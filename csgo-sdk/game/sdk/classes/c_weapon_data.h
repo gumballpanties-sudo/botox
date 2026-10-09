@@ -51,8 +51,9 @@ public:
 	float m_spread[ 2 ];                    
 	float m_inaccuracy_crouch[ 2 ];         
 	float m_inaccuracy_stand[ 2 ];          
-	unsigned char pad14[ 0x8 ];              
-	float m_inaccuracy_jump[ 2 ];           
+	float m_inaccuracy_unknown;
+	float m_inaccuracy_jump_initial;
+	float m_inaccuracy_jump[ 2 ];
 	float m_inaccuracy_land[ 2 ];           
 	float m_inaccuracy_ladder[ 2 ];         
 	float m_inaccuracy_fire[ 2 ];           

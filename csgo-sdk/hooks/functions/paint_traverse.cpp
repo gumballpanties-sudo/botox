@@ -10,6 +10,7 @@
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/movement/movement.h"
+#include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/visuals/bullets/bullets.h"
 #include "../../hacks/visuals/edicts/edicts.h"
 #include "../../hacks/visuals/grenade/grenade_path.h"
@@ -96,6 +97,8 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 				PERF_ZONE( zone_paint_movement );
 				g_movement.on_paint_traverse( );
 			}
+
+			g_movement_recorder.on_paint_traverse( );
 
 			g_logger.on_paint_traverse( );
 

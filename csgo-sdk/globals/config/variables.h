@@ -296,37 +296,37 @@ namespace n_variables
 
 		ADD_VARIABLE( float, m_aimbot_pistol_fov, 5.f );
 		ADD_VARIABLE( float, m_aimbot_pistol_smooth, 5.f );
-		ADD_VARIABLE( float, m_aimbot_pistol_rcs, 0.f );
+		ADD_VARIABLE( float, m_aimbot_pistol_rcs, 100.f );
 		ADD_VARIABLE( float, m_aimbot_heavy_pistol_fov, 5.f );
 		ADD_VARIABLE( float, m_aimbot_heavy_pistol_smooth, 5.f );
-		ADD_VARIABLE( float, m_aimbot_heavy_pistol_rcs, 0.f );
+		ADD_VARIABLE( float, m_aimbot_heavy_pistol_rcs, 100.f );
 		ADD_VARIABLE( float, m_aimbot_smg_fov, 5.f );
 		ADD_VARIABLE( float, m_aimbot_smg_smooth, 5.f );
-		ADD_VARIABLE( float, m_aimbot_smg_rcs, 0.f );
+		ADD_VARIABLE( float, m_aimbot_smg_rcs, 100.f );
 		ADD_VARIABLE( float, m_aimbot_rifle_fov, 5.f );
 		ADD_VARIABLE( float, m_aimbot_rifle_smooth, 5.f );
-		ADD_VARIABLE( float, m_aimbot_rifle_rcs, 0.f );
+		ADD_VARIABLE( float, m_aimbot_rifle_rcs, 100.f );
 		ADD_VARIABLE( float, m_aimbot_sniper_fov, 5.f );
 		ADD_VARIABLE( float, m_aimbot_sniper_smooth, 5.f );
-		ADD_VARIABLE( float, m_aimbot_sniper_rcs, 0.f );
+		ADD_VARIABLE( float, m_aimbot_sniper_rcs, 100.f );
 		ADD_VARIABLE( float, m_aimbot_scout_fov, 5.f );
 		ADD_VARIABLE( float, m_aimbot_scout_smooth, 5.f );
-		ADD_VARIABLE( float, m_aimbot_scout_rcs, 0.f );
+		ADD_VARIABLE( float, m_aimbot_scout_rcs, 100.f );
 		ADD_VARIABLE( float, m_aimbot_heavy_fov, 5.f );
 		ADD_VARIABLE( float, m_aimbot_heavy_smooth, 5.f );
-		ADD_VARIABLE( float, m_aimbot_heavy_rcs, 0.f );
+		ADD_VARIABLE( float, m_aimbot_heavy_rcs, 100.f );
 
 		ADD_VARIABLE( bool, m_aimbot_scope_fov_scale, false );
 		ADD_VARIABLE( float, m_aimbot_scope_fov_scale_amount, 100.f );
 
 		ADD_VARIABLE( float, m_aimbot_general_fov, 5.f );
 		ADD_VARIABLE( float, m_aimbot_general_smooth, 5.f );
-		ADD_VARIABLE( float, m_aimbot_general_rcs, 0.f );
+		ADD_VARIABLE( float, m_aimbot_general_rcs, 100.f );
 
 		ADD_VARIABLE( int, m_aimbot_rcs_start, 1 );
 		ADD_VARIABLE( float, m_aimbot_rcs_pitch, 100.f );
 		ADD_VARIABLE( float, m_aimbot_rcs_yaw, 100.f );
-		ADD_VARIABLE( bool, m_aimbot_rcs_only_with_aimbot, false );
+		ADD_VARIABLE( bool, m_aimbot_rcs_only_with_aimbot, true );
 
 		ADD_VARIABLE( bool, m_aimbot_pistol_override, false );
 		ADD_VARIABLE( bool, m_aimbot_heavy_pistol_override, false );
@@ -1591,6 +1591,24 @@ namespace n_variables
 
 		ADD_VARIABLE( bool, m_jump_stats, false );
 		ADD_VARIABLE( bool, m_jump_stats_show_fails, false );
+
+		ADD_VARIABLE( bool, m_movement_rec, false );
+		ADD_VARIABLE( bool, m_movement_rec_show_line, true );
+		ADD_VARIABLE( bool, m_movement_rec_render, true );
+		ADD_VARIABLE( int, m_movement_rec_position, 0 );
+		ADD_VARIABLE( bool, m_movement_rec_lockva, true );
+		ADD_VARIABLE( bool, m_movement_rec_lockgoingtostart, true );
+		ADD_VARIABLE( bool, m_movement_rec_clipper_box, true );
+		ADD_VARIABLE( float, m_movement_rec_clip_seconds, 15.f );
+		ADD_VARIABLE( bool, m_movement_rec_stop_on_move, false );
+		ADD_VARIABLE( bool, m_movement_rec_force_weapon, true );
+		ADD_VARIABLE( key_bind_t, m_movement_rec_keystartrecord, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( key_bind_t, m_movement_rec_keystoprecord, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( key_bind_t, m_movement_rec_keysaveroute, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( key_bind_t, m_movement_rec_keystartplay, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( key_bind_t, m_movement_rec_keystopplay, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( key_bind_t, m_movement_rec_keyclip, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( key_bind_t, m_movement_rec_keyclearrecord, key_bind_t( 0, 1 ) );
 
 		ADD_VARIABLE_VECTOR( bool, e_log_types::log_type_max, m_log_types, false );
 

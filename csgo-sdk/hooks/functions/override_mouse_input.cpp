@@ -4,6 +4,7 @@
 #include "../../hacks/movement/edge_skip.h"
 #include "../../hacks/movement/edgebug.h"
 #include "../../hacks/movement/movement.h"
+#include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/prediction/prediction.h"
 #include "../../hacks/visuals/screen/flip_world.h"
 #include "../hooks.h"
@@ -50,6 +51,8 @@ void __fastcall n_detoured_functions::override_mouse_input( void* thisptr, int e
 	if ( !edgebug_lock && skip_lock <= 0.f )
 		g_movement.strafe_optimizer_mouse( x );
 	g_movement.auto_strafe_mouse( x, y );
+
+	g_movement_recorder.camera_lock( x, y );
 
 	original( thisptr, edx, x, y );
 }

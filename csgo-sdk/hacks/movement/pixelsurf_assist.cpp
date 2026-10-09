@@ -396,10 +396,12 @@ void n_movement::impl_t::pixelsurf_assist( c_user_cmd* cmd )
 
 		if ( !plan.active && !pending && !c.out_of_budget && fallback.nolip >= 0 ) {
 			++st_nolip;
+			/* 10-09 11:14 log: ground never got past skip 2/8 ( a no-hit search resets it ). press-this-cmd arcs can't wait */
 			const int k_wait = n_tick::ticks( 8 );
-			botox_dbg_log( "[psa] nolip %s%s surf %.4f arrive %.4f k=%d skip %d/%d", n_assist::k_launch_names[ fallback_prog.launch ],
-			               fallback_prog.crouch ? " crouch" : "", fallback_z, fallback.nolip_z, fallback.nolip, nolip_skips + 1, k_wait );
-			if ( ++nolip_skips > k_wait ) {
+			const bool now   = fallback.launch == 0;
+			botox_dbg_log( "[psa] nolip %s%s surf %.4f arrive %.4f k=%d skip %d/%d%s", n_assist::k_launch_names[ fallback_prog.launch ],
+			               fallback_prog.crouch ? " crouch" : "", fallback_z, fallback.nolip_z, fallback.nolip, nolip_skips + 1, k_wait, now ? " now" : "" );
+			if ( ++nolip_skips > k_wait || now ) {
 				fallback.hit      = true;
 				fallback.lip      = 0;
 				fallback.target   = fallback.nolip_target;

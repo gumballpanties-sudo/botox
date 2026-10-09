@@ -225,7 +225,9 @@ namespace n_assist
 
 		/* 10-09 log: 13 of 33 plans hit the window on a face with no lip under that xy ( pin 0, wall 0.000 ). sim the arrival tick in
 		   its stance: your keys, auto align's pushes into the face ( 10..90 ), the ride hold's 45 / 450. none pins = no lip there,
-		   state goes back to the arrival and the arc falls on to lower points */
+		   state goes back to the arrival and the arc falls on to lower points.
+		   10-09 11:01 log: pin = vz only. xy >= 1 killed every ground jump ( keys held into the wall = 0 along it in the sim ),
+		   bhops passed on their speed. xy along the wall is your air strafe, not the lip */
 		const auto lip = [ & ]( const int i, const int press ) -> int {
 			const c_vector o    = local->get_origin( );
 			const c_vector mins = col->get_obb_mins( ), maxs = col->get_obb_maxs( );
@@ -262,8 +264,7 @@ namespace n_assist
 				g_prediction.begin( local, cmd );
 				g_prediction.end( local );
 				++c.sims;
-				const c_vector v = local->get_velocity( );
-				if ( !( local->get_flags( ) & fl_onground ) && std::fabs( v.m_z - pin ) < 0.01 && v.length_2d( ) >= 1.f )
+				if ( !( local->get_flags( ) & fl_onground ) && std::fabs( local->get_velocity( ).m_z - pin ) < 0.01 )
 					return 1;
 			}
 			g_prediction.restore_entity_to_predicted_frame( c.frame );

@@ -1113,7 +1113,7 @@ static bool is_stretched_window( const ImGuiWindow* window )
 	const std::string_view name = window->Name;
 
 	return name.find( "botox-spectators" ) != std::string_view::npos || name == "botox-practice-window-ui" ||
-	       name == "botox-route-calc-keys" || name == "##websurf_bare";
+	       name == "botox-route-calc-keys" || name == "##websurf_bare" || name == "##mr_clipper_box";
 }
 
 static bool window_unscaled( const ImGuiWindow* root )

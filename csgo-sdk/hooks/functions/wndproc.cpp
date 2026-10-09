@@ -5,6 +5,7 @@
 #include "../../hacks/chud_hud/chud_hud.h"
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/movement/movement.h"
+#include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/web/websurface.h"
 
 extern bool point_menu_is_opened( );
@@ -32,7 +33,7 @@ long __stdcall n_detoured_functions::wndproc( HWND window, unsigned int message,
 	if ( g_input.is_key_released( VK_INSERT ) )
 		g_menu.m_opened = !g_menu.m_opened;
 
-	const bool imgui_input = g_menu.m_opened || point_menu_is_opened( );
+	const bool imgui_input = g_menu.m_opened || point_menu_is_opened( ) || g_movement_recorder.m_editor_open;
 
 	g_interfaces.m_input_system->enable_input( !imgui_input );
 

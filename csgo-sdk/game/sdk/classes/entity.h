@@ -298,6 +298,7 @@ public:
 	/* DT_WeaponCSBase */
 	NETVAR_VARIABLE( bool, is_burst_mode, "CWeaponCSBase->m_bBurstMode" );
 	NETVAR_VARIABLE( float, get_accuracy_penalty, "CWeaponCSBase->m_fAccuracyPenalty" );
+	NETVAR_VARIABLE( int, get_weapon_mode, "CWeaponCSBase->m_weaponMode" );
 	NETVAR_VARIABLE( float, get_fire_ready_time, "CWeaponCSBase->m_flPostponeFireReadyTime" );
 	/* who dropped this gun, NULL (0xFFFFFFFF) until the first Drop. skinchanger: spawned-with vs picked-up */
 	NETVAR_VARIABLE( unsigned int, get_prev_owner_handle, "CWeaponCSBase->m_hPrevOwner" );

@@ -1,4 +1,5 @@
 #include "menu_internal.h"
+#include "../movement/movement_recorder.h"
 
 static bool move_mask_combo( const char* label, int& stored )
 {
@@ -1361,6 +1362,115 @@ void n_menu::impl_t::tab_movement( )
 					},
 					ImVec2( 200.f, -1 ) );
 			}
+		}
+		menu_group_end( );
+
+		menu_columns_end( );
+		break;
+	}
+	case 3: {
+		auto& mr = g_movement_recorder;
+
+		static bool first_list = true;
+		if ( first_list ) {
+			mr.refresh_clips( );
+			first_list = false;
+		}
+
+		menu_columns_begin( );
+
+		if ( menu_group_begin( "recorder" ) ) {
+			ImGui::Checkbox( "movement recorder", &GET_VARIABLE( g_variables.m_movement_rec, bool ) );
+			ImGui::Checkbox( "show recording line", &GET_VARIABLE( g_variables.m_movement_rec_show_line, bool ) );
+			ImGui::Checkbox( "show recorder timer", &GET_VARIABLE( g_variables.m_movement_rec_render, bool ) );
+			if ( GET_VARIABLE( g_variables.m_movement_rec_render, bool ) ) {
+				ImGui::OptionPopup(
+					"recorder timer settings",
+					[ & ]( ) {
+						ImGui::Combo( "position##recorder timer", &GET_VARIABLE( g_variables.m_movement_rec_position, int ),
+						              "top left\0bottom left\0bottom right\0" );
+					},
+					ImVec2( 200.f, -1 ) );
+			}
+			ImGui::Checkbox( "show clipper box", &GET_VARIABLE( g_variables.m_movement_rec_clipper_box, bool ) );
+			ImGui::Checkbox( "original playback viewangles", &GET_VARIABLE( g_variables.m_movement_rec_lockva, bool ) );
+			ImGui::Checkbox( "lock while aiming to position", &GET_VARIABLE( g_variables.m_movement_rec_lockgoingtostart, bool ) );
+			ImGui::Checkbox( "stop playback on movement", &GET_VARIABLE( g_variables.m_movement_rec_stop_on_move, bool ) );
+			ImGui::Checkbox( "force same weapons", &GET_VARIABLE( g_variables.m_movement_rec_force_weapon, bool ) );
+			ImGui::SliderFloat( "clipper duration##recorder", &GET_VARIABLE( g_variables.m_movement_rec_clip_seconds, float ), 1.f, 120.f, "%.0f s" );
+
+			/* press actions: a style ( always on / toggle ) would fire them on every menu close */
+			ImGui::Label( "start recording" );
+			ImGui::Keybind( "recorder start rec key", &GET_VARIABLE( g_variables.m_movement_rec_keystartrecord, key_bind_t ), false );
+			ImGui::Label( "stop recording" );
+			ImGui::Keybind( "recorder stop rec key", &GET_VARIABLE( g_variables.m_movement_rec_keystoprecord, key_bind_t ), false );
+			ImGui::Label( "save route" );
+			ImGui::Keybind( "recorder save key", &GET_VARIABLE( g_variables.m_movement_rec_keysaveroute, key_bind_t ), false );
+			ImGui::Label( "start playback" );
+			ImGui::Keybind( "recorder start play key", &GET_VARIABLE( g_variables.m_movement_rec_keystartplay, key_bind_t ), false );
+			ImGui::Label( "stop playback" );
+			ImGui::Keybind( "recorder stop play key", &GET_VARIABLE( g_variables.m_movement_rec_keystopplay, key_bind_t ), false );
+			ImGui::Label( "clear route" );
+			ImGui::Keybind( "recorder clear key", &GET_VARIABLE( g_variables.m_movement_rec_keyclearrecord, key_bind_t ), false );
+			ImGui::Label( "clip route" );
+			ImGui::Keybind( "recorder clip key", &GET_VARIABLE( g_variables.m_movement_rec_keyclip, key_bind_t ), false );
+		}
+		menu_group_end( );
+
+		if ( menu_group_begin( "actions" ) ) {
+			using namespace n_movement_recorder;
+
+			static constexpr std::pair< const char*, e_action > k_actions[ ] = {
+				{ "start recording", action_start_rec }, { "stop recording", action_stop_rec }, { "save route", action_save },
+				{ "start playback", action_start_play }, { "stop playback", action_stop_play }, { "clear route", action_clear },
+				{ "clip route", action_clip },
+			};
+
+			ImGui::BeginDisabled( !GET_VARIABLE( g_variables.m_movement_rec, bool ) );
+			for ( const auto& [ label, action ] : k_actions ) {
+				if ( ImGui::Button( std::format( "{}##recorder action", label ).c_str( ), ImVec2( -1.f, 15.f ) ) )
+					mr.request( action );
+			}
+			ImGui::EndDisabled( );
+		}
+		menu_group_end( );
+
+		menu_columns_next( );
+
+		if ( menu_group_begin( "routes" ) ) {
+			std::scoped_lock lock( mr.m_clips_mutex );
+
+			if ( mr.m_current_map.empty( ) )
+				ImGui::TextDisabled( "join a map to see its routes" );
+			else
+				ImGui::TextDisabled( "%s   %d routes   server %d tick", mr.m_current_map.c_str( ), static_cast< int >( mr.m_clips.size( ) ),
+				                     mr.server_tickrate( ) );
+
+			if ( ImGui::BeginListBox( "##recorder routes", ImVec2( -1.f, 220.f ) ) ) {
+				for ( std::size_t i = 0; i < mr.m_clips.size( ); ++i ) {
+					const auto& clip      = mr.m_clips[ i ];
+					const float seconds   = static_cast< float >( clip.frames.size( ) ) / static_cast< float >( std::max( clip.tickrate, 1 ) );
+					const std::string row = std::format( "{}   {} ticks  {:.1f}s##route {}", clip.label( ), clip.frames.size( ), seconds, i );
+					if ( ImGui::Selectable( row.c_str( ), mr.m_selected_clip == static_cast< int >( i ), ImGuiSelectableFlags_AllowDoubleClick ) ) {
+						mr.m_selected_clip = static_cast< int >( i );
+						if ( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
+							mr.open_clip_editor( i );
+					}
+				}
+				ImGui::EndListBox( );
+			}
+
+			const bool has_selection = mr.m_selected_clip >= 0 && mr.m_selected_clip < static_cast< int >( mr.m_clips.size( ) );
+
+			ImGui::BeginDisabled( !has_selection );
+			if ( ImGui::Button( "edit route", ImVec2( -1.f, 15.f ) ) && has_selection )
+				mr.open_clip_editor( static_cast< std::size_t >( mr.m_selected_clip ) );
+			if ( ImGui::Button( "delete route", ImVec2( -1.f, 15.f ) ) && has_selection )
+				mr.delete_clip( static_cast< std::size_t >( mr.m_selected_clip ) );
+			ImGui::EndDisabled( );
+
+			if ( ImGui::Button( "refresh routes", ImVec2( -1.f, 15.f ) ) )
+				mr.refresh_clips( );
 		}
 		menu_group_end( );
 

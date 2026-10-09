@@ -62,6 +62,7 @@
     <ClCompile Include="hacks\movement\edge_skip.cpp" />
     <ClCompile Include="hacks\movement\pixel_calc.cpp" />
     <ClCompile Include="hacks\movement\route_calc.cpp" />
+    <ClCompile Include="hacks\movement\movement_recorder.cpp" />
     <ClCompile Include="hacks\movement\dist_calc.cpp" />
     <ClCompile Include="hacks\movement\route_engine.cpp" />
     <ClCompile Include="hacks\movement\pixelsurf_assist.cpp" />

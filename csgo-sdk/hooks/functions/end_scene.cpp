@@ -8,6 +8,7 @@
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/misc/scaleform/image_cache.h"
 #include "../../hacks/movement/movement.h"
+#include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/visuals/players/players.h"
 #include "../../hacks/visuals/screen/color_correction.h"
 #include "../../hacks/visuals/screen/fx_compat.h"
@@ -25,6 +26,8 @@ void n_detoured_functions::draw_overlay_frame( IDirect3DDevice9* device )
 	g_render.on_end_scene(
 		[ & ]( ) {
 			g_movement.on_end_scene( );
+
+			g_movement_recorder.on_end_scene( );
 
 			Web_Present( device );
 

@@ -596,7 +596,7 @@ void n_menu::impl_t::on_end_scene( )
 		};
 
 		static const menu_tab_t tabs[ ] = {
-			{ "aimbot", { } }, { "visuals", { "esp", "world", "screen" } }, { "movement", { "main", "indicators", "calculators" } },
+			{ "aimbot", { } }, { "visuals", { "esp", "world", "screen" } }, { "movement", { "main", "indicators", "calculators", "recorder" } },
 			{ "misc", { } },   { "inventory", { "weapons", "player" } }, { "fonts", { "indicators", "esp", "chud hud", "default hud" } },
 			{ "settings", { } },
 		};

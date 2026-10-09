@@ -9,6 +9,7 @@
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/movement/edgebug.h"
 #include "../../hacks/movement/movement.h"
+#include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/skins/skins.h"
 #include "../../hacks/chams/chams.h"
 #include "../../hacks/visuals/bullets/bullets.h"
@@ -32,6 +33,8 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 	g_misc.on_frame_stage_notify( stage );
 
 	g_aimbot.nospread_frame_stage( stage );
+
+	g_movement_recorder.on_frame_stage( stage );
 
 	g_skins.publish_anim_donor( );
 

@@ -8,6 +8,7 @@
 #include "../../hacks/visuals/players/players.h"
 #include "../../hacks/visuals/bullets/bullets.h"
 #include "../../hacks/movement/movement.h"
+#include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/skins/skins.h"
 #include "../../utilities/console/console.h"
@@ -49,6 +50,7 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 		case HASH_BT( "switch_team" ):
 		case HASH_BT( "round_start" ):
 			if ( hashed_event == HASH_BT( "round_start" ) ) {
+				g_movement_recorder.set_round_frozen( true );
 				g_scaleform.m_killfeed_round_reset = true;
 				for ( auto& row : g_chud.m_kill_rows )
 					row.m_keep = false;
@@ -73,7 +75,14 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 		case HASH_BT( "round_mvp" ):
 			g_scaleform.m_pending_mvp = true;
 			break;
+		case HASH_BT( "round_prestart" ):
+			g_movement_recorder.set_round_frozen( true );
+			break;
+		case HASH_BT( "round_freeze_end" ):
+			g_movement_recorder.set_round_frozen( false );
+			break;
 		case HASH_BT( "round_end" ):
+			g_movement_recorder.set_round_frozen( true );
 			g_scaleform.m_winpanel_team          = game_event->get_int( "winner" );
 			g_scaleform.m_should_update_winpanel = true;
 			break;
@@ -85,6 +94,9 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 			const int local_id    = g_interfaces.m_engine_client->get_local_player( );
 
 			g_players.god_on_hurt( victim_id );
+
+			if ( victim_id == local_id )
+				g_movement_recorder.force_stop( );
 
 			const int revive_mode = GET_VARIABLE( g_variables.m_auto_revive_mode, int );
 			const auto picked     = player_list_get( victim_id );

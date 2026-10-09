@@ -11,6 +11,7 @@
 #include "../../hacks/movement/edgebug.h"
 #include "../../hacks/movement/edge_skip.h"
 #include "../../hacks/movement/movement.h"
+#include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/movement/tick_scale.h"
 #include "../../hacks/movement/wall_climb.h"
 #include "../../hacks/prediction/prediction.h"
@@ -387,6 +388,9 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 			return;
 		}
 
+		g_movement_recorder.capture_user_input( cmd );
+		g_movement_recorder.apply_playback( cmd );
+
 		gnd_wish_start( );
 		g_aimbot.nospread_pre_move( );
 		gnd_wish_check( "nospread_pre" );
@@ -426,6 +430,9 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		g_skins.deagle_spinner( );
 		gnd_wish_check( "deagle_spinner" );
 
+		/* pre features may have rewritten it: predict + detect on the exact recorded inputs */
+		g_movement_recorder.apply_playback( cmd );
+
 		cmd_start_guard( "pre_end", true );
 		g_prediction.begin( g_ctx.m_local, cmd, true );
 
@@ -456,13 +463,20 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 			g_movement.on_create_move_post( );
 		}
 
-		{
+		/* recorder owns cmd: eb post over a desynced replay overwrites recorded duck timing */
+		if ( !g_movement_recorder.owns_cmd( ) ) {
 			PERF_ZONE( zone_cmd_edgebug );
 			g_edgebug.EdgeBugPostPredict( cmd );
 			{
 				PERF_ZONE( zone_cmd_edge_skip );
 				g_edge_skip.post( cmd );
 			}
+		} else {
+			/* post never runs: a plan latched by pre would hold mouse lock */
+			g_edgebug.m_found  = false;
+			g_edgebug.m_ducked = false;
+			g_edgebug.drop_mouse( );
+			g_edge_skip.reset( true );
 		}
 		gnd_wish_check( "edgebug_post", true );
 
@@ -472,6 +486,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		/* debug: a wall climb catch rewritten after it committed never lands */
 		g_wall_climb.check_stomp( cmd );
 		g_movement.auto_align_sent( cmd );
+
+		g_movement_recorder.on_create_move( cmd );
 
 		silent_view( cmd, g_ctx.m_local );
 		gnd_wish_check( "silent_view", true );

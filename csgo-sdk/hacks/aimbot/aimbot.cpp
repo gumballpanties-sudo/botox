@@ -424,6 +424,172 @@ namespace
 		               offset.m_y, offset.m_z, offset.length_2d( ) );
 	}
 
+	constexpr float k_ray_range = 8192.f;
+
+	float ray_segment_distance_sq( const c_vector& eye, const c_vector& dir, const float range, const c_vector& a, const c_vector& b )
+	{
+		const c_vector axis   = b - a;
+		const c_vector offset = eye - a;
+
+		const float e = axis.length_squared( ), f = axis.dot_product( offset ), c = dir.dot_product( offset ), d = dir.dot_product( axis );
+
+		float s = 0.f, t = 0.f;
+
+		if ( e <= 1e-4f )
+			s = std::clamp( -c, 0.f, range );
+		else {
+			const float denom = e - d * d;
+
+			s = denom > 1e-4f ? std::clamp( ( d * f - c * e ) / denom, 0.f, range ) : 0.f;
+			t = ( d * s + f ) / e;
+
+			if ( t < 0.f ) {
+				t = 0.f;
+				s = std::clamp( -c, 0.f, range );
+			} else if ( t > 1.f ) {
+				t = 1.f;
+				s = std::clamp( d - c, 0.f, range );
+			}
+		}
+
+		return ( ( eye + dir * s ) - ( a + axis * t ) ).length_squared( );
+	}
+
+	/* bullet cone, tangent units. GetInaccuracy ( weapon_csbase.cpp:1258 ) by hand, the 482 vfunc logged -nan. turning term skipped */
+	struct cone_t {
+		float m_inaccuracy = 0.f, m_spread = 0.f;
+
+		bool wide( ) const { return m_inaccuracy + m_spread > 0.002f; }
+	};
+
+	cone_t weapon_cone( c_base_entity* weapon )
+	{
+		if ( !weapon || !g_ctx.m_local )
+			return { };
+
+		const auto data = g_interfaces.m_weapon_system->get_weapon_data( weapon->get_item_definition_index( ) );
+		if ( !data )
+			return { };
+
+		const int mode = std::clamp( weapon->get_weapon_mode( ), 0, 1 );
+
+		if ( GET_VARIABLE( g_variables.m_nospread_enable, bool ) )
+			return { 0.f, data->m_spread[ mode ] };
+
+		float inaccuracy = weapon->get_accuracy_penalty( );
+
+		const c_vector velocity = g_ctx.m_local->get_velocity( );
+		const float max_speed   = data->m_max_speed[ mode ] > 0.f ? data->m_max_speed[ mode ] : 250.f;
+
+		if ( const float move = std::clamp( ( velocity.length_2d( ) - max_speed * 0.34f ) / ( max_speed * 0.61f ), 0.f, 1.f ); move > 0.f )
+			inaccuracy += std::pow( move, 0.25f ) * data->m_inaccuracy_move[ mode ];
+
+		if ( !( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) ) {
+			static const auto air_scale = g_convars[ HASH_BT( "weapon_air_spread_scale" ) ];
+
+			const float initial   = std::clamp( data->m_inaccuracy_jump_initial, 0.f, 1.f ) * ( air_scale ? air_scale->get_float( ) : 1.f );
+			const float sqrt_jump = std::sqrt( 301.993378f );
+			const float air       = ( std::sqrt( std::fabs( velocity.m_z ) ) - sqrt_jump * 0.25f ) / ( sqrt_jump * 0.75f ) * initial;
+
+			inaccuracy += std::clamp( air, 0.f, 2.f * initial );
+		}
+
+		if ( !std::isfinite( inaccuracy ) )
+			return { };
+
+		return { std::clamp( inaccuracy, 0.f, 1.f ), data->m_spread[ mode ] };
+	}
+
+	/* fixed draws of FX_FireBullets ( fx_cs_shared.cpp:429-492 ): radius = uniform density * cone, inaccuracy + spread offsets added */
+	struct spread_samples_t {
+		static constexpr int k_count = 48;
+
+		float m_x0[ k_count ]{ }, m_y0[ k_count ]{ }, m_x1[ k_count ]{ }, m_y1[ k_count ]{ };
+
+		spread_samples_t( )
+		{
+			for ( int i = 0; i < k_count; i++ ) {
+				const float d0 = ( i + 0.5f ) / k_count, t0 = i * 2.39996323f;
+				const float d1 = std::fmod( 0.5f + i * 0.61803399f, 1.f ), t1 = 6.28318531f * std::fmod( i * 0.75487767f, 1.f );
+
+				m_x0[ i ] = d0 * std::cos( t0 );
+				m_y0[ i ] = d0 * std::sin( t0 );
+				m_x1[ i ] = d1 * std::cos( t1 );
+				m_y1[ i ] = d1 * std::sin( t1 );
+			}
+		}
+	};
+
+	const spread_samples_t g_spread_samples{ };
+
+	struct capsules_t {
+		static constexpr int k_max = 32;
+
+		c_vector m_a[ k_max ]{ }, m_b[ k_max ]{ };
+		float m_radius[ k_max ]{ };
+		int m_count               = 0;
+		const matrix3x4_t* m_from = nullptr;
+
+		void build( const hitbox_resolver_t& resolver, matrix3x4_t* matrix )
+		{
+			if ( m_from == matrix )
+				return;
+
+			m_from  = matrix;
+			m_count = 0;
+
+			for ( int i = 0; i < resolver.m_set->m_hit_boxes && m_count < k_max; i++ ) {
+				const auto box = resolver.m_set->get_hitbox( i );
+
+				if ( !box || box->m_radius <= 0.f || box->m_bone < 0 || box->m_bone >= 128 )
+					continue;
+
+				m_a[ m_count ]      = g_math.vector_transform( box->m_bb_min, matrix[ box->m_bone ] );
+				m_b[ m_count ]      = g_math.vector_transform( box->m_bb_max, matrix[ box->m_bone ] );
+				m_radius[ m_count ] = box->m_radius;
+				m_count++;
+			}
+		}
+
+		bool hit( const c_vector& eye, const c_vector& dir ) const
+		{
+			for ( int i = 0; i < m_count; i++ ) {
+				if ( ray_segment_distance_sq( eye, dir, k_ray_range, m_a[ i ], m_b[ i ] ) <= m_radius[ i ] * m_radius[ i ] )
+					return true;
+			}
+
+			return false;
+		}
+	};
+
+	/* share of the cone aimed at `point` that lands on ANY hitbox of this skeleton */
+	float hit_chance( const capsules_t& body, const c_vector& eye, const c_vector& point, const cone_t& cone )
+	{
+		c_angle angle{ };
+		g_math.vector_angles( point - eye, angle );
+
+		c_vector forward{ }, right{ }, up{ };
+		g_math.angle_vectors( angle, &forward, &right, &up );
+
+		const auto& s = g_spread_samples;
+
+		int hits = 0;
+		for ( int i = 0; i < spread_samples_t::k_count; i++ ) {
+			const float x = s.m_x0[ i ] * cone.m_inaccuracy + s.m_x1[ i ] * cone.m_spread;
+			const float y = s.m_y0[ i ] * cone.m_inaccuracy + s.m_y1[ i ] * cone.m_spread;
+
+			if ( body.hit( eye, ( forward + right * x + up * y ).normalized( ) ) )
+				hits++;
+		}
+
+		return static_cast< float >( hits ) / spread_samples_t::k_count;
+	}
+
+	/* crosshair-nearest box and the box the lock holds keep it unless another lands this much more ( head taps, no head <-> chest flick ) */
+	constexpr float k_hc_keep       = 0.1f;
+	constexpr int k_hc_candidates   = 12;
+	float g_dbg_hc = 1.f, g_dbg_cone = 0.f;
+
 	struct target_t {
 		c_base_entity* m_entity               = nullptr;
 		n_lagcomp::impl_t::record_t* m_record = nullptr;
@@ -434,10 +600,13 @@ namespace
 	struct scan_t {
 		fov_scorer_t m_scorer{ };
 		hitbox_list_t m_hitboxes{ };
-		float m_fov    = 180.f;
-		bool m_live    = true;
-		bool m_records = false;
-		int m_only     = 0;
+		cone_t m_cone{ };
+		float m_fov         = 180.f;
+		bool m_live         = true;
+		bool m_records      = false;
+		int m_only          = 0;
+		int m_prefer_entity = 0;
+		int m_prefer_hitbox = -1;
 	};
 
 	target_t scan_targets( const scan_t& scan )
@@ -529,8 +698,29 @@ namespace
 
 			const int ranked_count = shortlist.sorted( ranked );
 
-			for ( int i = 0; i < ranked_count && ranked[ i ].m_cosine > best_cosine; i++ ) {
+			/* best cosine past the gate ranks the entity. wide cone: of its top candidates, aim at the one whose cone lands most */
+			const bool spread    = scan.m_cone.wide( );
+			const bool preferred = entity->get_index( ) == scan.m_prefer_entity;
+
+			capsules_t body{ };
+			int first = -1, pick = -1;
+			float pick_score = -1.f, pick_hc = 1.f;
+
+			for ( int i = 0; i < ranked_count; i++ ) {
 				const auto& candidate = ranked[ i ];
+
+				if ( first < 0 ? candidate.m_cosine <= best_cosine : ( !spread || i >= k_hc_candidates ) )
+					break;
+
+				float hc = 1.f, score = 1.f;
+				if ( spread ) {
+					body.build( resolver, candidate.m_record ? candidate.m_record->m_matrix : live_bones( entity ) );
+					hc    = hit_chance( body, eye_position, candidate.m_position, scan.m_cone );
+					score = hc + ( i == 0 || ( preferred && candidate.m_hitbox == scan.m_prefer_hitbox ) ? k_hc_keep : 0.f );
+
+					if ( first >= 0 && score <= pick_score )
+						continue;
+				}
 
 				const auto box = resolver.m_set ? resolver.m_set->get_hitbox( candidate.m_hitbox ) : nullptr;
 
@@ -539,44 +729,24 @@ namespace
 					continue;
 				}
 
-				best_cosine = candidate.m_cosine;
-				best        = { entity, candidate.m_record, candidate.m_hitbox, candidate.m_position };
-				break;
+				if ( first < 0 )
+					first = i;
+
+				pick       = i;
+				pick_score = score;
+				pick_hc    = hc;
+			}
+
+			if ( first >= 0 ) {
+				const auto& chosen = ranked[ pick ];
+
+				best_cosine = ranked[ first ].m_cosine;
+				best        = { entity, chosen.m_record, chosen.m_hitbox, chosen.m_position };
+				g_dbg_hc    = pick_hc;
 			}
 		} );
 
 		return best;
-	}
-
-	constexpr float k_ray_range = 8192.f;
-
-	float ray_segment_distance_sq( const c_vector& eye, const c_vector& dir, const float range, const c_vector& a, const c_vector& b )
-	{
-		const c_vector axis   = b - a;
-		const c_vector offset = eye - a;
-
-		const float e = axis.length_squared( ), f = axis.dot_product( offset ), c = dir.dot_product( offset ), d = dir.dot_product( axis );
-
-		float s = 0.f, t = 0.f;
-
-		if ( e <= 1e-4f )
-			s = std::clamp( -c, 0.f, range );
-		else {
-			const float denom = e - d * d;
-
-			s = denom > 1e-4f ? std::clamp( ( d * f - c * e ) / denom, 0.f, range ) : 0.f;
-			t = ( d * s + f ) / e;
-
-			if ( t < 0.f ) {
-				t = 0.f;
-				s = std::clamp( -c, 0.f, range );
-			} else if ( t > 1.f ) {
-				t = 1.f;
-				s = std::clamp( d - c, 0.f, range );
-			}
-		}
-
-		return ( ( eye + dir * s ) - ( a + axis * t ) ).length_squared( );
 	}
 
 	float ray_depth( const hitbox_resolver_t& resolver, matrix3x4_t* matrix, const c_vector& eye, const c_vector& dir, int& hitbox )
@@ -729,13 +899,14 @@ void n_aimbot::impl_t::nospread_mark_shot( )
 		const float off_yaw   = std::remainderf( g_ctx.m_cmd->m_view_point.m_y - g_ctx.old_view_point.m_y, 360.f );
 
 		botox_dbg_log( "SHOT: gate=%s hb=%d rec=%d lv=%d gated=%d age=%.1fms ok=%d centre=%.0fms tick=%d srv=%.3f push=%d ns=%d lat=%.0f/%.0f "
-		               "off=%.1f pen=%.3f gnd=%d vz=%.0f wpn=%d spd=%.0f inacc=%.4f",
+		               "off=%.1f pen=%.3f gnd=%d vz=%.0f wpn=%d spd=%.0f inacc=%.4f hc=%.2f cone=%.4f",
 		                   g_dbg_gate ? g_dbg_gate : "-", m_target_hitbox, ( int )record_shot, ( int )live_shot, g_dbg_gated, record_age,
 		                   ( int )accepted, g_lagcomp.window_center( ) * 1000.f, g_ctx.m_cmd->m_tick_count, server_now,
 		                   g_lagcomp.push_ticks( ), ( int )GET_VARIABLE( g_variables.m_nospread_enable, bool ), latency_in, latency_out,
 		                   std::sqrtf( off_pitch * off_pitch + off_yaw * off_yaw ), weapon->get_accuracy_penalty( ),
 		                   ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) ? 1 : 0, g_ctx.m_local->get_velocity( ).m_z,
-		                   ( int )weapon->get_item_definition_index( ), g_ctx.m_local->get_velocity( ).length_2d( ), weapon->get_inaccuracy( ) );
+		                   ( int )weapon->get_item_definition_index( ), g_ctx.m_local->get_velocity( ).length_2d( ), weapon_cone( weapon ).m_inaccuracy,
+		                   g_dbg_hc, g_dbg_cone );
 	}
 
 	if ( !GET_VARIABLE( g_variables.m_nospread_enable, bool ) )
@@ -856,8 +1027,11 @@ void n_aimbot::impl_t::on_create_move_post( )
 
 		scan_t scan{ };
 		scan.m_scorer.setup( silent ? g_ctx.old_view_point : camera, rcs_offset( m_rcs_stale_punch ? 0.f : settings.m_rcs, m_rcs_shots ) );
-		scan.m_fov     = settings.m_fov;
-		scan.m_live    = live_ok;
+		scan.m_fov           = settings.m_fov;
+		scan.m_cone          = weapon_cone( weapon );
+		scan.m_prefer_entity = m_lock_index;
+		scan.m_prefer_hitbox = m_target_hitbox;
+		scan.m_live          = live_ok;
 		scan.m_records = backtrack && ( GET_VARIABLE( g_variables.m_aimbot_aim_at_backtrack, bool ) || !live_ok );
 
 		if ( class_vars->m_sniper && !g_ctx.m_local->is_scoped( ) ) {
@@ -869,6 +1043,8 @@ void n_aimbot::impl_t::on_create_move_post( )
 
 		g_dbg_best  = -2.f;
 		g_dbg_gated = 0;
+		g_dbg_hc    = 1.f;
+		g_dbg_cone  = scan.m_cone.m_inaccuracy + scan.m_cone.m_spread;
 		g_dbg_players = g_dbg_valid = g_dbg_immune = g_dbg_nobones = g_dbg_void = 0;
 
 		const auto scan_all = [ & ]( ) {
@@ -934,9 +1110,11 @@ void n_aimbot::impl_t::on_create_move_post( )
 			               m_rcs_shots, recoil_scale( ), want.m_x, want.m_y );
 	}
 
+	/* silent: bullet = view + punch * weapon_recoil_scale ( cs_player_shared.cpp:3010 ), comp it all, the camera never shows it */
 	c_angle aim{ };
 	if ( aiming ) {
-		aim = g_math.calculate_angle( g_ctx.m_local->get_eye_position( false ), target.m_position ) - want;
+		aim = g_math.calculate_angle( g_ctx.m_local->get_eye_position( false ), target.m_position ) -
+		      ( silent ? g_ctx.m_local->get_punch( ) * recoil_scale( ) : want );
 		aim.normalize( );
 	}
 
