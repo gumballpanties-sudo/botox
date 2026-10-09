@@ -376,6 +376,18 @@ namespace
 		}
 	};
 
+	/* record point: the live model is not there on the server, it must not count as "seen" */
+	bool record_visible( c_base_entity* entity, const c_vector& position, const c_vector& eye_position )
+	{
+		c_game_trace trace;
+		c_trace_filter filter( [ entity ]( c_base_entity* hit, int ) { return hit != g_ctx.m_local && hit != entity; } );
+		ray_t ray( eye_position, position );
+
+		g_interfaces.m_engine_trace->trace_ray( ray, mask_shot | contents_grate, &filter, &trace );
+
+		return trace.m_fraction > 0.99f;
+	}
+
 	/* autowall: hitbox must take min damage (through walls too). else per-HITBOX line of sight
 	   (can_see_matrix only traces the head) */
 	bool passes_gate( c_base_entity* entity, const c_vector& position, const c_vector& eye_position, const bool record, const int hit_group )
@@ -389,14 +401,7 @@ namespace
 		if ( !record )
 			return g_ctx.m_local->can_see_position( entity, position, eye_position );
 
-		/* record point: the live model is not there on the server, it must not count as "seen" */
-		c_game_trace trace;
-		c_trace_filter filter( [ entity ]( c_base_entity* hit, int ) { return hit != g_ctx.m_local && hit != entity; } );
-		ray_t ray( eye_position, position );
-
-		g_interfaces.m_engine_trace->trace_ray( ray, mask_shot | contents_grate, &filter, &trace );
-
-		return trace.m_fraction > 0.99f;
+		return record_visible( entity, position, eye_position );
 	}
 
 	/* hitbox centre vs the origin its matrix belongs to: standing head ~64 up, feet ~4, arms/lean < 30 sideways.
@@ -1226,38 +1231,39 @@ void n_aimbot::impl_t::run_backtrack( )
 	const auto eye     = g_ctx.m_local->get_eye_position( false );
 	const bool live_ok = g_lagcomp.live_accepted( );
 
-	constexpr float k_near_miss = 4.f;
+	/* clarity FUN_3c531170: every fire cmd goes out on the tick of the candidate nearest the bullet. a miss left on the
+	   cmd tick is scored on the live body = behind the wall it just ran to, spread can still land on the near record */
+	struct pick_t {
+		c_base_entity* m_entity               = nullptr;
+		n_lagcomp::impl_t::record_t* m_record = nullptr;
+		matrix3x4_t* m_matrix                 = nullptr;
+		hitbox_resolver_t m_resolver{ };
+		float m_score = -1e9f, m_depth = 0.f;
+		int m_hitbox = -1;
+	} best{ };
 
-	n_lagcomp::impl_t::record_t* best_record = nullptr;
-	float best_depth  = -k_near_miss;
-	int best_hitbox   = -1;
-	bool best_is_live = false;
-	bool live_hit     = false;
+	int records = 0, usable = 0;
 
 	g_entity_cache.enumerate( e_enumeration_type::type_players, [ & ]( c_base_entity* entity ) {
-		if ( live_hit || !entity || !entity->is_valid_aim_target( ) || entity->has_immunity( ) || !player_list_aim_allowed( entity->get_index( ) ) )
+		if ( !entity || !entity->is_valid_aim_target( ) || entity->has_immunity( ) || !player_list_aim_allowed( entity->get_index( ) ) )
 			return;
 
 		hitbox_resolver_t resolver{ };
 		if ( !resolver.setup( entity ) )
 			return;
 
-		int hitbox = -1;
+		const auto consider = [ & ]( n_lagcomp::impl_t::record_t* record, matrix3x4_t* matrix, const c_vector& origin ) {
+			int hitbox        = -1;
+			const float depth = ray_depth( resolver, matrix, eye, dir, hitbox );
+			const float score = depth / std::max( ( origin + c_vector( 0.f, 0.f, k_body_center ) - eye ).length( ), 1.f );
 
-		if ( live_ok ) {
-			if ( auto* bones = live_bones( entity ) ) {
-				if ( const float depth = ray_depth( resolver, bones, eye, dir, hitbox ); depth >= 0.f ) {
-					live_hit        = true;
-					m_target_hitbox = hitbox;
-					return;
-				} else if ( depth > best_depth ) {
-					best_depth   = depth;
-					best_record  = nullptr;
-					best_hitbox  = hitbox;
-					best_is_live = true;
-				}
-			}
-		}
+			if ( hitbox >= 0 && score > best.m_score )
+				best = { entity, record, matrix, resolver, score, depth, hitbox };
+		};
+
+		if ( live_ok )
+			if ( auto* bones = live_bones( entity ) )
+				consider( nullptr, bones, entity->get_abs_origin( ) );
 
 		const auto record_list = g_lagcomp.m_records[ entity->get_index( ) ];
 		if ( !record_list )
@@ -1266,34 +1272,33 @@ void n_aimbot::impl_t::run_backtrack( )
 		for ( int i = 0; i < g_ctx.m_max_allocations; i++ ) {
 			auto* record = &record_list[ i ];
 
+			if ( record->m_sim_time <= 0.f )
+				continue;
+
+			records++;
+
 			if ( !g_lagcomp.usable( entity, record->m_sim_time ) )
 				continue;
 
-			const c_vector body = record->m_vec_origin + c_vector( 0.f, 0.f, k_body_center );
-			if ( ray_segment_distance_sq( eye, dir, k_ray_range, body, body ) > ( k_body_radius + k_near_miss ) * ( k_body_radius + k_near_miss ) )
-				continue;
-
-			if ( const float depth = ray_depth( resolver, record->m_matrix, eye, dir, hitbox ); depth > best_depth ) {
-				best_depth   = depth;
-				best_record  = record;
-				best_hitbox  = hitbox;
-				best_is_live = false;
-			}
+			usable++;
+			consider( record, record->m_matrix, record->m_vec_origin );
 		}
 	} );
 
-	if ( live_hit || best_is_live ) {
-		if ( best_is_live && !live_hit )
-			m_target_hitbox = best_hitbox;
-
-		g_lagcomp.commit_shot( nullptr );
+	if ( !best.m_entity ) {
+		if ( records > 0 )
+			botox_dbg_log( "BT: none live=%d recs=%d ok=%d centre=%.0fms", ( int )live_ok, records, usable, g_lagcomp.window_center( ) * 1000.f );
 		return;
 	}
 
-	if ( best_record ) {
-		m_target_hitbox = best_hitbox;
-		g_lagcomp.commit_shot( best_record );
-	}
+	m_target_hitbox = best.m_hitbox;
+	g_lagcomp.commit_shot( best.m_record );
+
+	botox_dbg_log( "BT: pick=%s ent=%d hb=%d age=%.0fms depth=%.1f ang=%.2f vis=%d recs=%d ok=%d tick=%d", best.m_record ? "rec" : "live",
+	               best.m_entity->get_index( ), best.m_hitbox,
+	               best.m_record ? ( g_lagcomp.server_time( ) - best.m_record->m_sim_time ) * 1000.f : -1.f, best.m_depth,
+	               rad2deg( best.m_score ), ( int )record_visible( best.m_entity, best.m_resolver.position( best.m_hitbox, best.m_matrix ), eye ),
+	               records, usable, g_ctx.m_cmd->m_tick_count );
 }
 
 void n_aimbot::impl_t::run_zeusbug( )

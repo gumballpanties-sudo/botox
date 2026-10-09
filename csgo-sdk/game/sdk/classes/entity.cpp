@@ -4,6 +4,7 @@
 #include "../../../hacks/misc/misc.h"
 
 #include <array>
+#include <cfloat>
 
 void c_client_entity::set_abs_origin( const c_vector& origin )
 {
@@ -21,6 +22,24 @@ void c_base_entity::invalidate_bone_cache( )
 
 	if ( invalidate_bone_cache_address )
 		reinterpret_cast< void( __thiscall* )( void* ) >( invalidate_bone_cache_address )( this );
+}
+
+bool c_base_entity::force_bone_rebuild( )
+{
+	/* InvalidateBoneCache: +10 mov eax,[g_iModelBoneCounter]  +17 m_flLastBoneSetupTime  +27 m_iMostRecentModelBoneCounter (clarity FUN_3ca4de10) */
+	static const auto address = reinterpret_cast< std::uint8_t* >(
+		g_modules[ CLIENT_DLL ].find_pattern( "80 ? ? ? ? ? ? 74 16 A1 ? ? ? ? 48 C7 ? ? ? ? ? ? ? ? ? 89 ? ? ? ? ? C3" ) );
+	if ( !address )
+		return false;
+
+	static const auto counter      = *reinterpret_cast< int** >( address + 10 );
+	static const int setup_time_at = *reinterpret_cast< int* >( address + 17 );
+	static const int counter_at    = *reinterpret_cast< int* >( address + 27 );
+
+	const auto self                                          = reinterpret_cast< std::uintptr_t >( this );
+	*reinterpret_cast< float* >( self + setup_time_at )      = -FLT_MAX;
+	*reinterpret_cast< int* >( self + counter_at )           = *counter - 1;
+	return true;
 }
 
 void c_client_entity::set_abs_angles( const c_angle& angle )

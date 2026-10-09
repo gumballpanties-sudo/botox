@@ -459,6 +459,8 @@ public:
 	};
 
 	void invalidate_bone_cache( );
+	/* invalidate_bone_cache is a no-op outside OnRenderStart..OnRenderEnd (s_bEnableInvalidateBoneCache). this writes the fields */
+	bool force_bone_rebuild( );
 
 	void modify_eye_position( const c_animation_state* animation_state, c_vector* position ) const;
 	void set_next_think( int think );

@@ -256,27 +256,55 @@ void n_lagcomp::impl_t::on_frame_stage_notify( )
 			location = 0;
 		}
 
-		const auto saved_origin  = entity->get_abs_origin( );
-		const int saved_effects  = entity->get_effects( );
+		/* clarity FUN_3c52c550. raw +0xA0 write lost to CalcAbsolutePosition when EFL_DIRTY_ABSTRANSFORM was set = skeleton
+		   at the interpolated origin, labelled with the network one */
+		const auto saved_origin   = entity->get_abs_origin( );
+		const int saved_effects   = entity->get_effects( );
 		const auto entity_address = reinterpret_cast< std::uintptr_t >( entity );
+		auto& setup_frame         = *reinterpret_cast< int* >( entity_address + 0xA30 );
+		auto& setup_flags         = *reinterpret_cast< int* >( entity_address + 0xA28 );
+		auto& setup_a68           = *reinterpret_cast< int* >( entity_address + 0xA68 );
+		const int saved_frame = setup_frame, saved_flags = setup_flags, saved_a68 = setup_a68;
 
-		*reinterpret_cast< int* >( entity_address + 0xA30 ) = g_interfaces.m_global_vars_base->m_frame_count;
-		*reinterpret_cast< int* >( entity_address + 0xA28 ) = 0;
-
-		*reinterpret_cast< c_vector* >( entity_address + 0xA0 ) = entity->get_origin( );
-
-		*reinterpret_cast< int* >( entity_address + 0xA68 ) = 0;
-
-		entity->invalidate_bone_cache( );
+		entity->set_abs_origin( new_record.m_vec_origin );
 		entity->get_effects( ) |= 8;
+		setup_frame = g_interfaces.m_global_vars_base->m_frame_count;
+		setup_flags = 0;
+		setup_a68   = 0;
 
-		const bool built = entity->setup_bones( new_record.m_matrix, 128, 0x7FF00, g_interfaces.m_global_vars_base->m_current_time );
+		/* render_start runs before OnRenderStart: plain invalidate is off here, setup_bones would hand back last frame's drawn bones */
+		const bool rebuilt = entity->force_bone_rebuild( );
+		const bool built   = rebuilt && entity->setup_bones( new_record.m_matrix, 128, 0x7FF00, g_interfaces.m_global_vars_base->m_current_time );
+		entity->force_bone_rebuild( );
 
-		entity->set_abs_origin( saved_origin );
 		entity->get_effects( ) = saved_effects;
+		setup_frame            = saved_frame;
+		setup_flags            = saved_flags;
+		setup_a68              = saved_a68;
+		entity->set_abs_origin( saved_origin );
 
 		if ( !built )
 			return;
+
+		{
+			hitbox_resolver_t resolver{ };
+			const c_vector head = resolver.setup( entity ) ? resolver.position( hitbox_head, new_record.m_matrix ) - new_record.m_vec_origin : c_vector{ };
+			const bool off      = !std::isfinite( head.m_z ) || head.m_z < 20.f || head.m_z > 80.f || head.length_2d( ) > 24.f;
+
+			m_rec_built++;
+			if ( off ) {
+				m_rec_off++;
+				m_rec_last_off = head;
+			}
+
+			if ( const float now = g_interfaces.m_global_vars_base->m_real_time; now - m_rec_report >= 1.f || now < m_rec_report ) {
+				if ( m_rec_off )
+					botox_dbg_log( "REC: built=%d off=%d last=%.0f/%.0f/%.0f", m_rec_built, m_rec_off, m_rec_last_off.m_x, m_rec_last_off.m_y,
+					               m_rec_last_off.m_z );
+				m_rec_report = now;
+				m_rec_built = m_rec_off = 0;
+			}
+		}
 
 		memcpy( &record_list[ location ], &new_record, sizeof( record_t ) );
 

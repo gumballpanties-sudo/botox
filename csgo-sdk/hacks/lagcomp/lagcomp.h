@@ -100,6 +100,10 @@ namespace n_lagcomp
 		int m_window_frame   = -1;
 		float m_window_center = 0.f, m_window_unlag = 0.2f, m_window_limit = 0.2f;
 
+		int m_rec_built = 0, m_rec_off = 0;
+		float m_rec_report = 0.f;
+		c_vector m_rec_last_off{ };
+
 		std::deque< sequence_object_t > m_sequences = { };
 		int m_real_incoming_sequence                = 0;
 		int m_last_incoming_sequence                = 0;
