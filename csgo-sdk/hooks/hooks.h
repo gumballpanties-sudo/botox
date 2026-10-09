@@ -54,6 +54,7 @@ namespace n_hooks
 		c_detour_hook m_glow_effect_spectator{ };
 		c_detour_hook m_process_movement{ };
 		c_detour_hook m_process_movement_sv{ };
+		c_detour_hook m_pre_client_update{ };
 		c_detour_hook m_fire_event_intern{ };
 		c_detour_hook m_net_earliertempents{ };
 		c_detour_hook m_draw_set_color{ };
@@ -105,9 +106,9 @@ namespace n_detoured_functions
 	void __fastcall create_move_proxy( void* ecx, void* edx, int sequence_number, float input_sample_frametime, bool is_active );
 	void __fastcall run_command( void* ecx, void* edx, void* entity, void* cmd, void* move_helper );
 	void __fastcall get_local_view_angles( void* ecx, void* edx, c_angle& angles );
-	void __stdcall emit_sound( void* filter, int idx, int channel, const char* sound_entry, unsigned int sound_entry_hash, const char* sample,
-	                           float volume, int seed, float attenuation, int flags, int pitch, const c_vector* origin, const c_vector* direction,
-	                           void* vec_origins, bool update_pos, float soundtime, int speakerentity, int unk );
+	int __fastcall emit_sound( void* ecx, void* edx, void* filter, int idx, int channel, const char* sound_entry, unsigned int sound_entry_hash,
+	                           const char* sample, float volume, int seed, float attenuation, int flags, int pitch, const c_vector* origin,
+	                           const c_vector* direction, void* vec_origins, bool update_pos, float soundtime, int speakerentity, int unk );
 	void __fastcall frame_stage_notify( void* ecx, void* edx, int stage );
 	bool __fastcall dispatch_user_message( void* ecx, void* edx, int msg_type, int flags, int size, const void* msg );
 	void __fastcall paint_traverse( void* ecx, void* edx, unsigned int panel, bool force_repaint, bool force );
@@ -145,6 +146,7 @@ namespace n_detoured_functions
 	                                    float& alpha, float& time_start, float& time_target, bool& animate );
 	void __fastcall process_movement( void* thisptr, void* edx, c_base_entity* player, c_move_data* move_data );
 	void __fastcall process_movement_sv( void* thisptr, void* edx, void* player, c_move_data* move_data );
+	void __fastcall pre_client_update( void* ecx, void* edx, bool simulating );
 	bool __fastcall fire_event_intern( void* ecx, void* edx, game_event_t* game_event );
 	void __stdcall draw_set_color( int r, int g, int b, int a );
 	void __stdcall draw_filled_rect( int x0, int y0, int x1, int y1 );

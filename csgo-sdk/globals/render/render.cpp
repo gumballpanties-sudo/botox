@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -58,6 +59,50 @@ struct indicator_font_set_t {
 	std::vector< unsigned char > m_data{ };
 	float m_build_ms = 0.f;
 };
+
+/* dpi twins: main atlas fonts that drew on a dpi scaled list, re-rasterized at size x scale (antialiased) in a
+   side atlas. imgui_draw RenderText takes glyph quads from the twin (botox_dpi_twin), layout from the base */
+constexpr int k_dpi_twin_max = 16;
+
+struct dpi_font_request_t {
+	float m_scale = 1.f;
+	int m_count   = 0;
+	const ImFont* m_bases[ k_dpi_twin_max ]{ };
+
+	bool operator==( const dpi_font_request_t& ) const = default;
+};
+
+struct dpi_font_set_t {
+	ImFontAtlas* m_atlas = nullptr;
+	float m_scale        = 1.f;
+	int m_count          = 0;
+	const ImFont* m_bases[ k_dpi_twin_max ]{ };
+	ImFont* m_fonts[ k_dpi_twin_max ]{ };
+	float m_build_ms = 0.f;
+};
+
+/* render thread, except the pending hand-off. wanted = every base seen on a scaled list at m_scale */
+static std::atomic< dpi_font_set_t* > g_pending_dpi_fonts{ nullptr };
+static dpi_font_set_t* g_dpi_fonts = nullptr;
+static dpi_font_request_t g_dpi_wanted{ }, g_dpi_seen{ }, g_dpi_baked{ };
+static std::chrono::steady_clock::time_point g_dpi_changed{ };
+
+/* bg / fg lists inside an open panel stretch block this frame (dpi scaled when "dpi scale panels" is on) */
+static std::vector< const ImDrawList* > g_open_panel_lists{ };
+
+static void discard_dpi_set( dpi_font_set_t* set )
+{
+	if ( !set )
+		return;
+
+	if ( set->m_atlas && set->m_atlas->TexID ) {
+		ImGui_ImplDX9_SetTwinTextureA8( nullptr );
+		static_cast< IDirect3DTexture9* >( set->m_atlas->TexID )->Release( );
+	}
+
+	IM_DELETE( set->m_atlas );
+	delete set;
+}
 
 namespace
 {
@@ -801,6 +846,11 @@ void n_render::impl_t::install_fonts( font_set_t* set )
 		this->m_thread_safe_draw_data.clear( );
 	}
 
+	/* twins are keyed by the retired fonts: drop them, the next scaled frame asks again */
+	discard_dpi_set( g_pending_dpi_fonts.exchange( nullptr ) );
+	discard_dpi_set( std::exchange( g_dpi_fonts, nullptr ) );
+	g_dpi_wanted = g_dpi_seen = g_dpi_baked = { };
+
 	IM_DELETE( retired );
 
 	if ( const float build_ms = set->m_build_ms; build_ms > 0.f ) {
@@ -922,8 +972,182 @@ void n_render::impl_t::update_indicator_fonts( IDirect3DDevice9* device )
 	std::thread( build_indicator_fonts_worker, std::move( want ) ).detach( );
 }
 
+static bool build_dpi_fonts( dpi_font_set_t& set, const dpi_font_request_t& request )
+{
+	ImFontAtlas* const atlas = set.m_atlas = IM_NEW( ImFontAtlas )( );
+	atlas->Flags |= ImFontAtlasFlags_NoPowerOfTwoHeight;
+
+	set.m_scale = request.m_scale;
+	set.m_count = request.m_count;
+
+	const float scale        = set.m_scale;
+	constexpr unsigned mono  = ImGuiFreeTypeBuilderFlags_Monochrome | ImGuiFreeTypeBuilderFlags_MonoHinting;
+
+	for ( int i = 0; i < set.m_count; ++i ) {
+		const ImFont* const base = set.m_bases[ i ] = request.m_bases[ i ];
+
+		for ( int c = 0; c < base->ConfigDataCount; ++c ) {
+			ImFontConfig config = base->ConfigData[ c ];
+
+			/* full glyph tiers (cjk, indic ..) stay 100 %: a string needing one draws the base font */
+			if ( c > 0 && config.GlyphRanges != k_latin_ext_ranges && config.GlyphRanges != k_symbol_ranges )
+				continue;
+
+			config.FontDataOwnedByAtlas = false;
+			config.DstFont              = nullptr;
+			config.SizePixels *= scale;
+			config.GlyphOffset       = ImVec2( config.GlyphOffset.x * scale, config.GlyphOffset.y * scale );
+			config.GlyphExtraSpacing = ImVec2( config.GlyphExtraSpacing.x * scale, config.GlyphExtraSpacing.y * scale );
+			config.GlyphMinAdvanceX *= scale;
+			if ( config.GlyphMaxAdvanceX < FLT_MAX )
+				config.GlyphMaxAdvanceX *= scale;
+
+			/* 1 bit glyphs only fit the size they were hinted at: rescaled = antialiased */
+			if ( config.FontBuilderFlags & mono )
+				config.FontBuilderFlags = ( config.FontBuilderFlags & ~mono ) | ImGuiFreeTypeBuilderFlags_LightHinting;
+
+			ImFont* const font = atlas->AddFont( &config );
+			if ( c == 0 )
+				set.m_fonts[ i ] = font;
+		}
+	}
+
+	return ImGuiFreeType::BuildFontAtlas( atlas, 0x0 );
+}
+
+/* 4096 x 4096 = 16 mb as A8. a 30 px font at 200 % alone is ~5.5 m px, 32 bit process */
+constexpr float k_dpi_atlas_max_px = 4096.f * 4096.f;
+
+/* same flag as the other bakes: reads the live atlas' font bytes, so no main rebuild may swap it meanwhile */
+static void build_dpi_fonts_worker( dpi_font_request_t request )
+{
+	const auto start = std::chrono::steady_clock::now( );
+
+	dpi_font_set_t* set = nullptr;
+
+	/* over budget: drop the biggest font (it stays on the 100 % atlas) and bake again */
+	for ( ;; ) {
+		set = new dpi_font_set_t{ };
+
+		if ( !build_dpi_fonts( *set, request ) ) {
+			IM_DELETE( set->m_atlas );
+			set->m_atlas = nullptr;
+			break;
+		}
+
+		if ( request.m_count <= 1 ||
+		     static_cast< float >( set->m_atlas->TexWidth ) * static_cast< float >( set->m_atlas->TexHeight ) <= k_dpi_atlas_max_px )
+			break;
+
+		discard_dpi_set( set );
+
+		const ImFont** const end = request.m_bases + request.m_count;
+		const ImFont** const big = std::max_element( request.m_bases, end, []( const ImFont* a, const ImFont* b ) { return a->FontSize < b->FontSize; } );
+		std::move( big + 1, end, big );
+		request.m_bases[ --request.m_count ] = nullptr;
+	}
+
+	set->m_build_ms = std::chrono::duration< float, std::milli >( std::chrono::steady_clock::now( ) - start ).count( );
+
+	discard_dpi_set( g_pending_dpi_fonts.exchange( set ) );
+
+	g_render.m_font_build_running = false;
+}
+
+/* A8 (1/4 of argb), the backend takes its colour from the vertex. no A8 = the argb indicator upload */
+static IDirect3DTexture9* upload_dpi_atlas( IDirect3DDevice9* device, const ImFontAtlas* atlas )
+{
+	const unsigned char* const alpha = atlas->TexPixelsAlpha8;
+	const int width = atlas->TexWidth, height = atlas->TexHeight;
+
+	if ( !device || !alpha || width <= 0 || height <= 0 )
+		return nullptr;
+
+	IDirect3DTexture9* texture = nullptr;
+	if ( FAILED( device->CreateTexture( width, height, 1, 0, D3DFMT_A8, D3DPOOL_MANAGED, &texture, nullptr ) ) || !texture ) {
+		texture = nullptr;
+		if ( FAILED( device->CreateTexture( width, height, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8, D3DPOOL_DEFAULT, &texture, nullptr ) ) || !texture )
+			return upload_indicator_atlas( device, atlas );
+	}
+
+	D3DLOCKED_RECT locked{ };
+	if ( FAILED( texture->LockRect( 0, &locked, nullptr, 0 ) ) ) {
+		texture->Release( );
+		return nullptr;
+	}
+
+	for ( int y = 0; y < height; ++y )
+		std::memcpy( static_cast< unsigned char* >( locked.pBits ) + locked.Pitch * y, alpha + static_cast< std::size_t >( width ) * y, width );
+
+	texture->UnlockRect( 0 );
+	ImGui_ImplDX9_SetTwinTextureA8( texture );
+	return texture;
+}
+
+/* render thread, before NewFrame: install a baked set, (re)upload its texture, bake again once the wanted fonts settle */
+static void update_dpi_fonts( IDirect3DDevice9* device )
+{
+	if ( dpi_font_set_t* const set = g_pending_dpi_fonts.exchange( nullptr ) ) {
+		if ( !set->m_atlas ) {
+			g_console.print< n_console::log_level::WARNING >( "dpi font bake failed - scaled text stays on the 100 % fonts" );
+			delete set;
+		}
+		else {
+			discard_dpi_set( std::exchange( g_dpi_fonts, set ) );
+
+			const int width = set->m_atlas->TexWidth, height = set->m_atlas->TexHeight, count = set->m_count;
+			const float percent = set->m_scale * 100.f;
+			g_console.print( std::vformat( "dpi fonts baked: {} fonts at {:.0f} % in {:.0f} ms, atlas {}x{}",
+			                               std::make_format_args( count, percent, set->m_build_ms, width, height ) )
+			                     .c_str( ) );
+		}
+	}
+
+	if ( g_dpi_fonts && !g_dpi_fonts->m_atlas->TexID ) {
+		g_dpi_fonts->m_atlas->TexID = upload_dpi_atlas( device, g_dpi_fonts->m_atlas );
+
+		/* dropped, not retried a frame: wanted == baked, so it stays on the base fonts until the scale or fonts change */
+		if ( !g_dpi_fonts->m_atlas->TexID ) {
+			const int width = g_dpi_fonts->m_atlas->TexWidth, height = g_dpi_fonts->m_atlas->TexHeight;
+			g_console.print< n_console::log_level::WARNING >(
+				std::vformat( "dpi font texture {}x{} failed - scaled text stays on the 100 % fonts", std::make_format_args( width, height ) )
+					.c_str( ) );
+			discard_dpi_set( std::exchange( g_dpi_fonts, nullptr ) );
+		}
+	}
+
+	if ( g_render.m_dpi_scale == 1.f ) {
+		discard_dpi_set( std::exchange( g_dpi_fonts, nullptr ) );
+		g_dpi_wanted = g_dpi_seen = g_dpi_baked = { };
+		return;
+	}
+
+	const auto now = std::chrono::steady_clock::now( );
+
+	if ( !( g_dpi_wanted == g_dpi_seen ) ) {
+		g_dpi_seen    = g_dpi_wanted;
+		g_dpi_changed = now;
+	}
+
+	if ( !g_dpi_wanted.m_count || g_dpi_wanted == g_dpi_baked || now - g_dpi_changed < std::chrono::milliseconds( 250 ) ||
+	     g_render.m_reload_fonts || g_render.m_font_build_running )
+		return;
+
+	g_dpi_baked                   = g_dpi_wanted;
+	g_render.m_font_build_running = true;
+
+	std::thread( build_dpi_fonts_worker, g_dpi_wanted ).detach( );
+}
+
+/* device reset: both side atlases re-upload on the next frame */
 void n_render::impl_t::release_indicator_texture( )
 {
+	if ( g_dpi_fonts && g_dpi_fonts->m_atlas->TexID ) {
+		ImGui_ImplDX9_SetTwinTextureA8( nullptr );
+		static_cast< IDirect3DTexture9* >( g_dpi_fonts->m_atlas->TexID )->Release( );
+		g_dpi_fonts->m_atlas->TexID = nullptr;
+	}
+
 	indicator_font_set_t* const live = this->m_indicator_fonts;
 	if ( !live || !live->m_atlas || !live->m_atlas->TexID )
 		return;
@@ -1049,11 +1273,19 @@ static void keep_windows_on_screen( )
 
 n_render::impl_t::stretch_block_t n_render::impl_t::begin_stretch_block( ImDrawList* list, const bool panel )
 {
+	if ( panel )
+		g_open_panel_lists.push_back( list );
+
 	return { list, list->VtxBuffer.Size, 0, ImMax( list->CmdBuffer.Size - 1, 0 ), 0, panel };
 }
 
 void n_render::impl_t::end_stretch_block( stretch_block_t block )
 {
+	if ( block.m_panel ) {
+		if ( const auto it = std::find( g_open_panel_lists.rbegin( ), g_open_panel_lists.rend( ), block.m_list ); it != g_open_panel_lists.rend( ) )
+			g_open_panel_lists.erase( std::next( it ).base( ) );
+	}
+
 	block.m_vertex_end  = block.m_list->VtxBuffer.Size;
 	block.m_command_end = block.m_list->CmdBuffer.Size;
 
@@ -1156,6 +1388,60 @@ static ImRect window_drawn_rect( const ImGuiWindow* window, ImRect rect, const I
 float botox_dpi_window_scale( const ImGuiWindow* root )
 {
 	return window_unscaled( root ) ? 1.f : g_render.m_dpi_scale;
+}
+
+/* true = dpi_scale_overlays grows this list's vertices by m_dpi_scale (scaled windows, panel blocks on bg / fg) */
+static bool list_dpi_scaled( const ImDrawList* list )
+{
+	if ( list == ImGui::GetBackgroundDrawList( ) || list == ImGui::GetForegroundDrawList( ) )
+		return g_render.m_dpi_panel_scale != 1.f && std::ranges::find( g_open_panel_lists, list ) != g_open_panel_lists.end( );
+
+	const ImGuiContext& g     = *GImGui;
+	const ImGuiWindow* window = g.CurrentWindow && g.CurrentWindow->DrawList == list ? g.CurrentWindow : nullptr;
+
+	for ( int i = 0; !window && i < g.Windows.Size; ++i )
+		if ( g.Windows[ i ]->DrawList == list )
+			window = g.Windows[ i ];
+
+	return window && !window_unscaled( window->RootWindow );
+}
+
+/* imgui_draw RenderText / RenderChar: the twin to draw font from on this list, null = the base atlas. a missing
+   twin is wanted for the next bake (update_dpi_fonts) */
+const ImFont* botox_dpi_twin( const ImFont* font, const ImDrawList* list, const char* text, const char* text_end )
+{
+	const float scale = g_render.m_dpi_scale;
+	if ( scale == 1.f || !font || !GImGui || font->ContainerAtlas != ImGui::GetIO( ).Fonts || !list_dpi_scaled( list ) )
+		return nullptr;
+
+	const ImFont* twin = nullptr;
+
+	if ( const dpi_font_set_t* const set = g_dpi_fonts; set && set->m_scale == scale && set->m_atlas->TexID )
+		for ( int i = 0; i < set->m_count && !twin; ++i )
+			if ( set->m_bases[ i ] == font )
+				twin = set->m_fonts[ i ];
+
+	if ( !twin ) {
+		if ( g_dpi_wanted.m_scale != scale )
+			g_dpi_wanted = { scale };
+
+		const ImFont** const end = g_dpi_wanted.m_bases + g_dpi_wanted.m_count;
+		if ( g_dpi_wanted.m_count < k_dpi_twin_max && std::find( g_dpi_wanted.m_bases, end, font ) == end )
+			g_dpi_wanted.m_bases[ g_dpi_wanted.m_count++ ] = font;
+
+		return nullptr;
+	}
+
+	/* one texture per draw: a glyph only the base has (full tiers) keeps the whole string on the base */
+	for ( const char* s = text; s < text_end; ) {
+		unsigned int c = static_cast< unsigned char >( *s );
+		s += c < 0x80 ? 1 : ImTextCharFromUtf8( &c, s, text_end );
+
+		if ( c >= 32 && !twin->FindGlyphNoFallback( static_cast< ImWchar >( c ) ) && font->FindGlyphNoFallback( static_cast< ImWchar >( c ) ) )
+			return nullptr;
+	}
+
+	return twin;
 }
 
 static ImVec2 dpi_logical_mouse( const ImVec2 mouse, const ImVec2 screen, const float scale )
@@ -1406,7 +1692,9 @@ static void dpi_scale_overlays( ImDrawData* draw_data, const ImVec2 screen )
 		if ( lo.x > hi.x )
 			continue;
 
-		const ImVec2 pivot( dpi_pivot( ( lo.x + hi.x ) * 0.5f, screen.x ), dpi_pivot( ( lo.y + hi.y ) * 0.5f, screen.y ) );
+		/* pivot x ( 1 - scale ) whole: twin glyphs snapped to whole scaled px land on whole screen px ( <= 0.5 px shift ) */
+		const auto snap = [ scale ]( const float pivot ) { return ImFloorSigned( pivot * ( 1.f - scale ) + 0.5f ) / ( 1.f - scale ); };
+		const ImVec2 pivot( snap( dpi_pivot( ( lo.x + hi.x ) * 0.5f, screen.x ) ), snap( dpi_pivot( ( lo.y + hi.y ) * 0.5f, screen.y ) ) );
 
 		for ( int v = block.m_vertex_begin; v < last; ++v ) {
 			ImVec2& pos = vertices[ v ].pos;
@@ -1544,6 +1832,7 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& function, I
 	}
 
 	this->update_indicator_fonts( device );
+	update_dpi_fonts( device );
 
 	if ( const ImFontAtlas* const live = ImGui::GetIO( ).Fonts; live->Fonts.empty( ) || !live->Fonts[ 0 ]->ContainerAtlas ) {
 		static bool said = false;
@@ -1566,6 +1855,9 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& function, I
 	io.DisplaySize = ImVec2( screen.x / this->m_dpi_scale, screen.y / this->m_dpi_scale );
 	io.DisplayFramebufferScale = ImVec2( this->m_dpi_scale, this->m_dpi_scale );
 
+	/* curves tessellate in logical px: finer when they draw bigger, so rounded corners stay round on screen */
+	ImGui::GetStyle( ).CircleTessellationMaxError = 0.30f / ImMax( this->m_dpi_scale, 1.f );
+
 	this->m_screen_mouse_x = io.MousePos.x;
 	this->m_screen_mouse_y = io.MousePos.y;
 
@@ -1585,6 +1877,7 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& function, I
 	keep_windows_on_screen( );
 
 	this->m_stretch_blocks.clear( );
+	g_open_panel_lists.clear( );
 
 	/* steam avatars: fetch + free before any draw list takes a pointer, else a list holds a freed texture ( double free, c0000374 ) */
 	{
@@ -1651,6 +1944,9 @@ void n_render::impl_t::on_release( )
 	discard_font_set( this->m_pending_fonts.exchange( nullptr ) );
 	discard_indicator_set( this->m_pending_indicator_fonts.exchange( nullptr ) );
 	discard_indicator_set( std::exchange( this->m_indicator_fonts, nullptr ) );
+	discard_dpi_set( g_pending_dpi_fonts.exchange( nullptr ) );
+	discard_dpi_set( std::exchange( g_dpi_fonts, nullptr ) );
+	g_dpi_wanted = g_dpi_seen = g_dpi_baked = { };
 
 	ImGui_ImplDX9_Shutdown( );
 	ImGui_ImplWin32_Shutdown( );

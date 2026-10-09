@@ -5,6 +5,7 @@
 #include "../../globals/logger/logger.h"
 #include "../hooks.h"
 
+#include "../../hacks/aimbot/grenade_aim.h"
 #include "../../hacks/debug/debug.h"
 #include "../../hacks/indicators/indicators.h"
 #include "../../hacks/mc_hud/mc_hud.h"
@@ -108,6 +109,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 				g_indicators.on_paint_traverse( );
 				g_edicts.on_paint_traverse( );
 				g_grenade_path.on_paint_traverse( );
+				g_grenade_aim.on_paint_traverse( );
 				g_bullets.on_paint_traverse( );
 
 				{

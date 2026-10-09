@@ -3524,19 +3524,41 @@ ImVec2 ImFont::CalcTextSizeA(float size, float max_width, float wrap_width, cons
     return text_size;
 }
 
+// botox: render.cpp. on a dpi scaled list: this font re-rasterized at size x scale ( own atlas texture, same
+// layout ), or NULL = draw from this font. NULL too when the twin lacks a glyph of [text, text_end)
+const ImFont* botox_dpi_twin(const ImFont* font, const ImDrawList* list, const char* text, const char* text_end);
+
+// botox: twin quad corner onto a whole screen pixel ( screen = logical x px ), size kept
+static inline float botox_snap(float v, float px) { return ImFloorSigned(v * px + 0.5f) / px; }
+
 // Note: as with every ImDrawList drawing function, this expects that the font atlas texture is bound.
 void ImFont::RenderChar(ImDrawList* draw_list, float size, const ImVec2& pos, ImU32 col, ImWchar c) const
 {
-    const ImFontGlyph* glyph = FindGlyph(c);
+    char botox_utf8[5];
+    ImTextCharToUtf8(botox_utf8, c);
+    const ImFont* botox_twin = botox_dpi_twin(this, draw_list, botox_utf8, botox_utf8 + strlen(botox_utf8));
+    const ImFont* src = botox_twin ? botox_twin : this;
+    const ImFontGlyph* glyph = src->FindGlyph(c);
     if (!glyph || !glyph->Visible)
         return;
     if (glyph->Colored)
         col |= ~IM_COL32_A_MASK;
-    float scale = (size >= 0.0f) ? (size / FontSize) : 1.0f;
+    float scale = ((size >= 0.0f) ? size : FontSize) / src->FontSize;
     float x = IM_FLOOR(pos.x);
     float y = IM_FLOOR(pos.y);
+    ImVec2 a(x + glyph->X0 * scale, y + glyph->Y0 * scale), b(x + glyph->X1 * scale, y + glyph->Y1 * scale);
+    if (botox_twin)
+    {
+        const float px = botox_twin->FontSize / FontSize;
+        const ImVec2 sz(b.x - a.x, b.y - a.y);
+        a = ImVec2(botox_snap(a.x, px), botox_snap(a.y, px));
+        b = ImVec2(a.x + sz.x, a.y + sz.y);
+        draw_list->PushTextureID(botox_twin->ContainerAtlas->TexID);
+    }
     draw_list->PrimReserve(6, 4);
-    draw_list->PrimRectUV(ImVec2(x + glyph->X0 * scale, y + glyph->Y0 * scale), ImVec2(x + glyph->X1 * scale, y + glyph->Y1 * scale), ImVec2(glyph->U0, glyph->V0), ImVec2(glyph->U1, glyph->V1), col);
+    draw_list->PrimRectUV(a, b, ImVec2(glyph->U0, glyph->V0), ImVec2(glyph->U1, glyph->V1), col);
+    if (botox_twin)
+        draw_list->PopTextureID();
 }
 
 // Note: as with every ImDrawList drawing function, this expects that the font atlas texture is bound.
@@ -3593,6 +3615,13 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
     }
     if (s == text_end)
         return;
+
+    // botox: dpi scaled list = quads + uvs from the twin, advances from this font ( layout unchanged )
+    const ImFont* botox_twin = botox_dpi_twin(this, draw_list, s, text_end);
+    const float botox_scale = botox_twin ? size / botox_twin->FontSize : scale;
+    const float botox_px = botox_twin ? botox_twin->FontSize / FontSize : 1.0f;
+    if (botox_twin)
+        draw_list->PushTextureID(botox_twin->ContainerAtlas->TexID);
 
     // Reserve vertices for remaining worse case (over-reserving is useful and easily amortized)
     const int vtx_count_max = (int)(text_end - s) * 4;
@@ -3657,20 +3686,27 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
             continue;
 
         float char_width = glyph->AdvanceX * scale;
-        if (glyph->Visible)
+        const ImFontGlyph* drawn = botox_twin ? botox_twin->FindGlyph((ImWchar)c) : glyph;
+        if (drawn && drawn->Visible)
         {
             // We don't do a second finer clipping test on the Y axis as we've already skipped anything before clip_rect.y and exit once we pass clip_rect.w
-            float x1 = x + glyph->X0 * scale;
-            float x2 = x + glyph->X1 * scale;
-            float y1 = y + glyph->Y0 * scale;
-            float y2 = y + glyph->Y1 * scale;
+            float x1 = x + drawn->X0 * botox_scale;
+            float x2 = x + drawn->X1 * botox_scale;
+            float y1 = y + drawn->Y0 * botox_scale;
+            float y2 = y + drawn->Y1 * botox_scale;
+            if (botox_twin)
+            {
+                const float w = x2 - x1, h = y2 - y1;
+                x1 = botox_snap(x1, botox_px); x2 = x1 + w;
+                y1 = botox_snap(y1, botox_px); y2 = y1 + h;
+            }
             if (x1 <= clip_rect.z && x2 >= clip_rect.x)
             {
                 // Render a character
-                float u1 = glyph->U0;
-                float v1 = glyph->V0;
-                float u2 = glyph->U1;
-                float v2 = glyph->V1;
+                float u1 = drawn->U0;
+                float v1 = drawn->V0;
+                float u2 = drawn->U1;
+                float v2 = drawn->V1;
 
                 // CPU side clipping used to fit text in their frame when the frame is too small. Only does clipping for axis aligned quads.
                 if (cpu_fine_clip)
@@ -3703,7 +3739,7 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
                 }
 
                 // Support for untinted glyphs
-                ImU32 glyph_col = glyph->Colored ? col_untinted : col;
+                ImU32 glyph_col = drawn->Colored ? col_untinted : col;
 
                 // We are NOT calling PrimRectUV() here because non-inlined causes too much overhead in a debug builds. Inlined here:
                 {
@@ -3729,6 +3765,8 @@ void ImFont::RenderText(ImDrawList* draw_list, float size, const ImVec2& pos, Im
     draw_list->_VtxWritePtr = vtx_write;
     draw_list->_IdxWritePtr = idx_write;
     draw_list->_VtxCurrentIdx = vtx_current_idx;
+    if (botox_twin)
+        draw_list->PopTextureID();
 }
 
 //-----------------------------------------------------------------------------

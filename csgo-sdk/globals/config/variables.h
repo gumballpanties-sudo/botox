@@ -292,6 +292,14 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_zeusbug, false );
 		ADD_VARIABLE( bool, m_zeusbug_swapback, true );
 		ADD_VARIABLE( key_bind_t, m_zeusbug_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( bool, m_grenade_aim, false );
+		ADD_VARIABLE( key_bind_t, m_grenade_aim_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( float, m_grenade_aim_fov, 30.f );
+		ADD_VARIABLE( int, m_grenade_aim_arc, 0 );
+		ADD_VARIABLE( bool, m_grenade_aim_silent, true );
+		ADD_VARIABLE( bool, m_grenade_aim_auto_throw, false );
+		ADD_VARIABLE( bool, m_grenade_aim_draw, true );
+		ADD_VARIABLE( c_color, m_grenade_aim_color, c_color( 255, 200, 60, 255 ) );
 		ADD_VARIABLE( int, m_aimbot_weapon_settings, 0 );
 
 		ADD_VARIABLE( float, m_aimbot_pistol_fov, 5.f );
@@ -440,6 +448,8 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_players_health_text_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( c_color, m_players_health_bar_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( c_color, m_players_health_bar_bg_color, c_color( 0, 0, 0, 255 ) );
+		ADD_VARIABLE( bool, m_players_health_bar_gradient, false );
+		ADD_VARIABLE( c_color, m_players_health_bar_bottom_color, c_color( 255, 0, 0, 255 ) );
 		ADD_VARIABLE( bool, m_players_name, false );
 		ADD_VARIABLE( c_color, m_players_name_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( int, m_players_name_position, e_name_position::name_position_above );
@@ -1402,6 +1412,7 @@ namespace n_variables
 		ADD_VARIABLE( int, m_bot_names_length, 8 );
 		ADD_VARIABLE( bool, m_bot_names_no_prefix, true );
 		ADD_VARIABLE( bool, m_bot_names_ping, false );
+		ADD_VARIABLE( bool, m_bot_names_profile, false );
 
 		ADD_VARIABLE( bool, m_performance, false );
 		ADD_VARIABLE( bool, m_performance_threaded_bones, true );

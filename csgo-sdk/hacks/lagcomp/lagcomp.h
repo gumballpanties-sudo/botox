@@ -84,6 +84,9 @@ namespace n_lagcomp
 
 		record_t* oldest_record( const int ent_index );
 
+		/* sim time the drawn model sits at. records newer = ahead of it */
+		float model_time( );
+
 		void update_incoming_sequences( c_net_channel* net_channel );
 		void clear_incoming_sequences( );
 		void add_latency_to_net_channel( c_net_channel* net_channel, float latency );

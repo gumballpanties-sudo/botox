@@ -186,8 +186,16 @@ void n_menu::impl_t::tab_visuals( )
 						                     &GET_VARIABLE( g_variables.m_players_health_bar_custom_color, bool ) );
 
 							if ( GET_VARIABLE( g_variables.m_players_health_bar_custom_color, bool ) ) {
-								ImGui::ColorEdit4( "bar color##health bar color", &GET_VARIABLE( g_variables.m_players_health_bar_color, c_color ),
-							                       color_picker_alpha_flags );
+								ImGui::ColorEdit4( GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool ) ? "top color##health bar color"
+								                                                                                   : "bar color##health bar color",
+								                   &GET_VARIABLE( g_variables.m_players_health_bar_color, c_color ), color_picker_alpha_flags );
+
+								ImGui::Checkbox( "gradient##health bar", &GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool ) );
+
+								if ( GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool ) )
+									ImGui::ColorEdit4( "bottom color##health bar bottom color",
+									                   &GET_VARIABLE( g_variables.m_players_health_bar_bottom_color, c_color ),
+									                   color_picker_alpha_flags );
 							}
 
 							ImGui::ColorEdit4( "background color##health bar background color",

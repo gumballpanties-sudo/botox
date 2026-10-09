@@ -229,6 +229,9 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 
 		const bool gradient = GET_VARIABLE( g_variables.m_chams_backtrack_gradient, bool );
 
+		/* records are network pose, model is interpolated behind it: newer ones would draw in front */
+		const float model_time = g_lagcomp.model_time( );
+
 		const auto draw_record = [ & ]( matrix3x4_t* record_matrix, float alpha_scale ) {
 			alpha_scale *= esp_gate;
 
@@ -242,7 +245,7 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 
 		switch ( backtrack_type ) {
 		case 0:
-			if ( oldest_record && oldest_record->m_valid ) {
+			if ( oldest_record && oldest_record->m_valid && oldest_record->m_sim_time <= model_time ) {
 				const float distance = oldest_record->m_vec_origin.dist_to_squared( player->get_abs_origin( ) );
 
 				ImAnimationHelper alpha_animation = ImAnimationHelper( anim_key, ImGui::GetIO( ).DeltaTime );
@@ -268,7 +271,7 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 					for ( int step = 1; step <= capacity; step++ ) {
 						const int slot = ( g_lagcomp.m_record_location[ info.entity_index ] - step + capacity * 2 ) % capacity;
 
-						if ( !record_list[ slot ].m_valid )
+						if ( !record_list[ slot ].m_valid || record_list[ slot ].m_sim_time > model_time )
 							continue;
 
 						if ( record_count > 0 && record_list[ slot ].m_sim_time > ranked[ record_count - 1 ]->m_sim_time )

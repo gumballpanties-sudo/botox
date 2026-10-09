@@ -41,6 +41,8 @@ static int g_VertexBufferSize = 5000, g_IndexBufferSize = 10000;
 // botox: font texture as D3DFMT_A8 ( 1/4 of the argb size: ~34 vs ~136 mb at 4096x8722 ). the argb upload failed
 // after a Reset in a 2.7 gb 32 bit csgo -> TexID null -> every glyph a solid block until a retry got through
 static bool g_FontTextureA8 = false;
+static LPDIRECT3DTEXTURE9 g_TwinTextureA8 = NULL;
+void ImGui_ImplDX9_SetTwinTextureA8( void* texture ) { g_TwinTextureA8 = ( LPDIRECT3DTEXTURE9 )texture; }
 // botox: font texture levels ( 100 / 50 / 25 % ), the dpi scale's floor is 25 %
 static const int k_font_mip_levels = 3;
 void botox_dbg_log( const char* fmt, ... ); // globals/logger/debug_log.cpp
@@ -282,7 +284,7 @@ void ImGui_ImplDX9_RenderDrawData( ImDrawData* draw_data )
 				const RECT r                     = { ( LONG )( pcmd->ClipRect.x - clip_off.x ), ( LONG )( pcmd->ClipRect.y - clip_off.y ),
 					                                 ( LONG )( pcmd->ClipRect.z - clip_off.x ), ( LONG )( pcmd->ClipRect.w - clip_off.y ) };
 				const LPDIRECT3DTEXTURE9 texture = ( LPDIRECT3DTEXTURE9 )pcmd->TextureId;
-				if ( const int want = g_FontTextureA8 && texture == g_FontTexture; want != color_from_vertex ) {
+				if ( const int want = ( g_FontTextureA8 && texture == g_FontTexture ) || ( texture && texture == g_TwinTextureA8 ); want != color_from_vertex ) {
 					color_from_vertex = want;
 					g_pd3dDevice->SetTextureStageState( 0, D3DTSS_COLOROP, want ? D3DTOP_SELECTARG2 : D3DTOP_MODULATE );
 				}

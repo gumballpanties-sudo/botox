@@ -3,9 +3,11 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../../utilities/perf/perf_watch.h"
+#include "../../hooks/hooks.h"
 #include <algorithm>
 #include <cstring>
 #include <format>
+#include <map>
 #include <mutex>
 #include <random>
 #include <thread>
@@ -35,12 +37,22 @@ namespace
 		int m_uses          = 0;
 	};
 
+	enum e_field { field_ping, field_rank, field_wins, field_level, field_medal, field_count };
+
+	constexpr const char* k_fields[ field_count ] = { "m_iPing", "m_iCompetitiveRanking", "m_iCompetitiveWins", "m_nPersonaDataPublicLevel",
+	                                                  "m_nActiveCoinRank" };
+
+	/* coin/pin item def ids, checked against items_game.txt */
+	constexpr int k_medals[] = { 874,  969,  904,  941,  1331, 1332, 1339, 1340, 1341, 1357, 1358, 1359, 1367, 1368, 1369, 1376, 1377,
+	                             1378, 4674, 4675, 4676, 4737, 4738, 4739, 4819, 4820, 4821, 4873, 4874, 4875, 6001, 6002, 6003, 6004,
+	                             6006, 6008, 6009, 6010, 6011, 6014, 6015, 6017, 6018, 6019, 6024, 6031, 6032 };
+
 	struct bot_t {
 		std::vector< uint8_t > m_original = { };
 		std::vector< uint8_t > m_written  = { };
 		bool m_assigned                   = false;
 		profile_t m_profile               = { };
-		int m_ping                        = 0;
+		int m_stats[ field_count ]        = { };
 	};
 
 	/* key = raw userid bytes, unique per connection: a slot reused by a human is never ours */
@@ -48,31 +60,120 @@ namespace
 	uint32_t s_signature = 0;
 	int s_generation     = 0;
 	std::mt19937 s_rng{ std::random_device{ }( ) };
-	std::vector< int > s_pinged;
 
-	int roll_ping( )
+	void roll_stats( bot_t& bot )
 	{
-		return std::uniform_int_distribution< int >( 17, 155 )( s_rng );
+		const auto pick = []( int low, int high ) { return std::uniform_int_distribution< int >( low, high )( s_rng ); };
+
+		bot.m_stats[ field_ping ]  = pick( 17, 155 );
+		bot.m_stats[ field_rank ]  = pick( 1, 18 );
+		bot.m_stats[ field_wins ]  = pick( 10, 600 );
+		bot.m_stats[ field_level ] = pick( 1, 40 );
+		bot.m_stats[ field_medal ] = pick( 0, 2 ) ? k_medals[ pick( 0, static_cast< int >( std::size( k_medals ) ) - 1 ) ] : 0;
 	}
 
-	/* bots get 0 from the server (IsBot is skipped) and a value that never changes is never re-sent, so the
-	   client m_iPing copy keeps whatever we write. client only: a recorded demo still has 0. empty = put 0 back */
-	void write_pings( const std::vector< std::pair< int, int > >& pings )
-	{
-		auto* resource = find_player_resource( );
+	/* writes go into the LISTEN SERVER's CCSPlayerResource so pov demos and gotv record them. its think (0.1s) puts the real
+	   values back with Set( ), which flags the slot changed; PreClientUpdate runs after that and right before the snapshot,
+	   so ours is what gets packed. stop writing = the next think restores. live server.dll disasm 10-09: IServerGameDLL
+	   GetAllServerClasses 10 / PreClientUpdate 5, IServerTools GetIServerEntity 1 / FirstEntity 7 / NextEntity 8,
+	   SendProp 0x54 bytes: name +0x30, table +0x48, offset +0x4C (low 20 bits) */
+	constexpr int k_prop_size    = 0x54;
+	constexpr int k_prop_name    = 0x30;
+	constexpr int k_prop_table   = 0x48;
+	constexpr int k_prop_offset  = 0x4C;
+	constexpr int k_offset_mask  = ( 1 << 20 ) - 1;
+	constexpr int k_max_slots    = 65;
 
-		std::vector< int > pinged;
-		for ( const auto& [ index, ping ] : pings ) {
-			if ( resource )
-				resource->get_resource_ping( index ) = ping;
-			pinged.push_back( index );
+	struct server_t {
+		void* m_game_dll                         = nullptr;
+		void* m_tools                            = nullptr;
+		void* m_resource_vtable                  = nullptr;
+		std::uintptr_t m_offsets[ field_count ]  = { };
+		std::mutex m_lock;
+		int m_values[ k_max_slots ][ field_count ] = { };
+		uint8_t m_masks[ k_max_slots ]           = { };
+	} s_server;
+
+	void find_offsets( const uint8_t* table, std::uintptr_t base )
+	{
+		const auto* props = *reinterpret_cast< const uint8_t* const* >( table );
+		const int count   = *reinterpret_cast< const int* >( table + 4 );
+
+		for ( int i = 0; props && i < count; ++i ) {
+			const uint8_t* prop = props + i * k_prop_size;
+			const char* name    = *reinterpret_cast< const char* const* >( prop + k_prop_name );
+			const auto offset   = base + ( *reinterpret_cast< const int* >( prop + k_prop_offset ) & k_offset_mask );
+			if ( !name )
+				continue;
+
+			if ( !std::strcmp( name, "baseclass" ) ) {
+				if ( const auto* child = *reinterpret_cast< const uint8_t* const* >( prop + k_prop_table ) )
+					find_offsets( child, offset );
+				continue;
+			}
+
+			for ( int field = 0; field < field_count; ++field )
+				if ( !std::strcmp( name, k_fields[ field ] ) )
+					s_server.m_offsets[ field ] = offset;
+		}
+	}
+
+	/* main thread, retried until hooked: interfaces, offsets, the resource class vtable, then the hook */
+	void server_setup( )
+	{
+		static uint64_t next = 0;
+		const uint64_t now   = GetTickCount64( );
+		if ( g_hooks.m_pre_client_update.is_hooked( ) || now < next )
+			return;
+		next = now + 2000;
+
+		if ( !s_server.m_game_dll ) {
+			void* sv = GetModuleHandleA( "server.dll" );
+			if ( !sv )
+				return;
+
+			module_t module( sv, "server.dll" );
+			s_server.m_game_dll = module.find_interface( "ServerGameDLL005" );
+			s_server.m_tools    = module.find_interface( "VSERVERTOOLS001" );
+			if ( !s_server.m_game_dll || !s_server.m_tools ) {
+				s_server.m_game_dll = nullptr;
+				return;
+			}
+
+			for ( auto* cls = g_virtual.call< const uint8_t* >( s_server.m_game_dll, 10 ); cls;
+			      cls       = *reinterpret_cast< const uint8_t* const* >( cls + 8 ) ) {
+				const char* name = *reinterpret_cast< const char* const* >( cls );
+				if ( name && !std::strcmp( name, "CCSPlayerResource" ) ) {
+					find_offsets( *reinterpret_cast< const uint8_t* const* >( cls + 4 ), 0 );
+					break;
+				}
+			}
+
+			g_console.print( std::format( "[bot names] server offsets ping {:x} rank {:x} wins {:x} level {:x} medal {:x}", s_server.m_offsets[ 0 ],
+			                              s_server.m_offsets[ 1 ], s_server.m_offsets[ 2 ], s_server.m_offsets[ 3 ], s_server.m_offsets[ 4 ] )
+			                     .c_str( ) );
 		}
 
-		for ( const int index : s_pinged )
-			if ( resource && std::find( pinged.begin( ), pinged.end( ), index ) == pinged.end( ) )
-				resource->get_resource_ping( index ) = 0;
+		if ( !s_server.m_resource_vtable ) {
+			auto* client_resource = find_player_resource( );
+			void* resource        = client_resource ? g_virtual.call< void*, void* >( s_server.m_tools, 1, client_resource ) : nullptr;
+			if ( !resource )
+				return;
+			s_server.m_resource_vtable = *reinterpret_cast< void** >( resource );
+		}
 
-		s_pinged = std::move( pinged );
+		const bool ok = g_hooks.m_pre_client_update.create( g_virtual.get( s_server.m_game_dll, 5 ), &n_detoured_functions::pre_client_update );
+		g_console.print( std::format( "[bot names] server PreClientUpdate hook {}", ok ? "ok" : "FAILED" ).c_str( ) );
+	}
+
+	void set_server_values( const std::map< std::pair< int, int >, int >& wanted )
+	{
+		std::lock_guard< std::mutex > lock( s_server.m_lock );
+		std::memset( s_server.m_masks, 0, sizeof( s_server.m_masks ) );
+		for ( const auto& [ key, value ] : wanted ) {
+			s_server.m_values[ key.first ][ key.second ] = value;
+			s_server.m_masks[ key.first ] |= 1 << key.second;
+		}
 	}
 
 	/* steam pool: worker appends, main thread reads */
@@ -275,8 +376,7 @@ namespace
 
 	void restore_all( c_network_string_table* table )
 	{
-		if ( !s_pinged.empty( ) )
-			write_pings( { } );
+		set_server_values( { } );
 
 		for ( int i = 0; table && !s_bots.empty( ) && i < table->get_num_strings( ); ++i ) {
 			int length       = 0;
@@ -313,12 +413,16 @@ void bot_names_frame( )
 		s_signature = signature;
 		for ( auto& [ id, bot ] : s_bots ) {
 			bot.m_assigned = false;
-			bot.m_ping     = roll_ping( );
+			roll_stats( bot );
 		}
 	}
 
-	const bool fake_ping = GET_VARIABLE( g_variables.m_bot_names_ping, bool );
-	std::vector< std::pair< int, int > > pings;
+	const bool fake_ping    = GET_VARIABLE( g_variables.m_bot_names_ping, bool );
+	const bool fake_profile = GET_VARIABLE( g_variables.m_bot_names_profile, bool );
+	if ( fake_ping || fake_profile )
+		server_setup( );
+
+	std::map< std::pair< int, int >, int > wanted;
 	std::vector< int > seen;
 	for ( int i = 0; i < table->get_num_strings( ); ++i ) {
 		int length       = 0;
@@ -335,14 +439,16 @@ void bot_names_frame( )
 			if ( !engine_bot )
 				continue;
 
-			it = s_bots.emplace( user_id, bot_t{ .m_ping = roll_ping( ) } ).first;
+			it = s_bots.emplace( user_id, bot_t{ } ).first;
+			roll_stats( it->second );
 		}
 
 		auto& bot = it->second;
 		seen.push_back( user_id );
 
-		if ( fake_ping && i < 64 )
-			pings.emplace_back( i + 1, bot.m_ping );
+		for ( int field = 0; field < field_count && i < 64; ++field )
+			if ( field == field_ping ? fake_ping : fake_profile )
+				wanted[ { i + 1, field } ] = bot.m_stats[ field ];
 
 		if ( bot.m_written.empty( ) || std::memcmp( data, bot.m_written.data( ), k_info_size ) != 0 )
 			bot.m_original.assign( data, data + length );
@@ -357,8 +463,27 @@ void bot_names_frame( )
 
 	std::erase_if( s_bots, [ & ]( const auto& entry ) { return std::find( seen.begin( ), seen.end( ), entry.first ) == seen.end( ); } );
 
-	if ( !pings.empty( ) || !s_pinged.empty( ) )
-		write_pings( pings );
+	set_server_values( wanted );
+}
+
+void bot_names_server_write( )
+{
+	std::lock_guard< std::mutex > lock( s_server.m_lock );
+	if ( !s_server.m_resource_vtable || std::ranges::none_of( s_server.m_masks, []( uint8_t mask ) { return mask != 0; } ) )
+		return;
+
+	/* walk the live list every send: never holds a pointer across a map change */
+	uint8_t* resource = nullptr;
+	for ( void* entity = g_virtual.call< void* >( s_server.m_tools, 7 ); entity; entity = g_virtual.call< void*, void* >( s_server.m_tools, 8, entity ) )
+		if ( *reinterpret_cast< void** >( entity ) == s_server.m_resource_vtable ) {
+			resource = static_cast< uint8_t* >( entity );
+			break;
+		}
+
+	for ( int index = 1; resource && index < k_max_slots; ++index )
+		for ( int field = 0; field < field_count; ++field )
+			if ( ( s_server.m_masks[ index ] & ( 1 << field ) ) && s_server.m_offsets[ field ] )
+				*reinterpret_cast< int* >( resource + s_server.m_offsets[ field ] + index * sizeof( int ) ) = s_server.m_values[ index ][ field ];
 }
 
 void bot_names_randomize( )

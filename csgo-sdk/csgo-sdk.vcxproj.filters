@@ -76,6 +76,7 @@
     <ClCompile Include="hacks\misc\spectator_list\spectator_list.cpp" />
     <ClCompile Include="hacks\visuals\players\players.cpp" />
     <ClCompile Include="hacks\aimbot\aimbot.cpp" />
+    <ClCompile Include="hacks\aimbot\grenade_aim.cpp" />
     <ClCompile Include="hacks\skins\skins.cpp" />
     <ClCompile Include="hacks\skins\skins_changers.cpp" />
     <ClCompile Include="hacks\skins\parser.cpp" />
@@ -151,6 +152,7 @@
     <ClCompile Include="hooks\functions\push_notice.cpp" />
     <ClCompile Include="hooks\functions\present.cpp" />
     <ClCompile Include="hooks\functions\process_movement.cpp" />
+    <ClCompile Include="hooks\functions\pre_client_update.cpp" />
     <ClCompile Include="hooks\functions\reset.cpp" />
     <ClCompile Include="hooks\functions\run_command.cpp" />
     <ClCompile Include="hooks\functions\send_datagram.cpp" />
@@ -347,6 +349,7 @@
     <ClInclude Include="game\sdk\enums\e_class_ids.h" />
     <ClInclude Include="hacks\visuals\players\players.h" />
     <ClInclude Include="hacks\aimbot\aimbot.h" />
+    <ClInclude Include="hacks\aimbot\grenade_aim.h" />
     <ClInclude Include="hacks\skins\skins.h" />
     <ClInclude Include="hacks\skins\skins_internal.h" />
     <ClInclude Include="hacks\skins\skin_names.h" />

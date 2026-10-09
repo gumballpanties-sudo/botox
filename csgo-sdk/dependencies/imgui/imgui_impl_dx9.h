@@ -21,6 +21,8 @@ void ImGui_ImplDX9_RenderDrawData( ImDrawData* draw_data );
 // botox: draws draw_data through an offscreen layer, composited once at alpha ( uniform fade )
 void ImGui_ImplDX9_RenderDrawDataFaded( ImDrawData* draw_data, float alpha );
 void ImGui_ImplDX9_DestroyFontsTexture( );
+// botox: one more D3DFMT_A8 texture ( render.cpp dpi font twins ) that takes its colour from the vertex, null = none
+void ImGui_ImplDX9_SetTwinTextureA8( void* texture );
 
 // Use if you want to reset your rendering device without losing ImGui state.
  bool ImGui_ImplDX9_CreateDeviceObjects( );

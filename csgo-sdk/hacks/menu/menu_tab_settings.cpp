@@ -1702,6 +1702,7 @@ void n_menu::impl_t::tab_misc( )
 
 					ImGui::Checkbox( "remove bot prefix##botnames", &GET_VARIABLE( g_variables.m_bot_names_no_prefix, bool ) );
 					ImGui::Checkbox( "random ping##botnames", &GET_VARIABLE( g_variables.m_bot_names_ping, bool ) );
+					ImGui::Checkbox( "random rank + medal##botnames", &GET_VARIABLE( g_variables.m_bot_names_profile, bool ) );
 
 					if ( ImGui::Button( "randomize##botnames", ImVec2( -1.f, 15.f ) ) )
 						bot_names_randomize( );

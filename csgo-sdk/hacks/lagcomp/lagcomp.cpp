@@ -329,6 +329,12 @@ n_lagcomp::impl_t::record_t* n_lagcomp::impl_t::oldest_record( const int index )
 	return oldest;
 }
 
+float n_lagcomp::impl_t::model_time( )
+{
+	/* GetInterpolationAmount (c_baseentity.cpp:5937) */
+	return g_interfaces.m_global_vars_base->m_current_time - g_math.ticks_to_time( g_math.time_to_ticks( lerp_time( ) ) + 1 ) + 1e-3f;
+}
+
 void n_lagcomp::impl_t::update_incoming_sequences( c_net_channel* net_channel )
 {
 	if ( !net_channel )

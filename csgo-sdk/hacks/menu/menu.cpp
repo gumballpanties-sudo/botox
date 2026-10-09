@@ -874,5 +874,24 @@ void n_menu::impl_t::tab_aimbot( )
 	}
 	menu_group_end( );
 
+	if ( menu_group_begin( "grenade aimbot" ) ) {
+		ImGui::Checkbox( "grenade aimbot", &GET_VARIABLE( g_variables.m_grenade_aim, bool ) );
+		ImGui::Keybind( "grenade aim key", &GET_VARIABLE( g_variables.m_grenade_aim_key, key_bind_t ) );
+		ImGui::SliderFloat( "grenade fov", &GET_VARIABLE( g_variables.m_grenade_aim_fov, float ), 1.f, 180.f, "%.0f" );
+		ImGui::Combo( "arc##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_arc, int ), "auto\0low\0lob\0" );
+		ImGui::Checkbox( "silent##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_silent, bool ) );
+		ImGui::Checkbox( "auto throw##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_auto_throw, bool ) );
+		ImGui::Checkbox( "draw path##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_draw, bool ) );
+		if ( GET_VARIABLE( g_variables.m_grenade_aim_draw, bool ) )
+			ImGui::OptionPopup(
+				"grenade aim path settings",
+				[ & ]( ) {
+					ImGui::ColorEdit4( "path##grenade aim color", &GET_VARIABLE( g_variables.m_grenade_aim_color, c_color ),
+				                       color_picker_alpha_flags );
+				},
+				ImVec2( 200.f, -1 ) );
+	}
+	menu_group_end( );
+
 	menu_columns_end( );
 }

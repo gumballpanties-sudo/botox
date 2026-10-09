@@ -6929,8 +6929,12 @@ bool ImGui::Begin( const char* name, bool* p_open, ImGuiWindowFlags flags )
 		window->IDStack.resize( 1 );
 		window->DrawList->_ResetForNewFrame( );
 		// botox: dpi scale grows window vertices at render ( 1:1 panels don't, render.cpp ); AA fringe stays 1 screen px
-		if ( const float botox_scale = botox_dpi_window_scale( window->RootWindow ); botox_scale > 0.0f )
+		if ( const float botox_scale = botox_dpi_window_scale( window->RootWindow ); botox_scale > 0.0f ) {
 			window->DrawList->_FringeScale = 1.0f / botox_scale;
+			// botox: atlas lines carry a 100 % AA ramp ( smears scaled ), geometry AA keeps the 1 px fringe
+			if ( botox_scale != 1.0f )
+				window->DrawList->Flags &= ~ImDrawListFlags_AntiAliasedLinesUseTex;
+		}
 		window->DC.CurrentTableIdx = -1;
 
 		// Restore buffer capacity when woken from a compacted state, to avoid

@@ -3,6 +3,7 @@
 #include "../hooks.h"
 
 #include "../../hacks/aimbot/aimbot.h"
+#include "../../hacks/aimbot/grenade_aim.h"
 #include "../../hacks/lagcomp/lagcomp.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/misc/chat_extras.h"
@@ -444,6 +445,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		{
 			PERF_ZONE( zone_cmd_aimbot );
 			g_aimbot.on_create_move_post( );
+			g_grenade_aim.on_create_move( );
 		}
 
 		{
@@ -518,6 +520,9 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		}
 	}
 	gnd_wish_check( "shot_guard", true );
+
+	if ( local && local->is_alive( ) )
+		g_grenade_aim.apply( cmd );
 
 	if ( local && local->is_alive( ) && ( cmd->m_buttons & ( in_attack | in_second_attack ) ) && !( local->get_flags( ) & fl_onground ) ) {
 		c_angle engine_view{ };

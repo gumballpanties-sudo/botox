@@ -1231,19 +1231,50 @@ void n_players::impl_t::players( )
 			const ImU32 fill_color    = GET_VARIABLE( g_variables.m_players_health_bar_custom_color, bool )
 			                                ? GET_VARIABLE( g_variables.m_players_health_bar_color, c_color ).get_u32( this->m_fading_alpha[ index ] )
 			                                : c_color::from_hsb( hue, 1.f, 1.f, 1.f ).get_u32( this->m_fading_alpha[ index ] );
+			const bool  gradient      = GET_VARIABLE( g_variables.m_players_health_bar_custom_color, bool ) &&
+			                       GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool );
+			const ImU32 bottom_color = GET_VARIABLE( g_variables.m_players_health_bar_bottom_color, c_color ).get_u32( this->m_fading_alpha[ index ] );
+
+			float track_top = FLT_MAX, track_bottom = -FLT_MAX;
+			for ( const auto& p : track ) {
+				track_top    = std::min( track_top, p.y );
+				track_bottom = std::max( track_bottom, p.y );
+			}
+			track_top -= bar_thickness * 0.5f;
+			track_bottom += bar_thickness * 0.5f;
 
 			g_render.m_draw_data.emplace_back(
 				e_draw_type::draw_type_callback,
 				std::make_any< callback_draw_object_t >( callback_draw_object_t{
-					[ track, outer, fill, bar_outline, bar_thickness, outline_color, bg_color, fill_color ]( ImDrawList* draw_list ) {
+					[ track, outer, fill, bar_outline, bar_thickness, outline_color, bg_color, fill_color, gradient, bottom_color, track_top,
+				      track_bottom ]( ImDrawList* draw_list ) {
 						if ( bar_outline )
 							draw_list->AddPolyline( outer.data( ), static_cast< int >( outer.size( ) ), outline_color, ImDrawFlags_None,
 						                            bar_thickness + 2.f );
 
 						draw_list->AddPolyline( track.data( ), static_cast< int >( track.size( ) ), bg_color, ImDrawFlags_None, bar_thickness );
 
-						if ( fill.size( ) >= 2 )
-							draw_list->AddPolyline( fill.data( ), static_cast< int >( fill.size( ) ), fill_color, ImDrawFlags_None, bar_thickness );
+						if ( fill.size( ) < 2 )
+							return;
+
+						const int first_vertex = draw_list->VtxBuffer.Size;
+						draw_list->AddPolyline( fill.data( ), static_cast< int >( fill.size( ) ), gradient ? IM_COL32_WHITE : fill_color,
+					                            ImDrawFlags_None, bar_thickness );
+						if ( !gradient )
+							return;
+
+						const ImVec4 top = ImGui::ColorConvertU32ToFloat4( fill_color ), bottom = ImGui::ColorConvertU32ToFloat4( bottom_color );
+						const float  height = std::max( track_bottom - track_top, 1.f );
+
+						for ( int i = first_vertex; i < draw_list->VtxBuffer.Size; ++i ) {
+							ImDrawVert& vertex  = draw_list->VtxBuffer[ i ];
+							const float t       = std::clamp( ( vertex.pos.y - track_top ) / height, 0.f, 1.f );
+							const float coverage = static_cast< float >( ( vertex.col >> IM_COL32_A_SHIFT ) & 0xFF ) / 255.f;
+
+							vertex.col = ImGui::ColorConvertFloat4ToU32( ImVec4( top.x + ( bottom.x - top.x ) * t, top.y + ( bottom.y - top.y ) * t,
+						                                                         top.z + ( bottom.z - top.z ) * t,
+						                                                         ( top.w + ( bottom.w - top.w ) * t ) * coverage ) );
+						}
 					} } ) );
 
 			if ( GET_VARIABLE( g_variables.m_players_health_text, bool ) && GET_VARIABLE( g_variables.m_players_health_text_style, int ) == 1 &&
@@ -1298,20 +1329,38 @@ void n_players::impl_t::players( )
 
 			const unsigned int outline_flags = bar_outline ? e_rect_flags::rect_flag_outer_outline : e_rect_flags::rect_flag_none;
 
+			const bool  custom_color = GET_VARIABLE( g_variables.m_players_health_bar_custom_color, bool );
+			const bool  gradient     = custom_color && GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool );
+			const ImU32 top_color    = GET_VARIABLE( g_variables.m_players_health_bar_color, c_color ).get_u32( this->m_fading_alpha[ index ] );
+
 			g_render.m_draw_data.emplace_back(
 				e_draw_type::draw_type_rect,
 				std::make_any< rect_draw_object_t >(
 					track_min, track_max, GET_VARIABLE( g_variables.m_players_health_bar_bg_color, c_color ).get_u32( this->m_fading_alpha[ index ] ),
-					ImColor( 0.f, 0.f, 0.f, this->m_fading_alpha[ index ] ), false, 0.f, ImDrawFlags_::ImDrawFlags_None, 1.f, outline_flags ) );
+					ImColor( 0.f, 0.f, 0.f, this->m_fading_alpha[ index ] ), true, 0.f, ImDrawFlags_::ImDrawFlags_None, 1.f, outline_flags ) );
 
 			g_render.m_draw_data.emplace_back(
 				e_draw_type::draw_type_rect,
 				std::make_any< rect_draw_object_t >(
 					fill_min, fill_max,
-					GET_VARIABLE( g_variables.m_players_health_bar_custom_color, bool )
-						? GET_VARIABLE( g_variables.m_players_health_bar_color, c_color ).get_u32( this->m_fading_alpha[ index ] )
-						: c_color::from_hsb( hue, 1.f, 1.f, 1.f ).get_u32( this->m_fading_alpha[ index ] ),
-					ImColor( 0.f, 0.f, 0.f, this->m_fading_alpha[ index ] ), false, 0.f, ImDrawFlags_::ImDrawFlags_None, 1.f, outline_flags ) );
+					gradient ? 0u : custom_color ? top_color : c_color::from_hsb( hue, 1.f, 1.f, 1.f ).get_u32( this->m_fading_alpha[ index ] ),
+					ImColor( 0.f, 0.f, 0.f, this->m_fading_alpha[ index ] ), true, 0.f, ImDrawFlags_::ImDrawFlags_None, 1.f, outline_flags ) );
+
+			if ( gradient ) {
+				// gradient pinned to track, fill reveals it
+				const ImVec4 top    = ImGui::ColorConvertU32ToFloat4( top_color );
+				const ImVec4 bottom = ImGui::ColorConvertU32ToFloat4(
+					GET_VARIABLE( g_variables.m_players_health_bar_bottom_color, c_color ).get_u32( this->m_fading_alpha[ index ] ) );
+				const float t = std::clamp( ( fill_min.m_y - track_min.m_y ) / std::max( track_max.m_y - track_min.m_y, 1.f ), 0.f, 1.f );
+
+				g_render.m_draw_data.emplace_back(
+					e_draw_type::draw_type_gradient_rect,
+					std::make_any< gradient_rect_draw_object_t >(
+						fill_min, fill_max,
+						ImGui::ColorConvertFloat4ToU32( ImVec4( top.x + ( bottom.x - top.x ) * t, top.y + ( bottom.y - top.y ) * t,
+				                                                top.z + ( bottom.z - top.z ) * t, top.w + ( bottom.w - top.w ) * t ) ),
+						ImGui::ColorConvertFloat4ToU32( bottom ) ) );
+			}
 
 			if ( GET_VARIABLE( g_variables.m_players_health_text, bool ) && GET_VARIABLE( g_variables.m_players_health_text_style, int ) == 1 &&
 			     health_font ) {
