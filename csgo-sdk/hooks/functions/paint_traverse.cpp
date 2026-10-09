@@ -53,15 +53,8 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 
 	original( ecx, edx, panel, force_repaint, force );
 
-	static HWND foreground_window = LI_FN( GetForegroundWindow )( );
-
-	if ( static float last_checked = g_interfaces.m_global_vars_base->m_real_time;
-	     fabs( last_checked - g_interfaces.m_global_vars_base->m_real_time ) > 2.0f ) {
-		foreground_window = LI_FN( GetForegroundWindow )( );
-		last_checked = g_interfaces.m_global_vars_base->m_real_time;
-	}
-
-	g_ctx.m_is_window_focused = foreground_window == g_input.m_window;
+	/* every call: old 2 s poll kept binds "unfocused" (dead) up to 2 s after alt-tab back */
+	g_ctx.m_is_window_focused = LI_FN( GetForegroundWindow )( ) == g_input.m_window;
 
 	switch ( panel_hash ) {
 	case HASH_BT( "MatSystemTopPanel" ): {

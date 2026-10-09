@@ -71,6 +71,8 @@ bool n_input::impl_t::on_wndproc( unsigned int msg, unsigned int wide_param, lon
 	/* alt-tab: key ups go to the other window, held keys would stick down. no seq bump = no toggle flip */
 	case WM_KILLFOCUS:
 	case WM_ACTIVATEAPP:
+		if ( msg == WM_ACTIVATEAPP )
+			g_ctx.m_is_window_focused = wide_param != 0; /* keys right after refocus beat next paint */
 		if ( msg == WM_KILLFOCUS || !wide_param )
 			for ( auto& state : this->m_key_state )
 				if ( state == e_key_state::down )
