@@ -53,12 +53,12 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 
 	original( ecx, edx, panel, force_repaint, force );
 
-	/* every call: old 2 s poll kept binds "unfocused" (dead) up to 2 s after alt-tab back */
-	g_ctx.m_is_window_focused = LI_FN( GetForegroundWindow )( ) == g_input.m_window;
-
 	switch ( panel_hash ) {
 	case HASH_BT( "MatSystemTopPanel" ): {
 		PERF_ZONE( zone_paint );
+
+		/* once per frame, cached: uncached LI_FN on every panel = export walk x hundreds per frame */
+		g_ctx.m_is_window_focused = LI_FN( GetForegroundWindow ).cached( )( ) == g_input.m_window;
 
 		if ( g_ctx.m_world_restore_requested.load( std::memory_order_acquire ) &&
 		     !g_ctx.m_world_restore_done.load( std::memory_order_acquire ) ) {
