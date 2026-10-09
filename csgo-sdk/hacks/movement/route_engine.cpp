@@ -4,16 +4,20 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../prediction/prediction.h"
+#include "../../utilities/perf/perf_watch.h"
 #include <algorithm>
+#include <atomic>
 #include <cfloat>
 #include <chrono>
 #include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <iterator>
 #include <memory>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -383,8 +387,49 @@ namespace
 		return true;
 	}
 
+	std::string departure_name( int style, int timing, int delay_ticks, bool ducked_in, bool hold_crouch );
+	std::string arrival_name( int type, bool ducked );
+
+	/* route elements as the few values that name them: a string per arc was 3 heap blocks and most of the memory */
+	struct dep_t {
+		unsigned char style = 0, timing = 0, delay = 0;
+		bool from_ground = false, hop_only = false, press_ducked = false, hold_crouch = false;
+		std::string text( ) const
+		{
+			if ( !from_ground )
+				return hold_crouch ? "fall (ducked)" : "fall";
+			return ( hop_only ? "(pixel) " : "" ) + departure_name( style, timing, delay, press_ducked, hold_crouch );
+		}
+	};
+	struct arr_t {
+		enum : unsigned char { none, named, ground_ducked } kind = none;
+		unsigned char type = 0, late = 0;
+		bool ducked        = false;
+		std::string text( ) const
+		{
+			if ( kind == ground_ducked )
+				return "ground (ducked)";
+			std::string label = arrival_name( type, ducked );
+			/* later push-in tick: "Nt late", never "+Nt" ( read as a delayed press ) */
+			if ( late > 0 ) {
+				char suffix[ 16 ]{ };
+				sprintf_s( suffix, " %dt late", static_cast< int >( late ) );
+				label += suffix;
+			}
+			return label;
+		}
+	};
+	arr_t arr_named( int type, bool ducked, int late = 0 )
+	{
+		arr_t a;
+		a.kind   = arr_t::named;
+		a.type   = static_cast< unsigned char >( type );
+		a.ducked = ducked;
+		a.late   = static_cast< unsigned char >( late );
+		return a;
+	}
+
 	struct leg_t {
-		std::string name{ };
 		int type       = route_pt_ground;
 		float dep_z    = 0.f;
 		float dep_stam = 0.f;
@@ -397,18 +442,72 @@ namespace
 		float stam_out = 0.f;
 	};
 
+	struct step_t;
+	/* a merged twin's way in, as pointers: prefix = head's prefix + path's elements from `from` on ( head null =
+	   all of path's ). listed as prefix + the lead's elements from len on. strings are only built to compare
+	   or list ( materialized prefixes were most of the memory on big routes ) */
 	struct alt_t {
-		std::vector< std::string > prefix{ };
-		std::size_t len = 0;
-		std::string text{ };
+		std::shared_ptr< const alt_t > head{ };
+		std::shared_ptr< const step_t > path{ };
+		std::size_t from        = 0;
+		std::size_t len         = 0;
+		unsigned long long hash = 0; /* of route_text( prefix ), continued per merge without building it */
+		bool empty              = false; /* route_text( prefix ) == "" */
 	};
-	constexpr std::size_t k_alt_cap = 512;
+	/* persistent list: a merge into a twin that shares its list stacks a link on top, never copies the list
+	   ( a copy per twin was most of the memory on big routes ) */
+	struct alt_list_t {
+		std::shared_ptr< const alt_list_t > base{ };
+		std::vector< std::shared_ptr< const alt_t > > items{ };
+		std::size_t size = 0; /* base's + items */
+		/* text hashes of items while its point folds, once there are enough that a scan of items would be quadratic */
+		std::unordered_set< unsigned long long > hashes{ };
+		static constexpr std::size_t k_scan = 32;
+		bool has( unsigned long long h ) const
+		{
+			if ( items.size( ) <= k_scan )
+				return std::any_of( items.begin( ), items.end( ), [ & ]( const auto& a ) { return a->hash == h; } );
+			return hashes.count( h ) != 0;
+		}
+		void push( std::shared_ptr< const alt_t > a )
+		{
+			items.push_back( std::move( a ) );
+			++size;
+			if ( items.size( ) == k_scan + 1 )
+				for ( const auto& i : items )
+					hashes.insert( i->hash );
+			else if ( items.size( ) > k_scan + 1 )
+				hashes.insert( items.back( )->hash );
+		}
+		template < class F >
+		void each( F&& f ) const
+		{
+			if ( base )
+				base->each( f );
+			for ( const auto& a : items )
+				f( a );
+		}
+	};
+
+	/* one leg + its 1..2 route elements ( dep, then arrival unless none ). children share the parent's chain:
+	   a node never copies its path */
+	struct step_t {
+		std::shared_ptr< const step_t > up{ };
+		leg_t leg{ };
+		dep_t dep{ };
+		arr_t arr{ };
+		bool roof = false;
+		int n_el( ) const { return arr.kind == arr_t::none ? 1 : 2; }
+		std::string name( ) const { return roof ? dep.text( ) + " [roof]" : dep.text( ); }
+	};
 
 	struct node_t {
 		n_route::sim_t st{ };
-		std::vector< std::string > elements{ };
-		std::shared_ptr< const std::vector< alt_t > > alts{ };
-		std::vector< leg_t > legs{ };
+		std::shared_ptr< const step_t > path{ };
+		/* only the serial admit writes it, and only while it is the sole owner */
+		std::shared_ptr< alt_list_t > alts{ };
+		int n_legs = 0;
+		int n_els  = 0;
 		int cost = 0;
 		float floor       = 0.f;
 		unsigned int mask = n_route::k_all_styles;
@@ -454,42 +553,92 @@ namespace
 		return a.cost < b.cost;
 	}
 
-	void merge_alts( node_t& keep, const node_t& drop, long long& over_cap )
+	std::vector< std::string > path_elements( const step_t* path )
 	{
-		const std::size_t len       = keep.elements.size( );
-		const std::string keep_text = n_route::route_text( keep.elements );
-		std::vector< alt_t > add;
-		const auto offer = [ & ]( std::vector< std::string > prefix ) {
-			std::string text = n_route::route_text( prefix );
-			if ( text == keep_text )
-				return;
-			const auto same = [ & ]( const alt_t& a ) { return a.len == len && a.text == text; };
-			if ( std::any_of( add.begin( ), add.end( ), same ) || ( keep.alts && std::any_of( keep.alts->begin( ), keep.alts->end( ), same ) ) )
-				return;
-			if ( add.size( ) + ( keep.alts ? keep.alts->size( ) : 0 ) >= k_alt_cap ) {
-				++over_cap;
-				return;
-			}
-			add.push_back( { std::move( prefix ), len, std::move( text ) } );
-		};
-		offer( drop.elements );
-		if ( drop.alts )
-			for ( const alt_t& a : *drop.alts ) {
-				std::vector< std::string > prefix = a.prefix;
-				prefix.insert( prefix.end( ), drop.elements.begin( ) + static_cast< std::ptrdiff_t >( a.len ), drop.elements.end( ) );
-				offer( std::move( prefix ) );
-			}
-		if ( add.empty( ) )
-			return;
-		auto merged = std::make_shared< std::vector< alt_t > >( );
-		if ( keep.alts )
-			*merged = *keep.alts;
-		merged->insert( merged->end( ), std::make_move_iterator( add.begin( ) ), std::make_move_iterator( add.end( ) ) );
-		keep.alts = std::move( merged );
+		std::size_t n = 0;
+		for ( const step_t* s = path; s; s = s->up.get( ) )
+			n += static_cast< std::size_t >( s->n_el( ) );
+		std::vector< std::string > out( n );
+		for ( const step_t* s = path; s; s = s->up.get( ) ) {
+			if ( s->arr.kind != arr_t::none )
+				out[ --n ] = s->arr.text( );
+			out[ --n ] = s->dep.text( );
+		}
+		return out;
+	}
+	std::vector< std::string > elements_of( const node_t& n ) { return path_elements( n.path.get( ) ); }
+
+	std::vector< std::string > alt_prefix( const alt_t& a )
+	{
+		std::vector< std::string > out = a.head ? alt_prefix( *a.head ) : std::vector< std::string >{ };
+		const std::vector< std::string > els = path_elements( a.path.get( ) );
+		out.insert( out.end( ), els.begin( ) + static_cast< std::ptrdiff_t >( a.from ), els.end( ) );
+		return out;
+	}
+	/* fnv-1a 64, resumable: text_hash( b, text_hash( a ) ) == text_hash( a + b ) */
+	unsigned long long text_hash( const std::string& text, unsigned long long h = 14695981039346656037ull )
+	{
+		for ( const unsigned char c : text )
+			h = ( h ^ c ) * 1099511628211ull;
+		return h;
+	}
+	std::vector< const step_t* > steps_of( const node_t& n )
+	{
+		std::vector< const step_t* > out( static_cast< std::size_t >( n.n_legs ) );
+		std::size_t i = out.size( );
+		for ( const step_t* s = n.path.get( ); s; s = s->up.get( ) )
+			out[ --i ] = s;
+		return out;
 	}
 
-	constexpr std::size_t k_beam       = 1u << 18;
-	constexpr std::size_t k_beam_plain = 1u << 17;
+	void merge_alts( node_t& keep, const node_t& drop )
+	{
+		const std::vector< std::string > drop_els = elements_of( drop );
+		const std::size_t len              = static_cast< std::size_t >( keep.n_els );
+		const unsigned long long keep_hash = text_hash( n_route::route_text( elements_of( keep ) ) );
+		/* route_text( drop_els from i on ), built once per i: route_text( a + b ) = text a + " -> " + text b ( either
+		   empty = no arrow; no element's text is empty ), so an alt's hash continues over this tail alone */
+		std::vector< std::string > tails( drop_els.size( ) + 1 );
+		std::vector< char > tail_done( drop_els.size( ) + 1, 0 );
+		const auto tail = [ & ]( std::size_t from ) -> const std::string& {
+			if ( !tail_done[ from ] ) {
+				tails[ from ]     = n_route::route_text( std::vector< std::string >( drop_els.begin( ) + static_cast< std::ptrdiff_t >( from ), drop_els.end( ) ) );
+				tail_done[ from ] = 1;
+			}
+			return tails[ from ];
+		};
+		/* only this point's links can hold a duplicate: a link from an earlier point holds shorter routes ( smaller len ) */
+		const auto here = [ & ]( const alt_list_t* l ) { return l && !l->items.empty( ) && l->items.front( )->len == len; };
+		/* this point's link, the sole owner's to append to; else stacked on the shared list */
+		const auto top = [ & ]( ) -> alt_list_t& {
+			if ( keep.alts.use_count( ) != 1 || !here( keep.alts.get( ) ) ) {
+				auto link  = std::make_shared< alt_list_t >( );
+				link->size = keep.alts ? keep.alts->size : 0;
+				link->base = std::move( keep.alts );
+				keep.alts  = std::move( link );
+			}
+			return *keep.alts;
+		};
+		/* same 64 bit text hash = same text ( the lead's, or an alt's of this len ): a collision needs ~2^32 alts on one state */
+		const auto offer = [ & ]( std::shared_ptr< const alt_t > head, std::size_t from, unsigned long long hash, bool empty ) {
+			if ( hash == keep_hash )
+				return;
+			for ( const alt_list_t* l = keep.alts.get( ); here( l ); l = l->base.get( ) )
+				if ( l->has( hash ) )
+					return;
+			top( ).push( std::make_shared< const alt_t >( alt_t{ std::move( head ), drop.path, from, len, hash, empty } ) );
+		};
+		offer( nullptr, 0, text_hash( tail( 0 ) ), tail( 0 ).empty( ) );
+		if ( drop.alts )
+			drop.alts->each( [ & ]( const std::shared_ptr< const alt_t >& a ) {
+				const std::string& t = tail( a->len );
+				unsigned long long h = a->hash;
+				if ( !a->empty && !t.empty( ) )
+					h = text_hash( " -> ", h );
+				offer( a, a->len, text_hash( t, h ), a->empty && t.empty( ) );
+			} );
+	}
+
 	int timing_cost( int style, int timing, int delay_ticks )
 	{
 		if ( style == n_route::style_jumpbug )
@@ -544,20 +693,6 @@ namespace
 		return std::string( );
 	}
 
-	/* dedup key: nodes in the same state fly the same arcs. quantum must be far finer than a pixel
-	   window ( 1/4 stamina = ~0.28u of apex, too coarse ). node_key adds jumpbug origin + bind history. */
-	/* phys_key = PHYSICS half only, so two key histories of one state don't eat two beam slots */
-	std::string phys_key( const node_t& n, float floor_z )
-	{
-		const n_route::sim_t& st = n.st;
-		char buf[ 160 ]{ };
-		sprintf_s( buf, "%d|%d|%d|%d|%d|%d|%d|%d|%d", static_cast< int >( st.stamina * 256.f ),
-		           static_cast< int >( st.vz * 64.f ), static_cast< int >( ( st.z - floor_z ) * 1024.f ),
-		           static_cast< int >( st.duck_amount * 8.f ), st.ducked ? 1 : 0, st.on_ground ? 1 : 0, n.jb_ok ? 1 : 0,
-		           n.jb_ok ? static_cast< int >( ( n.jb.z - floor_z ) * 1024.f ) : 0,
-		           n.jb_ok ? static_cast< int >( n.jb.stamina * 256.f ) : 0 );
-		return buf;
-	}
 	// float bits: dedup merges exact states only. a merged twin is listed as an alt of the lead, so
 	// its future must be the lead's bit for bit. near-only merges (duck gate, low stamina) fly their own arcs
 	unsigned int bits( float f )
@@ -566,28 +701,84 @@ namespace
 		memcpy( &u, &f, sizeof( u ) );
 		return u;
 	}
-	std::string node_key( const node_t& n, float floor_z )
+	/* dedup key = exact sim state + jumpbug origin + bind history. crouch tier never merges into a crouch-free
+	   twin: the crouch-free search stays the pre-crouch one to the node */
+	struct node_key_t {
+		unsigned int w[ 15 ]{ };
+		bool operator==( const node_key_t& o ) const { return memcmp( w, o.w, sizeof( w ) ) == 0; }
+	};
+	struct node_key_hash_t {
+		std::size_t operator( )( const node_key_t& k ) const
+		{
+			std::size_t h = 2166136261u;
+			for ( const unsigned int v : k.w )
+				h = ( h ^ v ) * 16777619u;
+			return h;
+		}
+	};
+	node_key_t node_key( const node_t& n )
 	{
 		const n_route::sim_t& st = n.st;
 		const float since = ( std::min )( st.time - st.last_duck_time, 1.f );
-		char buf[ 208 ]{ };
-		/* crouch tier never merges into a crouch-free twin: the crouch-free search stays the pre-crouch one to the node */
-		sprintf_s( buf, "|%x|%d|%d|%d|%x|%x|%x|%x|%x|%x|%x|%x|%x|%d%d%d%d%d%d|%x|%x|%x", n.bind_mask, n.last_bind, n.crouch_only ? 1 : 0,
-		           n.crouches > 0 ? 1 : 0, bits( st.z ), bits( st.vz ), bits( st.stamina ), bits( st.duck_amount ), bits( st.duck_speed ),
-		           bits( since ), bits( duck_recover_since( st ) ), bits( st.fall ), bits( st.ceiling ), st.fl_ducking ? 1 : 0,
-		           st.raw_duck ? 1 : 0, st.ducking ? 1 : 0, n.hop_only ? 1 : 0, n.skin ? 1 : 0, st.on_player ? 1 : 0,
-		           n.jb_ok ? bits( n.jb.z ) : 0u, n.jb_ok ? bits( n.jb.vz ) : 0u, n.jb_ok ? bits( n.jb.stamina ) : 0u );
-		return phys_key( n, floor_z ) + buf;
+		const unsigned int flags = ( n.crouch_only ? 1u : 0u ) | ( n.crouches > 0 ? 2u : 0u ) | ( st.fl_ducking ? 4u : 0u ) |
+		                           ( st.raw_duck ? 8u : 0u ) | ( st.ducking ? 16u : 0u ) | ( n.hop_only ? 32u : 0u ) |
+		                           ( n.skin ? 64u : 0u ) | ( st.on_player ? 128u : 0u ) | ( st.ducked ? 256u : 0u ) |
+		                           ( st.on_ground ? 512u : 0u ) | ( n.jb_ok ? 1024u : 0u );
+		return { { n.bind_mask, static_cast< unsigned int >( n.last_bind ), flags, bits( st.z ), bits( st.vz ), bits( st.stamina ),
+		           bits( st.duck_amount ), bits( st.duck_speed ), bits( since ), bits( duck_recover_since( st ) ), bits( st.fall ),
+		           bits( st.ceiling ), n.jb_ok ? bits( n.jb.z ) : 0u, n.jb_ok ? bits( n.jb.vz ) : 0u, n.jb_ok ? bits( n.jb.stamina ) : 0u } };
 	}
 
-	std::string beam_key( const node_t& n, float floor_z )
+	/* no beam: a big enough route outgrows the 32 bit address space. stop the solve while the game still has
+	   room to allocate, never crash it */
+	constexpr unsigned long long k_memory_reserve = 512ull << 20;
+	bool low_memory( )
 	{
-		const n_route::sim_t& st = n.st;
-		char buf[ 96 ]{ };
-		sprintf_s( buf, "%d|%d|%d|%d|%d", static_cast< int >( st.stamina * 16.f ),
-		           static_cast< int >( ( st.z - floor_z ) * 8.f ), st.ducked ? 1 : 0, st.on_ground ? 1 : 0, n.jb_ok ? 1 : 0 );
-		return buf;
+		MEMORYSTATUSEX ms{ };
+		ms.dwLength = sizeof( ms );
+		return GlobalMemoryStatusEx( &ms ) && ms.ullAvailVirtual < k_memory_reserve;
 	}
+
+	/* closest-first log rows, only the shown ones kept: every arc used to format and hold its line */
+	struct top_t {
+		std::size_t cap = 0;
+		long long count = 0;
+		std::vector< std::pair< float, std::string > > rows{ };
+		/* counts the row; false = it can't make the list ( a tie keeps the earlier row, as a stable sort does ) */
+		bool counts( float gap )
+		{
+			++count;
+			return rows.size( ) < cap || gap < rows.back( ).first;
+		}
+		bool full( ) const { return rows.size( ) >= cap; }
+		void add( float gap, std::string line )
+		{
+			const auto at = std::upper_bound( rows.begin( ), rows.end( ), gap, []( float g, const auto& r ) { return g < r.first; } );
+			rows.insert( at, { gap, std::move( line ) } );
+			if ( rows.size( ) > cap )
+				rows.pop_back( );
+		}
+		/* o's rows all come after ours in frontier order */
+		void merge( top_t& o )
+		{
+			count += o.count;
+			for ( auto& r : o.rows )
+				add( r.first, std::move( r.second ) );
+		}
+	};
+
+	/* one frontier node's expansion, made on any thread, folded in frontier order */
+	struct expand_t {
+		std::vector< node_t > made{ };
+		std::vector< node_key_t > keys{ };
+		long long opts = 0;
+		float best_gap = FLT_MAX, closest_z = 0.f;
+		unsigned int blocked = 0u, refused = 0u;
+		float best_by_presses[ 16 ]{ FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX,
+		                             FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX };
+		top_t misses{ 12 };
+		top_t edge{ 8 };
+	};
 
 	bool duck_at_launch( int style ) { return style == n_route::style_minijump || style == n_route::style_longjump; }
 	bool duck_held_after( int style ) { return style == n_route::style_longjump; }
@@ -843,7 +1034,7 @@ namespace n_route
 		return true;
 	}
 
-	void solve( const solve_input_t& in, solve_output_t& out )
+	void solve_search( const solve_input_t& in, solve_output_t& out )
 	{
 		out = solve_output_t{ };
 		if ( in.points.empty( ) )
@@ -877,22 +1068,25 @@ namespace n_route
 		const float half_g  = half_gravity_per_tick( );
 		const float eb_null = -half_g;
 
+		/* no beam: every arc is kept, so searched == space */
 		std::vector< long double > branch_max;
-		std::vector< long double > unsearched;
 		const auto commit_counts = [ & ]( ) {
-			long double space = 1.L, missed = 0.L, suffix = 1.L;
+			long double space = 1.L;
 			for ( const long double b : branch_max )
 				space *= b;
-			for ( std::size_t i = branch_max.size( ); i-- > 0; ) {
-				missed += unsearched[ i ] * suffix;
-				suffix *= branch_max[ i ];
-			}
 			out.space    = space;
-			out.searched = space > missed ? space - missed : 0.L;
+			out.searched = space;
 		};
 
-		std::vector< node_t > frontier;
-		long long alts_over_cap = 0;
+		/* warm the static convar lookup in IsEdgeBugTick here: /Zc:threadSafeInit- statics race on the workers */
+		(void)g_edgebug.IsEdgeBugTick( 0.f, 0.f, false, false );
+		const int lj_air_ticks = lj_bind_air_ticks( );
+		/* helpers = cores - 2: the game thread keeps one, this thread admits and expands too */
+		const unsigned int hw      = std::thread::hardware_concurrency( );
+		const unsigned int helpers = ( std::min )( hw > 2u ? hw - 2u : 0u, 64u );
+
+		/* deque: a million arcs never need one contiguous block of the 32 bit address space */
+		std::deque< node_t > frontier;
 		node_t seed;
 		seed.st.z         = in.start_z;
 		seed.st.on_ground = in.start_on_ground;
@@ -948,67 +1142,44 @@ namespace n_route
 				out.blocked_moves = 0u;
 			}
 
-			std::vector< node_t > next;
-			std::unordered_map< std::string, std::size_t > seen;
+			std::deque< node_t > next;
+			std::unordered_map< node_key_t, std::size_t, node_key_hash_t > seen;
 			std::vector< long long > fan;
 			fan.reserve( frontier.size( ) );
-			std::vector< std::pair< float, std::string > > misses;
-			std::vector< std::pair< float, std::string > > edge;
+			top_t misses{ 12 };
+			top_t edge{ 8 };
+			/* misses' 12th best so far: a worker never formats a line that can't make the list */
+			std::atomic< float > miss_cut{ FLT_MAX };
 			float best_by_presses[ 16 ];
 			for ( float& b : best_by_presses )
 				b = FLT_MAX;
 
-			/* progress = nodes expanded / ( done + this point + later points at this point's growth, beam capped ) */
+			/* progress = nodes expanded / ( done + this point + later points at this point's growth ) */
 			const long double width = static_cast< long double >( frontier.size( ) );
 			long double later       = 0.L;
 			{
 				const long double grow = ( std::max )( 1.L, width / static_cast< long double >( prev_width ) );
 				long double w          = width;
 				for ( std::size_t j = p + 1; j < points.size( ); ++j ) {
-					w = ( std::min )( w * grow, static_cast< long double >( k_beam ) );
+					w *= grow;
 					later += w;
 				}
 			}
-			std::size_t expanded = 0;
 
-			for ( const node_t& node : frontier ) {
-				if ( ( ++expanded & 63u ) == 0u ) {
-					if ( in.cancel && in.cancel->load( std::memory_order_relaxed ) )
-						return;
-					/* one writer: a re-estimate at a new point never shows the bar stepping back */
-					if ( const int permille = static_cast< int >( 999.L * ( nodes_done + expanded ) / ( nodes_done + width + later ) );
-					     in.progress && permille > in.progress->load( std::memory_order_relaxed ) )
-						in.progress->store( permille, std::memory_order_relaxed );
-				}
+			/* any thread: one node's arcs into its own slot. nothing shared is written here */
+			const auto expand = [ & ]( const node_t& node, expand_t& r ) {
 				const bool node_ducked = node.st.ducked || node.st.ducking;
-				long long opts         = 0;
 				/* roof pass whose head never hit the roof = the open pass's arc again: dropped, not counted twice */
 				bool roof_pass = false;
 				const auto admit = [ & ]( node_t& made ) {
 					if ( roof_pass && !made.st.roof_hit )
 						return;
-					++opts;
+					++r.opts;
 					made.paths = node.paths;
 					made.alts  = node.alts;
-					if ( last ) {
-						next.emplace_back( std::move( made ) );
-						return;
-					}
-					const std::string key = node_key( made, target_z );
-					if ( const auto it = seen.find( key ); it != seen.end( ) ) {
-						node_t& twin     = next[ it->second ];
-						const long long sum =
-							( twin.paths > LLONG_MAX - made.paths ) ? LLONG_MAX : twin.paths + made.paths;
-						if ( easier( made, twin ) ) {
-							merge_alts( made, twin, alts_over_cap );
-							twin = std::move( made );
-						} else
-							merge_alts( twin, made, alts_over_cap );
-						twin.paths = sum;
-						return;
-					}
-					seen.emplace( key, next.size( ) );
-					next.emplace_back( std::move( made ) );
+					if ( !last )
+						r.keys.emplace_back( node_key( made ) );
+					r.made.emplace_back( std::move( made ) );
 				};
 				for ( int style = 0; style < style_count; ++style ) {
 					if ( !node.st.on_ground && style != style_walk_off )
@@ -1020,7 +1191,7 @@ namespace n_route
 						continue;
 
 					if ( style == style_walk_off && node.st.on_ground ) {
-						if ( !node.legs.empty( ) )
+						if ( node.n_legs != 0 )
 							continue;
 						if ( target_z > node.st.z - k_ground_catch )
 							continue;
@@ -1035,12 +1206,12 @@ namespace n_route
 							continue;
 						if ( timing == timing_delay && ( style != style_jump || node_ducked ) )
 							continue;
-						if ( timing != timing_rest && node.legs.empty( ) && in.start_on_ground )
+						if ( timing != timing_rest && node.n_legs == 0 && in.start_on_ground )
 							continue;
-						if ( timing == timing_rest && node.st.on_ground && !node.legs.empty( ) &&
+						if ( timing == timing_rest && node.st.on_ground && node.n_legs != 0 &&
 						     style != style_walk_off )
 							continue;
-						if ( style == style_jumpbug && node.legs.empty( ) )
+						if ( style == style_jumpbug && node.n_legs == 0 )
 							continue;
 						if ( node.hop_only && timing != timing_bhop )
 							continue;
@@ -1049,8 +1220,8 @@ namespace n_route
 
 						if ( const unsigned int bit = 1u << move_of( style, timing, node_ducked );
 						     node.st.on_ground && !( in.global_moves & bit ) ) {
-							out.blocked_moves |= bit;
-							out.refused_moves |= bit;
+							r.blocked |= bit;
+							r.refused |= bit;
 							continue;
 						}
 						const int only_delay = timing == timing_delay ? in.delay_ticks : 1;
@@ -1089,7 +1260,7 @@ namespace n_route
 								continue;
 							if ( duck_air && point.type == route_pt_ground && plain_arrived ) {
 								if ( !( in.global_moves & ( 1u << move_crouch_hop ) ) ) {
-									out.refused_moves |= 1u << move_crouch_hop;
+									r.refused |= 1u << move_crouch_hop;
 									continue;
 								}
 								if ( point.styles != 0u && !( point.styles & ( 1u << style_jump ) ) )
@@ -1144,7 +1315,7 @@ namespace n_route
 							const bool hold_duck  = duck_held_after( style ) || hold_crouch == 1;
 							if ( hold_crouch == 1 && node.st.on_ground &&
 							     !( in.global_moves & ( 1u << move_of( style, timing, true ) ) ) ) {
-								out.refused_moves |= 1u << move_of( style, timing, true );
+								r.refused |= 1u << move_of( style, timing, true );
 								continue;
 							}
 							/* the style's +duck must pass the gate, else it's a standing jump mislabeled */
@@ -1171,10 +1342,14 @@ namespace n_route
 									continue;
 							}
 
-							const std::string dep =
-								node.st.on_ground
-									? ( node.hop_only ? "(pixel) " : "" ) + departure_name( style, timing, delay_n, press_ducked, hold_crouch == 1 )
-									: std::string( hold_crouch == 1 ? "fall (ducked)" : "fall" );
+							dep_t dep;
+							dep.style        = static_cast< unsigned char >( style );
+							dep.timing       = static_cast< unsigned char >( timing );
+							dep.delay        = static_cast< unsigned char >( delay_n );
+							dep.from_ground  = node.st.on_ground;
+							dep.hop_only     = node.hop_only;
+							dep.press_ducked = press_ducked;
+							dep.hold_crouch  = hold_crouch == 1;
 							const int leg_cost = timing_cost( style, timing, delay_n );
 
 							float attempt_gap = FLT_MAX;
@@ -1182,10 +1357,15 @@ namespace n_route
 							float apex        = s.z;
 							bool made_any     = false;
 
-							const auto push_leg = [ & ]( node_t& made, float arrive_z, float fall, float hover, float gap,
-							                            int tier = 0 ) {
-								leg_t leg;
-								leg.name     = made.st.roof_hit ? dep + " [roof]" : dep;
+							/* arrival = the route element after dep ( kind none = no element; an empty name still counts as one ) */
+							const auto push_leg = [ & ]( node_t& made, const arr_t& arrival, float arrive_z, float fall, float hover,
+							                            float gap, int tier = 0 ) {
+								auto step  = std::make_shared< step_t >( );
+								step->up   = node.path;
+								step->dep  = dep;
+								step->arr  = arrival;
+								step->roof = made.st.roof_hit;
+								leg_t& leg   = step->leg;
 								leg.type     = shown_type;
 								leg.dep_z    = dep_z;
 								leg.dep_stam = dep_stam;
@@ -1196,8 +1376,9 @@ namespace n_route
 								leg.gap      = gap;
 								leg.tier     = tier;
 								leg.stam_out = made.st.stamina;
-								made.legs    = node.legs;
-								made.legs.emplace_back( std::move( leg ) );
+								made.n_legs  = node.n_legs + 1;
+								made.n_els   = node.n_els + step->n_el( );
+								made.path    = std::move( step );
 								made.floor = target_z;
 								made.mask  = point.styles == 0u ? k_all_styles : point.styles;
 								made.bind_mask = node.bind_mask;
@@ -1229,11 +1410,8 @@ namespace n_route
 								made.st.on_ground = false;
 								made.st.fall      = -eb_null;
 								made.st.ceiling   = target_z;
-								made.elements     = node.elements;
 								made.cost         = node.cost + leg_cost;
-								made.elements.emplace_back( dep );
-								made.elements.emplace_back( arrival_name( shown_type, ducked_in ) );
-								push_leg( made, made.st.z, 0.f, 0.f, std::fabs( ( z_in + hull_in ) - target_z ) );
+								push_leg( made, arr_named( shown_type, ducked_in ), made.st.z, 0.f, 0.f, std::fabs( ( z_in + hull_in ) - target_z ) );
 								admit( made );
 								made_any = true;
 								return true;
@@ -1257,16 +1435,15 @@ namespace n_route
 								node_t made;
 								made.st           = st;
 								made.st.on_player = point.ent > 0;
-								made.elements     = node.elements;
 								made.cost         = node.cost + leg_cost;
-								made.elements.emplace_back( dep );
+								arr_t arrival;
 								if ( point.type == route_pt_pixeljump ) {
 									if ( last )
-										made.elements.emplace_back( arrival_name( point.type, st.ducked || st.ducking ) );
+										arrival = arr_named( point.type, st.ducked || st.ducking );
 									made.hop_only = true;
 									made.skin     = skin;
 								} else if ( point.type == route_pt_ground && last && duck_air )
-									made.elements.emplace_back( "ground (ducked)" );
+									arrival.kind = arr_t::ground_ducked;
 								made.crouch_only = duck_air && plain_arrived && point.type == route_pt_ground;
 								if ( !held_now && vz_in < 0.f ) {
 									made.jb_ok        = jumpbug_band( st_in, target_z, made.jb, skin );
@@ -1274,14 +1451,14 @@ namespace n_route
 								}
 								constexpr float k_skin_last_push = 0.98f * ( 0.03125f / 16.f - n_route::k_creep_gap );
 								const int tier = skin && st.z - target_z < n_route::k_skin_lo + k_skin_last_push ? 1 : 0;
-								push_leg( made, st.z, -vz_in, st.z - target_z, st.z - target_z, tier );
+								push_leg( made, arrival, st.z, -vz_in, st.z - target_z, st.z - target_z, tier );
 								admit( made );
 								made_any = true;
 							};
 
 							for ( int i = 0, cap = launch_bang ? 0 : air_tick_cap( ); i < cap; ++i ) {
 								bool held = hold_duck;
-								if ( held && style == style_longjump && hold_crouch == 0 && i >= lj_bind_air_ticks( ) )
+								if ( held && style == style_longjump && hold_crouch == 0 && i >= lj_air_ticks )
 									held = false;
 								if ( duck_air && ( !duck_late || i > 0 ) )
 									held = true;
@@ -1377,9 +1554,9 @@ namespace n_route
 									}
 									const float report_z =
 										point.type == route_pt_headbang ? s.z + hull_top( s ) : px_z;
-									if ( gap < out.best_gap ) {
-										out.best_gap  = gap;
-										out.closest_z = report_z;
+									if ( gap < r.best_gap ) {
+										r.best_gap  = gap;
+										r.closest_z = report_z;
 									}
 									if ( gap < attempt_gap ) {
 										attempt_gap = gap;
@@ -1427,11 +1604,11 @@ namespace n_route
 											           ? 0
 											           : ( pixel_bucket( catch_z ) == pixel_bucket( target_z ) ? 1 : 2 );
 										}
-										if ( tier > 0 ) {
+										if ( tier > 0 && r.edge.counts( rank_gap ) ) {
 											char line[ 160 ]{ };
-											sprintf_s( line, "%-18s%s catch %9.4f  gap %6.4f", dep.c_str( ),
+											sprintf_s( line, "%-18s%s catch %9.4f  gap %6.4f", dep.text( ).c_str( ),
 											           catch_duck ? " +9" : "   ", catch_z, target_z - catch_z );
-											edge.emplace_back( rank_gap, line );
+											r.edge.add( rank_gap, line );
 										}
 
 										node_t made;
@@ -1457,11 +1634,8 @@ namespace n_route
 											duck_recover( made.st );
 											made.st.time += tick_dt( );
 										}
-										made.elements = node.elements;
 										made.cost     = node.cost + leg_cost;
-										made.elements.emplace_back( dep );
-										made.elements.emplace_back( arrival_name( shown_type, ducked ) );
-										push_leg( made, catch_z, s.fall, 0.f, rank_gap, tier );
+										push_leg( made, arr_named( shown_type, ducked ), catch_z, s.fall, 0.f, rank_gap, tier );
 										admit( made );
 										made_any = true;
 									}
@@ -1501,11 +1675,8 @@ namespace n_route
 									made.st.vz        = eb_null;
 									made.st.on_ground = false;
 									made.st.fall      = -eb_null;
-									made.elements     = node.elements;
 									made.cost         = node.cost + leg_cost;
-									made.elements.emplace_back( dep );
-									made.elements.emplace_back( arrival_name( point.type, ducked_in ) );
-									push_leg( made, z_in, -vz_in, 0.f, target_z - hb_head );
+									push_leg( made, arr_named( point.type, ducked_in ), z_in, -vz_in, 0.f, target_z - hb_head );
 									admit( made );
 									made_any = true;
 									break;
@@ -1531,20 +1702,8 @@ namespace n_route
 									made.st.vz        = eb_null;
 									made.st.on_ground = false;
 									made.st.fall      = -eb_null;
-									made.elements     = node.elements;
 									made.cost         = node.cost + leg_cost + ( i - tb_first );
-									made.elements.emplace_back( dep );
-									{
-										std::string label = arrival_name( point.type, ducked_in );
-										/* later push-in tick: "Nt late", never "+Nt" ( read as a delayed press ) */
-										if ( i > tb_first ) {
-											char suffix[ 16 ]{ };
-											sprintf_s( suffix, " %dt late", i - tb_first );
-											label += suffix;
-										}
-										made.elements.emplace_back( label );
-									}
-									push_leg( made, z_in, -vz_in, 0.f, 0.f );
+									push_leg( made, arr_named( point.type, ducked_in, i - tb_first ), z_in, -vz_in, 0.f, 0.f );
 									admit( made );
 									made_any = true;
 									continue;
@@ -1565,11 +1724,8 @@ namespace n_route
 									made.st.vz        = eb_null;
 									made.st.on_ground = false; /* an edgebug never lands: the fall goes on */
 									made.st.fall      = 0.f;
-									made.elements     = node.elements;
 									made.cost         = node.cost + leg_cost;
-									made.elements.emplace_back( dep );
-									made.elements.emplace_back( arrival_name( point.type, ducked ) );
-									push_leg( made, s.z, -vz_in, s.z - target_z, std::fabs( s.z - target_z ) );
+									push_leg( made, arr_named( point.type, ducked ), s.z, -vz_in, s.z - target_z, std::fabs( s.z - target_z ) );
 									admit( made );
 									made_any = true;
 									break;
@@ -1588,23 +1744,147 @@ namespace n_route
 								continue;
 
 							if ( !made_any )
-								++opts;
-							if ( const std::size_t presses = node.legs.size( ) + 1;
-							     presses < 16 && attempt_gap < best_by_presses[ presses ] )
-								best_by_presses[ presses ] = attempt_gap;
-							if ( attempt_gap < FLT_MAX ) {
+								++r.opts;
+							if ( const std::size_t presses = static_cast< std::size_t >( node.n_legs ) + 1;
+							     presses < 16 && attempt_gap < r.best_by_presses[ presses ] )
+								r.best_by_presses[ presses ] = attempt_gap;
+							if ( attempt_gap < FLT_MAX && r.misses.counts( attempt_gap ) &&
+							     attempt_gap < miss_cut.load( std::memory_order_relaxed ) ) {
 								char line[ 224 ]{ };
-								sprintf_s( line, "%-24s%s from %9.3f stam %5.2f -> apex %9.3f closest %9.3f (off %6.3f)", dep.c_str( ),
+								sprintf_s( line, "%-24s%s from %9.3f stam %5.2f -> apex %9.3f closest %9.3f (off %6.3f)", dep.text( ).c_str( ),
 								           duck_late ? " [duck late]" : duck_air ? " [duck air]" : ( ceil_over ? " [ceil over]" : under_roof ? " [roof]" : "" ), dep_z, dep_stam, apex,
 								           attempt_z, attempt_gap );
-								misses.emplace_back( attempt_gap, line );
+								r.misses.add( attempt_gap, line );
 							}
 							}
 						}
 					}
 				}
-				fan.emplace_back( opts );
+			};
+
+			/* fold one slot, in frontier order: the dedup ( first key wins its seat ), merges, and every min / list
+			   come out exactly as a single thread walking the frontier would make them */
+			const auto fold = [ & ]( expand_t& r ) {
+				for ( std::size_t k = 0; k < r.made.size( ); ++k ) {
+					node_t& made = r.made[ k ];
+					if ( last ) {
+						next.emplace_back( std::move( made ) );
+						continue;
+					}
+					if ( const auto it = seen.find( r.keys[ k ] ); it != seen.end( ) ) {
+						node_t& twin     = next[ it->second ];
+						const long long sum =
+							( twin.paths > LLONG_MAX - made.paths ) ? LLONG_MAX : twin.paths + made.paths;
+						if ( easier( made, twin ) ) {
+							merge_alts( made, twin );
+							twin = std::move( made );
+						} else
+							merge_alts( twin, made );
+						twin.paths = sum;
+						continue;
+					}
+					seen.emplace( r.keys[ k ], next.size( ) );
+					next.emplace_back( std::move( made ) );
+				}
+				fan.emplace_back( r.opts );
+				if ( r.best_gap < out.best_gap ) {
+					out.best_gap  = r.best_gap;
+					out.closest_z = r.closest_z;
+				}
+				out.blocked_moves |= r.blocked;
+				out.refused_moves |= r.refused;
+				for ( int n = 0; n < 16; ++n )
+					best_by_presses[ n ] = ( std::min )( best_by_presses[ n ], r.best_by_presses[ n ] );
+				misses.merge( r.misses );
+				edge.merge( r.edge );
+				if ( misses.full( ) )
+					miss_cut.store( misses.rows.back( ).first, std::memory_order_relaxed );
+				r = expand_t{ };
+			};
+
+			/* nothing runs more than k_ahead past the fold, so a ring of 2x holds every slot in flight
+			   ( claimed - folded < k_ahead + helpers ) and a slot is folded before its index comes round */
+			constexpr std::size_t k_ahead = 2048, k_ring = 2 * k_ahead;
+			const std::size_t n_front = frontier.size( );
+			const std::size_t ring    = ( std::min )( n_front, k_ring );
+			std::vector< expand_t > slots( ring );
+			std::unique_ptr< std::atomic< bool >[ ] > ready( new std::atomic< bool >[ ring ]( ) );
+			std::atomic< std::size_t > claim{ 0 }, folded{ 0 };
+			std::atomic< bool > stop{ false }, helper_oom{ false };
+			const auto run = [ & ]( std::size_t i ) {
+				expand( frontier[ i ], slots[ i % ring ] );
+				ready[ i % ring ].store( true, std::memory_order_release );
+			};
+			std::vector< std::thread > pool;
+			/* declared last: joins before anything the helpers touch goes out of scope ( cancel / oom leave early ) */
+			struct join_t {
+				std::vector< std::thread >& pool;
+				std::atomic< bool >& stop;
+				~join_t( )
+				{
+					stop.store( true );
+					for ( std::thread& t : pool )
+						t.join( );
+				}
+			} join{ pool, stop };
+			if ( n_front >= 64 )
+				for ( unsigned int t = 0; t < helpers; ++t ) {
+					try {
+						pool.emplace_back( [ & ]( ) {
+							n_perf::background_thread( );
+							for ( ;; ) {
+								const std::size_t i = claim.fetch_add( 1, std::memory_order_relaxed );
+								if ( i >= n_front )
+									return;
+								while ( i >= folded.load( std::memory_order_acquire ) + k_ahead )
+									if ( stop.load( std::memory_order_relaxed ) )
+										return;
+									else
+										std::this_thread::yield( );
+								if ( stop.load( std::memory_order_relaxed ) )
+									return;
+								try {
+									run( i );
+								} catch ( const std::bad_alloc& ) {
+									helper_oom.store( true );
+									return;
+								}
+							}
+						} );
+					} catch ( const std::system_error& ) {
+						break; /* no thread to spare: the ones running ( or this one alone ) do it */
+					}
+				}
+
+			for ( std::size_t i = 0; i < n_front; ++i ) {
+				/* not done yet: this thread expands the next unclaimed node in the window instead of waiting */
+				while ( !ready[ i % ring ].load( std::memory_order_acquire ) ) {
+					if ( helper_oom.load( ) )
+						throw std::bad_alloc( );
+					std::size_t c = claim.load( std::memory_order_relaxed );
+					if ( c < n_front && c < i + k_ahead && claim.compare_exchange_weak( c, c + 1, std::memory_order_relaxed ) )
+						run( c );
+					else
+						std::this_thread::yield( );
+				}
+				fold( slots[ i % ring ] );
+				ready[ i % ring ].store( false, std::memory_order_relaxed );
+				folded.store( i + 1, std::memory_order_release );
+				if ( ( ( i + 1 ) & 63u ) == 0u ) {
+					if ( in.cancel && in.cancel->load( std::memory_order_relaxed ) )
+						return;
+					if ( low_memory( ) )
+						throw std::bad_alloc( );
+					/* one writer: a re-estimate at a new point never shows the bar stepping back */
+					if ( const int permille = static_cast< int >( 999.L * ( nodes_done + ( i + 1 ) ) / ( nodes_done + width + later ) );
+					     in.progress && permille > in.progress->load( std::memory_order_relaxed ) )
+						in.progress->store( permille, std::memory_order_relaxed );
+				}
 			}
+			/* this point's dedup sets are done: free them before the next point inherits the links */
+			for ( node_t& n : next )
+				if ( n.alts && !n.alts->hashes.empty( ) )
+					std::unordered_set< unsigned long long >( ).swap( n.alts->hashes );
 			nodes_done += width;
 			prev_width = frontier.size( );
 
@@ -1613,11 +1893,10 @@ namespace n_route
 				for ( const long long f : fan )
 					fan_max = ( std::max )( fan_max, f );
 				branch_max.emplace_back( static_cast< long double >( fan_max ) );
-				unsearched.emplace_back( 0.L );
 			}
 
 			if ( last && !next.empty( ) ) {
-				out.jumps = static_cast< int >( next.front( ).legs.size( ) );
+				out.jumps = next.front( ).n_legs;
 				for ( int n = 0; n < 16; ++n )
 					out.reach_gap[ n ] = best_by_presses[ n ];
 			}
@@ -1637,17 +1916,11 @@ namespace n_route
 					                   route_point_type_name( shown_type ), reach.c_str( ) );
 			}
 
-			if ( !edge.empty( ) ) {
-				std::stable_sort( edge.begin( ), edge.end( ),
-				                  []( const auto& a, const auto& b ) { return a.first < b.first; } );
+			if ( edge.count > 0 ) {
 				botox_dbg_log( "[rc edge] %s: %d catches on the W-held band edge or under it ( gentle press ) - KEPT, ranked under:\n",
-				                   point_label( p ).c_str( ), static_cast< int >( edge.size( ) ) );
-				int shown = 0;
-				for ( const auto& e : edge ) {
-					if ( shown++ >= 8 )
-						break;
+				                   point_label( p ).c_str( ), static_cast< int >( edge.count ) );
+				for ( const auto& e : edge.rows )
 					botox_dbg_log( "[rc edge]   %s\n", e.second.c_str( ) );
-				}
 			}
 
 			if ( next.empty( ) ) {
@@ -1655,15 +1928,10 @@ namespace n_route
 				out.failed_at = static_cast< int >( p );
 				out.want_z    = target_z;
 
-				std::stable_sort( misses.begin( ), misses.end( ),
-				                  []( const auto& a, const auto& b ) { return a.first < b.first; } );
 				botox_dbg_log( "[rc miss] %s ( %s ) wants z %.4f - %d departures tried, closest first:\n",
 				                   point_label( p ).c_str( ), route_point_type_name( shown_type ), target_z,
-				                   static_cast< int >( misses.size( ) ) );
-				int shown = 0;
-				for ( const auto& m : misses ) {
-					if ( shown++ >= 12 )
-						break;
+				                   static_cast< int >( misses.count ) );
+				for ( const auto& m : misses.rows ) {
 					botox_dbg_log( "[rc miss]   %s\n", m.second.c_str( ) );
 					out.miss_lines.emplace_back( m.second );
 				}
@@ -1672,86 +1940,39 @@ namespace n_route
 
 			out.arcs_after.emplace_back( static_cast< int >( next.size( ) ) );
 
-			const std::size_t n_plain =
-				static_cast< std::size_t >( std::count_if( next.begin( ), next.end( ), []( const node_t& n ) { return n.crouches == 0; } ) );
-			const bool trim = !last && ( n_plain > k_beam_plain || next.size( ) > k_beam );
-			if ( !last )
-				botox_dbg_log( "[rc beam] %s: %d arcs ( %d with an optional crouch )%s\n", point_label( p ).c_str( ),
-				                   static_cast< int >( next.size( ) ), static_cast< int >( next.size( ) - n_plain ),
-				                   trim ? " -> TRIMMED, routes may be lost" : " ( all kept )" );
-
-			if ( trim ) {
-				out.trimmed = true;
-				long double before = 0.L;
-				for ( const node_t& n : next )
-					before += static_cast< long double >( n.paths );
-				std::stable_sort( next.begin( ), next.end( ), easier );
-				std::vector< node_t > keep;
-				keep.reserve( k_beam );
-				std::vector< bool > taken( next.size( ), false );
-				const auto phys_of = [ ]( const node_t& n ) {
-					return phys_key( n, n.floor ) + "|" + std::to_string( static_cast< int >( n.floor * 32.f ) );
-				};
-				/* one tier [ lo, hi ) up to cap: easiest per distinct launch, then each PHYSICAL state once ( key histories
-				   duplicate states and must not crowd out a fine variant ), then extra key histories */
-				const auto fill = [ & ]( std::size_t lo, std::size_t hi, std::size_t cap ) {
-					const std::size_t first = keep.size( );
-					std::unordered_set< std::string > spread;
-					for ( std::size_t i = lo; i < hi && keep.size( ) < cap; ++i ) {
-						if ( !spread.insert( beam_key( next[ i ], target_z ) ).second )
-							continue;
-						taken[ i ] = true;
-						keep.emplace_back( std::move( next[ i ] ) );
-					}
-					std::unordered_set< std::string > phys;
-					for ( std::size_t k = first; k < keep.size( ); ++k )
-						phys.insert( phys_of( keep[ k ] ) );
-					for ( std::size_t i = lo; i < hi && keep.size( ) < cap; ++i ) {
-						if ( taken[ i ] || !phys.insert( phys_of( next[ i ] ) ).second )
-							continue;
-						taken[ i ] = true;
-						keep.emplace_back( std::move( next[ i ] ) );
-					}
-					for ( std::size_t i = lo; i < hi && keep.size( ) < cap; ++i ) {
-						if ( !taken[ i ] ) {
-							taken[ i ] = true;
-							keep.emplace_back( std::move( next[ i ] ) );
-						}
-					}
-				};
-				fill( 0, n_plain, k_beam_plain );
-				fill( n_plain, next.size( ), k_beam );
-				next = std::move( keep );
-
-				long double after = 0.L;
-				for ( const node_t& n : next )
-					after += static_cast< long double >( n.paths );
-				if ( before > after )
-					unsearched.back( ) += before - after;
+			if ( !last ) {
+				const std::size_t n_plain =
+					static_cast< std::size_t >( std::count_if( next.begin( ), next.end( ), []( const node_t& n ) { return n.crouches == 0; } ) );
+				botox_dbg_log( "[rc beam] %s: %d arcs ( %d with an optional crouch )\n", point_label( p ).c_str( ),
+				                   static_cast< int >( next.size( ) ), static_cast< int >( next.size( ) - n_plain ) );
 			}
 			frontier = std::move( next );
 		}
 
-		const auto final_gap = []( const node_t& n ) { return n.legs.empty( ) ? 0.f : n.legs.back( ).gap; };
-		const auto tier_of = []( const node_t& n ) { return n.legs.empty( ) ? 0 : n.legs.back( ).tier; };
-		std::stable_sort( frontier.begin( ), frontier.end( ), [ & ]( const node_t& a, const node_t& b ) {
+		const auto final_gap = []( const node_t& n ) { return n.path ? n.path->leg.gap : 0.f; };
+		const auto tier_of = []( const node_t& n ) { return n.path ? n.path->leg.tier : 0; };
+		/* sort keys once per node ( the old comparator walked every element string per compare ) */
+		std::vector< std::size_t > text_len( frontier.size( ), 0 );
+		for ( std::size_t i = 0; i < frontier.size( ); ++i )
+			for ( const std::string& e : elements_of( frontier[ i ] ) )
+				text_len[ i ] += e.size( );
+		std::vector< std::size_t > order( frontier.size( ) );
+		for ( std::size_t i = 0; i < order.size( ); ++i )
+			order[ i ] = i;
+		std::stable_sort( order.begin( ), order.end( ), [ & ]( std::size_t ia, std::size_t ib ) {
+			const node_t &a = frontier[ ia ], &b = frontier[ ib ];
 			if ( tier_of( a ) != tier_of( b ) )
 				return tier_of( a ) < tier_of( b );
 			if ( easier( a, b ) )
 				return true;
 			if ( easier( b, a ) )
 				return false;
-			if ( a.legs.size( ) != b.legs.size( ) )
-				return a.legs.size( ) < b.legs.size( );
+			if ( a.n_legs != b.n_legs )
+				return a.n_legs < b.n_legs;
 			const int ga = static_cast< int >( final_gap( a ) * 2000.f ), gb = static_cast< int >( final_gap( b ) * 2000.f );
 			if ( ga != gb )
 				return ga < gb;
-			std::size_t la = 0, lb = 0;
-			for ( const auto& e : a.elements )
-				la += e.size( );
-			for ( const auto& e : b.elements )
-				lb += e.size( );
-			return la < lb;
+			return text_len[ ia ] < text_len[ ib ];
 		} );
 
 		const auto last_press_plain = []( std::string e ) {
@@ -1772,14 +1993,10 @@ namespace n_route
 		std::unordered_set< std::string > outcomes;
 		bool chained = false;
 		int alt_rows = 0;
+		std::size_t rows_seen = 0;
 		const auto list_row = [ & ]( const node_t& n, const std::vector< std::string >& els, bool alt ) {
-			std::string text;
-			for ( const auto& e : els ) {
-				if ( e.empty( ) )
-					continue;
-				text += e == "fall (ducked)" ? std::string( "fall" ) : e;
-				text += '>';
-			}
+			if ( ( ++rows_seen & 4095u ) == 0u && low_memory( ) )
+				throw std::bad_alloc( );
 			if ( !printed.insert( route_text( els ) ).second )
 				return;
 			{
@@ -1790,28 +2007,36 @@ namespace n_route
 				for ( int i = 0; i < static_cast< int >( els.size( ) ); ++i )
 					key += ( i == last_press ? last_press_plain( els[ i ] ) : els[ i ] ) + ">";
 				char tail[ 48 ]{ };
-				sprintf_s( tail, "|%d|%d", n.legs.empty( ) ? 0 : static_cast< int >( std::lround( n.legs.back( ).arrive_z * 10000.f ) ),
+				sprintf_s( tail, "|%d|%d", n.path ? static_cast< int >( std::lround( n.path->leg.arrive_z * 10000.f ) ) : 0,
 				           n.st.ducked ? 1 : 0 );
 				if ( !outcomes.insert( key + tail ).second )
 					return;
 			}
 			alt_rows += alt;
-			if ( n.legs.size( ) < 16 )
-				out.reach_hits[ n.legs.size( ) ]++;
+			if ( n.n_legs < 16 )
+				out.reach_hits[ n.n_legs ]++;
 			if ( !chained ) {
 				chained = true;
-				for ( std::size_t i = 0; i < n.legs.size( ); ++i ) {
-					const leg_t& l = n.legs[ i ];
+				const std::vector< const step_t* > steps = steps_of( n );
+				for ( std::size_t i = 0; i < steps.size( ); ++i ) {
+					const leg_t& l = steps[ i ]->leg;
 					botox_dbg_log( "[rc chain] %d %-9s %-11s from %9.3f stam %5.2f -> apex %9.3f %s %9.3f fall %6.1f "
 					                   "hover %5.3f gap %6.3f stam %5.2f\n",
-					                   static_cast< int >( i ) + 1, route_point_type_name( l.type ), l.name.c_str( ), l.dep_z,
+					                   static_cast< int >( i ) + 1, route_point_type_name( l.type ), steps[ i ]->name( ).c_str( ), l.dep_z,
 					                   l.dep_stam, l.apex, ( l.type == route_pt_ground || l.type == route_pt_pixeljump ) ? "land " : "catch", l.arrive_z, l.fall,
 					                   l.hover, l.gap, l.stam_out );
 				}
 			}
 			if ( static_cast< int >( out.routes.size( ) ) < cap ) {
-				if ( !n.legs.empty( ) ) {
-					const leg_t& l = n.legs.back( );
+				if ( n.path ) {
+					std::string text;
+					for ( const auto& e : els ) {
+						if ( e.empty( ) )
+							continue;
+						text += e == "fall (ducked)" ? std::string( "fall" ) : e;
+						text += '>';
+					}
+					const leg_t& l = n.path->leg;
 					botox_dbg_log( "[rc list] %2d  gap %6.4f  band %s  catch %9.4f  %s  keys %d  switches %d  presses %d  "
 					                   "cost %d  %s%s\n",
 					                   static_cast< int >( out.routes.size( ) ) + 1, l.gap,
@@ -1831,25 +2056,39 @@ namespace n_route
 		std::size_t alts_total = 0;
 		const auto list_tier = [ & ]( const node_t& n ) { return ( std::min )( tier_of( n ), 2 ); };
 		for ( int tier = 0; tier <= 2; ++tier ) {
-			for ( const node_t& n : frontier )
-				if ( list_tier( n ) == tier )
-					list_row( n, n.elements, false );
-			for ( const node_t& n : frontier ) {
+			for ( const std::size_t i : order )
+				if ( list_tier( frontier[ i ] ) == tier )
+					list_row( frontier[ i ], elements_of( frontier[ i ] ), false );
+			for ( const std::size_t i : order ) {
+				const node_t& n = frontier[ i ];
 				if ( !n.alts || list_tier( n ) != tier )
 					continue;
-				alts_total += n.alts->size( );
-				for ( const alt_t& a : *n.alts ) {
-					std::vector< std::string > els = a.prefix;
-					els.insert( els.end( ), n.elements.begin( ) + static_cast< std::ptrdiff_t >( a.len ), n.elements.end( ) );
+				alts_total += n.alts->size;
+				const std::vector< std::string > lead = elements_of( n );
+				n.alts->each( [ & ]( const std::shared_ptr< const alt_t >& a ) {
+					std::vector< std::string > els = alt_prefix( *a );
+					els.insert( els.end( ), lead.begin( ) + static_cast< std::ptrdiff_t >( a->len ), lead.end( ) );
 					list_row( n, els, true );
-				}
+				} );
 			}
 		}
-		botox_dbg_log( "[rc alts] %d unique rows from %d merged sequences, %lld over the %d cap NOT listed\n", alt_rows,
-		               static_cast< int >( alts_total ), alts_over_cap, static_cast< int >( k_alt_cap ) );
+		botox_dbg_log( "[rc alts] %d unique rows from %d merged sequences\n", alt_rows, static_cast< int >( alts_total ) );
 		out.total     = static_cast< long long >( outcomes.size( ) );
 		out.failed_at = -1;
 		commit_counts( );
+	}
+
+	void solve( const solve_input_t& in, solve_output_t& out )
+	{
+		try {
+			solve_search( in, out );
+		} catch ( const std::bad_alloc& ) {
+			/* unwound: every arc is freed. failed_at = the point it was expanding */
+			out.routes.clear( );
+			out.total         = 0;
+			out.out_of_memory = true;
+			botox_dbg_log( "[rc] out of memory at point %d: more arcs than the game's address space holds\n", out.failed_at + 1 );
+		}
 	}
 
 	std::string route_text( const std::vector< std::string >& elements )
@@ -1894,7 +2133,9 @@ namespace n_route
 		std::string line;
 		const auto t0 = std::chrono::steady_clock::now( );
 		const auto works = [ & ]( unsigned int bits ) {
-			if ( std::chrono::steady_clock::now( ) - t0 > std::chrono::milliseconds( budget_ms ) )
+			if ( budget_ms >= 0 && std::chrono::steady_clock::now( ) - t0 > std::chrono::milliseconds( budget_ms ) )
+				return false;
+			if ( in.cancel && in.cancel->load( std::memory_order_relaxed ) )
 				return false;
 			botox_dbg_log( "[rc hint] re-solve with %s switched on:\n", move_list( bits, " + " ).c_str( ) );
 			solve_input_t retry = in;

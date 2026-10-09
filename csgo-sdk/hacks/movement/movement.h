@@ -238,7 +238,8 @@ namespace n_route
 		int reach_hits[ 16 ]{ };
 		long double space    = 0.L;
 		long double searched = 0.L;
-		bool trimmed         = false;
+		/* the search outgrew the address space at failed_at and stopped ( no beam, every arc is kept ) */
+		bool out_of_memory   = false;
 		int failed_at   = -1;
 		float want_z    = 0.f;
 		float closest_z = 0.f;
@@ -252,7 +253,8 @@ namespace n_route
 	/* route calc solve running on its worker: anything else touching the engine numbers waits */
 	bool solve_busy( );
 	void route_calc_shutdown( );
-	std::string solve_hint( const solve_input_t& in, unsigned int refused, std::string& example, int budget_ms = 250 );
+	/* budget_ms < 0 = no limit ( route calc worker ); pixel calc runs on the game thread and passes its own */
+	std::string solve_hint( const solve_input_t& in, unsigned int refused, std::string& example, int budget_ms = -1 );
 	std::string move_list( unsigned int mask, const char* join );
 	/* distance calculator: longest block (kz distance, edge to edge) a longjump / jumpbug clears onto a floor dz over
 	   the takeoff, perfect strafes. max_speed = m_flMaxspeed (takeoff = 1.1x). -1 = never gets that high */

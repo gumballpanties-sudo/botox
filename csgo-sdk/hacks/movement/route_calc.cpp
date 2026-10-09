@@ -325,9 +325,6 @@ namespace
 					con( k_con_text, "   " + line + "\n" );
 				con( k_con_text, "\n" );
 			}
-		} else if ( r.trimmed ) {
-			con( k_con_bad, "the search width limit was reached, so some combos were dropped" );
-			con( k_con_text, ".\n\n" );
 		} else {
 			con( con_good( ), "successfully searched all possible combos" );
 			con( k_con_text, ".\n\n" );
@@ -888,7 +885,9 @@ namespace
 		const int idx      = result.failed_at >= 0 && result.failed_at < static_cast< int >( job.marker_no.size( ) ) ? result.failed_at : 0;
 		const int point_no = job.marker_no.empty( ) ? idx + 1 : job.marker_no[ idx ];
 		char buf[ 192 ]{ };
-		if ( result.best_gap < 3.4e38f )
+		if ( result.out_of_memory )
+			sprintf_s( buf, "point %d: too many combos to hold in memory - remove a point or turn jump types off", point_no );
+		else if ( result.best_gap < 3.4e38f )
 			sprintf_s( buf, "point %d unreachable - wants z %.4f, closest %.4f (off by %.4f)", point_no,
 			           result.want_z, result.closest_z, result.best_gap );
 		else if ( result.blocked_moves != 0u )
@@ -898,7 +897,8 @@ namespace
 			sprintf_s( buf, "point %d unreachable - no arc got near it", point_no );
 		job.fail = buf;
 		botox_dbg_log( "[rc] %s\n", buf );
-		if ( job.advanced )
+		/* more moves on = more arcs: no hint re-solve after running out of memory */
+		if ( job.advanced && !result.out_of_memory )
 			job.hint = n_route::solve_hint( job.in, result.refused_moves, job.example );
 	}
 
@@ -922,7 +922,7 @@ namespace
 			print_report( result, job.seconds, "", job.in, job.marker_no );
 			return;
 		}
-		data.message = job.advanced ? job.fail : "no solutions found";
+		data.message = job.advanced || result.out_of_memory ? job.fail : "no solutions found";
 		say( 3, "route: " + data.message );
 		if ( !job.hint.empty( ) ) {
 			data.note = "with " + job.hint + " on ( off in jump types ): " + job.example;

@@ -765,9 +765,7 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 		atlas->AddFontFromMemoryCompressedTTF( icon_font_compressed_data, icon_font_compressed_size, 13.f, 0, icon_ranges );
 
 	ImFontConfig icon_font_config     = { };
-	icon_font_config.FontBuilderFlags = ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_LightHinting |
-	                                    ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Monochrome |
-	                                    ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_MonoHinting;
+	icon_font_config.FontBuilderFlags = ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_LightHinting;
 
 	constexpr ImWchar weapon_icon_ranges[] = { 0xe000, 0xf8ff, 0 };
 	fonts[ e_font_names::font_name_icon_12 ] = atlas->AddFontFromMemoryCompressedTTF(
