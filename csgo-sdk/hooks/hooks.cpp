@@ -83,6 +83,9 @@ bool n_hooks::impl_t::on_attach( )
 	initialise_hook( m_tier0_warning, g_modules[ TIER0_DLL ].find_export( HASH_BT( "Warning" ) ), &n_detoured_functions::tier0_warning,
 	                 "tier0::Warning()" );
 
+	initialise_hook( m_random_int, g_modules[ VSTDLIB_DLL ].find_export( HASH_BT( "RandomInt" ) ), &n_detoured_functions::random_int,
+	                 "vstdlib::RandomInt()" );
+
 	initialise_hook( m_alloc_key_values_memory, safe_vfunc( g_interfaces.m_key_values_system, 2 ), &n_detoured_functions::alloc_key_values_memory,
 	                 "IKeyValuesSystem::AllocKeyValuesMemory()" );
 

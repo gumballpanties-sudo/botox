@@ -63,22 +63,26 @@ static const char k_shader[] =
 	"#endif\n"
 	"float4 main(float2 uv:TEXCOORD0):COLOR0{"
 	"float3 c=src(uv);\n"
-	/* deband = edge keeping smooth, BrutPitt smartDeNoise bilateral: vogel disk taps, weight = gaussian( dist, sigma radius / 2 )
-	   * gaussian( color diff, sigma threshold ), so flat / noisy areas average and edges ( diff >> threshold ) keep. exp2 with
-	   log2e folded in c16.x, then grain */
+	/* deband = vegas boris dft DeBand ( gradientShop.cl ): pixel steps under thres dropped, image re solved as screened poisson
+	   ( lambda - lap ) u = lambda c - div g. single pass form: u = c + green's fn blur of the dropped part J, J = running sum of
+	   clamp( step, -thres, thres ) marched out along c17.x rays, 12 texel snapped taps ( no bilinear: an edge split over 2 taps
+	   would count twice ), r >= 1 px apart, geometric by c18.z out to 5 * radius. weight sqrt( z ) exp( -z ) dz ~ z K0( z ) ring,
+	   z = r / radius, constant factors dropped, c16.y = log2e / radius, c18.w = 1 / weight sum, c9.zw = ray step turn */
 	"#if DEBAND\n"
-	"float dn=frac(52.9829189*frac(dot(uv/c13.xy+c16.w,float2(0.06711056,0.00583715))));"
+	"float2 dq=uv*c11.zw,dh=c13.xy*0.5;"
+	"float dn=frac(52.9829189*frac(dot(dq+c16.w,float2(0.06711056,0.00583715))));"
 	"float2 dd;sincos(6.2831853*dn,dd.y,dd.x);"
-	"float3 da=c;float dw=1.0;"
-	"[loop]for(float di=0.5;di<64.0;di+=1.0){"
+	"float3 d0=raw(uv),da=0.0;"
+	"[loop]for(float di=0.5;di<16.0;di+=1.0){"
 	"if(di>c17.x)break;"
-	"float dt=di/c17.x;"
-	"float3 ds=raw(uv+dd*sqrt(dt)*c16.y*c13.xy);"
-	"float3 dc=ds-c;"
-	"float w=exp2(-2.8853901*dt-dot(dc,dc)*c16.x);"
-	"da+=ds*w;dw+=w;"
-	"dd=float2(dd.x*-0.73736888-dd.y*0.67549029,dd.x*0.67549029+dd.y*-0.73736888);}"
-	"c=da/dw+c16.z*(frac(dn+float3(0.0,0.381966,0.618034))-0.5);\n"
+	"float3 dp=d0,dj=0.0;float dk=1.0,dl=0.0;"
+	"[loop]for(float dm=0.0;dm<12.0;dm+=1.0){"
+	"float2 df=dq+dd*dk;"
+	"float3 ds=raw((df-frac(df))*c13.xy+dh);"
+	"dj+=clamp(ds-dp,-c16.x,c16.x);dp=ds;"
+	"da+=dj*(sqrt(dk)*exp2(-dk*c16.y)*(dk-dl));dl=dk;dk=max(dk+1.0,dk*c18.z);}"
+	"dd=float2(dd.x*c9.z-dd.y*c9.w,dd.x*c9.w+dd.y*c9.z);}"
+	"c+=da*c18.w;\n"
 	"#endif\n"
 	"#if VIGNETTE\n"
 	"float2 vt=uv-0.5;"
@@ -88,7 +92,7 @@ static const char k_shader[] =
 	/* blur: 24 tap vogel disk, radius = mask * blur px, lod taps ( gradients undefined in a branch ), under half a px skipped.
 	   [loop] not unroll: unrolled taps push the all-stages variant past ps_3_0's 512 slots */
 	"if(vm*c9.x>0.5){"
-	"float2 vp=uv/c13.xy;"
+	"float2 vp=uv*c11.zw;"
 	"float2 vd;"
 	"sincos(6.2831853*frac(52.9829189*frac(dot(vp,float2(0.06711056,0.00583715)))),vd.y,vd.x);"
 	"float2 vs=vm*c9.x*c13.xy;"
@@ -156,7 +160,7 @@ static const char k_shader[] =
 	"#endif\n"
 	/* posterize: n levels, optional ign dither of one step before rounding ( prod80 PD80_06 style, round not floor so white stays white ) */
 	"#if POSTERIZE\n"
-	"float pn=frac(52.9829189*frac(dot(uv/c13.xy,float2(0.06711056,0.00583715))))-0.5;"
+	"float pn=frac(52.9829189*frac(dot(uv*c11.zw,float2(0.06711056,0.00583715))))-0.5;"
 	"float3 pq=floor(saturate(c)*c17.y+0.5+pn*c17.z)/c17.y;"
 	"c=lerp(c,saturate(pq),c17.w);\n"
 	"#endif\n"
@@ -177,6 +181,10 @@ static const char k_shader[] =
 	"float gl=saturate(abs(dot(c,float3(0.299,0.587,0.114))-c12.x)*c12.y);"
 	"gl*=gl;"
 	"c=saturate(c+n*lerp(1.0-gl*gl,1.0,c12.z)*c14.w);\n"
+	"#endif\n"
+	/* deband dither last: the 8 bit back buffer rounds the smooth ramp straight back into the same bands. tpdf, c16.z = 1 step at 16 */
+	"#if DEBAND\n"
+	"c+=c16.z*(dn+frac(52.9829189*frac(dot(dq+c16.w*1.7+37.0,float2(0.00583715,0.06711056))))-1.0);\n"
 	"#endif\n"
 	"return float4(c,1);"
 	"}";
@@ -716,7 +724,30 @@ bool n_color_correction::impl_t::on_end_scene_post( IDirect3DDevice9* device )
 
 	const float constant_8[ 4 ] = { vignette_color[ 0 ] / 255.f, vignette_color[ 1 ] / 255.f, vignette_color[ 2 ] / 255.f, vignette_color[ 3 ] / 255.f };
 
-	const float constant_9[ 4 ] = { vignette_blur, vignette_blur > 0.f ? 1.f : 0.f, 0.f, 0.f };
+	// deband tap growth: 12 taps from 1 px, r = max( r + 1, r * q ), q bisected so tap 12 lands on 5 * radius
+	const float deband_radius = std::clamp( GET_VARIABLE( g_variables.m_deband_radius, float ), 4.f, 48.f );
+	const int deband_rays     = std::clamp( GET_VARIABLE( g_variables.m_deband_iterations, int ), 1, 4 ) * 4;
+	float deband_low = 1.f, deband_high = 4.f;
+	for ( int pass = 0; pass < 32; pass++ ) {
+		const float growth = ( deband_low + deband_high ) * 0.5f;
+		float reach        = 1.f;
+		for ( int tap = 1; tap < 12; tap++ )
+			reach = std::max( reach + 1.f, reach * growth );
+		( reach < 5.f * deband_radius ? deband_low : deband_high ) = growth;
+	}
+
+	// same r walk + weight as the shader, summed so it can multiply instead of tracking dw
+	const float deband_growth = ( deband_low + deband_high ) * 0.5f;
+	float deband_weight = 0.f, deband_reach = 1.f, deband_last = 0.f;
+	for ( int tap = 0; tap < 12; tap++ ) {
+		deband_weight += std::sqrt( deband_reach ) * std::exp2( -deband_reach * 1.4426950f / deband_radius ) * ( deband_reach - deband_last );
+		deband_last  = deband_reach;
+		deband_reach = std::max( deband_reach + 1.f, deband_reach * deband_growth );
+	}
+
+	const float deband_turn = 6.28318531f / static_cast< float >( deband_rays );
+
+	const float constant_9[ 4 ] = { vignette_blur, vignette_blur > 0.f ? 1.f : 0.f, std::cos( deband_turn ), std::sin( deband_turn ) };
 
 	const float constant_10[ 4 ] = { GET_VARIABLE( g_variables.m_channel_shift_red_x, float ) / width,
 		                             GET_VARIABLE( g_variables.m_channel_shift_red_y, float ) / height,
@@ -724,22 +755,22 @@ bool n_color_correction::impl_t::on_end_scene_post( IDirect3DDevice9* device )
 		                             GET_VARIABLE( g_variables.m_channel_shift_green_y, float ) / height };
 
 	const float constant_11[ 4 ] = { GET_VARIABLE( g_variables.m_channel_shift_blue_x, float ) / width,
-		                             GET_VARIABLE( g_variables.m_channel_shift_blue_y, float ) / height, 0.f, 0.f };
+		                             GET_VARIABLE( g_variables.m_channel_shift_blue_y, float ) / height, width, height };
 
-	// x = log2e / ( 2 sigma² ), sigma = threshold in 8 bit steps; grain / 8192; w = ign temporal offset ( 5.588238 px per frame )
-	const float deband_sigma     = std::max( GET_VARIABLE( g_variables.m_deband_threshold, float ), 1.f ) / 255.f;
-	const float constant_16[ 4 ] = { 1.4426950f * 0.5f / ( deband_sigma * deband_sigma ),
-		                             std::clamp( GET_VARIABLE( g_variables.m_deband_range, float ), 1.f, 16.f ),
-		                             GET_VARIABLE( g_variables.m_deband_grain, float ) / 8192.f,
+	// x = boris thres ( strength * 0.001, BCC+.ofx ); y = log2e / radius, radius px = 1 / sqrt( dataCost ), boris 0.005 = 14;
+	// z = dither, 16 = 1 step; w = ign temporal offset ( 5.588238 px per frame )
+	const float constant_16[ 4 ] = { std::clamp( GET_VARIABLE( g_variables.m_deband_strength, float ), 1.f, 50.f ) * 0.001f, 1.4426950f / deband_radius,
+		                             GET_VARIABLE( g_variables.m_deband_grain, float ) / ( 16.f * 255.f ),
 		                             static_cast< float >( grain_frame % 64u ) * 5.588238f };
 
 	const float posterize_steps = static_cast< float >( std::clamp( GET_VARIABLE( g_variables.m_posterize_levels, int ), 2, 64 ) - 1 );
 
-	const float constant_17[ 4 ] = { static_cast< float >( std::clamp( GET_VARIABLE( g_variables.m_deband_iterations, int ), 1, 4 ) * 16 ), posterize_steps,
+	const float constant_17[ 4 ] = { static_cast< float >( deband_rays ), posterize_steps,
 		                             GET_VARIABLE( g_variables.m_posterize_dither, float ), GET_VARIABLE( g_variables.m_posterize_strength, float ) };
 
 	const float constant_18[ 4 ] = { GET_VARIABLE( g_variables.m_invert_filter_strength, float ),
-		                             GET_VARIABLE( g_variables.m_invert_filter_mode, int ) == 1 ? 1.f : 0.f, 0.f, 0.f };
+		                             GET_VARIABLE( g_variables.m_invert_filter_mode, int ) == 1 ? 1.f : 0.f, deband_growth,
+		                             1.f / ( static_cast< float >( deband_rays ) * deband_weight ) };
 
 	const float block[ 19 ][ 4 ] = { { constant_0[ 0 ], constant_0[ 1 ], constant_0[ 2 ], constant_0[ 3 ] },
 		                             { constant_1[ 0 ], constant_1[ 1 ], constant_1[ 2 ], constant_1[ 3 ] },

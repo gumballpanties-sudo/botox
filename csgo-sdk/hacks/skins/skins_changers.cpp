@@ -695,3 +695,182 @@ void n_skins::impl_t::gloves_changer( )
 		re_arm_at = 0.f;
 	}
 }
+
+namespace
+{
+	/* listen server = one model cache: its view model + knife hold the same graph. what the `flush` command does
+	   (CServerGameDLL::InvalidateMdlCache, live slot 33): CBaseAnimating::InvalidateMdlCache = [vt+0x320], GetModelPtr
+	   relocks lazily. live server.dll: IServerTools FirstEntity 7 / NextEntity 8, IServerEntity GetModelIndex 6 */
+	int drop_server_hdrs( const model_t* const mesh_models[ KNIFE_COUNT ], const int indexes[ KNIFE_COUNT ], unsigned int& held_meshes )
+	{
+		static void* tools = nullptr;
+		if ( !tools ) {
+			if ( void* sv = GetModuleHandleA( "server.dll" ) )
+				tools = module_t( sv, "server.dll" ).find_interface( "VSERVERTOOLS001" );
+			if ( !tools )
+				return -1;
+		}
+
+		int dropped = 0;
+		for ( void* entity = g_virtual.call< void* >( tools, 7 ); entity; entity = g_virtual.call< void*, void* >( tools, 8, entity ) ) {
+			const int model_index = g_virtual.call< int >( entity, 6 );
+			for ( int i = 1; i < KNIFE_COUNT; i++ ) {
+				if ( !mesh_models[ i ] || model_index != indexes[ i ] )
+					continue;
+
+				g_virtual.call< void >( entity, 200 );
+				held_meshes |= 1u << i;
+				dropped++;
+				break;
+			}
+		}
+		return dropped;
+	}
+
+	/* freed graphs go straight back to the next 0xa8 alloc = the rebuild, and a same address graph keeps every activity
+	   map (client + server, studio.cpp ValidateAgainst) on the old donor's table: idle -> draw seqs, inspect gone.
+	   live datacache.dll GetVirtualModelFast: g_pMemAlloc Alloc( 0xa8 ) = slot 1, Free = slot 5 */
+	constexpr std::size_t VIRTUAL_MODEL_SIZE = 0xa8;
+	constexpr int GRAPH_DECOYS               = 8;
+
+	void* mem_alloc( )
+	{
+		static void** exported = [ ]( ) -> void** {
+			const auto tier0 = GetModuleHandleA( "tier0.dll" );
+			return tier0 ? reinterpret_cast< void** >( GetProcAddress( tier0, "g_pMemAlloc" ) ) : nullptr;
+		}( );
+		return exported ? *exported : nullptr;
+	}
+}
+
+/* a mid map flush crashed because CStudioHdr keeps a raw graph pointer (studio.cpp ResetVModel) on the view model AND
+   the knife weapon (SendWeaponAnim picks off the weapon's hdr): draw played, next anim read freed memory. so do what a
+   model change does: model 0 (OnNewModel deletes the hdr), flush, model back (new hdr, include resolves the new donor) */
+void n_skins::impl_t::knife_anim_live( )
+{
+	const char* pick           = g_anim_pick.load( std::memory_order_relaxed );
+	const unsigned int targets = g_anim_targets_pick.load( std::memory_order_relaxed );
+	const char* donor          = g_anim_donor.load( std::memory_order_relaxed );
+	const unsigned int live    = g_anim_targets.load( std::memory_order_relaxed );
+
+	if ( pick == donor && targets == live )
+		return;
+
+	unsigned int meshes = 0;
+	for ( int i = 1; i < KNIFE_COUNT; i++ ) {
+		const unsigned int bit = 1u << i;
+		if ( ( ( live & bit ) ? donor : nullptr ) != ( ( targets & bit ) ? pick : nullptr ) )
+			meshes |= bit;
+	}
+
+	g_anim_donor.store( pick, std::memory_order_relaxed );
+	g_anim_targets.store( targets, std::memory_order_relaxed );
+
+	if ( !meshes || !g_interfaces.m_model_cache )
+		return;
+
+	int indexes[ KNIFE_COUNT ];
+	fill_knife_indexes( indexes );
+
+	const model_t* mesh_models[ KNIFE_COUNT ] = { };
+	for ( int i = 1; i < KNIFE_COUNT; i++ ) {
+		if ( ( meshes & ( 1u << i ) ) && indexes[ i ] > 0 )
+			mesh_models[ i ] = g_interfaces.m_model_info->get_model( indexes[ i ] );
+	}
+
+	struct held_t {
+		c_base_entity* m_entity;
+		int m_index;
+	};
+	std::vector< held_t > held;
+	unsigned int held_meshes = 0;
+
+	for ( int e = 1; e <= g_interfaces.m_client_entity_list->get_highest_entity_index( ); e++ ) {
+		const auto entity = g_interfaces.m_client_entity_list->get< c_base_entity >( e );
+		const model_t* model = entity ? entity->get_model( ) : nullptr;
+		if ( !model )
+			continue;
+
+		for ( int i = 1; i < KNIFE_COUNT; i++ ) {
+			if ( model != mesh_models[ i ] )
+				continue;
+
+			held.push_back( { entity, indexes[ i ] } );
+			held_meshes |= 1u << i;
+			entity->set_model_index( 0 );
+			break;
+		}
+	}
+
+	const auto nci       = g_interfaces.m_engine_client->get_net_channel_info( );
+	const int server_held = nci && nci->is_loopback( ) ? drop_server_hdrs( mesh_models, indexes, held_meshes ) : 0;
+
+	unsigned short handles[ KNIFE_COUNT ];
+	const void* old_graphs[ KNIFE_COUNT ] = { };
+	for ( int i = 1; i < KNIFE_COUNT; i++ ) {
+		handles[ i ] = 0xffff;
+		if ( !( meshes & ( 1u << i ) ) )
+			continue;
+
+		// fresh handle + our own ref: a cached one can be recycled into another model
+		handles[ i ] = g_interfaces.m_model_cache->find_mdl( KNIFE_MODELS[ i ] );
+		if ( handles[ i ] == 0xffff )
+			continue;
+
+		if ( held_meshes & ( 1u << i ) )
+			old_graphs[ i ] = g_interfaces.m_model_cache->get_virtual_model( handles[ i ] );
+
+		g_interfaces.m_model_cache->flush( handles[ i ], c_model_cache::flush_virtual_model );
+	}
+
+	void* const allocator = mem_alloc( );
+	void* decoys[ GRAPH_DECOYS ] = { };
+	for ( auto& decoy : decoys )
+		decoy = allocator ? g_virtual.call< void*, std::size_t >( allocator, 1, VIRTUAL_MODEL_SIZE ) : nullptr;
+
+	for ( const auto& entry : held )
+		entry.m_entity->set_model_index( entry.m_index );
+
+	int same = 0;
+	for ( int i = 1; i < KNIFE_COUNT; i++ ) {
+		if ( handles[ i ] == 0xffff )
+			continue;
+
+		// server-only holders rebuild lazily, after the decoys are gone: build theirs now too
+		if ( held_meshes & ( 1u << i ) ) {
+			const void* fresh = g_interfaces.m_model_cache->get_virtual_model( handles[ i ] );
+			same += fresh == old_graphs[ i ];
+			botox_dbg_log( "KANIM: mesh %d graph %p -> %p same=%d donor %s", i, old_graphs[ i ], fresh, fresh == old_graphs[ i ] ? 1 : 0,
+			               pick ? pick : "stock" );
+		}
+
+		g_interfaces.m_model_cache->release( handles[ i ] );
+	}
+
+	int decoyed = 0;
+	for ( void* decoy : decoys ) {
+		if ( !decoy )
+			continue;
+		for ( int i = 1; i < KNIFE_COUNT; i++ )
+			decoyed += decoy == old_graphs[ i ];
+		g_virtual.call< void, void* >( allocator, 5, decoy );
+	}
+
+	botox_dbg_log( "KANIM: live meshes 0x%X held %d server %d same %d decoyed %d alloc %p", meshes, static_cast< int >( held.size( ) ),
+	               server_held, same, decoyed, allocator );
+
+	g_knife_view.m_view_model = nullptr;
+
+	// arms bone merge onto the view model and cached its old hdr's merge flags: rebuild them like the glove changer does
+	const auto local = g_ctx.m_local;
+	if ( !local || !local->is_alive( ) )
+		return;
+
+	const auto viewmodel = g_interfaces.m_client_entity_list->get< c_base_entity >( local->get_view_model_handle( ) );
+	for ( const auto& entry : held ) {
+		if ( entry.m_entity == viewmodel ) {
+			rebuild_arms( local, nullptr, "knife anims" );
+			break;
+		}
+	}
+}

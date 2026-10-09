@@ -82,6 +82,7 @@ namespace n_hooks
 		c_detour_hook m_get_local_view_angles{ };
 
 		c_detour_hook m_tier0_warning{ };
+		c_detour_hook m_random_int{ };
 
 		c_detour_hook m_loose_files_allowed{ };
 		c_detour_hook m_check_for_pure_server_whitelist{ };
@@ -179,5 +180,6 @@ namespace n_detoured_functions
 	const view_matrix_t& __fastcall world_to_screen_matrix( void* ecx, void* edx );
 
 	void __cdecl tier0_warning( const char* format, ... );
+	int __cdecl random_int( int min, int max );
 
 }

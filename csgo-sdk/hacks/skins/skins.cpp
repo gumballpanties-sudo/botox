@@ -353,6 +353,7 @@ void n_skins::impl_t::on_frame_stage_notify( int stage )
 	init_parser( );
 
 	agent_changer( );
+	knife_anim_live( );
 	knife_changer( );
 	gloves_changer( );
 	full_update( );
@@ -538,6 +539,9 @@ void n_skins::impl_t::deagle_spinner( )
 		rolling = rolling || key;
 		if ( rolling ) {
 			if ( now - last_send > std::max( echo, k_roll_gap ) && now - last_cancel > echo ) {
+				// own server: rig the roll (hooks/functions/random_int.cpp), real lookat02 = demos + spectators see it
+				if ( const auto nci = g_interfaces.m_engine_client->get_net_channel_info( ); nci && nci->is_loopback( ) )
+					g_rig_lookat_until.store( GetTickCount64( ) + 1000ull, std::memory_order_relaxed );
 				send( true, -1.f );
 				rolls++;
 			}
@@ -548,6 +552,7 @@ void n_skins::impl_t::deagle_spinner( )
 
 	if ( rolling )
 		botox_dbg_log( "[spin] hit after %d rolls", rolls );
+	g_rig_lookat_until.store( 0, std::memory_order_relaxed );
 	rolling = false;
 	rolls   = 0;
 

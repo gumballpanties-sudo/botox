@@ -223,7 +223,7 @@ void on_hit_sound( );
 void on_healthshot( int trigger );
 void on_death_particles( int victim_index, int attacker_index );
 void kill_effects_paint( );
-void kill_effects_world( const c_vector& origin );
+void kill_effects_world( const c_vector& origin, const c_angle& angles );
 void kill_effects_capture( IDirect3DDevice9* device );
 void kill_effects_release_textures( );
 void kill_effects_shutdown( );
@@ -264,7 +264,7 @@ void discord_rpc_start( );
 void discord_rpc_frame( );
 inline std::atomic< bool > g_discord_rpc_alive{ false };
 
-/* menu image box "browse": file dialog (+ catbox upload) thread. cancel = eject closes dialog + aborts upload */
+/* menu image box "browse": file dialog (+ freeimage.host upload) thread. cancel = eject closes dialog + aborts upload */
 void image_pick_cancel( );
 inline std::atomic< bool > g_image_pick_alive{ false };
 /* gif/mascot box url downloads (spectator_list.cpp file_image_frame) in flight */

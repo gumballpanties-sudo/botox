@@ -38,8 +38,9 @@ namespace
 		s_pick_done   = true;
 	}
 
-	/* discord fetches the image itself, so a local file needs a public url. anonymous, no key */
-	std::string catbox_upload( const std::string& path )
+	/* discord fetches the image itself, so a local file needs a public url. freeimage.host public key (their api page).
+	   not catbox: discord proxy gets 502 from files.catbox.moe = "?" image */
+	std::string image_upload( const std::string& path )
 	{
 		std::ifstream file( path, std::ios::binary );
 		const std::string data( ( std::istreambuf_iterator< char >( file ) ), std::istreambuf_iterator< char >( ) );
@@ -53,8 +54,9 @@ namespace
 		std::erase_if( extension, []( const char c ) { return !isalnum( static_cast< unsigned char >( c ) ) && c != '.'; } );
 
 		const std::string boundary = std::format( "----botox{:08x}{:08x}", GetTickCount( ), GetCurrentThreadId( ) );
-		std::string body = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"reqtype\"\r\n\r\nfileupload\r\n--" + boundary +
-		                   "\r\nContent-Disposition: form-data; name=\"fileToUpload\"; filename=\"image" + extension +
+		std::string body = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"key\"\r\n\r\n6d207e02198a847aa98d0a2a901485a5\r\n--" + boundary +
+		                   "\r\nContent-Disposition: form-data; name=\"format\"\r\n\r\ntxt\r\n--" + boundary +
+		                   "\r\nContent-Disposition: form-data; name=\"source\"; filename=\"image" + extension +
 		                   "\"\r\nContent-Type: application/octet-stream\r\n\r\n";
 		body += data;
 		body += "\r\n--" + boundary + "--\r\n";
@@ -67,8 +69,8 @@ namespace
 		WinHttpSetTimeouts( session, 5000, 5000, 30000, 30000 );
 
 		std::string out;
-		HINTERNET connection = WinHttpConnect( session, L"catbox.moe", INTERNET_DEFAULT_HTTPS_PORT, 0 );
-		HINTERNET request    = connection ? WinHttpOpenRequest( connection, L"POST", L"/user/api.php", nullptr, WINHTTP_NO_REFERER,
+		HINTERNET connection = WinHttpConnect( session, L"freeimage.host", INTERNET_DEFAULT_HTTPS_PORT, 0 );
+		HINTERNET request    = connection ? WinHttpOpenRequest( connection, L"POST", L"/api/1/upload", nullptr, WINHTTP_NO_REFERER,
 		                                                        WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE )
 		                                  : nullptr;
 
@@ -109,7 +111,7 @@ namespace
 		dialog.lpstrFilter = "images\0*.png;*.jpg;*.jpeg;*.gif;*.bmp\0all files\0*.*\0";
 		dialog.lpstrFile   = path;
 		dialog.nMaxFile    = MAX_PATH;
-		dialog.lpstrTitle  = upload ? "pick image (uploads to catbox.moe)" : "pick image";
+		dialog.lpstrTitle  = upload ? "pick image (uploads to freeimage.host)" : "pick image";
 		dialog.Flags       = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
 
 		s_pick_thread = GetCurrentThreadId( );
@@ -126,7 +128,7 @@ namespace
 				s_pick_status = "uploading...";
 			}
 
-			const std::string url = catbox_upload( path );
+			const std::string url = image_upload( path );
 			botox_dbg_log( "PICK: upload %s", url.empty( ) ? "failed" : url.c_str( ) );
 			pick_finish( url.empty( ) ? "upload failed" : "uploaded", url );
 		}
@@ -138,7 +140,7 @@ namespace
 		return 0;
 	}
 
-	/* text box + browse button. upload = local file goes to catbox, box gets the url (discord) */
+	/* text box + browse button. upload = local file goes to freeimage.host, box gets the url (discord) */
 	void image_path_input( const char* label, const char* hint, std::string& value, const bool upload )
 	{
 		static std::unordered_map< ImGuiID, std::array< char, 260 > > buffers;
@@ -493,9 +495,7 @@ void n_menu::impl_t::tab_inventory( )
 		if ( menu_group_begin( "knife" ) ) {
 			ImGui::Checkbox( "enable knife anims", &GET_VARIABLE( g_variables.m_knife_anims_enable, bool ) );
 			if ( GET_VARIABLE( g_variables.m_knife_anims_enable, bool ) ) {
-				/* include is read once at map load; no "apply now": forcing a re-resolve mid map crashes */
-				ImGui::TextDisabled( "pick before joining a map" );
-
+				// applies live, knife_anim_live
 				if ( !n_skins::knife_anims_fit( GET_VARIABLE( g_variables.m_knife_anims_model, int ),
 				                                GET_VARIABLE( g_variables.m_knife_model, int ) ) )
 					ImGui::TextColored( ImVec4( 1.f, 0.4f, 0.4f, 1.f ), "wrong bones for this knife — draw will not play" );

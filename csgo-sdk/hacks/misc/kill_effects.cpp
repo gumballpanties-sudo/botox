@@ -89,6 +89,7 @@ namespace
 		c_color m_color{ };
 		float m_age = 0.f, m_life = 1.f;
 		float m_size  = 1.f;
+		float m_seed  = 0.f;
 		int m_style   = 0;
 		bool m_resting = false;
 		// minecraft: ticks at 20 hz, m_vel = u / tick
@@ -217,6 +218,7 @@ namespace
 			puff.m_style = k_smoke_style;
 			puff.m_size  = radius * rand_range( 0.75f, 1.15f ) * size;
 			puff.m_life  = rand_range( 0.6f, 1.f ) * life;
+			puff.m_seed  = rand01( );
 			const int shade = static_cast< int >( rand_range( 150.f, 205.f ) );
 			puff.m_color    = c_color( shade, shade, shade, 255 );
 			push( puff );
@@ -495,71 +497,42 @@ namespace
 		particle.m_pos = particle.m_pos + particle.m_vel * dt;
 	}
 
-	bool project( const c_vector& pos, const float radius, c_vector_2d& screen, float& radius_px )
-	{
-		if ( !g_render.world_to_screen( pos, screen ) )
-			return false;
-
-		c_vector_2d up{ }, side{ };
-		float px = 0.f;
-
-		if ( g_render.world_to_screen( pos + c_vector( 0.f, 0.f, radius ), up ) )
-			px = ( std::max )( px, std::hypot( up.m_x - screen.m_x, up.m_y - screen.m_y ) );
-		if ( g_render.world_to_screen( pos + c_vector( radius, 0.f, 0.f ), side ) )
-			px = ( std::max )( px, std::hypot( side.m_x - screen.m_x, side.m_y - screen.m_y ) );
-		if ( g_render.world_to_screen( pos + c_vector( 0.f, radius, 0.f ), side ) )
-			px = ( std::max )( px, std::hypot( side.m_x - screen.m_x, side.m_y - screen.m_y ) );
-
-		radius_px = std::clamp( px, 0.75f, 40.f );
-		return true;
-	}
-
-	struct kfx_draw_t {
-		float m_x, m_y, m_radius;
-		unsigned int m_color, m_glow, m_highlight;
-		bool m_ball, m_smoke, m_mc;
-		int m_xp = -1;
+	/* world billboard corner = center + ( right * m_ox + up * m_oy ) * m_radius, expanded in k_kfx_vs with the view's axes.
+	   m_su / m_sv run -1..1 across the quad ( shape space for the pixel shader ) */
+	struct kfx_vertex_t {
+		float m_x, m_y, m_z;
+		unsigned int m_color;
+		float m_ox, m_oy, m_radius, m_kind;
+		float m_su, m_sv;
 	};
 
-	ImU32 scale_alpha( const ImU32 color, const float k )
+	enum e_kfx_kind : int { kfx_square, kfx_disc, kfx_glow, kfx_smoke };
+
+	// rebuilt every paint, drawn in kill_effects_world ( main thread both )
+	std::vector< kfx_vertex_t > g_kfx_quads{ };
+
+	// spin = 0..1 shader param packed into frac( kind ), smoke only
+	void kfx_quad( const c_vector& at, const float radius, const float x0, const float y0, const float x1, const float y1, const e_kfx_kind kind,
+	               const ImU32 color, const float spin = 0.f )
 	{
-		const auto alpha = static_cast< ImU32 >( static_cast< float >( ( color & IM_COL32_A_MASK ) >> IM_COL32_A_SHIFT ) * k );
-		return ( color & ~IM_COL32_A_MASK ) | ( alpha << IM_COL32_A_SHIFT );
+		// imgui packs abgr, d3d diffuse = argb
+		const unsigned int argb = ( color & 0xff00ff00u ) | ( ( color & 0xffu ) << 16 ) | ( ( color >> 16 ) & 0xffu );
+		const auto corner       = [ & ]( const float x, const float y, const float su, const float sv ) {
+			return kfx_vertex_t{ at.m_x, at.m_y, at.m_z, argb, x, y, radius, static_cast< float >( kind ) + spin, su, sv };
+		};
+		const kfx_vertex_t a = corner( x0, y0, -1.f, -1.f ), b = corner( x1, y0, 1.f, -1.f ), c = corner( x1, y1, 1.f, 1.f ), d = corner( x0, y1, -1.f, 1.f );
+		g_kfx_quads.insert( g_kfx_quads.end( ), { a, b, c, a, c, d } );
 	}
 
-	void soft_soul( ImDrawList* list, const ImVec2 at, const float radius, const ImU32 color )
+	/* pixel art spanning -1..1, row 0 on top: one square per texel, texel( x, y ) == 0 = clear */
+	template < typename T >
+	void kfx_sprite( const c_vector& at, const float radius, const int texels, T&& texel )
 	{
-		constexpr int segments = 16;
-		constexpr int rings    = 4;
-		const float radii[ rings ]  = { radius * 0.4f, radius, radius * 1.7f, radius * 2.8f };
-		const ImU32 colors[ rings ] = { color, scale_alpha( color, 0.5f ), scale_alpha( color, 0.16f ), scale_alpha( color, 0.f ) };
-		const ImVec2 uv             = list->_Data->TexUvWhitePixel;
-
-		list->PrimReserve( segments * 3 + ( rings - 1 ) * segments * 6, 1 + rings * segments );
-		// read after PrimReserve: it resets _VtxCurrentIdx past 64k verts
-		const auto base = static_cast< ImDrawIdx >( list->_VtxCurrentIdx );
-
-		list->PrimWriteVtx( at, uv, color );
-		for ( int ring = 0; ring < rings; ring++ )
-			for ( int s = 0; s < segments; s++ ) {
-				const float angle = IM_PI * 2.f * static_cast< float >( s ) / segments;
-				list->PrimWriteVtx( ImVec2( at.x + std::cos( angle ) * radii[ ring ], at.y + std::sin( angle ) * radii[ ring ] ), uv, colors[ ring ] );
-			}
-
-		const auto vtx = [ base ]( const int ring, const int s ) { return static_cast< ImDrawIdx >( base + 1 + ring * segments + s % segments ); };
-		for ( int s = 0; s < segments; s++ ) {
-			list->PrimWriteIdx( base );
-			list->PrimWriteIdx( vtx( 0, s ) );
-			list->PrimWriteIdx( vtx( 0, s + 1 ) );
-			for ( int ring = 0; ring + 1 < rings; ring++ ) {
-				list->PrimWriteIdx( vtx( ring, s ) );
-				list->PrimWriteIdx( vtx( ring, s + 1 ) );
-				list->PrimWriteIdx( vtx( ring + 1, s + 1 ) );
-				list->PrimWriteIdx( vtx( ring, s ) );
-				list->PrimWriteIdx( vtx( ring + 1, s + 1 ) );
-				list->PrimWriteIdx( vtx( ring + 1, s ) );
-			}
-		}
+		const float step = 2.f / static_cast< float >( texels );
+		for ( int y = 0; y < texels; y++ )
+			for ( int x = 0; x < texels; x++ )
+				if ( const ImU32 color = texel( x, y ) )
+					kfx_quad( at, radius, -1.f + step * x, 1.f - step * ( y + 1 ), -1.f + step * ( x + 1 ), 1.f - step * y, kfx_square, color );
 	}
 
 	/* ---- melt sim: pure cpu, built offline by tools/melt_bench ( rerun it after any edit up to "melt sim end" ) ---- */
@@ -1660,6 +1633,9 @@ namespace
 	IDirect3DVertexShader9* g_melt_vs     = nullptr;
 	IDirect3DPixelShader9* g_melt_ps      = nullptr;
 	bool g_melt_shader_failed             = false;
+	IDirect3DVertexShader9* g_kfx_vs      = nullptr;
+	IDirect3DPixelShader9* g_kfx_ps       = nullptr;
+	bool g_kfx_shader_failed              = false;
 
 	std::vector< melt_t > g_melts{ };
 	std::vector< melt_skin_slot_t > g_melt_skins{ };
@@ -2215,34 +2191,123 @@ float4 main( float3 normal : TEXCOORD0, float3 world : TEXCOORD1, float4 color :
 }
 )";
 
-	bool melt_shaders( IDirect3DDevice9* device )
+	/* render thread: billboards from kfx_quad, shape picked by kind ( e_kfx_kind ) */
+	constexpr const char* k_kfx_vs = R"(
+float4 row0 : register( c0 );
+float4 row1 : register( c1 );
+float4 row2 : register( c2 );
+float4 row3 : register( c3 );
+float4 right : register( c4 );
+float4 up : register( c5 );
+
+struct vs_in {
+	float3 position : POSITION;
+	float4 color : COLOR0;
+	float4 quad : TEXCOORD0;
+	float2 shape : TEXCOORD1;
+};
+
+struct vs_out {
+	float4 position : POSITION;
+	float4 color : TEXCOORD0;
+	float3 shape : TEXCOORD1;
+};
+
+vs_out main( vs_in i )
+{
+	const float4 p = float4( i.position + ( right.xyz * i.quad.x + up.xyz * i.quad.y ) * i.quad.z, 1.0 );
+	vs_out o;
+	o.position = float4( dot( row0, p ), dot( row1, p ), dot( row2, p ), dot( row3, p ) );
+	o.color    = i.color;
+	o.shape    = float3( i.shape, i.quad.w );
+	return o;
+}
+)";
+
+	constexpr const char* k_kfx_ps = R"(
+// iq lattice hash, no sin, no integer-input streaks
+float hash( float2 p )
+{
+	p = 50.0 * frac( p * 0.3183099 + float2( 0.71, 0.113 ) );
+	return frac( p.x * p.y * ( p.x + p.y ) );
+}
+
+float noise( float2 p )
+{
+	const float2 i = floor( p );
+	const float2 f = frac( p );
+	const float2 u = f * f * ( 3.0 - 2.0 * f );
+	return lerp( lerp( hash( i ), hash( i + float2( 1, 0 ) ), u.x ), lerp( hash( i + float2( 0, 1 ) ), hash( i + 1.0 ), u.x ), u.y );
+}
+
+float fbm( float2 p )
+{
+	float v = 0.0, w = 0.5;
+	for ( int k = 0; k < 4; k++ ) {
+		v += w * noise( p );
+		p = float2( 1.6 * p.x + 1.2 * p.y, -1.2 * p.x + 1.6 * p.y ) + 17.1;
+		w *= 0.5;
+	}
+	return v / 0.9375;
+}
+
+float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
+{
+	const float r    = length( shape.xy );
+	const float edge = saturate( ( 1.0 - r ) / max( fwidth( r ), 1e-4 ) + 0.5 );
+
+	// glow: soul rings 0.4 / 1 / 1.7 / 2.8 radii at alpha 1 / 0.5 / 0.16 / 0, quad spans 2.8
+	const float g    = r * 2.8;
+	const float glow = g < 0.4 ? 1.0 : g < 1.0 ? lerp( 1.0, 0.5, ( g - 0.4 ) / 0.6 ) : g < 1.7 ? lerp( 0.5, 0.16, ( g - 1.0 ) / 0.7 ) : lerp( 0.16, 0.0, saturate( ( g - 1.7 ) / 1.1 ) );
+
+	const float kind = shape.z;
+	if ( kind > 2.5 ) {
+		// smoke: warped fbm puff, frac( kind ) = spin -> rotation + noise offset ( both wrap at 1 ), edge 0 before r = 1
+		const float spin = frac( kind ) * 6.2831853;
+		const float2 cs  = float2( cos( spin ), sin( spin ) );
+		const float2 q   = float2( shape.x * cs.x - shape.y * cs.y, shape.x * cs.y + shape.y * cs.x ) * 1.7 + cs * 3.0;
+		const float n    = fbm( q + ( noise( q * 0.8 + 5.2 ) - 0.5 ) );
+		const float d    = r / 0.75 + ( 0.5 - n ) * 0.6;
+		const float body = 1.0 - smoothstep( 0.25, 1.0, d );
+		const float a    = saturate( color.a * body * ( 0.45 + 0.8 * n ) );
+		return float4( color.rgb * ( 0.72 + 0.36 * n + 0.1 * shape.y ), a );
+	}
+
+	const float a = kind < 0.5 ? color.a : kind < 1.5 ? color.a * edge : color.a * glow;
+	return float4( color.rgb, a );
+}
+)";
+
+	ID3DXBuffer* compile_shader( const char* source, const char* profile, const char* tag )
 	{
-		if ( g_melt_vs && g_melt_ps )
+		ID3DXBuffer *code = nullptr, *errors = nullptr;
+		const HRESULT result =
+			D3DXCompileShader( source, static_cast< UINT >( std::strlen( source ) ), nullptr, nullptr, "main", profile, 0, &code, &errors, nullptr );
+		if ( errors ) {
+			if ( FAILED( result ) )
+				botox_dbg_log( "%s: %s compile: %s", tag, profile, static_cast< const char* >( errors->GetBufferPointer( ) ) );
+			errors->Release( );
+		}
+		if ( FAILED( result ) && code ) {
+			code->Release( );
+			code = nullptr;
+		}
+		return code;
+	}
+
+	bool build_shaders( IDirect3DDevice9* device, const char* vs_source, const char* ps_source, IDirect3DVertexShader9*& vs_out,
+	                    IDirect3DPixelShader9*& ps_out, bool& failed, const char* tag )
+	{
+		if ( vs_out && ps_out )
 			return true;
-		if ( g_melt_shader_failed )
+		if ( failed )
 			return false;
 
-		const auto compile = [ ]( const char* source, const char* profile ) -> ID3DXBuffer* {
-			ID3DXBuffer *code = nullptr, *errors = nullptr;
-			const HRESULT result =
-				D3DXCompileShader( source, static_cast< UINT >( std::strlen( source ) ), nullptr, nullptr, "main", profile, 0, &code, &errors, nullptr );
-			if ( errors ) {
-				if ( FAILED( result ) )
-					botox_dbg_log( "MELT: %s compile: %s", profile, static_cast< const char* >( errors->GetBufferPointer( ) ) );
-				errors->Release( );
-			}
-			if ( FAILED( result ) && code ) {
-				code->Release( );
-				code = nullptr;
-			}
-			return code;
-		};
+		ID3DXBuffer* vs = compile_shader( vs_source, "vs_3_0", tag );
+		ID3DXBuffer* ps = compile_shader( ps_source, "ps_3_0", tag );
 
-		ID3DXBuffer* vs = compile( k_melt_vs, "vs_3_0" );
-		ID3DXBuffer* ps = compile( k_melt_ps, "ps_3_0" );
-
-		const bool ok = vs && ps && SUCCEEDED( device->CreateVertexShader( static_cast< const DWORD* >( vs->GetBufferPointer( ) ), &g_melt_vs ) ) &&
-		                SUCCEEDED( device->CreatePixelShader( static_cast< const DWORD* >( ps->GetBufferPointer( ) ), &g_melt_ps ) );
+		const bool ok = vs && ps && SUCCEEDED( device->CreateVertexShader( static_cast< const DWORD* >( vs->GetBufferPointer( ) ), &vs_out ) ) &&
+		                SUCCEEDED( device->CreatePixelShader( static_cast< const DWORD* >( ps->GetBufferPointer( ) ), &ps_out ) );
 
 		if ( vs )
 			vs->Release( );
@@ -2250,18 +2315,99 @@ float4 main( float3 normal : TEXCOORD0, float3 world : TEXCOORD1, float4 color :
 			ps->Release( );
 
 		if ( !ok ) {
-			if ( g_melt_vs )
-				g_melt_vs->Release( );
-			if ( g_melt_ps )
-				g_melt_ps->Release( );
-			g_melt_vs            = nullptr;
-			g_melt_ps            = nullptr;
-			g_melt_shader_failed = true;
+			if ( vs_out )
+				vs_out->Release( );
+			if ( ps_out )
+				ps_out->Release( );
+			vs_out = nullptr;
+			ps_out = nullptr;
+			failed = true;
 		}
 
-		botox_dbg_log( "MELT: shaders %s", ok ? "built" : "FAILED" );
+		botox_dbg_log( "%s: shaders %s", tag, ok ? "built" : "FAILED" );
 		return ok;
 	}
+
+	bool melt_shaders( IDirect3DDevice9* device )
+	{
+		return build_shaders( device, k_melt_vs, k_melt_ps, g_melt_vs, g_melt_ps, g_melt_shader_failed, "MELT" );
+	}
+
+	/* render thread: every d3d state a world draw touches, put back after */
+	struct world_state_t {
+		static constexpr D3DRENDERSTATETYPE k_states[] = { D3DRS_ZENABLE,           D3DRS_ZWRITEENABLE,     D3DRS_ZFUNC,           D3DRS_ALPHABLENDENABLE,
+		                                                   D3DRS_SRCBLEND,          D3DRS_DESTBLEND,        D3DRS_ALPHATESTENABLE, D3DRS_CULLMODE,
+		                                                   D3DRS_STENCILENABLE,     D3DRS_COLORWRITEENABLE, D3DRS_SRGBWRITEENABLE, D3DRS_SCISSORTESTENABLE,
+		                                                   D3DRS_CLIPPLANEENABLE,   D3DRS_FILLMODE,         D3DRS_FOGENABLE,       D3DRS_SEPARATEALPHABLENDENABLE };
+		static constexpr D3DSAMPLERSTATETYPE k_samplers[] = { D3DSAMP_ADDRESSU, D3DSAMP_ADDRESSV, D3DSAMP_MAGFILTER, D3DSAMP_MINFILTER, D3DSAMP_MIPFILTER,
+		                                                      D3DSAMP_SRGBTEXTURE };
+
+		DWORD m_states[ std::size( k_states ) ]{ }, m_samplers[ std::size( k_samplers ) ]{ }, m_fvf = 0;
+		float m_vs_constants[ 6 ][ 4 ]{ }, m_ps_constants[ 3 ][ 4 ]{ };
+		IDirect3DVertexShader9* m_vs        = nullptr;
+		IDirect3DPixelShader9* m_ps         = nullptr;
+		IDirect3DVertexDeclaration9* m_decl = nullptr;
+		IDirect3DBaseTexture9* m_texture    = nullptr;
+		n_stream_guard::state_t m_streams{ };
+
+		void capture( IDirect3DDevice9* device )
+		{
+			for ( std::size_t i = 0; i < std::size( k_states ); i++ )
+				device->GetRenderState( k_states[ i ], &m_states[ i ] );
+			for ( std::size_t i = 0; i < std::size( k_samplers ); i++ )
+				device->GetSamplerState( 0, k_samplers[ i ], &m_samplers[ i ] );
+			device->GetVertexShader( &m_vs );
+			device->GetPixelShader( &m_ps );
+			device->GetVertexDeclaration( &m_decl );
+			device->GetFVF( &m_fvf );
+			device->GetTexture( 0, &m_texture );
+			device->GetVertexShaderConstantF( 0, m_vs_constants[ 0 ], 6 );
+			device->GetPixelShaderConstantF( 0, m_ps_constants[ 0 ], 3 );
+			m_streams.capture( device );
+		}
+
+		/* z test vs scene depth ( walls, props, viewmodel all wrote it before DoPostScreenSpaceEffects ), blended, rgb only */
+		static void set( IDirect3DDevice9* device )
+		{
+			device->SetRenderState( D3DRS_ZENABLE, D3DZB_TRUE );
+			device->SetRenderState( D3DRS_ZFUNC, D3DCMP_LESSEQUAL );
+			device->SetRenderState( D3DRS_ALPHABLENDENABLE, TRUE );
+			device->SetRenderState( D3DRS_SRCBLEND, D3DBLEND_SRCALPHA );
+			device->SetRenderState( D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA );
+			device->SetRenderState( D3DRS_ALPHATESTENABLE, FALSE );
+			device->SetRenderState( D3DRS_CULLMODE, D3DCULL_NONE );
+			device->SetRenderState( D3DRS_STENCILENABLE, FALSE );
+			device->SetRenderState( D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE );
+			device->SetRenderState( D3DRS_SRGBWRITEENABLE, FALSE );
+			device->SetRenderState( D3DRS_SCISSORTESTENABLE, FALSE );
+			device->SetRenderState( D3DRS_CLIPPLANEENABLE, 0 );
+			device->SetRenderState( D3DRS_FILLMODE, D3DFILL_SOLID );
+			device->SetRenderState( D3DRS_FOGENABLE, FALSE );
+			device->SetRenderState( D3DRS_SEPARATEALPHABLENDENABLE, FALSE );
+		}
+
+		void restore( IDirect3DDevice9* device )
+		{
+			for ( std::size_t i = 0; i < std::size( k_states ); i++ )
+				device->SetRenderState( k_states[ i ], m_states[ i ] );
+			for ( std::size_t i = 0; i < std::size( k_samplers ); i++ )
+				device->SetSamplerState( 0, k_samplers[ i ], m_samplers[ i ] );
+			device->SetVertexShaderConstantF( 0, m_vs_constants[ 0 ], 6 );
+			device->SetPixelShaderConstantF( 0, m_ps_constants[ 0 ], 3 );
+			device->SetVertexShader( m_vs );
+			device->SetPixelShader( m_ps );
+			if ( m_decl )
+				device->SetVertexDeclaration( m_decl );
+			else
+				device->SetFVF( m_fvf );
+			device->SetTexture( 0, m_texture );
+			m_streams.restore( device );
+
+			for ( IUnknown* held : std::initializer_list< IUnknown* >{ m_vs, m_ps, m_decl, m_texture } )
+				if ( held )
+					held->Release( );
+		}
+	};
 
 	struct melt_draw_t {
 		std::shared_ptr< const melt_mesh_t > m_mesh;
@@ -2282,50 +2428,9 @@ float4 main( float3 normal : TEXCOORD0, float3 world : TEXCOORD1, float4 color :
 			max_index = SUCCEEDED( device->GetDeviceCaps( &caps ) ) ? caps.MaxVertexIndex : 0xffffu;
 		}
 
-		static constexpr D3DRENDERSTATETYPE states[] = { D3DRS_ZENABLE,           D3DRS_ZWRITEENABLE,   D3DRS_ZFUNC,           D3DRS_ALPHABLENDENABLE,
-		                                                 D3DRS_SRCBLEND,          D3DRS_DESTBLEND,      D3DRS_ALPHATESTENABLE, D3DRS_CULLMODE,
-		                                                 D3DRS_STENCILENABLE,     D3DRS_COLORWRITEENABLE, D3DRS_SRGBWRITEENABLE, D3DRS_SCISSORTESTENABLE,
-		                                                 D3DRS_CLIPPLANEENABLE,   D3DRS_FILLMODE,       D3DRS_FOGENABLE,       D3DRS_SEPARATEALPHABLENDENABLE };
-		static constexpr D3DSAMPLERSTATETYPE samplers[] = { D3DSAMP_ADDRESSU, D3DSAMP_ADDRESSV, D3DSAMP_MAGFILTER, D3DSAMP_MINFILTER, D3DSAMP_MIPFILTER,
-		                                                    D3DSAMP_SRGBTEXTURE };
-
-		DWORD old_states[ std::size( states ) ]{ }, old_samplers[ std::size( samplers ) ]{ }, old_fvf = 0;
-		float old_vs_constants[ 4 ][ 4 ]{ }, old_ps_constants[ 3 ][ 4 ]{ };
-		IDirect3DVertexShader9* old_vs           = nullptr;
-		IDirect3DPixelShader9* old_ps            = nullptr;
-		IDirect3DVertexDeclaration9* old_decl    = nullptr;
-		IDirect3DBaseTexture9* old_texture       = nullptr;
-
-		for ( std::size_t i = 0; i < std::size( states ); i++ )
-			device->GetRenderState( states[ i ], &old_states[ i ] );
-		for ( std::size_t i = 0; i < std::size( samplers ); i++ )
-			device->GetSamplerState( 0, samplers[ i ], &old_samplers[ i ] );
-		device->GetVertexShader( &old_vs );
-		device->GetPixelShader( &old_ps );
-		device->GetVertexDeclaration( &old_decl );
-		device->GetFVF( &old_fvf );
-		device->GetTexture( 0, &old_texture );
-		device->GetVertexShaderConstantF( 0, old_vs_constants[ 0 ], 4 );
-		device->GetPixelShaderConstantF( 0, old_ps_constants[ 0 ], 3 );
-
-		n_stream_guard::state_t streams{ };
-		streams.capture( device );
-
-		device->SetRenderState( D3DRS_ZENABLE, D3DZB_TRUE );
-		device->SetRenderState( D3DRS_ZFUNC, D3DCMP_LESSEQUAL );
-		device->SetRenderState( D3DRS_ALPHABLENDENABLE, TRUE );
-		device->SetRenderState( D3DRS_SRCBLEND, D3DBLEND_SRCALPHA );
-		device->SetRenderState( D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA );
-		device->SetRenderState( D3DRS_ALPHATESTENABLE, FALSE );
-		device->SetRenderState( D3DRS_CULLMODE, D3DCULL_NONE );
-		device->SetRenderState( D3DRS_STENCILENABLE, FALSE );
-		device->SetRenderState( D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE );
-		device->SetRenderState( D3DRS_SRGBWRITEENABLE, FALSE );
-		device->SetRenderState( D3DRS_SCISSORTESTENABLE, FALSE );
-		device->SetRenderState( D3DRS_CLIPPLANEENABLE, 0 );
-		device->SetRenderState( D3DRS_FILLMODE, D3DFILL_SOLID );
-		device->SetRenderState( D3DRS_FOGENABLE, FALSE );
-		device->SetRenderState( D3DRS_SEPARATEALPHABLENDENABLE, FALSE );
+		world_state_t saved{ };
+		saved.capture( device );
+		world_state_t::set( device );
 		device->SetSamplerState( 0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP );
 		device->SetSamplerState( 0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP );
 		device->SetSamplerState( 0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR );
@@ -2380,24 +2485,45 @@ float4 main( float3 normal : TEXCOORD0, float3 world : TEXCOORD1, float4 color :
 			}
 		}
 
-		for ( std::size_t i = 0; i < std::size( states ); i++ )
-			device->SetRenderState( states[ i ], old_states[ i ] );
-		for ( std::size_t i = 0; i < std::size( samplers ); i++ )
-			device->SetSamplerState( 0, samplers[ i ], old_samplers[ i ] );
-		device->SetVertexShaderConstantF( 0, old_vs_constants[ 0 ], 4 );
-		device->SetPixelShaderConstantF( 0, old_ps_constants[ 0 ], 3 );
-		device->SetVertexShader( old_vs );
-		device->SetPixelShader( old_ps );
-		if ( old_decl )
-			device->SetVertexDeclaration( old_decl );
-		else
-			device->SetFVF( old_fvf );
-		device->SetTexture( 0, old_texture );
-		streams.restore( device );
+		saved.restore( device );
+	}
 
-		for ( IUnknown* held : std::initializer_list< IUnknown* >{ old_vs, old_ps, old_decl, old_texture } )
-			if ( held )
-				held->Release( );
+	constexpr DWORD k_kfx_fvf = D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX2 | D3DFVF_TEXCOORDSIZE4( 0 ) | D3DFVF_TEXCOORDSIZE2( 1 );
+	static_assert( sizeof( kfx_vertex_t ) == 40, "k_kfx_fvf layout" );
+
+	/* render thread. no z write = translucent like engine sprites, scene depth still hides them behind walls / viewmodel */
+	void kfx_draw( const std::vector< kfx_vertex_t >& quads, const std::array< float, 16 >& matrix, const c_vector& right, const c_vector& up )
+	{
+		IDirect3DDevice9* device = g_interfaces.m_direct_device;
+		if ( !device || quads.empty( ) || !build_shaders( device, k_kfx_vs, k_kfx_ps, g_kfx_vs, g_kfx_ps, g_kfx_shader_failed, "KFX" ) )
+			return;
+
+		world_state_t saved{ };
+		saved.capture( device );
+		world_state_t::set( device );
+		device->SetRenderState( D3DRS_ZWRITEENABLE, FALSE );
+
+		device->SetFVF( k_kfx_fvf );
+		device->SetVertexShader( g_kfx_vs );
+		device->SetPixelShader( g_kfx_ps );
+		device->SetVertexShaderConstantF( 0, matrix.data( ), 4 );
+		const float axes[ 2 ][ 4 ] = { { right.m_x, right.m_y, right.m_z, 0.f }, { up.m_x, up.m_y, up.m_z, 0.f } };
+		device->SetVertexShaderConstantF( 4, axes[ 0 ], 2 );
+
+		constexpr std::size_t chunk = 3 * 0x8000;
+		HRESULT result              = S_OK;
+		for ( std::size_t first = 0; first < quads.size( ) && SUCCEEDED( result ); first += chunk ) {
+			const std::size_t count = ( std::min )( chunk, quads.size( ) - first );
+			result = device->DrawPrimitiveUP( D3DPT_TRIANGLELIST, static_cast< UINT >( count / 3 ), &quads[ first ], sizeof( kfx_vertex_t ) );
+		}
+
+		static HRESULT logged = 1;
+		if ( result != logged ) {
+			logged = result;
+			botox_dbg_log( "KFX: world draw hr %08lx quads %d", static_cast< unsigned long >( result ), static_cast< int >( quads.size( ) / 6 ) );
+		}
+
+		saved.restore( device );
 	}
 
 	void spawn_melt( c_base_entity* victim, const int victim_index )
@@ -2599,38 +2725,30 @@ void kill_effects_paint( )
 		melt_paint( dt );
 	}
 
+	g_kfx_quads.clear( );
 	if ( g_kfx.empty( ) )
 		return;
 
 	const bool glow = GET_VARIABLE( g_variables.m_death_particles_glow, bool );
-
-	const c_vector eye = melt_eye( );
-	c_trace_filter filter( g_ctx.m_local );
-	const auto seen = [ & ]( const c_vector& at ) {
-		trace_t trace{ };
-		g_interfaces.m_engine_trace->trace_ray( ray_t( eye, at ), e_mask::mask_visible, &filter, &trace );
-		return ( 1.f - trace.m_fraction ) * ( at - eye ).length( ) < 2.f;
-	};
-
-	std::vector< kfx_draw_t > draws{ };
-	draws.reserve( g_kfx.size( ) );
 
 	for ( kfx_particle_t& particle : g_kfx ) {
 		particle.m_age += dt;
 		if ( particle.m_age >= particle.m_life )
 			continue;
 
-		c_vector_2d screen{ };
-		float radius = 0.f;
-
 		if ( particle.m_style == k_mc_style ) {
 			for ( particle.m_tick_acc += dt * 20.f; particle.m_tick_acc >= 1.f && particle.m_age < particle.m_life; particle.m_tick_acc -= 1.f )
 				mc_tick( particle );
 			const c_vector at = particle.m_prev + ( particle.m_pos - particle.m_prev ) * particle.m_tick_acc;
-			if ( particle.m_tick_acc >= 0.f && particle.m_age < particle.m_life && project( at, particle.m_size, screen, radius ) && seen( at ) ) {
+			if ( particle.m_tick_acc >= 0.f && particle.m_age < particle.m_life ) {
 				const auto channel = [ & ]( const int i ) { return static_cast< ImU32 >( std::clamp( particle.m_tint[ i ], 0.f, 1.f ) * 255.f ); };
-				const ImU32 tint   = ( channel( 0 ) << IM_COL32_R_SHIFT ) | ( channel( 1 ) << IM_COL32_G_SHIFT ) | ( channel( 2 ) << IM_COL32_B_SHIFT );
-				draws.push_back( { screen.m_x, screen.m_y, radius, tint, 0u, 0u, false, false, true } );
+				kfx_sprite( at, particle.m_size, 8, [ & ]( const int x, const int y ) -> ImU32 {
+					const std::uint32_t rgb = k_mc_crit[ y ][ x ];
+					if ( !rgb )
+						return 0u;
+					const auto mix = [ & ]( const int shift, const int i ) { return ( ( rgb >> shift ) & 0xff ) * channel( i ) / 255u; };
+					return IM_COL32( mix( 16, 0 ), mix( 8, 1 ), mix( 0, 2 ), 255 );
+				} );
 			}
 			continue;
 		}
@@ -2642,16 +2760,19 @@ void kill_effects_paint( )
 			const float scale = particle.m_size * 0.3f * k_mc_block;
 			const c_vector at = particle.m_prev + ( particle.m_pos - particle.m_prev ) * particle.m_tick_acc +
 			                    c_vector( 0.f, 0.f, 0.1f * k_mc_block + scale * 0.25f );
-			if ( project( at, scale * 0.5f, screen, radius ) && seen( at ) ) {
-				const float phase = particle.m_age * 20.f / 2.f;
-				const auto red    = static_cast< ImU32 >( ( std::sin( phase ) + 1.f ) * 0.5f * 255.f );
-				const auto blue   = static_cast< ImU32 >( ( std::sin( phase + 4.18879f ) + 1.f ) * 0.1f * 255.f );
-				const float fade  = std::clamp( ( particle.m_life - particle.m_age ) / ( std::min )( 1.5f, particle.m_life * 0.5f ), 0.f, 1.f );
-				const auto alpha  = static_cast< ImU32 >( fade * fade * ( 3.f - 2.f * fade ) * 128.f );
-				const ImU32 tint  = ( red << IM_COL32_R_SHIFT ) | ( 255u << IM_COL32_G_SHIFT ) | ( blue << IM_COL32_B_SHIFT ) | ( alpha << IM_COL32_A_SHIFT );
-				if ( alpha )
-					draws.push_back( { screen.m_x, screen.m_y, radius, tint, 0u, 0u, false, false, false, particle.m_icon } );
-			}
+			const float phase = particle.m_age * 20.f / 2.f;
+			const auto red    = static_cast< ImU32 >( ( std::sin( phase ) + 1.f ) * 0.5f * 255.f );
+			const auto blue   = static_cast< ImU32 >( ( std::sin( phase + 4.18879f ) + 1.f ) * 0.1f * 255.f );
+			const float fade  = std::clamp( ( particle.m_life - particle.m_age ) / ( std::min )( 1.5f, particle.m_life * 0.5f ), 0.f, 1.f );
+			const auto alpha  = static_cast< ImU32 >( fade * fade * ( 3.f - 2.f * fade ) * 128.f );
+			if ( alpha )
+				kfx_sprite( at, scale * 0.5f, 16, [ & ]( const int x, const int y ) -> ImU32 {
+					const char key = k_mc_xp_orb[ particle.m_icon ][ y ][ x ];
+					if ( key == '.' )
+						return 0u;
+					const std::uint32_t rgb = k_mc_xp_palette[ key - 'a' ];
+					return IM_COL32( ( ( rgb >> 16 ) & 0xff ) * red / 255u, ( rgb >> 8 ) & 0xff, ( rgb & 0xff ) * blue / 255u, alpha );
+				} );
 			continue;
 		}
 
@@ -2671,81 +2792,32 @@ void kill_effects_paint( )
 			alpha *= rand_range( 0.55f, 1.f );
 
 		const float size = smoke ? particle.m_size * ( 1.f + 0.7f * t ) : particle.m_size;
-		if ( alpha <= 0.01f || !project( particle.m_pos, size, screen, radius ) )
+		if ( alpha <= 0.01f )
 			continue;
 
 		const c_color& color = particle.m_color;
 		if ( smoke ) {
-			draws.push_back( { screen.m_x, screen.m_y, radius, color.get_u32( alpha * 0.3f ), 0u, 0u, false, true } );
+			// slow swirl, half spin each way
+			const float spin = particle.m_seed + particle.m_age * ( particle.m_seed < 0.5f ? 0.04f : -0.04f );
+			kfx_quad( particle.m_pos, size, -1.f, -1.f, 1.f, 1.f, kfx_smoke, color.get_u32( alpha * 0.55f ), spin - std::floor( spin ) );
 			continue;
 		}
-		const c_color highlight( ( std::min )( 255, color[ 0 ] + 90 ), ( std::min )( 255, color[ 1 ] + 90 ), ( std::min )( 255, color[ 2 ] + 90 ), static_cast< int >( color[ 3 ] ) );
-		const bool halo = glow && particle.m_style >= 0;
-		draws.push_back( { screen.m_x, screen.m_y, radius, color.get_u32( alpha ), halo ? 1u : 0u,
-		                   highlight.get_u32( alpha * 0.8f ), particle.m_style < 0, false } );
+		if ( glow && particle.m_style >= 0 ) {
+			kfx_quad( particle.m_pos, size, -2.8f, -2.8f, 2.8f, 2.8f, kfx_glow, color.get_u32( alpha ) );
+			continue;
+		}
+		kfx_quad( particle.m_pos, size, -1.f, -1.f, 1.f, 1.f, kfx_disc, color.get_u32( alpha ) );
+		if ( particle.m_style < 0 ) {
+			// up-left shine, 0.35 radius
+			const c_color highlight( ( std::min )( 255, color[ 0 ] + 90 ), ( std::min )( 255, color[ 1 ] + 90 ), ( std::min )( 255, color[ 2 ] + 90 ), static_cast< int >( color[ 3 ] ) );
+			kfx_quad( particle.m_pos, size, -0.7f, 0.f, 0.f, 0.7f, kfx_disc, highlight.get_u32( alpha * 0.8f ) );
+		}
 	}
 
 	g_kfx.erase( std::remove_if( g_kfx.begin( ), g_kfx.end( ), [ ]( const kfx_particle_t& p ) { return p.m_age >= p.m_life; } ), g_kfx.end( ) );
-
-	if ( draws.empty( ) )
-		return;
-
-	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_callback,
-	                                   std::make_any< callback_draw_object_t >( callback_draw_object_t{ [ draws = std::move( draws ) ]( ImDrawList* list ) {
-										   for ( const kfx_draw_t& d : draws ) {
-											   const ImVec2 at( d.m_x, d.m_y );
-											   if ( d.m_mc ) {
-												   const float texel = d.m_radius * 0.25f;
-												   for ( int y = 0; y < 8; y++ )
-													   for ( int x = 0; x < 8; x++ ) {
-														   const std::uint32_t rgb = k_mc_crit[ y ][ x ];
-														   if ( !rgb )
-															   continue;
-														   const auto mix = [ & ]( const int shift, const int tint_shift ) {
-															   return ( ( ( rgb >> shift ) & 0xff ) * ( ( d.m_color >> tint_shift ) & 0xff ) / 255u );
-														   };
-														   const ImVec2 lo( at.x - d.m_radius + texel * x, at.y - d.m_radius + texel * y );
-														   list->AddRectFilled( lo, ImVec2( lo.x + texel, lo.y + texel ),
-														                        IM_COL32( mix( 16, IM_COL32_R_SHIFT ), mix( 8, IM_COL32_G_SHIFT ), mix( 0, IM_COL32_B_SHIFT ), 255 ) );
-													   }
-												   continue;
-											   }
-											   if ( d.m_xp >= 0 ) {
-												   const float texel = d.m_radius * 2.f / 16.f;
-												   for ( int y = 0; y < 16; y++ )
-													   for ( int x = 0; x < 16; x++ ) {
-														   const char key = k_mc_xp_orb[ d.m_xp ][ y ][ x ];
-														   if ( key == '.' )
-															   continue;
-														   const std::uint32_t rgb = k_mc_xp_palette[ key - 'a' ];
-														   const auto mix = [ & ]( const int shift, const int tint_shift ) {
-															   return ( ( ( rgb >> shift ) & 0xff ) * ( ( d.m_color >> tint_shift ) & 0xff ) / 255u );
-														   };
-														   const ImVec2 lo( at.x - d.m_radius + texel * x, at.y - d.m_radius + texel * y );
-														   list->AddRectFilled( lo, ImVec2( lo.x + texel, lo.y + texel ),
-														                        IM_COL32( mix( 16, IM_COL32_R_SHIFT ), mix( 8, IM_COL32_G_SHIFT ), mix( 0, IM_COL32_B_SHIFT ), ( d.m_color >> IM_COL32_A_SHIFT ) & 0xff ) );
-													   }
-												   continue;
-											   }
-											   if ( d.m_smoke ) {
-												   list->AddCircleFilled( at, d.m_radius, d.m_color, 14 );
-												   list->AddCircleFilled( at, d.m_radius * 0.7f, d.m_color, 12 );
-												   list->AddCircleFilled( at, d.m_radius * 0.4f, d.m_color, 10 );
-												   continue;
-											   }
-											   if ( d.m_glow ) {
-											   	soft_soul( list, at, d.m_radius, d.m_color );
-											   	continue;
-											   }
-											   list->AddCircleFilled( at, d.m_radius, d.m_color, d.m_ball ? 16 : 10 );
-											   if ( d.m_ball && d.m_radius > 2.f )
-												   list->AddCircleFilled( ImVec2( at.x - d.m_radius * 0.35f, at.y - d.m_radius * 0.35f ), d.m_radius * 0.35f,
-												                          d.m_highlight, 8 );
-										   }
-									   } } ) );
 }
 
-void kill_effects_world( const c_vector& origin )
+void kill_effects_world( const c_vector& origin, const c_angle& angles )
 {
 	g_melt_eye       = origin;
 	g_melt_eye_valid = true;
@@ -2755,13 +2827,22 @@ void kill_effects_world( const c_vector& origin )
 		if ( melt.m_stage >= melt_run && melt.m_mesh && !melt.m_mesh->m_indices.empty( ) && melt.m_alpha > 0.f )
 			draws.push_back( { melt.m_mesh, melt.m_slot, melt.m_alpha } );
 
-	if ( draws.empty( ) )
+	if ( draws.empty( ) && g_kfx_quads.empty( ) )
 		return;
 
 	std::array< float, 16 > matrix{ };
 	std::memcpy( matrix.data( ), &g_interfaces.m_engine_client->get_world_to_screen_matrix( ).data[ 0 ][ 0 ], sizeof( float ) * 16 );
 
-	auto job = [ draws, matrix, origin ] { melt_draw( draws, matrix, origin ); };
+	c_vector right{ }, up{ };
+	g_math.angle_vectors( angles, nullptr, &right, &up );
+	const auto quads = g_kfx_quads.empty( ) ? nullptr : std::make_shared< const std::vector< kfx_vertex_t > >( g_kfx_quads );
+
+	auto job = [ draws = std::move( draws ), quads, matrix, origin, right, up ] {
+		if ( !draws.empty( ) )
+			melt_draw( draws, matrix, origin );
+		if ( quads )
+			kfx_draw( *quads, matrix, right, up );
+	};
 	if ( !n_render_queue::submit( job ) )
 		job( );
 }
@@ -2797,6 +2878,14 @@ void kill_effects_release_textures( )
 	g_melt_vs            = nullptr;
 	g_melt_ps            = nullptr;
 	g_melt_shader_failed = false;
+
+	if ( g_kfx_vs )
+		g_kfx_vs->Release( );
+	if ( g_kfx_ps )
+		g_kfx_ps->Release( );
+	g_kfx_vs            = nullptr;
+	g_kfx_ps            = nullptr;
+	g_kfx_shader_failed = false;
 }
 
 void kill_effects_shutdown( )

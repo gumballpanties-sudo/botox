@@ -771,8 +771,8 @@ namespace n_variables
 		ADD_VARIABLE( float, m_posterize_strength, 1.f );
 		ADD_VARIABLE( bool, m_deband, false );
 		ADD_VARIABLE( int, m_deband_iterations, 2 );
-		ADD_VARIABLE( float, m_deband_threshold, 24.f );
-		ADD_VARIABLE( float, m_deband_range, 4.f );
+		ADD_VARIABLE( float, m_deband_strength, 10.f );
+		ADD_VARIABLE( float, m_deband_radius, 14.f );
 		ADD_VARIABLE( float, m_deband_grain, 16.f );
 		ADD_VARIABLE( bool, m_channel_shift, false );
 		ADD_VARIABLE( float, m_channel_shift_red_x, 3.f );

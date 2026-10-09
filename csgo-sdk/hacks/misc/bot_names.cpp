@@ -10,6 +10,7 @@
 #include <random>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace
@@ -27,8 +28,11 @@ namespace
 	constexpr size_t k_pool_want       = 32;
 
 	struct profile_t {
-		std::string m_name = { };
-		uint64_t m_xuid    = 0;
+		std::string m_name  = { };
+		uint64_t m_xuid     = 0;
+		uint64_t m_asked_at = 0;
+		bool m_ready        = false;
+		int m_uses          = 0;
 	};
 
 	struct bot_t {
@@ -74,8 +78,62 @@ namespace
 	/* steam pool: worker appends, main thread reads */
 	std::mutex s_pool_lock;
 	std::vector< profile_t > s_pool;
-	size_t s_pool_next = 0;
-	bool s_fetch_done  = false;
+	bool s_fetch_done = false;
+
+	/* steam hands strangers a shared grey "?" handle until the face downloads, and the hud avatar keeps whatever it got
+	   first. a handle on 2+ xuids = that placeholder. profile handed out only once its own face is in */
+	std::unordered_set< int > s_placeholders;
+	constexpr uint64_t k_warm_give_up_ms = 15'000;
+
+	void warm_pool( )
+	{
+		static uint64_t next = 0;
+		const uint64_t now   = GetTickCount64( );
+		if ( !SteamFriends || now < next )
+			return;
+		next = now + 500;
+
+		struct seen_t {
+			profile_t* m_profile;
+			int m_small, m_medium, m_large;
+		};
+		std::vector< seen_t > seen;
+		std::unordered_map< int, int > counts;
+
+		std::lock_guard< std::mutex > lock( s_pool_lock );
+		for ( auto& entry : s_pool ) {
+			if ( entry.m_ready )
+				continue;
+
+			if ( !entry.m_asked_at )
+				entry.m_asked_at = now;
+
+			const CSteamID id( static_cast< uint64 >( entry.m_xuid ) );
+			if ( SteamFriends->RequestUserInformation( id, false ) && now - entry.m_asked_at < k_warm_give_up_ms )
+				continue;
+
+			seen.push_back( { &entry, SteamFriends->GetSmallFriendAvatar( id ), SteamFriends->GetMediumFriendAvatar( id ),
+			                  SteamFriends->GetLargeFriendAvatar( id ) } );
+			++counts[ seen.back( ).m_small ];
+			++counts[ seen.back( ).m_medium ];
+		}
+
+		for ( const auto& [ handle, count ] : counts )
+			if ( handle > 0 && count > 1 )
+				s_placeholders.insert( handle );
+
+		for ( const auto& s : seen ) {
+			const bool face = !s_placeholders.empty( ) && s.m_small > 0 && s.m_medium > 0 && s.m_large > 0 &&
+			                  !s_placeholders.contains( s.m_small ) && !s_placeholders.contains( s.m_medium );
+			if ( !face && now - s.m_profile->m_asked_at < k_warm_give_up_ms )
+				continue;
+
+			s.m_profile->m_ready = true;
+			g_console.print( std::format( "[bot names] warm '{}' xuid {} handles {}/{}/{} {} ms{}", s.m_profile->m_name, s.m_profile->m_xuid, s.m_small,
+			                              s.m_medium, s.m_large, now - s.m_profile->m_asked_at, face ? "" : " GAVE UP" )
+			                     .c_str( ) );
+		}
+	}
 
 	void put_be( uint8_t* out, uint64_t value, int bytes )
 	{
@@ -150,10 +208,21 @@ namespace
 		}
 		case 3: {
 			std::lock_guard< std::mutex > lock( s_pool_lock );
-			if ( s_pool.empty( ) || ( s_pool_next >= s_pool.size( ) && !s_fetch_done ) )
+			profile_t* best = nullptr;
+			bool warming    = !s_fetch_done;
+			for ( auto& entry : s_pool ) {
+				if ( !entry.m_ready )
+					warming |= !entry.m_uses;
+				else if ( !best || entry.m_uses < best->m_uses )
+					best = &entry;
+			}
+
+			/* reuse a name only once nothing fresh is still coming */
+			if ( !best || ( best->m_uses && warming ) )
 				return false;
 
-			out = s_pool[ s_pool_next++ % s_pool.size( ) ];
+			++best->m_uses;
+			out = *best;
 			return true;
 		}
 		default:
@@ -235,8 +304,10 @@ void bot_names_frame( )
 		return;
 	}
 
-	if ( GET_VARIABLE( g_variables.m_bot_names_mode, int ) == 3 )
+	if ( GET_VARIABLE( g_variables.m_bot_names_mode, int ) == 3 ) {
 		start_fetch( );
+		warm_pool( );
+	}
 
 	if ( const uint32_t signature = settings_signature( ); signature != s_signature ) {
 		s_signature = signature;
@@ -297,7 +368,6 @@ void bot_names_randomize( )
 	if ( GET_VARIABLE( g_variables.m_bot_names_mode, int ) == 3 && !g_bot_names_fetching ) {
 		std::lock_guard< std::mutex > lock( s_pool_lock );
 		s_pool.clear( );
-		s_pool_next  = 0;
 		s_fetch_done = false;
 	}
 }
@@ -308,5 +378,10 @@ std::string bot_names_status( )
 	if ( g_bot_names_fetching )
 		return std::format( "fetching steam names... {}/{}", s_pool.size( ), k_pool_want );
 
-	return s_fetch_done && s_pool.empty( ) ? "steam unreachable, randomize to retry" : std::format( "{} steam names", s_pool.size( ) );
+	if ( s_fetch_done && s_pool.empty( ) )
+		return "steam unreachable, randomize to retry";
+
+	const auto ready = std::ranges::count_if( s_pool, []( const profile_t& entry ) { return entry.m_ready; } );
+	return ready < static_cast< std::ptrdiff_t >( s_pool.size( ) ) ? std::format( "{} steam names, {} avatars loaded", s_pool.size( ), ready )
+	                                                               : std::format( "{} steam names", s_pool.size( ) );
 }

@@ -23,7 +23,7 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 	original( ecx, edx, setup );
 
 	if ( setup )
-		kill_effects_world( setup->m_origin );
+		kill_effects_world( setup->m_origin, setup->m_angles );
 
 	g_player_stencil.after_glow( );
 

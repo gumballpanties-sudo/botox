@@ -117,7 +117,6 @@ namespace n_edgebug
 		int m_last_variant = 0;
 		int m_last_search_tick = -1;
 		int m_last_contact_tick = -1;
-		int m_last_reach_tick = -1;
 		struct base_ref_t {
 			c_vector org[k_predicted_cmd_max];
 			c_vector vel[k_predicted_cmd_max];

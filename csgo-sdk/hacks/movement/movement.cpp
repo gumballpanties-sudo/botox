@@ -3188,6 +3188,8 @@ void n_movement::impl_t::strafe_optimizer_mouse( float* x )
 	*x -= add / m_yaw;
 }
 
+float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, float cap );
+
 static bool ps_wall_ahead( const int n, c_vector* normal = nullptr )
 {
 	const auto col = g_ctx.m_local ? g_ctx.m_local->get_collideable( ) : nullptr;
@@ -3321,6 +3323,22 @@ void n_movement::impl_t::pixel_surf( float  )
 		constexpr float k_leave_dot = 0.5f;
 		if ( len > 0.01f && ( wish.m_x * n.m_x + wish.m_y * n.m_y ) / len > k_leave_dot )
 			return 0;
+		/* strafing into the face = 450 at the best along-wall strafe yaw ( wall eats the into part ), only if it keeps the pin */
+		constexpr float k_gain_dot = 0.25f;
+		if ( len > 0.01f && -( wish.m_x * n.m_x + wish.m_y * n.m_y ) / len > k_gain_dot ) {
+			const float gy = tb_wallstrafe_yaw( n, g_prediction.backup_data.m_velocity, g_convars.float_or( HASH_BT( "sv_air_max_wishspeed" ), 30.f ) );
+			if ( gy != FLT_MAX ) {
+				set_move_toward_yaw( cmd, gy, 450.f );
+				if ( keeps_pin( ) ) {
+					const float r       = deg2rad( gy - g_ctx.old_view_point.m_y );
+					cmd->m_forward_move = std::cosf( r ) * 450.f;
+					cmd->m_side_move    = -std::sinf( r ) * 450.f;
+					return 4;
+				}
+				cmd->m_forward_move = fwd;
+				cmd->m_side_move    = side;
+			}
+		}
 		if ( keeps_pin( ) )
 			return 1;
 		const float yaws[ 2 ] = { rad2deg( std::atan2f( wish.m_y, wish.m_x ) ), rad2deg( std::atan2f( -n.m_y, -n.m_x ) ) };
@@ -3346,7 +3364,7 @@ void n_movement::impl_t::pixel_surf( float  )
 	const auto log_hold = [ & ]( const int by ) {
 		data.m_ps_hold |= by != 0 || latched;
 		if ( by != last_by )
-			botox_dbg_log( "PSU: hold by=%s fwd=%.0f side=%.0f vz=%.2f", by == 0 ? "none" : by == 1 ? "keys" : by == 2 ? "wish" : "wall",
+			botox_dbg_log( "PSU: hold by=%s fwd=%.0f side=%.0f vz=%.2f", by == 0 ? "none" : by == 1 ? "keys" : by == 2 ? "wish" : by == 3 ? "wall" : "gain",
 			               cmd->m_forward_move, cmd->m_side_move, g_prediction.backup_data.m_velocity.m_z );
 		last_by = by;
 	};

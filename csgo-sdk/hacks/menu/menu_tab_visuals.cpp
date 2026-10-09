@@ -1329,11 +1329,11 @@ void n_menu::impl_t::tab_visuals( )
 					[ & ]( ) {
 						ImGui::SliderInt( "quality##deband", &GET_VARIABLE( g_variables.m_deband_iterations, int ), 1, 4, "%d",
 						                  ImGuiSliderFlags_AlwaysClamp );
-						ImGui::SliderFloat( "edge threshold##deband", &GET_VARIABLE( g_variables.m_deband_threshold, float ), 1.f, 128.f, "%.0f",
+						ImGui::SliderFloat( "strength##deband", &GET_VARIABLE( g_variables.m_deband_strength, float ), 1.f, 50.f, "%.0f",
 						                    ImGuiSliderFlags_AlwaysClamp );
-						ImGui::SliderFloat( "radius##deband", &GET_VARIABLE( g_variables.m_deband_range, float ), 1.f, 16.f, "%.1f px",
+						ImGui::SliderFloat( "radius##deband", &GET_VARIABLE( g_variables.m_deband_radius, float ), 4.f, 48.f, "%.0f px",
 						                    ImGuiSliderFlags_AlwaysClamp );
-						ImGui::SliderFloat( "grain##deband", &GET_VARIABLE( g_variables.m_deband_grain, float ), 0.f, 128.f, "%.0f",
+						ImGui::SliderFloat( "dither##deband", &GET_VARIABLE( g_variables.m_deband_grain, float ), 0.f, 64.f, "%.0f",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					},
 					ImVec2( 210.f, -1 ) );

@@ -119,13 +119,15 @@ void n_movement::impl_t::pixelsurf_assist( c_user_cmd* cmd )
 	static unsigned long long render_after = 0ull;
 	static int ride_arrival = 0, ride_until = -1, ride_pins = 0;
 	static float ride_target = 0.f;
+	static int nolip_skips   = 0;
 
 	const auto stop = [ & ]( const char* why ) {
 		if ( plan.active )
 			botox_dbg_log( "[psa] drop %s k=%d/%d", why, cmd->m_tick_count - plan.start_tick, plan.arrival );
 		plan.clear( );
-		pending = false;
-		HITGODA = false;
+		pending     = false;
+		nolip_skips = 0;
+		HITGODA     = false;
 	};
 
 	if ( !g_ctx.m_local || !GET_VARIABLE( g_variables.m_pixel_surf_assist, bool ) || !g_interfaces.m_engine_client->is_in_game( ) ||
@@ -158,7 +160,7 @@ void n_movement::impl_t::pixelsurf_assist( c_user_cmd* cmd )
 	const c_angle turn      = live_view - last_view;
 	last_view               = live_view;
 
-	static long long st_calls = 0ll, st_sims = 0ll, st_budget = 0ll, st_gate = 0ll, st_plans = 0ll, st_rejects = 0ll, st_diverge = 0ll;
+	static long long st_calls = 0ll, st_sims = 0ll, st_budget = 0ll, st_gate = 0ll, st_plans = 0ll, st_rejects = 0ll, st_diverge = 0ll, st_nolip = 0ll;
 	static long long st_us = 0ll;
 
 	if ( plan.active ) {
@@ -279,12 +281,29 @@ void n_movement::impl_t::pixelsurf_assist( c_user_cmd* cmd )
 			}
 		};
 		const auto take = [ & ]( const n_assist::program_t& p, n_assist::run_t& r, int point, float surf_z ) {
+			const int lip = r.lip;
 			plan.take( p, r, cmd->m_tick_count, point, surf_z );
-			ride_pins = 0;
+			ride_pins   = 0;
+			nolip_skips = 0;
 			++st_plans;
-			botox_dbg_log( "[psa] plan %s%s surf %.4f arrive %.4f launch k=%d arrival k=%d sims=%d", n_assist::k_launch_names[ p.launch ],
-			               p.crouch ? " crouch" : "", surf_z, plan.arrive_z, plan.launch, plan.arrival, c.sims );
+			botox_dbg_log( "[psa] plan %s%s surf %.4f arrive %.4f launch k=%d arrival k=%d sims=%d lip=%d", n_assist::k_launch_names[ p.launch ],
+			               p.crouch ? " crouch" : "", surf_z, plan.arrive_z, plan.launch, plan.arrival, c.sims, lip );
 			render( p, surf_z );
+		};
+
+		/* a window hit no press pins ( lip 0 ) is a wasted jump: keep searching programs and the next cmds ( new xy, stamina ),
+		   take it only after ticks( 8 ) skips. the probe can't see auto align's ulp ladder pins on axial walls */
+		n_assist::run_t fallback;
+		n_assist::program_t fallback_prog{ };
+		float fallback_z  = 0.f;
+		int fallback_point = -1;
+		const auto note_nolip = [ & ]( const n_assist::program_t& p, n_assist::run_t& r, const std::vector< n_assist::target_t >& tg ) {
+			if ( r.nolip < 0 || fallback.nolip >= 0 )
+				return;
+			fallback_prog  = p;
+			fallback_z     = tg[ r.nolip_target ].z;
+			fallback_point = tg[ r.nolip_target ].point;
+			fallback       = std::move( r );
 		};
 
 		bool landing_in_reach = on_ground;
@@ -333,16 +352,22 @@ void n_movement::impl_t::pixelsurf_assist( c_user_cmd* cmd )
 
 			n_assist::run_t r = n_assist::run( c, prog, targets, false );
 			if ( !r.hit ) {
-				if ( r.gap < 1e8f && miss_len < static_cast< int >( sizeof( miss ) ) - 32 )
-					miss_len += sprintf_s( miss + miss_len, sizeof( miss ) - miss_len, " %s%s=%.3f%s", n_assist::k_launch_names[ prog.launch ],
-					                       prog.crouch ? "(c)" : "", r.gap, r.complete ? "" : "(cut)" );
+				if ( ( r.gap < 1e8f || r.nolip >= 0 ) && miss_len < static_cast< int >( sizeof( miss ) ) - 32 ) {
+					if ( r.gap < 1e8f )
+						miss_len += sprintf_s( miss + miss_len, sizeof( miss ) - miss_len, " %s%s=%.3f%s%s", n_assist::k_launch_names[ prog.launch ],
+						                       prog.crouch ? "(c)" : "", r.gap, r.complete ? "" : "(cut)", r.nolip >= 0 ? "(nolip)" : "" );
+					else
+						miss_len += sprintf_s( miss + miss_len, sizeof( miss ) - miss_len, " %s%s=nolip", n_assist::k_launch_names[ prog.launch ],
+						                       prog.crouch ? "(c)" : "" );
+				}
+				note_nolip( prog, r, targets );
 				continue;
 			}
 
 			const int t = r.target;
 			if ( !r.exact ) {
-				const std::vector< n_assist::target_t > one{ targets[ t ] };
-				n_assist::run_t v = n_assist::run( c, prog, one, true );
+				/* every target: a lip-less first crossing falls on to the lower points */
+				n_assist::run_t v = n_assist::run( c, prog, targets, true );
 				if ( !v.hit ) {
 					if ( !v.complete ) {
 						pending         = true;
@@ -351,22 +376,40 @@ void n_movement::impl_t::pixelsurf_assist( c_user_cmd* cmd )
 						pending_tries   = 0;
 					} else {
 						/* full = where the g_prediction flight stopped: launch -1 = press refused, gnd=1 = a floor
-						   under the arc ( takeoff z = your keys never carried you off it ) */
+						   under the arc ( takeoff z = your keys never carried you off it ), nolip=k = window hit, nothing pinned */
 						++st_rejects;
-						botox_dbg_log( "[psa] verify miss %s%s surf %.4f stepped arrive %.4f k=%d | full launch=%d stop k=%d z=%.3f gnd=%d",
+						botox_dbg_log( "[psa] verify miss %s%s surf %.4f stepped arrive %.4f k=%d | full launch=%d stop k=%d z=%.3f gnd=%d nolip=%d",
 						               n_assist::k_launch_names[ prog.launch ], prog.crouch ? " crouch" : "", targets[ t ].z, r.arrive_z, r.arrival,
-						               v.launch, static_cast< int >( v.ticks.size( ) ) - 1, v.end_z, v.end_ground ? 1 : 0 );
+						               v.launch, static_cast< int >( v.ticks.size( ) ) - 1, v.end_z, v.end_ground ? 1 : 0, v.nolip );
+						note_nolip( prog, v, targets );
 					}
 					continue;
 				}
 				r = std::move( v );
 			}
-			take( prog, r, targets[ t ].point, targets[ t ].z );
+			take( prog, r, targets[ r.target ].point, targets[ r.target ].z );
 		}
 		if ( !c.out_of_budget )
 			resume = 0;
 		else if ( last >= 0 )
 			resume = last;
+
+		if ( !plan.active && !pending && !c.out_of_budget && fallback.nolip >= 0 ) {
+			++st_nolip;
+			const int k_wait = n_tick::ticks( 8 );
+			botox_dbg_log( "[psa] nolip %s%s surf %.4f arrive %.4f k=%d skip %d/%d", n_assist::k_launch_names[ fallback_prog.launch ],
+			               fallback_prog.crouch ? " crouch" : "", fallback_z, fallback.nolip_z, fallback.nolip, nolip_skips + 1, k_wait );
+			if ( ++nolip_skips > k_wait ) {
+				fallback.hit      = true;
+				fallback.lip      = 0;
+				fallback.target   = fallback.nolip_target;
+				fallback.arrival  = fallback.nolip;
+				fallback.arrive_z = fallback.nolip_z;
+				fallback.ticks.resize( static_cast< size_t >( fallback.nolip ) + 1 );
+				take( fallback_prog, fallback, fallback_point, fallback_z );
+			}
+		} else if ( !plan.active && !pending && !c.out_of_budget )
+			nolip_skips = 0;
 
 		cmd->m_buttons      = c.buttons;
 		cmd->m_forward_move = c.fwd;
@@ -433,10 +476,10 @@ void n_movement::impl_t::pixelsurf_assist( c_user_cmd* cmd )
 	if ( const unsigned long long now = GetTickCount64( ); now >= next_report ) {
 		next_report = now + 1000ull;
 		if ( st_calls || st_plans || st_diverge )
-			botox_dbg_log( "PS: calls=%lld sims=%lld avg=%.1f us=%lld budget=%lld gate=%lld plans=%lld rejects=%lld diverge=%lld", st_calls, st_sims,
-			               st_calls ? static_cast< float >( st_sims ) / static_cast< float >( st_calls ) : 0.f, st_calls ? st_us / st_calls : 0ll,
-			               st_budget, st_gate, st_plans, st_rejects, st_diverge );
-		st_calls = st_sims = st_budget = st_gate = st_plans = st_rejects = st_diverge = st_us = 0ll;
+			botox_dbg_log( "PS: calls=%lld sims=%lld avg=%.1f us=%lld budget=%lld gate=%lld plans=%lld rejects=%lld diverge=%lld nolip=%lld", st_calls,
+			               st_sims, st_calls ? static_cast< float >( st_sims ) / static_cast< float >( st_calls ) : 0.f, st_calls ? st_us / st_calls : 0ll,
+			               st_budget, st_gate, st_plans, st_rejects, st_diverge, st_nolip );
+		st_calls = st_sims = st_budget = st_gate = st_plans = st_rejects = st_diverge = st_nolip = st_us = 0ll;
 	}
 }
 

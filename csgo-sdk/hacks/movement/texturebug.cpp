@@ -50,7 +50,7 @@ static int s_sent_cmd = -1;
 static c_vector s_sent_org{ }, s_sent_vel{ };
 
 /* clarity tb_wallstrafe_yaw 0x3C665DF0: wall eats the into-wall part, gain along it = ( cap - s*c )*c, best c = cap / 2s. FLT_MAX = too slow */
-inline float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, const float cap )
+float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, const float cap )
 {
 	if ( vel.length_2d( ) < 1.f )
 		return FLT_MAX;

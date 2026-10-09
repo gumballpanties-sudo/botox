@@ -41,6 +41,12 @@ public:
 		return g_virtual.call< studiohdr_t*, unsigned short >( this, 14, handle );
 	}
 
+	// slot 20 = GetStudioHdr + 6. builds the graph if missing: game thread only
+	const void* get_virtual_model( unsigned short handle )
+	{
+		return g_virtual.call< const void*, unsigned short >( this, 20, handle );
+	}
+
 	/* slot 22 = GetStudioHdr + 8 ( GetHardwareData, GetVCollide x2, GetAnimBlock, HasAnimBlockBeenPreloaded, GetVirtualModel,
 	   GetAutoplayList ). the vvd ( vertexFileHeader_t ), loads it if evicted; may be null while it streams. hold begin_lock */
 	const void* get_vertex_data( unsigned short handle )

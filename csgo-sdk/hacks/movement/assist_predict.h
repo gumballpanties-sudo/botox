@@ -172,6 +172,10 @@ namespace n_assist
 		float gap       = 1e9f;
 		float end_z     = 0.f;
 		bool end_ground = false;
+		int lip          = -1; /* hit: 1 = the arrival tick pinned in a sim, -1 = no face in reach ( not probed ) */
+		int nolip        = -1; /* first window hit nothing pinned: its arrival tick, target, z */
+		int nolip_target = -1;
+		float nolip_z    = 0.f;
 		std::vector< tick_t > ticks;
 	};
 
@@ -202,7 +206,70 @@ namespace n_assist
 		c_angle view        = c.view;
 		int air             = -1;
 		bool free_prev      = false;
+		unsigned dead       = 0u;
 		r.ticks.reserve( 128 );
+
+		const auto aim = [ & ]( const int i, const bool ground_in, c_angle& v ) {
+			cmd->m_forward_move = i == 0 ? c.fwd0 : c.fwd;
+			cmd->m_side_move    = i == 0 ? c.side0 : c.side;
+			cmd->m_view_point   = c.view;
+			if ( !ground_in && ( c.delta.m_x != 0.f || c.delta.m_y != 0.f ) ) {
+				if ( !big_turn( v.m_y, c.view.m_y ) )
+					v = ( v + c.delta ).normalize( ).clamp( );
+				cmd->m_view_point = v;
+				start_movement_fix( cmd );
+				cmd->m_view_point = c.view;
+				end_movement_fix( cmd );
+			}
+		};
+
+		/* 10-09 log: 13 of 33 plans hit the window on a face with no lip under that xy ( pin 0, wall 0.000 ). sim the arrival tick in
+		   its stance: your keys, auto align's pushes into the face ( 10..90 ), the ride hold's 45 / 450. none pins = no lip there,
+		   state goes back to the arrival and the arc falls on to lower points */
+		const auto lip = [ & ]( const int i, const int press ) -> int {
+			const c_vector o    = local->get_origin( );
+			const c_vector mins = col->get_obb_mins( ), maxs = col->get_obb_maxs( );
+			c_trace_filter fil( local );
+			float best = 1.f;
+			c_vector n{ };
+			for ( int d = 0; d < 8; ++d ) {
+				const float a = static_cast< float >( d ) * 0.78539816f;
+				trace_t tr;
+				ray_t ray( o, c_vector( o.m_x + 0.1f * std::cos( a ), o.m_y + 0.1f * std::sin( a ), o.m_z ), mins, maxs );
+				g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &fil, &tr );
+				if ( !tr.m_start_solid && tr.m_fraction < best && std::fabs( tr.m_plane.m_normal.m_z ) < 0.7f ) {
+					best = tr.m_fraction;
+					n    = tr.m_plane.m_normal;
+				}
+			}
+			if ( best >= 1.f || !g_prediction.snapshot_save( 0 ) )
+				return -1;
+			const float rot             = deg2rad( c_vector( -n.m_x, -n.m_y, 0.f ).to_angle2( ).m_y - c.view.m_y );
+			constexpr float k_presses[ ] = { 0.f, 10.f, 20.f, 30.f, 40.f, 45.f, 50.f, 60.f, 70.f, 80.f, 90.f, 450.f };
+			for ( const float m : k_presses ) {
+				if ( m > 0.f ) {
+					g_prediction.restore_entity_to_predicted_frame( c.frame );
+					g_prediction.snapshot_load( 0 );
+					cmd->m_forward_move = std::cos( rot ) * m;
+					cmd->m_side_move    = -std::sin( rot ) * m;
+					cmd->m_view_point   = c.view;
+				} else {
+					c_angle next_view = view;
+					aim( i + 1, false, next_view );
+				}
+				cmd->m_buttons          = ( c.buttons & ~in_duck ) | ( press & in_duck );
+				local->get_tick_base( ) = tick_base + i + 1;
+				g_prediction.begin( local, cmd );
+				g_prediction.end( local );
+				++c.sims;
+				const c_vector v = local->get_velocity( );
+				if ( !( local->get_flags( ) & fl_onground ) && std::fabs( v.m_z - pin ) < 0.01 && v.length_2d( ) >= 1.f )
+					return 1;
+			}
+			g_prediction.restore_entity_to_predicted_frame( c.frame );
+			g_prediction.snapshot_load( 0 );
+			return 0;
+		};
 
 		for ( int i = 0; i < c.pre_ticks + c.air_ticks; ++i ) {
 			if ( air < 0 && i >= c.pre_ticks )
@@ -214,17 +281,7 @@ namespace n_assist
 			}
 
 			const bool ground_in = ( local->get_flags( ) & fl_onground ) != 0;
-			cmd->m_forward_move  = i == 0 ? c.fwd0 : c.fwd;
-			cmd->m_side_move     = i == 0 ? c.side0 : c.side;
-			cmd->m_view_point    = c.view;
-			if ( !ground_in && ( c.delta.m_x != 0.f || c.delta.m_y != 0.f ) ) {
-				if ( !big_turn( view.m_y, c.view.m_y ) )
-					view = ( view + c.delta ).normalize( ).clamp( );
-				cmd->m_view_point = view;
-				start_movement_fix( cmd );
-				cmd->m_view_point = c.view;
-				end_movement_fix( cmd );
-			}
+			aim( i, ground_in, view );
 
 			const int press = buttons( p, i, ground_in, air, c.jb_tick, c.lj_hold );
 			cmd->m_buttons  = ( c.buttons & ~( in_jump | in_duck ) ) | press;
@@ -274,8 +331,20 @@ namespace n_assist
 
 			s.clipped = s.vz_in > 0.0 && std::fabs( s.vz - pin ) < 0.01;
 			for ( int t = 0; t < static_cast< int >( targets.size( ) ); ++t ) {
+				if ( dead >> t & 1u )
+					continue;
 				r.gap = ( std::min )( r.gap, near_gap( c.kind, targets[ t ], s, h ) );
 				if ( arrives( c.kind, targets[ t ], s, h ) ) {
+					r.lip = c.kind == arrival_surf ? lip( i, press ) : -1;
+					if ( r.lip == 0 ) {
+						dead |= 1u << t;
+						if ( r.nolip < 0 ) {
+							r.nolip        = i;
+							r.nolip_target = t;
+							r.nolip_z      = static_cast< float >( s.z );
+						}
+						continue;
+					}
 					r.hit      = true;
 					r.exact    = true;
 					r.target   = t;
@@ -315,9 +384,12 @@ namespace n_assist
 				f.z                = zf;
 				f.vz               = vf;
 				for ( int t = 0; t < static_cast< int >( targets.size( ) ); ++t ) {
+					if ( dead >> t & 1u )
+						continue;
 					r.gap = ( std::min )( r.gap, near_gap( c.kind, targets[ t ], f, h ) );
 					if ( arrives( c.kind, targets[ t ], f, h ) ) {
 						r.hit      = true;
+						r.lip      = -1;
 						r.target   = t;
 						r.arrival  = j;
 						r.arrive_z = zf;

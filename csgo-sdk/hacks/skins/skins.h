@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,11 @@ namespace n_skins
 	bool knife_anims_fit( int anim_index, int knife_index );
 
 	const char* knife_killfeed_name( );
+
+	/* listen server shares our vstdlib: LookAtHeldWeapon's RandomInt( 0, 10 ) (lookat01 w10, lookat02 w1) from
+	   server.dll before this GetTickCount64 returns the max = lookat02. one shot */
+	constexpr int k_deagle_lookat_weights = 11;
+	inline std::atomic< unsigned long long > g_rig_lookat_until{ 0 };
 
 	void cache_actual_colors( int paint_kit, const paint_colors_t& colors );
 
@@ -184,6 +190,9 @@ namespace n_skins
 		void animation_unhook( );
 
 		void publish_anim_donor( );
+
+		// menu pick changed mid map: drop every CStudioHdr on the mesh, flush its graph, rebuild
+		void knife_anim_live( );
 
 		void init_parser( );
 
