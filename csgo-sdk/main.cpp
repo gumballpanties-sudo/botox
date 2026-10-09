@@ -19,7 +19,7 @@
 
 void botox_dbg_log( const char* fmt, ... );
 void botox_dbg_log_close( );
-
+//1123
 /* first witness: spdlog builds sinks + logger + thread before a byte hits disk (crash there = 0 byte file).
    raw api, no lazy_importer, no format, no allocation. */
 static void boot_crumb( const char* text )
