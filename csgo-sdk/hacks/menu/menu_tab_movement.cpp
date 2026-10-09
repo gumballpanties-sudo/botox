@@ -686,7 +686,7 @@ void n_menu::impl_t::tab_movement( )
 						/* stance tb pins in: an unticked one is swapped for the other, never tried */
 						ImGui::MultiCombo( "types allowed##tbtypes", GET_VARIABLE( g_variables.m_texture_bug_types, std::vector< bool > ),
 						                   { "ducking", "standing" }, GET_VARIABLE( g_variables.m_texture_bug_types, std::vector< bool > ).size( ) );
-						ImGui::Checkbox( "autostrafe on wall##tbws", &GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool ) );
+						ImGui::Checkbox( "wallstrafe##tbws", &GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool ) );
 
 						ImGui::Combo( "detection sound##tbsound", &GET_VARIABLE( g_variables.m_texture_bug_sound, int ),
 						              "none\0arena switch\0button\0money\0beep\0custom\0" );

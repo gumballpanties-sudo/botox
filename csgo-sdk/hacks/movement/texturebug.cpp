@@ -12,6 +12,7 @@
 #include <iterator>
 #include <limits>
 #include "wall_climb.h"
+#include "movement_recorder.h"
 
 using namespace n_tb;
 
@@ -49,7 +50,7 @@ inline bool s_tb_owned_prev = false;
 static int s_sent_cmd = -1;
 static c_vector s_sent_org{ }, s_sent_vel{ };
 
-/* clarity tb_wallstrafe_yaw 0x3C665DF0: wall eats the into-wall part, gain along it = ( cap - s*c )*c, best c = cap / 2s. FLT_MAX = too slow */
+// Auto-align also uses this yaw helper. Texturebug itself uses predicted inputs.
 float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, const float cap )
 {
 	if ( vel.length_2d( ) < 1.f )
@@ -97,7 +98,7 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 	s_tb_owned_prev   = m_hit || m_hs_hit || m_hb_hit || m_acted || m_owns_cmd;
 	m_acted           = false;
 	m_assist          = false;
-	m_wallstrafed     = false;
+	reset_command( );
 	m_hb_hit          = false;
 	s_sims_this_cmd   = 0;
 	s_traces_this_cmd = 0;
@@ -142,6 +143,9 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 	const float pre_forward = cmd->m_forward_move;
 	const float pre_side    = cmd->m_side_move;
 	const int pre_buttons   = cmd->m_buttons;
+	m_input_forward = pre_forward;
+	m_input_side = pre_side;
+	m_input_yaw = cmd->m_view_point.m_y;
 
 	this->tb_auto_align( cmd );
 	const float align_forward = cmd->m_forward_move;
@@ -196,9 +200,51 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 	}
 
 	m_acted = cmd->m_forward_move != pre_forward || cmd->m_side_move != pre_side || cmd->m_buttons != pre_buttons;
-	/* only auto align's run-up steer / the wall strafe touched the cmd: an assist, auto pixel surf must not yield to it */
+	/* Only auto-align's run-up steer is an assist. Proven wallstrafe owns movement. */
 	m_assist = m_acted && !m_hit && !m_hb_hit && !m_owns_cmd &&
-	           ( m_wallstrafed || ( cmd->m_forward_move == align_forward && cmd->m_side_move == align_side && cmd->m_buttons == align_buttons ) );
+	           cmd->m_forward_move == align_forward && cmd->m_side_move == align_side && cmd->m_buttons == align_buttons;
+	if ( GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool ) && ( caught || m_owns_cmd ) )
+		m_owned_move.capture( *cmd );
+}
+
+void n_texturebug::impl_t::preserve_move( c_user_cmd* cmd )
+{
+	if ( !cmd || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) ||
+	     !GET_VARIABLE( g_variables.m_texture_bug, bool ) ||
+	     !GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool ) ||
+	     !g_input.check_input( &GET_VARIABLE( g_variables.m_texture_bug_key, key_bind_t ) ) )
+		return;
+	if ( g_movement_recorder.owns_cmd( ) || g_movement.m_fireman_data.owns_cmd ||
+	     ( GET_VARIABLE( g_variables.m_air_stuck, bool ) &&
+	       g_input.check_input( &GET_VARIABLE( g_variables.m_air_stuck_key, key_bind_t ) ) ) ||
+	     ( GET_VARIABLE( g_variables.m_air_freeze, bool ) &&
+	       g_input.check_input( &GET_VARIABLE( g_variables.m_air_freeze_key, key_bind_t ) ) ) || g_wall_climb.caught( cmd ) ) {
+		reset_command( );
+		return;
+	}
+	constexpr int movement_mask = in_forward | in_back | in_moveleft | in_moveright | in_jump | in_duck | in_run | in_speed | in_walk | in_bullrush;
+	m_owned_move.apply( *cmd, movement_mask );
+}
+
+// After a confirmed surf, assistance needs a wall at head height rather than
+// just beside the body. Initial approaches keep their original inward push.
+// Native prediction still decides actual catches, including valid feet pins.
+static bool tb_head_wall_reachable( c_base_entity* local, const c_vector& origin, const c_vector& end,
+                                    const c_vector& mins, const c_vector& maxs, const c_vector& normal )
+{
+	constexpr float epsilon = 0.03125f;
+	c_vector head_mins = mins, head_maxs = maxs;
+	head_mins.m_z = maxs.m_z - epsilon;
+	head_maxs.m_z = maxs.m_z + epsilon;
+	trace_t wall{ };
+	c_trace_filter_tb_world_props filter( local );
+	// Start just outside the face so a flush hull is not reported start-solid.
+	ray_t ray( origin + normal * ( 2.f * epsilon ), end, head_mins, head_maxs );
+	tb_trace( ray, mask_playersolid, &filter, &wall );
+	const float same_face = wall.m_plane.m_normal.m_x * normal.m_x + wall.m_plane.m_normal.m_y * normal.m_y +
+	                        wall.m_plane.m_normal.m_z * normal.m_z;
+	return !wall.m_start_solid && !wall.m_all_solid && wall.m_fraction < 1.f &&
+	       std::fabs( wall.m_plane.m_normal.m_z ) < 0.1f && same_face >= 0.98f && !botox_is_ladder_trace( wall );
 }
 
 /* texture bug = box-brush pin ( IntersectRayWithBoxBrush ): the head crosses a wall brush's bottom ( or feet a flush lower brush's top )
@@ -280,6 +326,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	const float div_vz           = div_ok ? vel.m_z - s_sent_vel.m_z : 0.f;
 
 	const c_user_cmd in = *cmd;
+	const bool wallstrafe_enabled = GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool );
 	int sims            = 0;
 	/* rising START: a pin here is a head bounce ( seam / ceiling face clipped the rise ), one tick, never a ride.
 	   START vz == -pin exactly lands on the pin with no contact */
@@ -303,7 +350,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		const bool pinned = !( local->get_flags( ) & fl_onground ) && local->get_move_type( ) == e_move_types::move_type_walk &&
 		                    std::fabsf( e.vel.m_z - pin ) < 1e-3f && e.vel.length_2d( ) >= 1.f;
 		e.ride   = pinned && vel.m_z + pin < 0.f;
-		e.bounce = pinned && rising;
+		e.bounce = pinned && rising && ( !wallstrafe_enabled || n_tb::wallstrafe::retains_speed( vel.length_2d( ), e.vel.length_2d( ) ) );
 		e.head = g_prediction.m_last_face_dz != n_prediction::impl_t::k_no_face && g_prediction.m_last_face_dz > 1.f;
 		e.ok   = local->get_move_type( ) == e_move_types::move_type_walk; /* a ladder latch is never ours */
 		return e;
@@ -403,6 +450,19 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	s_park_cmd = -1;
 	const float xy0 = vel.length_2d( );
 	bool user_dies  = false;
+	c_user_cmd raw = in;
+	raw.m_view_point.m_y = m_input_yaw;
+	raw.m_forward_move = m_input_forward;
+	raw.m_side_move = m_input_side;
+	if ( wallstrafe_enabled && tb_steering_away_from_wall( &raw, n, raw.m_forward_move, raw.m_side_move ) ) {
+		drop( );
+		cmd->m_forward_move = raw.m_forward_move;
+		cmd->m_side_move = raw.m_side_move;
+		act = 'S';
+		log( );
+		return;
+	}
+	float user_along_speed = -FLT_MAX;
 	if ( const end_t e = sim( user ); e.ok && ( e.ride || e.bounce ) ) {
 		commit( user );
 		if ( e.bounce ) {
@@ -420,8 +480,11 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		act = 'R';
 		log( );
 		return;
-	} else
+	} else {
 		user_dies = e.ok && xy0 > 50.f && e.vel.length_2d( ) < 0.2f * xy0;
+		if ( e.ok && !e.ground )
+			user_along_speed = ( e.vel.m_x * -n.m_y + e.vel.m_y * n.m_x ) / std::sqrt( n.m_x * n.m_x + n.m_y * n.m_y );
+	}
 
 	static int s_away = 0;
 	s_away            = tb_steering_away_from_wall( &in, n, in.m_forward_move, in.m_side_move ) ? s_away + 1 : 0;
@@ -435,7 +498,10 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	/* v_plane = plane closing speed. a tilted face also closes by the fall ( vz + pin ) * n.z, the xy press makes that up.
 	   v_old_n / v_plane are along n, AirAccelerate along yaw_in: / |n.xy| */
 	const float nxy       = std::sqrt( n.m_x * n.m_x + n.m_y * n.m_y );
-	const auto press_from = [ & ]( const float v_old_n, const bool dk0, const float v_plane, const int duck, const float vz ) {
+	const c_vector tangent( -n.m_y / nxy, n.m_x / nxy, 0.f );
+	const float along = vel.m_x * tangent.m_x + vel.m_y * tangent.m_y;
+	const float direction = n_tb::wallstrafe::direction( along, along );
+	const auto press_from = [ & ]( const float v_old_n, const bool dk0, const float v_plane, const int duck, const float vz, bool keep_speed = true ) {
 		const float v_old = v_old_n / nxy;
 		const float v_t   = ( v_plane + ( vz + pin ) * n.m_z ) / nxy;
 		const float crop  = ( duck || dk0 ) ? k_duck_crop : 1.f;
@@ -444,12 +510,100 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		c_user_cmd c     = with_duck( in, duck );
 		c.m_forward_move = std::fabsf( w );
 		c.m_side_move    = 0.f;
+		if ( wallstrafe_enabled && rising && keep_speed ) {
+			const float speed = std::min( std::fabsf( w ) * crop, std::max( 0.f, local->get_max_speed( ) ) );
+			const float sign = w < 0.f ? -1.f : 1.f;
+			const float delta = sign * std::min( k_acc * speed, std::max( 0.f, std::min( speed, 30.f ) - v_old * sign ) );
+			const float max_wish = std::min( k_wish_max * crop, std::max( 0.f, local->get_max_speed( ) ) );
+			const auto wish = n_tb::wallstrafe::aligned_wish( v_old, along * direction, delta, max_wish, k_acc );
+			if ( wish.gain > 1e-4f ) {
+				c.m_forward_move = wish.into / crop;
+				c.m_side_move = wish.along * direction / crop;
+				move_fix_to_yaw( yaw_in, c );
+				c.m_buttons &= ~k_move_keys;
+				return c;
+			}
+		}
 		move_fix_to_yaw( w >= 0.f ? yaw_in : yaw_in + 180.f, c );
 		c.m_buttons &= ~k_move_keys;
 		return c;
 	};
 	const float v_old = -( vel.m_x * n.m_x + vel.m_y * n.m_y );
 	const auto press  = [ & ]( const float v_t, const int duck ) { return press_from( v_old, ducked0, v_t, duck, vel.m_z ); };
+
+	// Probe a small shortlist once, from the same restored frame as the catch
+	// search. Keep it pending until catch/precision corrections have had priority.
+	c_user_cmd strafe_cmd{ };
+	bool have_strafe = false;
+	bool head_assist_blocked = false;
+	if ( wallstrafe_enabled && sims_left( ) > 3 ) {
+		const float yaw = deg2rad( raw.m_view_point.m_y );
+		const c_vector wish( std::cosf( yaw ) * raw.m_forward_move + std::sinf( yaw ) * raw.m_side_move,
+		                     std::sinf( yaw ) * raw.m_forward_move - std::cosf( yaw ) * raw.m_side_move, 0.f );
+		const float direction = n_tb::wallstrafe::direction( wish.m_x * tangent.m_x + wish.m_y * tangent.m_y, along );
+		const float crop = ( stance || ducked0 ) ? k_duck_crop : 1.f;
+		const float wishspeed = std::min( k_wish_max * crop, std::max( 0.f, local->get_max_speed( ) ) );
+		const auto wishes = n_tb::wallstrafe::candidates( v_old / nxy, along * direction, wishspeed, k_acc );
+		float best_speed = std::max( along * direction, user_along_speed == -FLT_MAX ? along * direction : user_along_speed * direction );
+		for ( const auto& w : wishes ) {
+			if ( w.gain <= 1e-4f || sims_left( ) <= 0 )
+				continue;
+			c_user_cmd c = with_duck( in, stance );
+			c.m_forward_move = w.into * k_wish_max;
+			c.m_side_move = w.along * direction * k_wish_max;
+			move_fix_to_yaw( yaw_in, c );
+			c.m_buttons &= ~k_move_keys;
+			const end_t e = sim( c );
+			if ( !e.ok || e.ground || !n_tb::wallstrafe::retains_speed( xy0, e.vel.length_2d( ) ) )
+				continue;
+			// Check the wall still exists at the predicted position, including
+			// corners and ladders; an old infinite plane is insufficient here.
+			trace_t wall{ };
+			c_trace_filter_tb_world_props filter( local );
+			auto* col = local->get_collideable( );
+			if ( !col )
+				continue;
+			ray_t ray( e.org, e.org - n * ( reach + k_touch ), col->get_obb_mins( ), col->get_obb_maxs( ) );
+			tb_trace( ray, mask_playersolid, &filter, &wall );
+			const float same_face = wall.m_plane.m_normal.m_x * n.m_x + wall.m_plane.m_normal.m_y * n.m_y + wall.m_plane.m_normal.m_z * n.m_z;
+			const float end_gap = gap + ( e.org.m_x - org.m_x ) * n.m_x + ( e.org.m_y - org.m_y ) * n.m_y + ( e.org.m_z - org.m_z ) * n.m_z;
+			if ( wall.m_start_solid || wall.m_all_solid || wall.m_fraction >= 1.f || same_face < 0.98f || botox_is_ladder_trace( wall ) ||
+			     end_gap > std::max( gap, k_touch ) + k_touch )
+				continue;
+			if ( e.ride || e.bounce ) {
+				commit( c );
+				m_hit = e.ride;
+				s_rode = s_rode || e.ride;
+				m_hb_hit = e.bounce;
+				m_hs_hit = e.ride && e.head;
+				s_miss = 0;
+				s_ride_duck = stance;
+				s_ride_user = user_duck;
+				s_pin_cmd = cmd->m_command_number;
+				++s_run;
+				act = 'P';
+				log( );
+				return;
+			}
+			if ( s_rode && !rising && !tb_head_wall_reachable( local, e.org, e.org - n * ( reach + k_touch ),
+			                                                   col->get_obb_mins( ), col->get_obb_maxs( ), n ) ) {
+				head_assist_blocked = true;
+				continue;
+			}
+			const float speed = ( e.vel.m_x * tangent.m_x + e.vel.m_y * tangent.m_y ) * direction;
+			if ( speed > best_speed + 0.005f ) {
+				best_speed = speed;
+				strafe_cmd = c;
+				have_strafe = true;
+			}
+		}
+	}
+	const auto send_strafe = [ & ]( ) {
+		commit( strafe_cmd );
+		m_wallstrafed = m_owns_cmd = true;
+		act = 'W';
+		log( );
+	};
 
 	/* touching: dx ladder from the smallest crossing press ( feet seam ) up to the head pin bound at Hbrush = 0.
 	   rungs closer than one ulp of the coordinate move the hull the same, so steps are at least one ulp */
@@ -462,15 +616,25 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 			/* climb past the first pin while rungs still pin, send the run's middle: the lowest pinning rung sits on the window edge
 			   and a server 1 ulp off misses it */
 			float run_dx[ k_ladder_cap ];
-			bool run_head[ k_ladder_cap ];
+			bool run_head[ k_ladder_cap ], run_plain[ k_ladder_cap ];
 			int run_n = 0, k = 0;
 			const float step = rising ? k_rise_ratio : k_ratio;
 			for ( float dx = g * 1.0005f + 1e-7f; dx <= hi && k < k_ladder_cap; dx = std::max( dx * step, dx + ulp ), ++k ) {
-				const end_t e = sim( press( dx / ipt, duck ) );
+				c_user_cmd candidate = press( dx / ipt, duck );
+				end_t e = sim( candidate );
+				bool plain_used = false;
+				if ( wallstrafe_enabled && rising && e.ok && !e.bounce && sims_left( ) > 0 ) {
+					const c_user_cmd plain = press_from( v_old, ducked0, dx / ipt, duck, vel.m_z, false );
+					if ( plain.m_forward_move != candidate.m_forward_move || plain.m_side_move != candidate.m_side_move ) {
+						e = sim( plain );
+						plain_used = true;
+					}
+				}
 				if ( !e.ok && sims_left( ) <= 0 )
 					break;
 				if ( e.ok && ( e.ride || e.bounce ) ) {
 					run_dx[ run_n ]     = dx;
+					run_plain[ run_n ] = plain_used;
 					run_head[ run_n++ ] = e.head;
 				} else if ( run_n )
 					break;
@@ -478,7 +642,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 			if ( !run_n )
 				return false;
 			dx_hit   = run_dx[ run_n / 2 ];
-			out      = press( dx_hit / ipt, duck );
+			out      = press_from( v_old, ducked0, dx_hit / ipt, duck, vel.m_z, !run_plain[ run_n / 2 ] );
 			out_head = run_head[ run_n / 2 ];
 			return true;
 		};
@@ -594,6 +758,14 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 			s_ride_duck = -1;
 		s_run = 0;
 	}
+	// A capped search is unknown, not a lost catch. Never resume assistance
+	// because the remaining catch candidates could not be evaluated.
+	if ( sims_left( ) <= 0 )
+		have_strafe = false;
+	if ( have_strafe && gap > k_touch ) {
+		send_strafe( );
+		return;
+	}
 	if ( ( reach > 0.f || gap <= k_touch ) && gap > 0.f && s_park_margin <= 16 ) {
 		/* never under 1 ulp: a sub-ulp end is the plane or a hard hit on the server */
 		const float floor_gap = static_cast< float >( std::max( s_park_margin, 1 ) ) * ulp;
@@ -607,8 +779,14 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 			last_end           = end;
 			const c_user_cmd c = press( ( gap - end ) / ipt, stance );
 			const end_t e      = sim( c );
-			if ( !e.ok || e.ground )
+			if ( !e.ok || e.ground || ( wallstrafe_enabled && rising && !n_tb::wallstrafe::retains_speed( xy0, e.vel.length_2d( ) ) ) )
 				continue;
+			const auto col = local->get_collideable( );
+			if ( wallstrafe_enabled && s_rode && !rising && !e.ride && ( !col || !tb_head_wall_reachable( local, e.org, e.org - n * ( reach + k_touch ),
+			                                                               col->get_obb_mins( ), col->get_obb_maxs( ), n ) ) ) {
+				head_assist_blocked = true;
+				continue;
+			}
 			const float g1     = e.org.m_x * n.m_x + e.org.m_y * n.m_y + e.org.m_z * n.m_z - ( org.m_x * n.m_x + org.m_y * n.m_y + org.m_z * n.m_z ) + gap;
 			const bool touched = -( e.vel.m_x * n.m_x + e.vel.m_y * n.m_y ) <= 1e-3f;
 			if ( g1 > 0.f && g1 < gap && !touched && g1 >= floor_gap * 0.5f ) {
@@ -629,7 +807,8 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		for ( const float to : { k_eps, 0.125f, 0.5f } ) {
 			const c_user_cmd c = press( -( to - gap ) / ipt, stance );
 			const end_t e      = sim( c );
-			if ( e.ok && e.vel.length_2d( ) >= 0.2f * xy0 ) {
+			if ( e.ok && e.vel.length_2d( ) >= 0.2f * xy0 &&
+			     ( !wallstrafe_enabled || !rising || n_tb::wallstrafe::retains_speed( xy0, e.vel.length_2d( ) ) ) ) {
 				commit( c );
 				m_owns_cmd = true;
 				act        = 'U';
@@ -638,30 +817,12 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 			}
 		}
 	}
-	/* clarity tb_fallback_push450: no pin, no park on contact -> 450 at the best strafe yaw along the wall, never while steering away */
-	/* a ride ran on this wall and 2+ ticks missed since = fell off it: your move, no strafing down the face */
-	const bool fell       = s_rode && s_miss > 1;
-	const c_user_cmd mine = with_duck( in, held );
-	if ( GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool ) && gap <= k_contact &&
-	     !fell && !tb_steering_away_from_wall( &in, n, in.m_forward_move, in.m_side_move, 0.f ) ) {
-		static auto sv_air_max_wishspeed = g_interfaces.m_convar->find_var( "sv_air_max_wishspeed" );
-		const float yaw = tb_wallstrafe_yaw( n, vel, sv_air_max_wishspeed ? sv_air_max_wishspeed->get_float( ) : 30.f );
-		c_user_cmd c    = mine;
-		c.m_forward_move = k_wish_max;
-		c.m_side_move    = 0.f;
-		if ( yaw != FLT_MAX ) {
-			move_fix_to_yaw( yaw, c );
-			c.m_buttons &= ~k_move_keys;
-		}
-		if ( yaw != FLT_MAX && !tb_move_latches_ladder( &c, false ) ) {
-			commit( c );
-			m_wallstrafed = true;
-			m_owns_cmd    = mine.m_buttons != in.m_buttons && s_miss <= 1;
-			act           = 'W';
-			log( );
-			return;
-		}
+	if ( have_strafe && sims_left( ) > 0 ) {
+		send_strafe( );
+		return;
 	}
+	const bool fell = s_rode && s_miss > 1;
+	const c_user_cmd mine = with_duck( head_assist_blocked ? raw : in, held );
 	commit( mine );
 	m_owns_cmd = cmd->m_buttons != in.m_buttons && s_miss <= 1;
 	if ( fell )
@@ -686,6 +847,7 @@ void n_texturebug::impl_t::head_bounce( c_user_cmd* cmd )
 		return;
 	if ( !cmd || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) )
 		return;
+	const bool wallstrafe_enabled = GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool );
 	if ( m_hit || m_hs_hit || m_hb_hit )
 		return;
 	if ( ( g_prediction.backup_data.m_flags & fl_onground ) || g_prediction.backup_data.m_move_type != e_move_types::move_type_walk )
@@ -724,7 +886,7 @@ void n_texturebug::impl_t::head_bounce( c_user_cmd* cmd )
 
 	const float xy_base      = base_vel.length_2d( );
 	/* a bounce that costs half the speed is not a catch, it is a crash into the ceiling */
-	const float xy_floor    = xy_base >= 1.f ? xy_base * k_xy_creep_frac : 0.f;
+	const float xy_floor    = xy_base >= 1.f ? ( wallstrafe_enabled ? xy_base - n_tb::wallstrafe::k_speed_tolerance : xy_base * k_xy_creep_frac ) : 0.f;
 	const float vz_free     = base_vz + 2.f * half;
 
 	const float rise = std::fmax( 0.f, base_vz + half ) * dt;
@@ -866,6 +1028,8 @@ void n_texturebug::impl_t::head_bounce( c_user_cmd* cmd )
 		if ( ( g_ctx.m_local->get_flags( ) & fl_onground ) ||
 		     g_ctx.m_local->get_move_type( ) != e_move_types::move_type_walk )
 			return -1;
+		if ( wallstrafe_enabled && v.length_2d( ) < xy_floor )
+			return -1;
 		if ( cut > k_hb_cut_min )
 			return v.length_2d( ) >= xy_floor ? 1 : -1;
 		return v.m_z > 0.f ? 0 : -1;
@@ -886,7 +1050,7 @@ void n_texturebug::impl_t::head_bounce( c_user_cmd* cmd )
 
 	const auto run_chain = [ & ]( c_user_cmd* c, int n ) -> int {
 		for ( int i = 0; i < n; ++i ) {
-			if ( sims_used >= budget )
+			if ( sims_used >= budget || ( wallstrafe_enabled && sims_left( ) <= 0 ) )
 				return -1;
 			const float vz_in = g_ctx.m_local->get_velocity( ).m_z;
 			++sims_used;
@@ -923,6 +1087,15 @@ void n_texturebug::impl_t::head_bounce( c_user_cmd* cmd )
 	};
 	const auto keep_blind = [ & ]( ) {
 		restore_original( );
+		if ( wallstrafe_enabled ) {
+			// Budget exhaustion is not evidence that a stored braking plan is
+			// still safe for speed. Fall back to this tick's original movement.
+			cmd->m_forward_move = original_forward;
+			cmd->m_side_move = original_side;
+			cmd->m_buttons = original_buttons;
+			cmd->m_view_point = original_view;
+			return;
+		}
 		write_plan( );
 		m_hb_hit = true;
 		set_plan( plan_left - 1, p_yaw, p_fwd, p_unduck, p_own );
@@ -983,6 +1156,16 @@ void n_texturebug::impl_t::head_bounce( c_user_cmd* cmd )
 			return std::fabs( g_math.normalize_angle( a - aim ) ) < std::fabs( g_math.normalize_angle( b - aim ) );
 		} );
 		yaws = side_yaws;
+	}
+
+	float speed_yaws[ std::size( k_hb_yaw ) ];
+	if ( wallstrafe_enabled ) {
+		std::copy( yaws, yaws + n_yaws, speed_yaws );
+		std::stable_sort( std::begin( speed_yaws ), std::end( speed_yaws ), [ & ]( float a, float b ) {
+			return ( base_vel + air_accel_delta( base_vel, base_yaw + a, 450.f ) ).length_2d( ) >
+			       ( base_vel + air_accel_delta( base_vel, base_yaw + b, 450.f ) ).length_2d( );
+		} );
+		yaws = speed_yaws;
 	}
 
 	tb_dedup_t dedup{ }, dedup_u{ };
@@ -1047,6 +1230,27 @@ void n_texturebug::impl_t::head_bounce( c_user_cmd* cmd )
 	};
 
 	if ( need_ticks > 0 ) {
+		if ( wallstrafe_enabled && xy_base > 1.f ) {
+			restore_original( );
+			static auto sv_airaccelerate = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
+			const float acceleration = ( sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.f ) * dt * g_ctx.m_local->get_surface_friction( );
+			const float crop = ( ( pre.m_flags & fl_ducking ) || ( original_buttons & in_duck ) ) ? 0.34f : 1.f;
+			const float speed = std::min( 450.f * crop, std::max( 0.f, g_ctx.m_local->get_max_speed( ) ) );
+			const auto wishes = n_tb::wallstrafe::candidates( 0.f, xy_base, speed, acceleration );
+			// Both lateral directions can reach a ledge. Try true acceleration
+			// angles before the coarse legacy sweep, within its existing budget.
+			for ( const auto& wish : wishes ) {
+				if ( wish.gain <= 1e-4f )
+					continue;
+				const float offset = rad2deg( std::atan2f( wish.into, wish.along ) );
+				for ( const float sign : { 1.f, -1.f } ) {
+					if ( sims_used >= budget || refine_done( ) || sims_left( ) <= 0 )
+						break;
+					const int before = sims_used;
+					keep_best( try_variant( 450.f, sign * offset, chain, original_buttons, dedup ), before );
+				}
+			}
+		}
 		for ( float fwd : k_hb_fwd ) {
 			for ( int y = 0; y < n_yaws; ++y ) {
 				if ( sims_used >= budget || refine_done( ) )

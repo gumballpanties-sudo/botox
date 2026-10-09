@@ -14,6 +14,7 @@
 #include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/movement/tick_scale.h"
 #include "../../hacks/movement/wall_climb.h"
+#include "../../hacks/movement/texturebug.h"
 #include "../../hacks/prediction/prediction.h"
 #include "../../hacks/skins/skins.h"
 #include "../../hacks/visuals/screen/flip_world.h"
@@ -558,6 +559,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 	cmd->m_view_point.clamp( );
 
 	air_stuck_shot_proof( cmd );
+	g_texturebug.preserve_move( cmd );
 
 	g_ctx.m_last_tick_yaw = cmd->m_view_point.m_y;
 	g_ctx.last_view_point = cmd->m_view_point;
