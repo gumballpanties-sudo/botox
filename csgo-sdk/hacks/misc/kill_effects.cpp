@@ -1,6 +1,5 @@
 #include "misc.h"
 #include "mc_xp_orb.h"
-#include "../visuals/screen/frame_dump.h"
 #include "../visuals/screen/reflections.h"
 #include "../visuals/screen/render_queue.h"
 #include "../visuals/screen/stream_guard.h"
@@ -2978,14 +2977,6 @@ void kill_effects_capture( IDirect3DDevice9* device )
 				std::memcpy( g_melt_capture.m_crop, crop_rect, sizeof( crop_rect ) );
 				g_melt_capture.m_screen[ 0 ] = static_cast< float >( description.Width );
 				g_melt_capture.m_screen[ 1 ] = static_cast< float >( description.Height );
-			}
-
-			static bool dumped = false;
-			if ( ok && !dumped ) {
-				dumped = true;
-				const bool saved = n_frame_dump::save( device, crop, "melt_capture.png" );
-				botox_dbg_log( "MELT: capture dump %s rect %ld,%ld %ux%u bb %ux%u msaa %d slot %d", saved ? "ok" : "FAIL", left, top, width, height,
-				               description.Width, description.Height, multisampled ? 1 : 0, slot );
 			}
 
 			D3DLOCKED_RECT locked{ };

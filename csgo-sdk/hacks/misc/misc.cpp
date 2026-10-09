@@ -62,10 +62,15 @@ void n_misc::impl_t::on_paint_traverse( )
 
 	this->performance( );
 
-	bot_names_frame( );
+	{
+		PERF_ZONE( zone_paint_bots );
+		bot_names_frame( );
+	}
 
 	if ( g_ctx.m_world_restore_requested.load( std::memory_order_acquire ) )
 		return;
+
+	PERF_ZONE( zone_paint_world );
 
 	this->old_shaders( );
 
@@ -1235,7 +1240,7 @@ void n_misc::impl_t::update_clantag( )
 	static std::string last_sent = "";
 	static bool cleared          = true;
 
-	if ( !GET_VARIABLE( g_variables.m_clantag, bool ) ) {
+	if ( !GET_VARIABLE( g_variables.m_clantag, bool ) || GET_VARIABLE( g_variables.m_safe_mode, bool ) ) {
 		if ( !cleared ) {
 			/* same send rule as below: never emit CmdKeyValues while not on a team */
 			if ( g_interfaces.m_engine_client->is_in_game( ) && g_ctx.m_local &&
@@ -1601,7 +1606,7 @@ void n_misc::impl_t::disable_post_processing( )
 	if ( !post_process )
 		return;
 
-	const bool want = !GET_VARIABLE( g_variables.m_disable_post_processing, bool );
+	const bool want = !GET_VARIABLE( g_variables.m_disable_post_processing, bool ) || GET_VARIABLE( g_variables.m_safe_mode, bool );
 
 	if ( post_process->get_bool( ) != want )
 		post_process->set_value( want );
@@ -3350,7 +3355,7 @@ void n_misc::impl_t::force_crosshair( )
 	if ( !weapon_debug_spread_show )
 		return;
 
-	const bool should_draw = GET_VARIABLE( g_variables.m_force_crosshair, bool ) && g_ctx.m_local && g_ctx.m_local->is_alive( ) &&
+	const bool should_draw = GET_VARIABLE( g_variables.m_force_crosshair, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) && g_ctx.m_local && g_ctx.m_local->is_alive( ) &&
 	                         !g_ctx.m_local->is_scoped( );
 
 	const int wanted = should_draw ? 3 : 0;

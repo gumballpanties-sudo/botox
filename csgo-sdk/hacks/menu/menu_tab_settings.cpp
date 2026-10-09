@@ -946,7 +946,7 @@ void n_menu::impl_t::tab_misc( )
 {
 	menu_columns_begin( );
 
-	if ( menu_group_begin( "hud & effects" ) ) {
+	if ( menu_group_begin( "overlays" ) ) {
 		ImGui::Checkbox( "watermark", &GET_VARIABLE( g_variables.m_watermark, bool ) );
 		if ( GET_VARIABLE( g_variables.m_watermark, bool ) ) {
 			ImGui::OptionPopup(
@@ -1552,8 +1552,8 @@ void n_menu::impl_t::tab_misc( )
 	menu_columns_next( );
 
 	if ( menu_group_begin( "game" ) ) {
-		ImGui::Checkbox( "clantag", &GET_VARIABLE( g_variables.m_clantag, bool ) );
-		if ( GET_VARIABLE( g_variables.m_clantag, bool ) ) {
+		safe_checkbox( "clantag", &GET_VARIABLE( g_variables.m_clantag, bool ) );
+		if ( GET_VARIABLE( g_variables.m_clantag, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) ) {
 			ImGui::OptionPopup(
 				"clantag configuration",
 				[]( ) {
@@ -1726,7 +1726,7 @@ void n_menu::impl_t::tab_misc( )
 		ImGui::Checkbox( "deagle spinner", &GET_VARIABLE( g_variables.m_deagle_spinner, bool ) );
 		ImGui::Keybind( "deagle spinner key", &GET_VARIABLE( g_variables.m_deagle_spinner_key, key_bind_t ) );
 
-		ImGui::Checkbox( "sv_pure bypass", &GET_VARIABLE( g_variables.m_pure_bypass, bool ) );
+		safe_checkbox( "sv_pure bypass", &GET_VARIABLE( g_variables.m_pure_bypass, bool ) );
 
 		ImGui::Checkbox( "performance", &GET_VARIABLE( g_variables.m_performance, bool ) );
 		if ( GET_VARIABLE( g_variables.m_performance, bool ) ) {
@@ -1933,6 +1933,12 @@ void n_menu::impl_t::tab_settings( )
 	}
 	menu_group_end( );
 
+	if ( menu_group_begin( "system" ) ) {
+		ImGui::Checkbox( "debug log", &GET_VARIABLE( g_variables.m_debug_log, bool ) );
+		ImGui::Checkbox( "safe mode", &GET_VARIABLE( g_variables.m_safe_mode, bool ) );
+	}
+	menu_group_end( );
+
 	menu_columns_next( );
 
 	if ( menu_group_begin( "visuals config" ) ) {
@@ -1959,8 +1965,6 @@ void n_menu::impl_t::tab_settings( )
 
 			ImGui::Checkbox( "dpi scale panels", &GET_VARIABLE( g_variables.m_dpi_scale_panels, bool ) );
 		}
-
-		ImGui::Checkbox( "debug log", &GET_VARIABLE( g_variables.m_debug_log, bool ) );
 	}
 	menu_group_end( );
 

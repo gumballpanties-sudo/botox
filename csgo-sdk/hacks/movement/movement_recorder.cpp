@@ -79,6 +79,18 @@ namespace
 	{
 		return g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_real_time : 0.f;
 	}
+
+	/* playback yaw != original = camera follows the route too, just turned */
+	bool camera_locked( )
+	{
+		return GET_VARIABLE( g_variables.m_movement_rec_lockva, bool ) || GET_VARIABLE( g_variables.m_movement_rec_yaw, int ) != 0;
+	}
+
+	float smoothstep01( float t )
+	{
+		t = std::clamp( t, 0.f, 1.f );
+		return t * t * ( 3.f - 2.f * t );
+	}
 }
 
 n_movement_recorder::frame_t::frame_t( c_user_cmd* cmd, const c_vector& pos )
@@ -235,12 +247,15 @@ static void write_clip_to_file( const std::filesystem::path& file_path, const n_
 		out << j.dump( 2 );
 }
 
-void n_movement_recorder::impl_t::refresh_clips( )
+void n_movement_recorder::impl_t::refresh_clips( const bool only_if_changed )
 {
 	std::scoped_lock lock( m_clips_mutex );
 
 	ensure_root( );
-	m_clips.clear( );
+
+	/* listing stamp: re-parsing every .mr (json, all maps) each 5 s stalled paint 20-60 ms */
+	std::vector< std::filesystem::path > files;
+	std::wstring stamp( m_current_map.begin( ), m_current_map.end( ) );
 
 	std::error_code ec;
 	for ( const auto& entry : std::filesystem::directory_iterator{ get_root_path( ), ec } ) {
@@ -250,8 +265,21 @@ void n_movement_recorder::impl_t::refresh_clips( )
 		if ( entry.path( ).extension( ) != ".mr" )
 			continue;
 
+		stamp += L'|' + entry.path( ).filename( ).native( ) + L':' + std::to_wstring( entry.file_size( file_ec ) ) + L':' +
+		         std::to_wstring( entry.last_write_time( file_ec ).time_since_epoch( ).count( ) );
+		files.emplace_back( entry.path( ) );
+	}
+
+	const std::size_t hash = std::hash< std::wstring >{ }( stamp );
+	if ( only_if_changed && hash == m_clips_stamp )
+		return;
+	m_clips_stamp = hash;
+
+	m_clips.clear( );
+
+	for ( const auto& path : files ) {
 		clip_t c{ };
-		if ( !read_clip_from_file( entry.path( ), c ) )
+		if ( !read_clip_from_file( path, c ) )
 			continue;
 		if ( !m_current_map.empty( ) && !c.map.empty( ) && c.map != m_current_map )
 			continue;
@@ -443,10 +471,13 @@ bool n_movement_recorder::impl_t::play_clip( size_t index )
 	m_selected_clip     = static_cast< int >( index );
 	m_wish_to_start     = true;
 	m_approach_ticks    = 0;
+	m_smooth_t0         = now_real( );
+	g_interfaces.m_engine_client->get_view_angles( m_smooth_from );
 	apply_replay_jetpack( false );
 
-	botox_dbg_log( "REC: play %s ticks=%d dist=%.2f\n", c.filename.c_str( ), static_cast< int >( c.frames.size( ) ),
-	               g_prediction.backup_data.m_origin.dist_to( c.frames[ 0 ].position ) );
+	botox_dbg_log( "REC: play %s ticks=%d dist=%.2f yaw=%d in=%.2f out=%.2f\n", c.filename.c_str( ), static_cast< int >( c.frames.size( ) ),
+	               g_prediction.backup_data.m_origin.dist_to( c.frames[ 0 ].position ), GET_VARIABLE( g_variables.m_movement_rec_yaw, int ),
+	               GET_VARIABLE( g_variables.m_movement_rec_smooth_start, float ), GET_VARIABLE( g_variables.m_movement_rec_smooth_end, float ) );
 	return true;
 }
 
@@ -594,11 +625,52 @@ void n_movement_recorder::impl_t::apply_playback( c_user_cmd* cmd ) const
 		select_weapon( cmd, m_play_frames[ m_play_idx ] );
 	}
 
-	if ( !GET_VARIABLE( g_variables.m_movement_rec_lockva, bool ) ) {
-		start_movement_fix( cmd );
-		cmd->m_view_point = backup_view;
-		end_movement_fix( cmd );
+	/* movement fix keeps the recorded world wish dir under any sent view; same view = untouched, bit exact replay */
+	const c_angle view = camera_locked( ) ? camera_at( m_play_idx, now_real( ) ) : backup_view;
+	if ( view.m_x == cmd->m_view_point.m_x && view.m_y == cmd->m_view_point.m_y )
+		return;
+	start_movement_fix( cmd );
+	cmd->m_view_point = view;
+	end_movement_fix( cmd );
+}
+
+/* smooth end: offset eases to 0, spin decelerates to a stop over the last n seconds */
+float n_movement_recorder::impl_t::yaw_offset( size_t idx ) const
+{
+	const int mode = GET_VARIABLE( g_variables.m_movement_rec_yaw, int );
+	if ( mode <= 0 || m_play_frames.empty( ) )
+		return 0.f;
+
+	const float n = static_cast< float >( m_play_frames.size( ) - 1 );
+	const float m = std::clamp( GET_VARIABLE( g_variables.m_movement_rec_smooth_end, float ) * static_cast< float >( server_tickrate( ) ), 0.f, n );
+	const float i = std::min( static_cast< float >( idx ), n );
+
+	if ( mode == 4 ) {
+		const float s = GET_VARIABLE( g_variables.m_movement_rec_spin_speed, float ) / static_cast< float >( server_tickrate( ) );
+		const float e = n - m;
+		if ( m < 1.f || i <= e )
+			return s * i;
+		const float d = i - e;
+		return s * ( e + d - d * d / ( 2.f * m ) );
 	}
+
+	const float base = mode == 1 ? 90.f : mode == 2 ? -90.f : 180.f;
+	return m < 1.f ? base : base * smoothstep01( ( n - i ) / m );
+}
+
+/* smooth start: blend from the view at play press to the route camera */
+c_angle n_movement_recorder::impl_t::camera_at( size_t idx, float now ) const
+{
+	const frame_t& f = m_play_frames[ std::min( idx, m_play_frames.size( ) - 1 ) ];
+
+	const float dur = GET_VARIABLE( g_variables.m_movement_rec_smooth_start, float );
+	const float w   = dur > 0.01f ? smoothstep01( ( now - m_smooth_t0 ) / dur ) : 1.f;
+	if ( w >= 1.f )
+		return c_angle( f.view_pitch, std::remainder( f.view_yaw + yaw_offset( idx ), 360.f ), 0.f );
+
+	const float pitch = m_smooth_from.m_x + ( f.view_pitch - m_smooth_from.m_x ) * w;
+	const float yaw   = m_smooth_from.m_y + std::remainder( f.view_yaw - m_smooth_from.m_y, 360.f ) * w + yaw_offset( idx ) * w;
+	return c_angle( pitch, std::remainder( yaw, 360.f ), 0.f );
 }
 
 void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
@@ -724,8 +796,8 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 		const c_vector& cur_pos = g_prediction.backup_data.m_origin;
 		const float dist        = cur_pos.dist_to( first.position );
 
-		if ( GET_VARIABLE( g_variables.m_movement_rec_lockva, bool ) ) {
-			c_angle start_view( first.view_pitch, first.view_yaw, 0.f );
+		if ( camera_locked( ) ) {
+			c_angle start_view = camera_at( 0, now_real( ) );
 			cmd->m_view_point    = start_view;
 			cmd->m_mouse_delta_x = 0;
 			cmd->m_mouse_delta_y = 0;
@@ -800,20 +872,29 @@ void n_movement_recorder::impl_t::on_frame_stage( int stage )
 {
 	if ( stage != static_cast< int >( e_client_frame_stage::start ) )
 		return;
-	if ( !m_playing || !GET_VARIABLE( g_variables.m_movement_rec_lockva, bool ) )
+	if ( !camera_locked( ) || m_play_frames.empty( ) )
 		return;
-	if ( m_play_idx == 0 || m_play_idx >= m_play_frames.size( ) )
+
+	const float now = now_real( );
+
+	/* approach: per frame so smooth start eases at fps, not tick rate */
+	if ( m_wish_to_start ) {
+		c_angle view = camera_at( 0, now );
+		g_interfaces.m_engine_client->set_view_angles( view );
+		return;
+	}
+
+	if ( !m_playing || m_play_idx == 0 || m_play_idx >= m_play_frames.size( ) )
 		return;
 
 	/* sent frame idx-1 last tick, idx goes out next: lerp by real time so the camera is smooth at any fps */
-	const frame_t& from = m_play_frames[ m_play_idx - 1 ];
-	const frame_t& to   = m_play_frames[ m_play_idx ];
+	const c_angle from = camera_at( m_play_idx - 1, now );
+	const c_angle to   = camera_at( m_play_idx, now );
 
 	const float interval = g_interfaces.m_global_vars_base->m_interval_per_tick;
-	const float progress = std::clamp( interval > 1e-6f ? ( now_real( ) - m_step_realtime ) / interval : 1.f, 0.f, 1.f );
+	const float progress = std::clamp( interval > 1e-6f ? ( now - m_step_realtime ) / interval : 1.f, 0.f, 1.f );
 
-	c_angle view{ from.view_pitch + ( to.view_pitch - from.view_pitch ) * progress,
-	              from.view_yaw + wrap_180( to.view_yaw - from.view_yaw ) * progress, 0.f };
+	c_angle view{ from.m_x + ( to.m_x - from.m_x ) * progress, wrap_180( from.m_y + wrap_180( to.m_y - from.m_y ) * progress ), 0.f };
 	g_interfaces.m_engine_client->set_view_angles( view );
 }
 
@@ -822,7 +903,7 @@ void n_movement_recorder::impl_t::camera_lock( float* x, float* y )
 	if ( !x || !y || !GET_VARIABLE( g_variables.m_movement_rec, bool ) )
 		return;
 
-	const bool lockva = GET_VARIABLE( g_variables.m_movement_rec_lockva, bool );
+	const bool lockva = camera_locked( );
 	if ( ( m_playing && lockva ) || ( m_wish_to_start && ( lockva || GET_VARIABLE( g_variables.m_movement_rec_lockgoingtostart, bool ) ) ) ) {
 		*x = 0.f;
 		*y = 0.f;
@@ -1175,7 +1256,7 @@ void n_movement_recorder::impl_t::on_paint_traverse( )
 		const float now = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_current_time : 0.f;
 		if ( now - m_last_auto_refresh > 5.f || now < m_last_auto_refresh ) {
 			m_last_auto_refresh = now;
-			refresh_clips( );
+			refresh_clips( true );
 		}
 	}
 

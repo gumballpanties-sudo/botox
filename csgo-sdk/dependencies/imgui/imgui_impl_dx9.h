@@ -23,6 +23,13 @@ void ImGui_ImplDX9_RenderDrawDataFaded( ImDrawData* draw_data, float alpha );
 void ImGui_ImplDX9_DestroyFontsTexture( );
 // botox: one more D3DFMT_A8 texture ( render.cpp dpi font twins ) that takes its colour from the vertex, null = none
 void ImGui_ImplDX9_SetTwinTextureA8( void* texture );
+// botox: font texture in stages ( render.cpp reload ). stage: any thread, cpu only, null = no pixels. step: render
+// thread, 1 done / 0 more frames / -1 failed. install: render thread, io.Fonts already = the staged atlas, frees the stage
+struct ImFontAtlas;
+void* ImGui_ImplDX9_StageFontsTexture( ImFontAtlas* atlas );
+int ImGui_ImplDX9_UploadFontsStep( void* stage, unsigned int budget_bytes );
+void ImGui_ImplDX9_InstallFontsTexture( void* stage );
+void ImGui_ImplDX9_FreeFontsStage( void* stage );
 
 // Use if you want to reset your rendering device without losing ImGui state.
  bool ImGui_ImplDX9_CreateDeviceObjects( );

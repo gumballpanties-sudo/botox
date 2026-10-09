@@ -525,48 +525,55 @@ void ImGui_ImplDX9_Shutdown( )
 	}
 }
 
-static bool ImGui_ImplDX9_CreateFontsTexture( )
+/* botox: font texture in stages so a reload never stalls a frame ( render.cpp ). stage = cpu only, any thread;
+   step + install = render thread. the stage being uploaded is tracked: a Reset drops its DEFAULT texture, the
+   next step starts over */
+struct ImGui_ImplDX9_FontStage {
+	ImFontAtlas* atlas;
+	unsigned char* px[ k_font_mip_levels ];
+	int w[ k_font_mip_levels ], h[ k_font_mip_levels ];
+	int levels;
+	LPDIRECT3DTEXTURE9 tex;
+	bool a8;
+	int level, row;
+	unsigned int ms_start;
+};
+static ImGui_ImplDX9_FontStage* g_UploadingStage = NULL;
+
+void* ImGui_ImplDX9_StageFontsTexture( ImFontAtlas* atlas )
 {
 	/* botox: expand alpha8 straight into the locked rect. GetTexDataAsRGBA32 kept a W*H*4 copy in ONE
 	   malloc (~100mb for our cjk atlas), unchecked - in a 3gb 32 bit csgo it failed at random and
 	   imgui wrote through null (crash on config load). a colour build ( LoadColor ) is still rgba. */
-	ImGuiIO& io              = ImGui::GetIO( );
-	ImFontAtlas* const atlas = io.Fonts;
-	unsigned char* alpha     = NULL;
+	unsigned char* alpha = NULL;
 	int width = atlas->TexWidth, height = atlas->TexHeight;
 	if ( !atlas->TexPixelsRGBA32 )
 		atlas->GetTexDataAsAlpha8( &alpha, &width, &height );
 	if ( !atlas->TexPixelsRGBA32 && !alpha )
-		return false;
+		return NULL;
 
-	// botox: alpha builds go up as A8 when the card samples it ( all dx9 parts do, checked anyway )
-	bool a8 = false;
-	if ( !atlas->TexPixelsRGBA32 ) {
-		IDirect3D9* d3d = NULL;
-		D3DDEVICE_CREATION_PARAMETERS cp;
-		D3DDISPLAYMODE mode;
-		if ( g_pd3dDevice->GetDirect3D( &d3d ) == D3D_OK && d3d ) {
-			a8 = g_pd3dDevice->GetCreationParameters( &cp ) == D3D_OK && g_pd3dDevice->GetDisplayMode( 0, &mode ) == D3D_OK &&
-			     d3d->CheckDeviceFormat( cp.AdapterOrdinal, cp.DeviceType, mode.Format, D3DUSAGE_DYNAMIC, D3DRTYPE_TEXTURE, D3DFMT_A8 ) == D3D_OK;
-			d3d->Release( );
-		}
-	}
+	ImGui_ImplDX9_FontStage* const s = ( ImGui_ImplDX9_FontStage* )IM_ALLOC( sizeof( ImGui_ImplDX9_FontStage ) );
+	if ( !s )
+		return NULL;
+	memset( s, 0, sizeof( *s ) );
+	s->atlas  = atlas;
+	s->px[ 0 ] = alpha;
+	s->w[ 0 ]  = width;
+	s->h[ 0 ]  = height;
+	s->levels = 1;
 
 	// botox: mip chain for the dpi scale. under 100 % glyphs minify: plain bilinear skips texels and the 1 bit
 	// ( monochrome ) menu font loses whole strokes. 2x2 box levels + MIPFILTER LINEAR = real grey coverage.
 	// level 2 = 25 %. alpha builds only ( a colour LoadColor build stays 1 level ). a level that can't be
 	// allocated ends the chain there: never an unfilled level
-	unsigned char* levels_px[ k_font_mip_levels ] = { alpha };
-	int levels_w[ k_font_mip_levels ] = { width }, levels_h[ k_font_mip_levels ] = { height };
-	int levels = 1;
 	if ( !atlas->TexPixelsRGBA32 ) {
-		for ( ; levels < k_font_mip_levels; levels++ ) {
-			const int pw = levels_w[ levels - 1 ], ph = levels_h[ levels - 1 ];
+		for ( ; s->levels < k_font_mip_levels; s->levels++ ) {
+			const int pw = s->w[ s->levels - 1 ], ph = s->h[ s->levels - 1 ];
 			const int w = pw > 1 ? pw >> 1 : 1, h = ph > 1 ? ph >> 1 : 1;
 			unsigned char* const dst = ( unsigned char* )IM_ALLOC( ( size_t )w * h );
 			if ( !dst )
 				break;
-			const unsigned char* const src = levels_px[ levels - 1 ];
+			const unsigned char* const src = s->px[ s->levels - 1 ];
 			for ( int y = 0; y < h; y++ ) {
 				const unsigned char* const r0 = src + ( size_t )pw * ( y * 2 < ph ? y * 2 : ph - 1 );
 				const unsigned char* const r1 = src + ( size_t )pw * ( y * 2 + 1 < ph ? y * 2 + 1 : ph - 1 );
@@ -575,54 +582,96 @@ static bool ImGui_ImplDX9_CreateFontsTexture( )
 					dst[ ( size_t )w * y + x ] = ( unsigned char )( ( r0[ x0 ] + r0[ x1 ] + r1[ x0 ] + r1[ x1 ] + 2 ) / 4 );
 				}
 			}
-			levels_px[ levels ] = dst;
-			levels_w[ levels ]  = w;
-			levels_h[ levels ]  = h;
+			s->px[ s->levels ] = dst;
+			s->w[ s->levels ]  = w;
+			s->h[ s->levels ]  = h;
 		}
 	}
-	const auto free_levels = [ & ]( ) {
-		for ( int l = 1; l < levels; l++ )
-			IM_FREE( levels_px[ l ] );
-	};
+	return s;
+}
 
-	// Upload texture to graphics system
-	g_FontTexture = NULL;
-	HRESULT hr    = g_pd3dDevice->CreateTexture( width, height, levels, D3DUSAGE_DYNAMIC, a8 ? D3DFMT_A8 : D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
-	                                             &g_FontTexture, NULL );
-	// botox: no room for the chain = old single level, text just minifies rough again
-	if ( hr < 0 && levels > 1 ) {
-		free_levels( );
-		levels = 1;
-		hr     = g_pd3dDevice->CreateTexture( width, height, 1, D3DUSAGE_DYNAMIC, a8 ? D3DFMT_A8 : D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
-		                                      &g_FontTexture, NULL );
-	}
-	if ( hr < 0 ) {
-		// botox: one line per failure streak, NewFrame retries every frame ( text = blocks meanwhile )
-		static int s_fails = 0;
-		if ( s_fails++ % 256 == 0 )
-			botox_dbg_log( "FONT: texture create failed hr=%08x %dx%d a8=%d fails=%d", ( unsigned )hr, width, height, ( int )a8, s_fails );
-		g_FontTexture = NULL;
-		return false;
-	}
-	for ( int level = 0; level < levels; level++ ) {
-		const int lw = levels_w[ level ], lh = levels_h[ level ];
-		D3DLOCKED_RECT tex_locked_rect;
-		if ( g_FontTexture->LockRect( level, &tex_locked_rect, NULL, 0 ) != D3D_OK ) {
-			// botox: drop it, or NewFrame sees a texture and never retries - text stays blank
-			botox_dbg_log( "FONT: texture lock failed %dx%d a8=%d level=%d", width, height, ( int )a8, level );
-			free_levels( );
-			g_FontTexture->Release( );
-			g_FontTexture = NULL;
-			return false;
+void ImGui_ImplDX9_FreeFontsStage( void* stage )
+{
+	ImGui_ImplDX9_FontStage* const s = ( ImGui_ImplDX9_FontStage* )stage;
+	if ( !s )
+		return;
+	if ( g_UploadingStage == s )
+		g_UploadingStage = NULL;
+	if ( s->tex )
+		s->tex->Release( );
+	for ( int l = 1; l < s->levels; l++ )
+		IM_FREE( s->px[ l ] );
+	IM_FREE( s );
+}
+
+int ImGui_ImplDX9_UploadFontsStep( void* stage, unsigned int budget_bytes )
+{
+	ImGui_ImplDX9_FontStage* const s = ( ImGui_ImplDX9_FontStage* )stage;
+	const bool rgba                  = s->atlas->TexPixelsRGBA32 != NULL;
+
+	if ( !s->tex ) {
+		// botox: alpha builds go up as A8 when the card samples it ( all dx9 parts do, checked anyway )
+		s->a8 = false;
+		if ( !rgba ) {
+			IDirect3D9* d3d = NULL;
+			D3DDEVICE_CREATION_PARAMETERS cp;
+			D3DDISPLAYMODE mode;
+			if ( g_pd3dDevice->GetDirect3D( &d3d ) == D3D_OK && d3d ) {
+				s->a8 = g_pd3dDevice->GetCreationParameters( &cp ) == D3D_OK && g_pd3dDevice->GetDisplayMode( 0, &mode ) == D3D_OK &&
+				        d3d->CheckDeviceFormat( cp.AdapterOrdinal, cp.DeviceType, mode.Format, D3DUSAGE_DYNAMIC, D3DRTYPE_TEXTURE, D3DFMT_A8 ) == D3D_OK;
+				d3d->Release( );
+			}
 		}
-		for ( int y = 0; y < lh; y++ ) {
-			unsigned char* const row = ( unsigned char* )tex_locked_rect.pBits + tex_locked_rect.Pitch * y;
-			if ( atlas->TexPixelsRGBA32 ) {
-				memcpy( row, atlas->TexPixelsRGBA32 + ( size_t )lw * y, ( size_t )lw * 4 );
+
+		const D3DFORMAT format = s->a8 ? D3DFMT_A8 : D3DFMT_A8R8G8B8;
+		HRESULT hr = g_pd3dDevice->CreateTexture( s->w[ 0 ], s->h[ 0 ], s->levels, D3DUSAGE_DYNAMIC, format, D3DPOOL_DEFAULT, &s->tex, NULL );
+		// botox: no room for the chain = old single level, text just minifies rough again
+		if ( hr < 0 && s->levels > 1 ) {
+			for ( int l = 1; l < s->levels; l++ )
+				IM_FREE( s->px[ l ] );
+			s->levels = 1;
+			hr        = g_pd3dDevice->CreateTexture( s->w[ 0 ], s->h[ 0 ], 1, D3DUSAGE_DYNAMIC, format, D3DPOOL_DEFAULT, &s->tex, NULL );
+		}
+		if ( hr < 0 ) {
+			// botox: one line per failure streak, NewFrame retries every frame ( text = blocks meanwhile )
+			static int s_fails = 0;
+			if ( s_fails++ % 256 == 0 )
+				botox_dbg_log( "FONT: texture create failed hr=%08x %dx%d a8=%d fails=%d", ( unsigned )hr, s->w[ 0 ], s->h[ 0 ], ( int )s->a8, s_fails );
+			s->tex = NULL;
+			return -1;
+		}
+		s->level = s->row = 0;
+		s->ms_start       = GetTickCount( );
+		g_UploadingStage  = s;
+	}
+
+	const size_t bpp = s->a8 ? 1 : 4;
+	size_t spent     = 0;
+	while ( s->level < s->levels && spent < budget_bytes ) {
+		const int lw = s->w[ s->level ], lh = s->h[ s->level ];
+		const size_t row_bytes = ( size_t )lw * bpp;
+		size_t rows            = ( budget_bytes - spent ) / row_bytes;
+		if ( rows < 1 )
+			rows = 1;
+		if ( rows > ( size_t )( lh - s->row ) )
+			rows = ( size_t )( lh - s->row );
+
+		RECT rect = { 0, s->row, lw, s->row + ( LONG )rows };
+		D3DLOCKED_RECT locked;
+		if ( s->tex->LockRect( s->level, &locked, &rect, 0 ) != D3D_OK ) {
+			// botox: drop it, or NewFrame sees a texture and never retries - text stays blank
+			botox_dbg_log( "FONT: texture lock failed %dx%d a8=%d level=%d", s->w[ 0 ], s->h[ 0 ], ( int )s->a8, s->level );
+			return -1;
+		}
+		for ( size_t i = 0; i < rows; i++ ) {
+			const size_t y         = ( size_t )s->row + i;
+			unsigned char* const row = ( unsigned char* )locked.pBits + locked.Pitch * i;
+			if ( rgba ) {
+				memcpy( row, s->atlas->TexPixelsRGBA32 + ( size_t )lw * y, ( size_t )lw * 4 );
 				continue;
 			}
-			const unsigned char* const src = levels_px[ level ] + ( size_t )lw * y;
-			if ( a8 ) {
+			const unsigned char* const src = s->px[ s->level ] + ( size_t )lw * y;
+			if ( s->a8 ) {
 				memcpy( row, src, ( size_t )lw );
 				continue;
 			}
@@ -630,18 +679,48 @@ static bool ImGui_ImplDX9_CreateFontsTexture( )
 			for ( int x = 0; x < lw; x++ )
 				dst[ x ] = IM_COL32( 255, 255, 255, src[ x ] );
 		}
-		g_FontTexture->UnlockRect( level );
+		s->tex->UnlockRect( s->level );
+
+		spent += rows * row_bytes;
+		s->row += ( int )rows;
+		if ( s->row >= lh ) {
+			s->level++;
+			s->row = 0;
+		}
 	}
-	free_levels( );
-	g_FontTextureA8 = a8;
-	double bytes    = 0.0;
-	for ( int level = 0; level < levels; level++ )
-		bytes += ( double )levels_w[ level ] * levels_h[ level ] * ( a8 ? 1 : 4 );
-	botox_dbg_log( "FONT: texture up %dx%d %s levels=%d = %.1f mb", width, height, a8 ? "a8" : "argb", levels, bytes / ( 1024.0 * 1024.0 ) );
+	return s->level >= s->levels ? 1 : 0;
+}
 
-	// Store our identifier
-	io.Fonts->TexID = ( ImTextureID )g_FontTexture;
+void ImGui_ImplDX9_InstallFontsTexture( void* stage )
+{
+	ImGui_ImplDX9_FontStage* const s = ( ImGui_ImplDX9_FontStage* )stage;
 
+	if ( g_FontTexture )
+		g_FontTexture->Release( );
+	g_FontTexture   = s->tex;
+	g_FontTextureA8 = s->a8;
+	s->tex          = NULL;
+	s->atlas->TexID = ( ImTextureID )g_FontTexture;
+
+	double bytes = 0.0;
+	for ( int level = 0; level < s->levels; level++ )
+		bytes += ( double )s->w[ level ] * s->h[ level ] * ( s->a8 ? 1 : 4 );
+	botox_dbg_log( "FONT: texture up %dx%d %s levels=%d = %.1f mb in %u ms", s->w[ 0 ], s->h[ 0 ], s->a8 ? "a8" : "argb", s->levels,
+	               bytes / ( 1024.0 * 1024.0 ), ( unsigned )( GetTickCount( ) - s->ms_start ) );
+
+	ImGui_ImplDX9_FreeFontsStage( s );
+}
+
+static bool ImGui_ImplDX9_CreateFontsTexture( )
+{
+	void* const stage = ImGui_ImplDX9_StageFontsTexture( ImGui::GetIO( ).Fonts );
+	if ( !stage )
+		return false;
+	if ( ImGui_ImplDX9_UploadFontsStep( stage, 0xFFFFFFFFu ) != 1 ) {
+		ImGui_ImplDX9_FreeFontsStage( stage );
+		return false;
+	}
+	ImGui_ImplDX9_InstallFontsTexture( stage );
 	return true;
 }
 
@@ -671,6 +750,13 @@ void ImGui_ImplDX9_InvalidateDeviceObjects( )
 		g_FontTexture                = NULL;
 		ImGui::GetIO( ).Fonts->TexID = NULL;
 	} // We copied g_pFontTextureView to io.Fonts->TexID so let's clear that as well.
+	// botox: a half uploaded reload texture is DEFAULT pool too, its next step starts over
+	if ( g_UploadingStage ) {
+		if ( g_UploadingStage->tex )
+			g_UploadingStage->tex->Release( );
+		g_UploadingStage->tex = NULL;
+		g_UploadingStage      = NULL;
+	}
 	// botox: the fade layer, so Reset ( reset.cpp ) and unload ( Shutdown ) both drop it
 	if ( g_LayerTexture ) {
 		g_LayerTexture->Release( );

@@ -798,7 +798,7 @@ void n_scaleform::impl_t::force_crosshair_panorama( )
 
 	static int restored_state = -2;
 
-	const bool enabled = GET_VARIABLE( g_variables.m_force_crosshair, bool );
+	const bool enabled = GET_VARIABLE( g_variables.m_force_crosshair, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool );
 
 	if ( !enabled && !applied && !inline_dirty )
 		return;

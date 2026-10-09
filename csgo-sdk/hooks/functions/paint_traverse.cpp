@@ -92,24 +92,42 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 				g_movement.on_paint_traverse( );
 			}
 
-			g_movement_recorder.on_paint_traverse( );
+			{
+				PERF_ZONE( zone_paint_recorder );
+				g_movement_recorder.on_paint_traverse( );
+			}
 
 			g_logger.on_paint_traverse( );
 
 			// every frame, on or off: off is what puts the crosshair back and drops an open chat line
-			g_mc_hud.on_paint_traverse( );
+			{
+				PERF_ZONE( zone_paint_mc_hud );
+				g_mc_hud.on_paint_traverse( );
+			}
 
-			kill_effects_paint( );
+			{
+				PERF_ZONE( zone_paint_kill_fx );
+				kill_effects_paint( );
+			}
 
 #ifdef _DEBUG
 			g_debugger.on_paint_traverse( );
 #endif
 
 			if ( g_ctx.m_local ) {
-				g_indicators.on_paint_traverse( );
-				g_edicts.on_paint_traverse( );
-				g_grenade_path.on_paint_traverse( );
-				g_grenade_aim.on_paint_traverse( );
+				{
+					PERF_ZONE( zone_paint_indicators );
+					g_indicators.on_paint_traverse( );
+				}
+				{
+					PERF_ZONE( zone_paint_edicts );
+					g_edicts.on_paint_traverse( );
+				}
+				{
+					PERF_ZONE( zone_paint_grenade );
+					g_grenade_path.on_paint_traverse( );
+					g_grenade_aim.on_paint_traverse( );
+				}
 				g_bullets.on_paint_traverse( );
 
 				{

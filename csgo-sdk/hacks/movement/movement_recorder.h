@@ -81,6 +81,8 @@ namespace n_movement_recorder
 		size_t m_play_idx     = 0;
 		int m_approach_ticks  = 0;
 		float m_step_realtime = 0.f;
+		float m_smooth_t0     = 0.f;
+		c_angle m_smooth_from{ };
 		float m_route_render_start_time = 0.f;
 		std::vector< frame_t > m_play_frames;
 		std::string m_active_route_name;
@@ -92,6 +94,7 @@ namespace n_movement_recorder
 
 		float m_indicator_alpha   = 0.f;
 		float m_last_auto_refresh = 0.f;
+		std::size_t m_clips_stamp = 0;
 
 		std::string m_current_map;
 		bool m_replay_jetpack_active       = false;
@@ -122,7 +125,7 @@ namespace n_movement_recorder
 
 		std::filesystem::path get_root_path( ) const;
 		void ensure_root( );
-		void refresh_clips( );
+		void refresh_clips( bool only_if_changed = false );
 		void delete_clip( size_t index );
 		bool play_clip( size_t index );
 		void open_clip_editor( size_t index );
@@ -132,6 +135,8 @@ namespace n_movement_recorder
 
 	private:
 		static bool select_weapon( c_user_cmd* cmd, const frame_t& frame );
+		float yaw_offset( size_t idx ) const;
+		c_angle camera_at( size_t idx, float now ) const;
 		void check_map_change( );
 		void apply_replay_jetpack( bool active );
 		void save_frames( const std::vector< frame_t >& frames, const char* kind );

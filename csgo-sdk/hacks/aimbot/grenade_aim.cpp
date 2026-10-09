@@ -32,22 +32,36 @@ namespace
 		return offset ? *reinterpret_cast< T* >( reinterpret_cast< std::uintptr_t >( entity ) + offset ) : fallback;
 	}
 
-	float max_flight_time( const short item_index )
+	/* menu slot order = m_grenade_aim_types labels in menu.cpp */
+	int grenade_slot( const short item_index )
 	{
 		switch ( item_index ) {
 		case e_item_definition_index::weapon_flashbang:
+			return 0;
 		case e_item_definition_index::weapon_hegrenade:
-			return 1.5f;
+			return 1;
+		case e_item_definition_index::weapon_smokegrenade:
+			return 2;
 		case e_item_definition_index::weapon_molotov:
 		case e_item_definition_index::weapon_incgrenade:
-			return 2.f;
-		case e_item_definition_index::weapon_smokegrenade:
+			return 3;
 		case e_item_definition_index::weapon_decoy:
+			return 4;
 		case e_item_definition_index::weapon_tagrenade:
-			return 3.f;
+			return 5;
 		default:
-			return 0.f;
+			return -1;
 		}
+	}
+
+	float max_flight_time( const short item_index )
+	{
+		const int slot    = grenade_slot( item_index );
+		const auto& types = GET_VARIABLE( g_variables.m_grenade_aim_types, std::vector< bool > );
+		if ( slot < 0 || slot >= static_cast< int >( types.size( ) ) || !types[ slot ] )
+			return 0.f;
+
+		return slot <= 1 ? 1.5f : slot == 3 ? 2.f : 3.f;
 	}
 
 	/* CBaseCSGrenade::ThrowGrenade inputs ( weapon_basecsgrenade.cpp:555 ) */

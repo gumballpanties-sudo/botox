@@ -46,7 +46,11 @@ struct font_set_t {
 	ImFont* m_fonts[ e_font_names::font_name_max ]{ };
 	ImFont* m_custom_fonts[ e_custom_font_names::custom_font_name_max ]{ };
 	float m_build_ms = 0.f;
+	void* m_stage    = nullptr;
 };
+
+/* 2 mb of texture a frame: a reload uploads over frames, never in one */
+constexpr unsigned int k_font_upload_budget = 2u << 20;
 
 /* side atlas of scaled indicator fonts. m_base = the indicator font it was baked against (a main rebuild
    retires it). TexID = our own d3d texture, made on the render thread (update_indicator_fonts) */
@@ -285,6 +289,7 @@ namespace
 		if ( !set )
 			return;
 
+		ImGui_ImplDX9_FreeFontsStage( set->m_stage );
 		IM_DELETE( set->m_atlas );
 		delete set;
 	}
@@ -808,6 +813,8 @@ static void build_fonts_worker( const font_request_t request )
 		IM_DELETE( set->m_atlas );
 		set->m_atlas = nullptr;
 	}
+	else
+		set->m_stage = ImGui_ImplDX9_StageFontsTexture( set->m_atlas );
 
 	set->m_build_ms = std::chrono::duration< float, std::milli >( std::chrono::steady_clock::now( ) - start ).count( );
 
@@ -832,7 +839,11 @@ void n_render::impl_t::install_fonts( font_set_t* set )
 	{
 		std::unique_lock< std::shared_mutex > font_lock( this->m_font_mutex );
 
-		ImGui_ImplDX9_DestroyFontsTexture( );
+		/* staged = texture already whole, swapped in. unstaged (first build) = NewFrame uploads it */
+		if ( set->m_stage )
+			ImGui_ImplDX9_InstallFontsTexture( std::exchange( set->m_stage, nullptr ) );
+		else
+			ImGui_ImplDX9_DestroyFontsTexture( );
 
 		io.Fonts = set->m_atlas;
 		std::ranges::copy( set->m_fonts, this->m_fonts );
@@ -851,7 +862,14 @@ void n_render::impl_t::install_fonts( font_set_t* set )
 	discard_dpi_set( std::exchange( g_dpi_fonts, nullptr ) );
 	g_dpi_wanted = g_dpi_seen = g_dpi_baked = { };
 
-	IM_DELETE( retired );
+	/* thousands of glyph vectors: freed on a thread, under the build flag so eject waits for it */
+	if ( !this->m_font_build_running.exchange( true ) )
+		std::thread( []( ImFontAtlas* atlas ) {
+			IM_DELETE( atlas );
+			g_render.m_font_build_running = false;
+		}, retired ).detach( );
+	else
+		IM_DELETE( retired );
 
 	if ( const float build_ms = set->m_build_ms; build_ms > 0.f ) {
 		const int width = set->m_atlas->TexWidth, height = set->m_atlas->TexHeight;
@@ -963,7 +981,7 @@ void n_render::impl_t::update_indicator_fonts( IDirect3DDevice9* device )
 	}
 
 	if ( !want.m_count || want == s_baked || now - s_changed < std::chrono::milliseconds( 250 ) || this->m_reload_fonts ||
-	     this->m_font_build_running )
+	     this->m_font_build_running || this->m_uploading_fonts )
 		return;
 
 	s_baked                    = want;
@@ -1130,7 +1148,7 @@ static void update_dpi_fonts( IDirect3DDevice9* device )
 	}
 
 	if ( !g_dpi_wanted.m_count || g_dpi_wanted == g_dpi_baked || now - g_dpi_changed < std::chrono::milliseconds( 250 ) ||
-	     g_render.m_reload_fonts || g_render.m_font_build_running )
+	     g_render.m_reload_fonts || g_render.m_font_build_running || g_render.m_uploading_fonts )
 		return;
 
 	g_dpi_baked                   = g_dpi_wanted;
@@ -1819,12 +1837,27 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& function, I
 		this->m_initialised  = true;
 	}
 
-	/* swap a finished worker atlas in before NewFrame: imgui must never see it change mid-frame */
-	if ( font_set_t* const set = this->m_pending_fonts.exchange( nullptr ) )
-		this->install_fonts( set );
+	/* finished worker atlas: texture goes up in slices, old fonts stay live till it is whole, then swap before
+	   NewFrame. picked up with no worker running only: the dpi bake reads the live atlas this retires */
+	if ( !this->m_uploading_fonts && !this->m_font_build_running )
+		this->m_uploading_fonts = this->m_pending_fonts.exchange( nullptr );
+
+	if ( font_set_t* const set = this->m_uploading_fonts ) {
+		const int step = set->m_stage ? ImGui_ImplDX9_UploadFontsStep( set->m_stage, k_font_upload_budget ) : 1;
+
+		if ( step != 0 )
+			this->m_uploading_fonts = nullptr;
+
+		if ( step > 0 )
+			this->install_fonts( set );
+		else if ( step < 0 ) {
+			g_console.print< n_console::log_level::WARNING >( "font texture upload failed (out of video memory) - kept the old fonts" );
+			discard_font_set( set );
+		}
+	}
 
 	/* reload starts a worker, never builds here. pressed mid-build: flag stays up, next build starts after */
-	if ( this->m_reload_fonts && !this->m_font_build_running ) {
+	if ( this->m_reload_fonts && !this->m_font_build_running && !this->m_uploading_fonts ) {
 		this->m_font_build_running = true;
 		this->m_reload_fonts       = false;
 
@@ -1942,6 +1975,7 @@ void n_render::impl_t::on_release( )
 		std::this_thread::sleep_for( std::chrono::milliseconds( 10 ) );
 
 	discard_font_set( this->m_pending_fonts.exchange( nullptr ) );
+	discard_font_set( std::exchange( this->m_uploading_fonts, nullptr ) );
 	discard_indicator_set( this->m_pending_indicator_fonts.exchange( nullptr ) );
 	discard_indicator_set( std::exchange( this->m_indicator_fonts, nullptr ) );
 	discard_dpi_set( g_pending_dpi_fonts.exchange( nullptr ) );

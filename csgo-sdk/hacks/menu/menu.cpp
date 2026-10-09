@@ -877,6 +877,10 @@ void n_menu::impl_t::tab_aimbot( )
 	if ( menu_group_begin( "grenade aimbot" ) ) {
 		ImGui::Checkbox( "grenade aimbot", &GET_VARIABLE( g_variables.m_grenade_aim, bool ) );
 		ImGui::Keybind( "grenade aim key", &GET_VARIABLE( g_variables.m_grenade_aim_key, key_bind_t ) );
+
+		const std::vector< const char* > grenade_labels = { "flashbang", "he grenade", "smoke", "molotov", "decoy", "tactical awareness" };
+		auto& grenade_types                             = GET_VARIABLE( g_variables.m_grenade_aim_types, std::vector< bool > );
+		ImGui::MultiCombo( "grenades##grenade aim", grenade_types, grenade_labels, grenade_types.size( ) );
 		ImGui::SliderFloat( "grenade fov", &GET_VARIABLE( g_variables.m_grenade_aim_fov, float ), 1.f, 180.f, "%.0f" );
 		ImGui::Combo( "arc##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_arc, int ), "auto\0low\0lob\0" );
 		ImGui::Checkbox( "silent##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_silent, bool ) );

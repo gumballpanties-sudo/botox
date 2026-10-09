@@ -813,7 +813,7 @@ void n_menu::impl_t::tab_movement( )
 			ImGui::Checkbox( "blockbot", &GET_VARIABLE( g_variables.m_blockbot, bool ) );
 			ImGui::Keybind( "blockbot key", &GET_VARIABLE( g_variables.m_blockbot_key, key_bind_t ) );
 
-			ImGui::Checkbox( "no crouch cooldown", &GET_VARIABLE( g_variables.m_no_crouch_cooldown, bool ) );
+			safe_checkbox( "no crouch cooldown",&GET_VARIABLE( g_variables.m_no_crouch_cooldown, bool ) );
 
 			ImGui::Checkbox( "fast stop", &GET_VARIABLE( g_variables.m_fast_stop, bool ) );
 		}
@@ -1394,6 +1394,13 @@ void n_menu::impl_t::tab_movement( )
 			}
 			ImGui::Checkbox( "show clipper box", &GET_VARIABLE( g_variables.m_movement_rec_clipper_box, bool ) );
 			ImGui::Checkbox( "original playback viewangles", &GET_VARIABLE( g_variables.m_movement_rec_lockva, bool ) );
+			ImGui::Combo( "playback yaw", &GET_VARIABLE( g_variables.m_movement_rec_yaw, int ), "original\0left\0right\0backwards\0spinning\0" );
+			if ( GET_VARIABLE( g_variables.m_movement_rec_yaw, int ) == 4 )
+				ImGui::SliderFloat( "spin speed##recorder", &GET_VARIABLE( g_variables.m_movement_rec_spin_speed, float ), -1800.f, 1800.f, "%.0f deg/s" );
+			ImGui::SliderFloat( "smooth start##recorder", &GET_VARIABLE( g_variables.m_movement_rec_smooth_start, float ), 0.f, 3.f,
+			                    GET_VARIABLE( g_variables.m_movement_rec_smooth_start, float ) > 0.01f ? "%.2f s" : "off" );
+			ImGui::SliderFloat( "smooth end##recorder", &GET_VARIABLE( g_variables.m_movement_rec_smooth_end, float ), 0.f, 3.f,
+			                    GET_VARIABLE( g_variables.m_movement_rec_smooth_end, float ) > 0.01f ? "%.2f s" : "off" );
 			ImGui::Checkbox( "lock while aiming to position", &GET_VARIABLE( g_variables.m_movement_rec_lockgoingtostart, bool ) );
 			ImGui::Checkbox( "stop playback on movement", &GET_VARIABLE( g_variables.m_movement_rec_stop_on_move, bool ) );
 			ImGui::Checkbox( "force same weapons", &GET_VARIABLE( g_variables.m_movement_rec_force_weapon, bool ) );

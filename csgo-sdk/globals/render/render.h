@@ -312,6 +312,7 @@ namespace n_render
 
 		std::atomic< font_set_t* > m_pending_fonts{ nullptr };
 		std::atomic< bool > m_font_build_running{ false };
+		font_set_t* m_uploading_fonts = nullptr; // render thread: built set whose texture is going up in slices
 
 		// render thread, before NewFrame: swap a finished set in and free the old atlas
 		void install_fonts( font_set_t* set );

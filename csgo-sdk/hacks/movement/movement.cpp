@@ -360,7 +360,7 @@ void n_movement::impl_t::on_create_move_pre( )
 		m_user_buttons_raw      = g_ctx.m_cmd->m_buttons;
 	}
 
-	if ( GET_VARIABLE( g_variables.m_no_crouch_cooldown, bool ) )
+	if ( GET_VARIABLE( g_variables.m_no_crouch_cooldown, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) )
 		g_ctx.m_cmd->m_buttons |= e_command_buttons::in_bullrush;
 
 	this->pixel_finder( g_ctx.m_cmd );

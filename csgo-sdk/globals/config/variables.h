@@ -294,6 +294,7 @@ namespace n_variables
 		ADD_VARIABLE( key_bind_t, m_zeusbug_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_grenade_aim, false );
 		ADD_VARIABLE( key_bind_t, m_grenade_aim_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE_VECTOR( bool, 6, m_grenade_aim_types, true );
 		ADD_VARIABLE( float, m_grenade_aim_fov, 30.f );
 		ADD_VARIABLE( int, m_grenade_aim_arc, 0 );
 		ADD_VARIABLE( bool, m_grenade_aim_silent, true );
@@ -1613,6 +1614,10 @@ namespace n_variables
 		ADD_VARIABLE( float, m_movement_rec_clip_seconds, 15.f );
 		ADD_VARIABLE( bool, m_movement_rec_stop_on_move, false );
 		ADD_VARIABLE( bool, m_movement_rec_force_weapon, true );
+		ADD_VARIABLE( int, m_movement_rec_yaw, 0 );
+		ADD_VARIABLE( float, m_movement_rec_spin_speed, 360.f );
+		ADD_VARIABLE( float, m_movement_rec_smooth_start, 0.f );
+		ADD_VARIABLE( float, m_movement_rec_smooth_end, 0.f );
 		ADD_VARIABLE( key_bind_t, m_movement_rec_keystartrecord, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( key_bind_t, m_movement_rec_keystoprecord, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( key_bind_t, m_movement_rec_keysaveroute, key_bind_t( 0, 1 ) );
@@ -1630,6 +1635,7 @@ namespace n_variables
 		ADD_VARIABLE( font_setting_t, m_esp_font_settings, font_setting_t( "Verdanab", 11 ) );
 
 		ADD_VARIABLE( bool, m_debug_log, false );
+		ADD_VARIABLE( bool, m_safe_mode, false );
 #ifdef _DEBUG
 		ADD_VARIABLE( bool, m_debugger_visual, false );
 		ADD_VARIABLE( bool, m_disable_interp, false );

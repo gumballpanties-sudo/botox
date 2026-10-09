@@ -1022,7 +1022,7 @@ void n_menu::impl_t::tab_visuals( )
 		menu_columns_next( );
 
 		if ( menu_group_begin( "removals" ) ) {
-			ImGui::Checkbox( "disable post processing", &GET_VARIABLE( g_variables.m_disable_post_processing, bool ) );
+			safe_checkbox( "disable post processing",&GET_VARIABLE( g_variables.m_disable_post_processing, bool ) );
 			ImGui::Checkbox( "remove panorama blur", &GET_VARIABLE( g_variables.m_remove_panorama_blur, bool ) );
 
 			ImGui::Checkbox( "remove 3d skybox", &GET_VARIABLE( g_variables.m_remove_3d_skybox, bool ) );
@@ -1766,7 +1766,7 @@ void n_menu::impl_t::tab_visuals( )
 					ImVec2( 230.f, -1 ) );
 			}
 
-			ImGui::Checkbox( "force crosshair", &GET_VARIABLE( g_variables.m_force_crosshair, bool ) );
+			safe_checkbox( "force crosshair",&GET_VARIABLE( g_variables.m_force_crosshair, bool ) );
 
 			ImGui::Checkbox( "default crosshair color", &GET_VARIABLE( g_variables.m_panorama_crosshair_color, bool ) );
 

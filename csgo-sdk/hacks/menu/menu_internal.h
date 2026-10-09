@@ -39,6 +39,20 @@ void save_popup( const char* str_id, bool& open, const ImVec2& window_size, cons
 /* render thread, every frame: lands a finished image box pick even when its box is hidden */
 void image_pick_apply( );
 
+/* safe mode: greyed + shown off, feature code skips it too */
+inline void safe_checkbox( const char* label, bool* v )
+{
+	const bool safe = GET_VARIABLE( g_variables.m_safe_mode, bool );
+	bool off        = false;
+
+	ImGui::BeginDisabled( safe );
+	ImGui::Checkbox( label, safe ? &off : v );
+	ImGui::EndDisabled( );
+
+	if ( safe && ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenDisabled ) )
+		ImGui::SetTooltip( "safe mode enabled" );
+}
+
 /* page = two scrolling columns of groups; group = header child sized to last frame's content */
 void menu_columns_begin( );
 void menu_columns_next( );
