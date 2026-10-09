@@ -47,7 +47,7 @@ namespace n_route
 		if ( point.type == route_pt_headbounce ) {
 			if ( point.hb_ceiling )
 				return point.pos.m_z;
-			return point.pos.m_z + ( point.snap_type == route_pt_headbounce ? 0.02f : 0.03125f );
+			return point.pos.m_z + ( point.snap_type == route_pt_headbounce ? 0.f : 0.03125f );
 		}
 		if ( point.has_measured )
 			return point.measured_z;

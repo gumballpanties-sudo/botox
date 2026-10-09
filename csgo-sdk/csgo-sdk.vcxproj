@@ -444,6 +444,9 @@
     <ClInclude Include="hacks\movement\movement_internal.h" />
     <ClInclude Include="hacks\movement\texturebug.h" />
     <ClInclude Include="hacks\movement\texturebug_common.h" />
+    <ClInclude Include="hacks\movement\texturebug_wallstrafe.h" />
+    <ClInclude Include="hacks\movement\pixel_finder_bounce.h" />
+    <ClInclude Include="hacks\movement\pixel_finder_bounce_state.h" />
     <ClInclude Include="hacks\movement\wall_climb.h" />
     <ClInclude Include="hacks\movement\edge_skip.h" />
     <ClInclude Include="hacks\movement\edgebug.h" />
@@ -579,8 +582,8 @@
     <IntDir>intermediates</IntDir>
     <TargetName>botox</TargetName>
     <OutDir>release</OutDir>
-    <LibraryPath>$(ProjectDir)dependencies\spdlog\library\release;$(ProjectDir)\dependencies\direct x\library\x86;$(DXSDK_DIR)Lib\x86;$(VC_LibraryPath_x86);$(WindowsSDK_LibraryPath_x86)</LibraryPath>
-    <IncludePath>$(ProjectDir)dependencies\direct x\include;$(ProjectDir)dependencies\spdlog\include;$(DXSDK_DIR)Include;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
+    <LibraryPath>$(ProjectDir)dependencies\spdlog\library\release;$(ProjectDir)dependencies\freetype\library\releasex86;$(ProjectDir)\dependencies\direct x\library\x86;$(DXSDK_DIR)Lib\x86;$(VC_LibraryPath_x86);$(WindowsSDK_LibraryPath_x86)</LibraryPath>
+    <IncludePath>$(ProjectDir)dependencies\direct x\include;$(ProjectDir)dependencies\spdlog\include;$(ProjectDir)dependencies\freetype\include;$(DXSDK_DIR)Include;$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IntDir>intermediates_x64\</IntDir>
@@ -661,6 +664,7 @@
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
+      <AdditionalDependencies>freetype.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <!-- manual map never registers the image with the loader, so ntdll cannot validate a safeseh
            handler and kills the process on the first throw instead of running catch -->
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>

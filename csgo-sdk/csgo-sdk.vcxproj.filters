@@ -324,6 +324,9 @@
     <ClInclude Include="hacks\movement\movement_internal.h" />
     <ClInclude Include="hacks\movement\texturebug.h" />
     <ClInclude Include="hacks\movement\texturebug_common.h" />
+    <ClInclude Include="hacks\movement\texturebug_wallstrafe.h" />
+    <ClInclude Include="hacks\movement\pixel_finder_bounce.h" />
+    <ClInclude Include="hacks\movement\pixel_finder_bounce_state.h" />
     <ClInclude Include="hacks\movement\wall_climb.h" />
     <ClInclude Include="hacks\movement\edge_skip.h" />
     <ClInclude Include="globals\math\math.h" />

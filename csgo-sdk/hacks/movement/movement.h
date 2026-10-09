@@ -854,6 +854,7 @@ bool pf_dot_screen( const AnimatedPoint& ap, c_vector_2d& out );
 bool pf_tb_is_head( const c_vector& dot );
 void pf_tb_rise_seam( c_vector& dot );
 bool pf_hb_is_ceiling( const c_vector& dot );
+bool pf_hb_window( const c_vector& dot, float& lower, float& upper );
 float pf_head_over( );
 void pf_check_catch( const c_vector& pos, const c_vector& wall_n, float slid, bool ducked );
 void pf_check_trick( const char* kind, const c_vector& pos, bool ducked );
