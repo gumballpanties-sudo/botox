@@ -6,12 +6,12 @@
 #include "../../auto_wall/auto_wall.h"
 #include "../../avatar_cache/avatar_cache.h"
 #include "../../entity_cache/entity_cache.h"
+#include "../../network/botox_net.h"
 #include "dormancy/dormancy.h"
 #include "sound_esp/sound_esp.h"
 
 #include <cstdio>
 
-extern void botox_dbg_log( const char* fmt, ... );
 
 /* notched ring arrow, shared by player + sound arrows. ( x, y ) = unit direction, position = spot on
    the ring. tip must stay point 0: imgui fan-fills from it. */
@@ -323,12 +323,8 @@ void n_players::impl_t::god_resolve( const int index )
 	if ( god.m_pending == 0.f || ( now >= god.m_pending && now - god.m_pending < 0.1f ) )
 		return;
 
-	if ( now >= god.m_pending ) {
-		const int before = god.m_strikes;
+	if ( now >= god.m_pending )
 		god.m_strikes += god.m_hits;
-		if ( before < 2 && god.m_strikes >= 2 )
-			botox_dbg_log( "GOD: idx=%d latched (%d hits, no player_hurt)", index, god.m_strikes );
-	}
 
 	god.m_pending = 0.f;
 	god.m_hits    = 0;
@@ -531,13 +527,44 @@ void n_players::impl_t::players( )
 
 		const auto index = entity->get_index( );
 
-		if ( entity->is_dormant( ) ) {
-			this->m_fading_alpha[ index ] = 0.f;
-			g_dormancy.m_sound_players[ index ].reset( );
-			return;
-		}
+		/* dormant + botox network position: drawn at it, bone-based parts skipped (bones are stale).
+		   origin / health put back when this player's draw ends, nothing else sees peer data */
+		struct restore_t {
+			c_base_entity* m_entity = nullptr;
+			c_vector m_origin       = { };
+			int m_health            = 0;
 
-		g_dormancy.m_sound_players[ index ].reset( true, entity->get_abs_origin( ), entity->get_flags( ) );
+			~restore_t( )
+			{
+				if ( !m_entity )
+					return;
+
+				m_entity->set_abs_origin( m_origin );
+				m_entity->get_health( ) = m_health;
+			}
+		} restore{ };
+
+		bool shared = false;
+
+		if ( entity->is_dormant( ) ) {
+			c_vector shared_origin{ };
+			int shared_health = 0;
+
+			if ( !g_botox_net.shared_player( index, shared_origin, shared_health ) ) {
+				this->m_fading_alpha[ index ] = 0.f;
+				g_dormancy.m_sound_players[ index ].reset( );
+				return;
+			}
+
+			restore.m_origin = entity->get_abs_origin( );
+			restore.m_health = entity->get_health( );
+			restore.m_entity = entity;
+
+			entity->set_abs_origin( shared_origin );
+			entity->get_health( ) = shared_health;
+			shared                = true;
+		} else
+			g_dormancy.m_sound_players[ index ].reset( true, entity->get_abs_origin( ), entity->get_flags( ) );
 
 		const float distance = g_ctx.m_local->get_abs_origin( ).dist_to( entity->get_abs_origin( ) );
 
@@ -555,7 +582,7 @@ void n_players::impl_t::players( )
 				alpha = 1.f - ( distance - fade_start ) / ( max_distance - fade_start );
 		}
 
-		alpha *= g_sound_esp.player_gate( entity );
+		alpha *= shared ? 1.f : g_sound_esp.player_gate( entity );
 
 		if ( alpha <= 0.f ) {
 			this->m_fading_alpha[ index ] = 0.f;
@@ -1127,7 +1154,7 @@ void n_players::impl_t::players( )
 				{ "bomb", carrying_bomb, true },
 				{ "hostage", entity->is_grabbing_hostage( ), false },
 				{ "immune", entity->has_immunity( ) || this->is_god( index ), false },
-				{ "wallbangable", flag_enabled( e_player_flags::player_flag_wallbangable ) && this->wallbangable( entity, index ), true },
+				{ "wallbangable", flag_enabled( e_player_flags::player_flag_wallbangable ) && !shared && this->wallbangable( entity, index ), true },
 			};
 
 			float flag_y = box.m_top;
@@ -1481,13 +1508,13 @@ void n_players::impl_t::players( )
 
 				draw_skeleton_matrix( bone_matrix );
 			}
-		}( GET_VARIABLE( g_variables.m_players_skeleton, bool ) );
+		}( GET_VARIABLE( g_variables.m_players_skeleton, bool ) && !shared );
 
-		if ( GET_VARIABLE( g_variables.m_players_hitboxes, bool ) && GET_VARIABLE( g_variables.m_players_hitboxes_mode, int ) == 0 )
+		if ( !shared && GET_VARIABLE( g_variables.m_players_hitboxes, bool ) && GET_VARIABLE( g_variables.m_players_hitboxes_mode, int ) == 0 )
 			push_hitbox_capsules( hitbox_capsules( entity ), GET_VARIABLE( g_variables.m_players_hitboxes_color, c_color ).get_u32( this->m_fading_alpha[ index ] ),
 			                      GET_VARIABLE( g_variables.m_players_hitboxes_thickness, float ) );
 
-		if ( GET_VARIABLE( g_variables.m_players_backtrack_trail, bool ) ) {
+		if ( !shared && GET_VARIABLE( g_variables.m_players_backtrack_trail, bool ) ) {
 			hitbox_resolver_t hitbox_resolver{ };
 
 			if ( const auto record_list = hitbox_resolver.setup( entity ) ? g_lagcomp.m_records[ index ] : nullptr ) {

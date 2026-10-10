@@ -431,11 +431,56 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 		return;
 	}
 
+	/* ebanat 0x117481: a 15 / 30 push that carries you over the top in 3 ticks ( > 5u past the plane, rising > 2u ) = your keys, no align.
+	   sims only if free flight gets there: 3 ticks rise < 3 ipt ( vz + 2 bz ipt ), into the wall < 3 ipt ( max( v_in, air wish cap ) + b_in )
+	   ( base velocity: trigger_push / conveyor, xy rides along each move, z feeds vz ) */
+	{
+		static auto sv_air_max_wishspeed = g_interfaces.m_convar->find_var( "sv_air_max_wishspeed" );
+		const float ipt   = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_interval_per_tick : 0.f;
+		const float cap   = sv_air_max_wishspeed ? sv_air_max_wishspeed->get_float( ) : 30.f;
+		const c_vector& n = trace.m_plane.m_normal;
+		const c_vector v  = g_ctx.m_local->get_velocity( );
+		const c_vector b  = g_ctx.m_local->get_base_velocity( );
+		const float v_in  = -( v.m_x * n.m_x + v.m_y * n.m_y );
+		const float b_in  = -( b.m_x * n.m_x + b.m_y * n.m_y );
+		if ( ipt > 0.f && 3.f * ipt * ( v.m_z + 2.f * ipt * std::max( b.m_z, 0.f ) ) > 2.f && 3.f * ipt * ( std::max( v_in, cap ) + std::max( b_in, 0.f ) ) > 5.f ) {
+			const int frame = g_interfaces.m_prediction->m_commands_predicted - 1;
+			const float rot = std::atan2f( -n.m_y, -n.m_x ) - deg2rad( cmd->m_view_point.m_y );
+			bool over       = false;
+			for ( float push = 15.f; push < 45.f && !over && !aa_budget.expired( ); push += 15.f ) {
+				g_prediction.restore_entity_to_predicted_frame( frame );
+				const c_vector from = g_ctx.m_local->get_abs_origin( );
+				c_user_cmd c        = *cmd;
+				c.m_forward_move    = std::cosf( rot ) * push;
+				c.m_side_move       = -std::sinf( rot ) * push;
+				float bounds        = g_prediction.m_real_max_speed;
+				for ( int t = 0; t < 3; t++ ) {
+					g_prediction.m_bounds_max_speed = bounds;
+					g_prediction.begin( g_ctx.m_local, &c );
+					g_prediction.end( g_ctx.m_local );
+					bounds = g_prediction.m_last_max_speed;
+				}
+				aa_sims += 3;
+				g_prediction.m_bounds_max_speed = 0.f;
+				n_tb::s_pred_dirty              = true;
+				const c_vector to = g_ctx.m_local->get_abs_origin( );
+				over = ( to.m_x - from.m_x ) * n.m_x + ( to.m_y - from.m_y ) * n.m_y < -5.f && to.m_z - from.m_z > 2.f && to.m_z - trace.m_end.m_z > 1.f;
+			}
+			g_prediction.restore_entity_to_predicted_frame( frame );
+			if ( over ) {
+				warm_tick = -1;
+				aa_flush_drop( );
+				aa_outs[ aa_out_lip ]++;
+				return;
+			}
+		}
+	}
+
 	static int fail_tick = -1;
 	static c_vector fail_normal{ };
 
 	aa_flush_t flush;
-	const bool flush_on = flush.init( cmd, trace.m_plane.m_normal, trace.m_plane.m_distance, maxs, aa_budget );
+	const bool flush_on = flush.init( cmd, trace.m_plane.m_normal, n_tb::hull_plane_dist( trace, mins, maxs ), maxs, aa_budget );
 	/* your own move already rides ( tb act R ): keep it and its speed */
 	if ( flush_on && flush.user_pins ) {
 		warm_tick = fail_tick = -1;

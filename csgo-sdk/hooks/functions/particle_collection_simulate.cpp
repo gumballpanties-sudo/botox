@@ -75,6 +75,9 @@ void __fastcall n_detoured_functions::particle_collection_simulate( void* ecx, v
 	while ( root->m_parent )
 		root = root->m_parent;
 
+	if ( !root->m_def.m_obj || !root->m_def.m_obj->m_name.m_buffer )
+		return;
+
 	const auto hash = HASH_RT( root->m_def.m_obj->m_name.m_buffer );
 
 	const auto tint_all = [ & ]( const c_color& color ) {

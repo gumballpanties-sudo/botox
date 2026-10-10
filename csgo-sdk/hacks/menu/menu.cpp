@@ -376,6 +376,8 @@ void save_popup( const char* str_id, bool& open, const ImVec2& window_size, cons
 		return;
 	}
 
+	g_menu.popup_live( ImGui::GetCurrentWindow( )->ID );
+
 	{
 		const auto draw_list = ImGui::GetWindowDrawList( );
 
@@ -470,37 +472,103 @@ static bool menu_owns_window( ImGuiWindow* window, ImGuiWindow* root )
 	return false;
 }
 
-float n_menu::impl_t::fade_draw_lists( ImVector< ImDrawList* >& out )
+void n_menu::impl_t::popup_live( ImGuiID window_id )
+{
+	for ( popup_fade_t& popup : this->m_popups ) {
+		if ( popup.m_window_id == window_id ) {
+			popup.m_live = true;
+			return;
+		}
+	}
+
+	this->m_popups.push_back( { window_id, 0.f, true, nullptr } );
+}
+
+static bool window_drawn( const ImGuiWindow* window )
+{
+	return window && window->Active && !window->Hidden && window->DrawList;
+}
+
+float n_menu::impl_t::fade_draw_lists( ImVector< ImDrawList* >& out, ImVector< faded_list_t >& popups )
 {
 	out.resize( 0 );
-
-	if ( this->m_anim_progress <= 0.f || this->m_anim_progress >= 0.999f )
-		return 1.f;
+	popups.resize( 0 );
 
 	ImGuiWindow* root = ImGui::FindWindowByName( ( "botox-ui" ) );
 
-	if ( !root || !root->Active || root->Hidden )
+	/* popups: 2x the menu speed; drawn = copy list as ghost, closed = ghost fades out */
+	const float step  = ImMin( ImGui::GetIO( ).DeltaTime, 1.f / 30.f ) / ( menu_anim_duration * 0.5f );
+	const bool shown  = this->m_anim_progress > 0.f && window_drawn( root );
+
+	for ( int i = 0; i < this->m_popups.Size; ) {
+		popup_fade_t& popup = this->m_popups[ i ];
+		ImGuiWindow* window = ImGui::FindWindowByID( popup.m_window_id );
+
+		if ( shown && popup.m_live && window_drawn( window ) ) {
+			popup.m_alpha = ImMin( popup.m_alpha + step, 1.f );
+
+			if ( !popup.m_ghost )
+				popup.m_ghost = IM_NEW( ImDrawList )( window->DrawList->_Data );
+
+			popup.m_ghost->CmdBuffer = window->DrawList->CmdBuffer;
+			popup.m_ghost->IdxBuffer = window->DrawList->IdxBuffer;
+			popup.m_ghost->VtxBuffer = window->DrawList->VtxBuffer;
+			popup.m_ghost->Flags     = window->DrawList->Flags;
+		} else if ( !shown || !popup.m_live )
+			popup.m_alpha = shown ? popup.m_alpha - step : 0.f;
+
+		/* live but hidden = imgui auto-fit frame, hold at 0 */
+		if ( popup.m_alpha <= 0.f && !( shown && popup.m_live ) ) {
+			if ( popup.m_ghost )
+				IM_DELETE( popup.m_ghost );
+
+			this->m_popups.erase( this->m_popups.Data + i );
+			continue;
+		}
+
+		++i;
+	}
+
+	/* !shown already emptied m_popups above */
+	if ( !shown || ( this->m_anim_progress >= 0.999f && this->m_popups.empty( ) ) )
 		return 1.f;
 
+	const float menu_fade = ImSaturate( this->m_anim_progress );
+
 	ImGuiWindow* web = ImGui::FindWindowByName( "Web##websurf" );
-	ImGuiWindow* route_calc = ImGui::FindWindowByName( "route calculator##pinned" );
-	ImGuiWindow* player_list = ImGui::FindWindowByName( "player list##window" );
 
 	ImGuiContext& g = *GImGui;
 
 	for ( ImGuiWindow* window : g.Windows ) {
-		if ( !window->Active || window->Hidden ||
-		     !( menu_owns_window( window, root ) || ( web && menu_owns_window( window, web ) ) ||
-		        ( route_calc && menu_owns_window( window, route_calc ) ) || ( player_list && menu_owns_window( window, player_list ) ) ) )
+		if ( !window->Active || window->Hidden || !( menu_owns_window( window, root ) || ( web && menu_owns_window( window, web ) ) ) )
 			continue;
 
 		ImDrawList* list = window->DrawList;
 
-		if ( list && !out.contains( list ) )
+		if ( !list || out.contains( list ) )
+			continue;
+
+		const popup_fade_t* owner = nullptr;
+
+		for ( const popup_fade_t& popup : this->m_popups ) {
+			if ( popup.m_live && menu_owns_window( window, ImGui::FindWindowByID( popup.m_window_id ) ) )
+				owner = &popup;
+		}
+
+		if ( owner )
+			popups.push_back( { list, menu_fade * owner->m_alpha } );
+		else
 			out.push_back( list );
 	}
 
-	return ImSaturate( this->m_anim_progress );
+	for ( popup_fade_t& popup : this->m_popups ) {
+		if ( !popup.m_live && popup.m_ghost )
+			popups.push_back( { popup.m_ghost, menu_fade * popup.m_alpha } );
+
+		popup.m_live = false;
+	}
+
+	return menu_fade;
 }
 
 void n_menu::impl_t::on_end_scene( )
@@ -596,8 +664,8 @@ void n_menu::impl_t::on_end_scene( )
 		};
 
 		static const menu_tab_t tabs[ ] = {
-			{ "aimbot", { } }, { "visuals", { "esp", "world", "screen" } }, { "movement", { "main", "indicators", "calculators", "recorder" } },
-			{ "misc", { } },   { "inventory", { "weapons", "player" } }, { "fonts", { "indicators", "esp", "chud hud", "default hud" } },
+			{ "aimbot", { } }, { "visuals", { "esp", "world", "screen" } }, { "movement", { "main", "indicators", "calculator", "recorder" } },
+			{ "misc", { "main", "player list" } },   { "inventory", { "weapons", "player" } }, { "fonts", { "indicators", "esp", "chud hud", "default hud" } },
 			{ "settings", { } },
 		};
 
@@ -634,8 +702,8 @@ void n_menu::impl_t::on_end_scene( )
 
 			const float lit = selected_animation.AnimationData->second;
 
-			draw_list->AddRectFilled( tab_min, tab_max, ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f ), rounding, ImDrawFlags_RoundCornersTop );
-			draw_list->AddRect( tab_min, tab_max, ImColor( 50, 50, 50, 100 ), rounding, ImDrawFlags_RoundCornersTop );
+			draw_list->AddRectFilled( tab_min, tab_max, ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f ), rounding );
+			draw_list->AddRect( tab_min, tab_max, ImColor( 50, 50, 50, 100 ), rounding );
 
 			RenderFadedGradientLine( draw_list, ImVec2( tab_min.x, tab_max.y - 1.f ), ImVec2( tab_width, 1.f ),
 			                         ImColor( accent_color.Value.x, accent_color.Value.y, accent_color.Value.z, lit ) );
@@ -670,7 +738,7 @@ void n_menu::impl_t::on_end_scene( )
 
 			const int page_count = static_cast< int >( entry.m_pages.size( ) );
 			const float clip_top = tab_y - tab_gap;
-			const float clip_bot = tab_y + ( page_count * ( page_height + 1.f ) + tab_gap ) * open;
+			const float clip_bot = clip_top + page_count * ( page_height + 1.f ) * open;
 			draw_list->PushClipRect( ImVec2( tab_x, clip_top ), ImVec2( tab_x + tab_width, clip_bot ), true );
 
 			for ( int page = 0; page < page_count; page++ ) {
@@ -710,8 +778,6 @@ void n_menu::impl_t::on_end_scene( )
 			}
 
 			draw_list->PopClipRect( );
-
-			tab_y += tab_gap * open;
 		}
 
 		/* eject sits on the sidebar floor, level with the bottom of the columns */
@@ -762,9 +828,6 @@ void n_menu::impl_t::on_end_scene( )
 		ImGui::Unindent( content_indent );
 	}
 	ImGui::End( );
-
-	this->route_calc_pinned( ( window_flags & ImGuiWindowFlags_::ImGuiWindowFlags_NoInputs ) != 0 );
-	this->player_list_window( ( window_flags & ImGuiWindowFlags_::ImGuiWindowFlags_NoInputs ) != 0 );
 }
 
 void n_menu::impl_t::tab_aimbot( )

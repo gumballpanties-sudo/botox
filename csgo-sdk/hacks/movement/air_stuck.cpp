@@ -130,11 +130,15 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	m_air_stuck_data.reset( );
 	m_air_stuck_data.m_auto_align_block_until_tick = saved_auto_align_block_until_tick;
 
-	as_sync( cmd, GET_VARIABLE( g_variables.m_air_stuck, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_air_stuck_key, key_bind_t ) ) &&
-	                  g_ctx.m_local && g_ctx.m_local->is_alive( ) );
+	const bool feature = GET_VARIABLE( g_variables.m_air_stuck, bool );
+	const bool key     = g_input.check_input( &GET_VARIABLE( g_variables.m_air_stuck_key, key_bind_t ) );
+	const bool alive   = g_ctx.m_local && g_ctx.m_local->is_alive( );
+	as_sync( cmd, feature && key && alive );
 
-	if ( !GET_VARIABLE( g_variables.m_air_stuck, bool ) || !g_input.check_input( &GET_VARIABLE( g_variables.m_air_stuck_key, key_bind_t ) ) ||
-	     !g_ctx.m_local || !g_ctx.m_local->is_alive( ) || ( g_ctx.m_local->get_flags( ) & fl_onground ) ) {
+	if ( !feature || !key || !alive || ( g_ctx.m_local->get_flags( ) & fl_onground ) ) {
+		if ( hold_armed )
+			botox_dbg_log( "AS: end t=%d why=%s blk=%d", s_hold.ticks, !feature ? "off" : !key ? "key" : !alive ? "dead" : "ground", ( int )g_input.keys_blocked( ) );
+		s_hold.ticks   = 0;
 		was_stuck      = false;
 		s_expect.valid = false;
 		return;
@@ -225,13 +229,40 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	const float pin_vz    = g_prediction.get_engine_target_predict_z_velocity( );
 	const auto vel_pinned = [ pin_vz ]( const c_vector& v ) { return v.m_x == 0.0f && v.m_y == 0.0f && v.m_z == pin_vz; };
 	const auto pinned     = [ ]( ) { return g_prediction.is_target_predict_z_velocity( g_ctx.m_local->get_velocity( ).m_z, 0.05f ); };
+	const auto pin_held   = [ & ]( ) {
+		return !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk && vel_pinned( g_ctx.m_local->get_velocity( ) );
+	};
+
+	/* server rounding != ours: a moving-START catch only ports if its first tick pins from START +-1 ulp on every origin / velocity axis
+	   ( 10-10 offline log: 71/83 sim-proven catches fell, pinned-START ones all held ). early out once it cannot beat `need` */
+	constexpr int k_crob  = 12;
+	const auto catch_rob = [ & ]( int& sims, const int need, const n_tick::c_sim_budget& clk ) {
+		int n = 0;
+		for ( int k = 0; k < k_crob && n + k_crob - k > need && !( k > 0 && clk.expired( ) ); ++k ) {
+			c_vector o = origin, v = live_velocity;
+			c_vector& w = k < 6 ? o : v;
+			const int a = ( k % 6 ) >> 1;
+			float& c    = a == 0 ? w.m_x : a == 1 ? w.m_y : w.m_z;
+			c           = std::nextafter( c, ( k & 1 ) ? FLT_MAX : -FLT_MAX );
+			g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
+			g_ctx.m_local->set_abs_origin( o );
+			g_ctx.m_local->get_origin( )   = o;
+			g_ctx.m_local->get_velocity( ) = v;
+			g_prediction.begin( g_ctx.m_local, cmd );
+			g_prediction.end( g_ctx.m_local );
+			++sims;
+			n += pin_held( );
+		}
+		return n;
+	};
 
 	/* last tick sent a proven pin that did not hold: d = real START - our sim end */
 	if ( s_expect.valid ) {
 		s_expect.valid = false;
 		if ( !g_prediction.is_target_predict_z_velocity( live_velocity.m_z, 0.05f ) ) {
 			const c_vector d = origin - s_expect.origin;
-			botox_dbg_log( "AS: lost d=%.6f,%.6f,%.6f vel=%.3f,%.3f,%.3f", d.m_x, d.m_y, d.m_z, live_velocity.m_x, live_velocity.m_y, live_velocity.m_z );
+			botox_dbg_log( "AS: lost d=%.6f,%.6f,%.6f vel=%.3f,%.3f,%.3f cp=%d", d.m_x, d.m_y, d.m_z, live_velocity.m_x, live_velocity.m_y, live_velocity.m_z,
+			               g_interfaces.m_prediction->m_commands_predicted );
 		}
 	}
 
@@ -287,6 +318,9 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		bool cl_held   = false;
 		bool cl_parked = false;
 		int cl_rob     = -1;
+		int cl_crob    = -1;
+		int cl_score   = -1;
+		int cl_pins    = 0;
 		float cl_yaw = 0.f, cl_fwd = 0.f, cl_pitch = 0.f;
 		c_vector cl_end{ };
 		float cl_park_yaw = 0.f, cl_park_fwd = 0.f, cl_park_gap = -1.f;
@@ -309,7 +343,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			const float step = ( 0.03125f / ( airaccel * ipt * g_ctx.m_local->get_surface_friction( ) * duck_mul * ipt ) ) / 100.0f;
 
 			/* server float noise != ours ( online: near-axis pins die after 1 rtt ): prefer a pin that survives 1 ulp of origin each way */
-			constexpr int k_rob = 6;
+			constexpr int k_rob  = 6;
+			constexpr int k_best = k_crob * ( k_rob + 1 ) + k_rob;
 			const auto robust = [ & ]( ) {
 				const c_vector base = g_ctx.m_local->get_abs_origin( );
 				int n               = 0;
@@ -320,6 +355,9 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 					g_ctx.m_local->set_abs_origin( o );
 					g_ctx.m_local->get_origin( )   = o;
 					g_ctx.m_local->get_velocity( ) = c_vector( 0.0f, 0.0f, pin_vz );
+					/* EFL_DIRTY_ABSVELOCITY: SetupMove reads GetAbsVelocity ( prediction.cpp:781 ), else a fallen k-1 sim's END leaks in */
+					if ( int& eflags = g_ctx.m_local->get_eflags( ); reinterpret_cast< std::uintptr_t >( &eflags ) != reinterpret_cast< std::uintptr_t >( g_ctx.m_local ) )
+						eflags |= 1 << 12;
 					bool held = true;
 					for ( int t = 0; t < 2 && held; ++t ) {
 						g_prediction.begin( g_ctx.m_local, cmd );
@@ -334,8 +372,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			};
 
 			/* i = 0 once: a zero-move pin is view-free ( turn / shoot / silent all sim the same ), it wins ties */
-			for ( int y = first_yaw; y < 2 && cl_rob < k_rob; ++y ) {
-				for ( int i = y == first_yaw ? 0 : 1; i <= 100 && cl_rob < k_rob && !( cl_sims > 0 && cl_clock.expired( ) ); ++i ) {
+			for ( int y = first_yaw; y < 2 && cl_score < k_best; ++y ) {
+				for ( int i = y == first_yaw ? 0 : 1; i <= 100 && cl_score < k_best && !( cl_sims > 0 && cl_clock.expired( ) ); ++i ) {
 					const float fwd = static_cast< float >( i ) * step;
 					g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 					apply_predicted_state( );
@@ -356,9 +394,19 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 						ok = !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk &&
 						     vel_pinned( g_ctx.m_local->get_velocity( ) );
 					}
-					if ( const int rob = ok ? robust( ) : -1; rob > cl_rob ) {
+					if ( !ok )
+						continue;
+					++cl_pins;
+					const int rob = robust( );
+					if ( k_crob * ( k_rob + 1 ) + rob <= cl_score )
+						continue;
+					const int crob  = catch_rob( cl_sims, cl_score < rob ? -1 : ( cl_score - rob ) / ( k_rob + 1 ), cl_clock );
+					const int score = crob * ( k_rob + 1 ) + rob;
+					if ( score > cl_score ) {
 						cl_held  = true;
+						cl_score = score;
 						cl_rob   = rob;
+						cl_crob  = crob;
 						cl_yaw   = yaws[ y ];
 						cl_fwd   = fwd;
 						cl_pitch = live_view.m_x;
@@ -427,10 +475,10 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			cmd->m_side_move    = live_side;
 			cmd->m_buttons      = live_buttons;
 
-			botox_dbg_log( "AS: clarity %s n=%.3f,%.3f yaw=%.0f fwd=%.4f sims=%d vz=%.3f gap=%.5f disp=%d rob=%d ent=%d surf=%s us=%lld",
+			botox_dbg_log( "AS: clarity %s n=%.3f,%.3f yaw=%.0f fwd=%.4f sims=%d vz=%.3f vxy=%.1f gap=%.5f disp=%d rob=%d crob=%d np=%d cp=%d ent=%d surf=%s us=%lld",
 			               cl_held ? "pin" : cl_parked ? "park" : "miss", cl_normal.m_x, cl_normal.m_y,
-			               cl_parked ? cl_park_yaw : cl_yaw, cl_parked ? cl_park_fwd : cl_fwd, cl_sims, live_velocity.m_z, cl_park_gap,
-			               ( int )cl_disp, cl_rob, cl_ent, cl_surf, cl_clock.used_us( ) );
+			               cl_parked ? cl_park_yaw : cl_yaw, cl_parked ? cl_park_fwd : cl_fwd, cl_sims, live_velocity.m_z, live_velocity.length_2d( ), cl_park_gap,
+			               ( int )cl_disp, cl_rob, cl_crob, cl_pins, g_interfaces.m_prediction->m_commands_predicted, cl_ent, cl_surf, cl_clock.used_us( ) );
 			if ( cl_held ) {
 				publish( cl_yaw, cl_fwd, true, cl_pitch, true );
 				s_expect = { true, cl_end };
@@ -546,6 +594,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	n_tick::c_sim_budget clock;
 	clock.start( GET_VARIABLE( g_variables.m_air_stuck_budget, float ) * 0.01f, n_tick::engine_interval( ), n_tick::search_as );
 	int cands        = 0;
+	int crob_sims    = 0;
+	int best_crob    = -1;
 	int best_ticks   = 0;
 	float best_gap   = FLT_MAX;
 	float best_yaw   = wall_yaw;
@@ -583,8 +633,10 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		const trace_t tr   = line( c_vector( end.m_x, end.m_y, hit_z ),
 		                           c_vector( end.m_x - normal.m_x * gap_len, end.m_y - normal.m_y * gap_len, hit_z ), mask_all );
 		const float gap    = tr.m_fraction * gap_len - support;
+		const int crob     = ticks > 0 ? catch_rob( crob_sims, best_crob - 1, clock ) : -1;
 
-		if ( ticks > best_ticks || ( ticks == best_ticks && gap < best_gap ) ) {
+		if ( crob > best_crob || ( crob == best_crob && ( ticks > best_ticks || ( ticks == best_ticks && gap < best_gap ) ) ) ) {
+			best_crob  = crob;
 			best_ticks = ticks;
 			best_gap   = gap;
 			best_yaw   = cmd->m_view_point.m_y;
@@ -622,8 +674,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	publish( best_yaw, best_move, best_ticks > 0, live_view.m_x, false );
 	s_expect = { best_ticks > 0, best_end };
 
-	botox_dbg_log( "AS: lumi scan=%c n=%.3f,%.3f,%.3f hz=%.1f side=%.0f pin=%d gap=%.3f yaw=%.1f fwd=%.0f cand=%d vz=%.2f ent=%d scan_us=%lld us=%lld", scan,
-	               normal.m_x, normal.m_y, normal.m_z, hit_z - origin.m_z, side, best_ticks, best_gap, best_yaw, best_move, cands, live_velocity.m_z,
+	botox_dbg_log( "AS: lumi scan=%c n=%.3f,%.3f,%.3f hz=%.1f side=%.0f pin=%d crob=%d/%d gap=%.3f yaw=%.1f fwd=%.0f cand=%d vz=%.2f ent=%d scan_us=%lld us=%lld", scan,
+	               normal.m_x, normal.m_y, normal.m_z, hit_z - origin.m_z, side, best_ticks, best_crob, crob_sims, best_gap, best_yaw, best_move, cands, live_velocity.m_z,
 	               hit_ent, scan_us, clock.used_us( ) );
 }
 

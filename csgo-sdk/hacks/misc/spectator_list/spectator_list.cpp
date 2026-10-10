@@ -10,8 +10,6 @@
 #include <mutex>
 #include <thread>
 
-void botox_dbg_log( const char* fmt, ... );
-
 namespace Gdiplus
 {
 	using std::max;
@@ -2060,9 +2058,7 @@ namespace
 				CreateDirectoryA( "C:\\botox", nullptr );
 				CreateDirectoryA( "C:\\botox\\images", nullptr );
 
-				const bool ok = n_image_cache::download_file( url, local );
-				botox_dbg_log( "IMG: %s %s", ok ? "got" : "failed", url.c_str( ) );
-
+				n_image_cache::download_file( url, local );
 				g_url_image_downloads--;
 			} ).detach( );
 		}

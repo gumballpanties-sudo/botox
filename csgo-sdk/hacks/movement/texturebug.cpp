@@ -409,7 +409,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 				continue;
 			const c_vector& tn = tr.m_plane.m_normal;
 			/* nearest hull corner to the plane: a face leaning over you ( n.z < 0 ) meets the head, xy-only read it |n.z|*72 too far */
-			const float g = org.m_x * tn.m_x + org.m_y * tn.m_y + org.m_z * tn.m_z - tr.m_plane.m_distance +
+			const float g = org.m_x * tn.m_x + org.m_y * tn.m_y + org.m_z * tn.m_z - n_tb::hull_plane_dist( tr, mins, maxs ) +
 			                std::min( tn.m_x * mins.m_x, tn.m_x * maxs.m_x ) + std::min( tn.m_y * mins.m_y, tn.m_y * maxs.m_y ) +
 			                std::min( tn.m_z * mins.m_z, tn.m_z * maxs.m_z );
 			if ( g < best ) {

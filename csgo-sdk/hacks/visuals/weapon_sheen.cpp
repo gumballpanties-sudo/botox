@@ -293,7 +293,6 @@ float4 main( PS_INPUT i ) : COLOR
 			}
 		}
 
-		botox_dbg_log( "SHEEN: assets ready, mask %d frames", g_vtf[ asset_mask ].m_frames );
 		g_state.store( 2, std::memory_order_release );
 	}
 
@@ -364,9 +363,6 @@ float4 main( PS_INPUT i ) : COLOR
 
 		planes.m_v[ across ] = 1.f / height;
 		planes.m_v[ 3 ]      = -mins[ across ] / height;
-
-		botox_dbg_log( "SHEEN: %s along %d (%.1f..%.1f) across %d (%.1f..%.1f)", name, along, mins[ along ], maxs[ along ], across, mins[ across ],
-		               maxs[ across ] );
 
 		g_planes.emplace( name, planes );
 		out = planes;
@@ -570,10 +566,8 @@ float4 main( PS_INPUT i ) : COLOR
 			ok           = g_cubes[ 0 ] && g_cubes[ 1 ];
 		}
 
-		botox_dbg_log( "SHEEN: gpu %s, defs vs %d ps %d", ok ? "built" : "FAILED", static_cast< int >( g_vs_defs.size( ) ),
-		               static_cast< int >( g_ps_defs.size( ) ) );
-
 		if ( !ok ) {
+			botox_dbg_log( "SHEEN: gpu FAILED, defs vs %d ps %d", static_cast< int >( g_vs_defs.size( ) ), static_cast< int >( g_ps_defs.size( ) ) );
 			release_gpu( );
 			g_gpu_failed = true;
 			return false;
@@ -806,13 +800,6 @@ long n_weapon_sheen::impl_t::draw( const draw_indexed_primitive_t original, IDir
 	device->SetPixelShaderConstantF( 9, params.m_band, 1 );
 
 	const long result = original( device, type, base_vertex, min_vertex, vertices, start_index, primitives );
-
-	static bool logged = false;
-	if ( !logged ) {
-		logged = true;
-		botox_dbg_log( "SHEEN: first draw hr %08lx hdr %d compressed %d frame %d", static_cast< unsigned long >( result ), hdr ? 1 : 0, compressed,
-		               params.m_frame );
-	}
 
 	// constants before shaders: the engine shader's own defs must win their slots
 	for ( std::size_t i = 0; i < std::size( states ); i++ )

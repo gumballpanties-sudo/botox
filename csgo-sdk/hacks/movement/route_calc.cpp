@@ -22,6 +22,9 @@ extern bool g_air_stuck_owns_cmd;
 
 namespace
 {
+	/* a solve stops here and lists the combos it finished ( user 10-10 ) */
+	constexpr int k_rc_time_limit_ms = 45000;
+
 	float quantize_pixel_z( float z )
 	{
 		const float plane   = z - 0.03125f;
@@ -58,7 +61,14 @@ namespace n_route
 		return point.snapped ? point.pos.m_z : quantize_pixel_z( point.pos.m_z );
 	}
 
-	std::string route_line( const solution_t& s ) { return route_text( s.elements ); }
+	std::string route_line( const solution_t& s )
+	{
+		if ( s.odds >= 1.f )
+			return route_text( s.elements );
+		char tag[ 32 ]{ };
+		sprintf_s( tag, "  (chancy %d%%)", static_cast< int >( s.odds * 100.f ) );
+		return route_text( s.elements ) + tag;
+	}
 }
 
 namespace
@@ -326,7 +336,7 @@ namespace
 				con( k_con_text, "\n" );
 			}
 		} else {
-			con( con_good( ), "successfully searched all possible combos" );
+			con( con_good( ), r.timed_out ? "time limit - listed the combos finished by then, more exist" : "successfully searched all possible combos" );
 			con( k_con_text, ".\n\n" );
 		}
 
@@ -346,7 +356,7 @@ namespace
 		con( con_good( ), commas( r.space ) );
 		con( k_con_text, " possible combinations (" );
 		con( con_good( ), std::string( pct_buf ) + "%" );
-		con( k_con_text, ") and found " );
+		con( k_con_text, r.trimmed ? ") and found at least " : r.total_approx ? ") and found about " : ") and found " );
 		con( r.total > 0 ? con_good( ) : k_con_bad, commas( static_cast< long double >( r.total ) ) );
 		con( k_con_text, " solutions.\n\n" );
 
@@ -763,6 +773,8 @@ void n_movement::impl_t::route_pj_creep( c_user_cmd* cmd )
 		return;
 	if ( !GET_VARIABLE( g_variables.m_route_calc, bool ) )
 		return;
+
+	std::lock_guard< std::recursive_mutex > route_lock( n_route::g_route_lock );
 	if ( local->get_move_type( ) != e_move_types::move_type_walk || ( local->get_flags( ) & fl_onground ) )
 		return;
 	if ( g_air_stuck_owns_cmd || m_pixelsurf_data.should_pixel_surf )
@@ -886,7 +898,9 @@ namespace
 		const int point_no = job.marker_no.empty( ) ? idx + 1 : job.marker_no[ idx ];
 		char buf[ 192 ]{ };
 		if ( result.out_of_memory )
-			sprintf_s( buf, "point %d: too many combos to hold in memory - remove a point or turn jump types off", point_no );
+			sprintf_s( buf, "point %d: out of memory even solved in halves - remove a point or turn jump types off", point_no );
+		else if ( result.timed_out )
+			sprintf_s( buf, "no combo finished in %d s - remove a point or turn jump types off", k_rc_time_limit_ms / 1000 );
 		else if ( result.best_gap < 3.4e38f )
 			sprintf_s( buf, "point %d unreachable - wants z %.4f, closest %.4f (off by %.4f)", point_no,
 			           result.want_z, result.closest_z, result.best_gap );
@@ -897,8 +911,8 @@ namespace
 			sprintf_s( buf, "point %d unreachable - no arc got near it", point_no );
 		job.fail = buf;
 		botox_dbg_log( "[rc] %s\n", buf );
-		/* more moves on = more arcs: no hint re-solve after running out of memory */
-		if ( job.advanced && !result.out_of_memory )
+		/* more moves on = more arcs: no hint re-solve after running out of memory or time */
+		if ( job.advanced && !result.out_of_memory && !result.timed_out )
 			job.hint = n_route::solve_hint( job.in, result.refused_moves, job.example );
 	}
 
@@ -913,16 +927,23 @@ namespace
 		data.popup_started   = GetTickCount64( ) / 1000.f;
 		data.solutions       = result.routes;
 		data.total_solutions = result.total;
+		data.total_approx    = result.total_approx;
+		data.total_floor     = result.trimmed;
 		data.solved          = !result.routes.empty( );
 
 		if ( data.solved ) {
-			say( 6, "route: " + std::to_string( result.total ) + " combos" );
+			if ( result.timed_out )
+				data.note = "stopped at " + std::to_string( k_rc_time_limit_ms / 1000 ) + " s: " + std::to_string( result.total ) +
+				            " combos found so far, there are more";
+			say( 6, "route: " + std::string( result.trimmed ? "at least " : result.total_approx ? "about " : "" ) + std::to_string( result.total ) + " combos" +
+			            ( result.timed_out ? " ( stopped at time limit )" : "" ) );
 			say( 6, n_route::route_line( data.solutions.front( ) ) );
-			botox_dbg_log( "[rc] solved %lld combos, best: %s\n", result.total, n_route::route_line( data.solutions.front( ) ).c_str( ) );
+			botox_dbg_log( "[rc] solved %lld combos%s, best: %s\n", result.total, result.timed_out ? " ( time limit, partial )" : "",
+			               n_route::route_line( data.solutions.front( ) ).c_str( ) );
 			print_report( result, job.seconds, "", job.in, job.marker_no );
 			return;
 		}
-		data.message = job.advanced || result.out_of_memory ? job.fail : "no solutions found";
+		data.message = job.advanced || result.out_of_memory || result.timed_out ? job.fail : "no solutions found";
 		say( 3, "route: " + data.message );
 		if ( !job.hint.empty( ) ) {
 			data.note = "with " + job.hint + " on ( off in jump types ): " + job.example;
@@ -944,6 +965,7 @@ namespace
 		g_rc_job         = job;
 		std::thread( [ job ]( ) {
 			n_perf::background_thread( );
+			SetThreadPriority( GetCurrentThread( ), THREAD_PRIORITY_LOWEST );
 			rc_work( *job );
 			/* running drops first: the next job can only start after rc_poll saw done */
 			g_rc_running.store( false );
@@ -994,6 +1016,7 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 	if ( !GET_VARIABLE( g_variables.m_route_calc, bool ) )
 		return;
 
+	std::lock_guard< std::recursive_mutex > route_lock( n_route::g_route_lock );
 	auto& data = m_route_calc_data;
 
 	if ( cmd )
@@ -1266,6 +1289,7 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 	n_route::solve_input_t& in = job->in;
 	in.delay_ticks = GET_VARIABLE( g_variables.m_route_calc_delay_ticks, int );
 	in.max_results = GET_VARIABLE( g_variables.m_route_calc_max_results, int );
+	in.time_limit_ms = k_rc_time_limit_ms;
 
 	in.global_moves = static_cast< unsigned int >( GET_VARIABLE( g_variables.m_route_calc_global_moves, int ) ) &
 	                  n_route::k_all_moves;
@@ -1443,9 +1467,28 @@ void n_movement::impl_t::route_calc_render( )
 	if ( !GET_VARIABLE( g_variables.m_route_calc, bool ) )
 		return;
 
+	std::lock_guard< std::recursive_mutex > route_lock( n_route::g_route_lock );
 	auto& data = m_route_calc_data;
 	if ( !data.map.empty( ) && data.map != g_interfaces.m_engine_client->get_level_name_short( ) )
 		data.clear( );
+
+	std::vector< n_route::popup_row_t > rows;
+	if ( GET_VARIABLE( g_variables.m_route_calc_show_bar, bool ) ) {
+		if ( !data.solutions.empty( ) ) {
+			for ( const auto& solution : data.solutions )
+				rows.push_back( { n_route::route_line( solution ), n_route::popup_row_combo } );
+			/* clarity's "(and +N more)"; a time-limit note already says how many */
+			const long long more = data.total_solutions - static_cast< long long >( data.solutions.size( ) );
+			if ( more > 0 && data.note.empty( ) )
+				rows.push_back( { std::string( data.total_floor ? "(and at least +" : data.total_approx ? "(and about +" : "(and +" ) +
+				                      commas( static_cast< long double >( more ) ) + " more)",
+				                  n_route::popup_row_note } );
+		} else if ( !data.message.empty( ) )
+			rows.push_back( { data.message, n_route::popup_row_error } );
+		if ( !rows.empty( ) && !data.note.empty( ) )
+			rows.push_back( { data.note, n_route::popup_row_note } );
+	}
+	n_route::g_route_popup.publish( std::move( rows ), data.popup_started );
 
 	const auto accent_var = GET_VARIABLE( g_variables.m_accent, c_color );
 	const unsigned int accent =
@@ -1509,8 +1552,6 @@ void n_movement::impl_t::route_calc_ui( )
 		return;
 	if ( !GET_VARIABLE( g_variables.m_route_calc, bool ) )
 		return;
-
-	auto& data = m_route_calc_data;
 
 	auto* font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
 	auto* bold = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ];
@@ -1597,23 +1638,26 @@ void n_movement::impl_t::route_calc_ui( )
 		n_route::draw_popup( "route calculator", busy, GetTickCount64( ) / 1000.f - 0.25f );
 		return;
 	}
-	if ( !GET_VARIABLE( g_variables.m_route_calc_show_bar, bool ) )
-		return;
-	if ( data.solutions.empty( ) && data.message.empty( ) )
-		return;
+	n_route::g_route_popup.draw( "route calculator" );
+}
 
-	std::vector< n_route::popup_row_t > rows;
-	if ( !data.solutions.empty( ) ) {
-		for ( const auto& solution : data.solutions )
-			rows.push_back( { n_route::route_line( solution ), n_route::popup_row_combo } );
-		if ( !data.note.empty( ) )
-			rows.push_back( { data.note, n_route::popup_row_note } );
-	} else {
-		rows.push_back( { data.message, n_route::popup_row_error } );
-		if ( !data.note.empty( ) )
-			rows.push_back( { data.note, n_route::popup_row_note } );
+void n_route::popup_slot_t::publish( std::vector< popup_row_t > rows, const float started )
+{
+	std::lock_guard< std::mutex > lock( m_lock );
+	m_rows    = std::move( rows );
+	m_started = started;
+}
+
+void n_route::popup_slot_t::draw( const char* title )
+{
+	std::vector< popup_row_t > rows;
+	float started;
+	{
+		std::lock_guard< std::mutex > lock( m_lock );
+		rows    = m_rows;
+		started = m_started;
 	}
-	n_route::draw_popup( "route calculator", rows, data.popup_started );
+	draw_popup( title, rows, started );
 }
 
 void n_route::draw_popup( const char* title, const std::vector< popup_row_t >& rows, float popup_started )

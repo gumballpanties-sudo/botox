@@ -1633,6 +1633,22 @@ ImVec2 n_render::impl_t::screen_mouse( )
 	return ImVec2( this->m_screen_mouse_x, this->m_screen_mouse_y );
 }
 
+/* mouse in a stretch block's layout space: undoes the overlay stretch ( runs last, pivot from the drawn block ) then dpi */
+ImVec2 n_render::impl_t::panel_mouse( const ImVec2 pos, const ImVec2 size )
+{
+	const ImVec2 shown = this->dpi_panel_pos( pos, size );
+	const float dpi    = this->m_dpi_panel_scale;
+	ImVec2 mouse       = this->screen_mouse( );
+
+	float stretch, center_x;
+	if ( overlay_stretch( stretch, center_x ) ) {
+		const float pivot = stretch_pivot( shown.x, shown.x + size.x * dpi, center_x * 2.f );
+		mouse.x           = pivot + ( mouse.x - pivot ) / stretch;
+	}
+
+	return ImVec2( pos.x + ( mouse.x - shown.x ) / dpi, pos.y + ( mouse.y - shown.y ) / dpi );
+}
+
 static void dpi_scale_overlays( ImDrawData* draw_data, const ImVec2 screen )
 {
 	const float scale = g_render.m_dpi_scale;
@@ -1928,11 +1944,12 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& function, I
 	dpi_scale_overlays( draw_data, screen );
 	stretch_overlays( );
 
-	static ImVector< ImDrawList* > owned, before, menu, after;
+	static ImVector< ImDrawList* > owned, before, menu, after, popup_list;
+	static ImVector< n_menu::impl_t::faded_list_t > popups;
 
-	const float fade = g_menu.fade_draw_lists( owned );
+	const float fade = g_menu.fade_draw_lists( owned, popups );
 
-	if ( owned.empty( ) ) {
+	if ( owned.empty( ) && popups.empty( ) ) {
 		ImGui_ImplDX9_RenderDrawData( draw_data );
 		return;
 	}
@@ -1946,12 +1963,20 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& function, I
 
 		if ( owned.contains( list ) )
 			menu.push_back( list );
-		else
+		else if ( !std::any_of( popups.begin( ), popups.end( ), [ & ]( const auto& popup ) { return popup.m_list == list; } ) )
 			( menu.empty( ) ? before : after ).push_back( list );
 	}
 
 	render_lists( draw_data, before, 1.f );
 	render_lists( draw_data, menu, fade );
+
+	/* popups on top of menu, each at its own alpha ( ghosts are not in draw_data ) */
+	for ( const auto& popup : popups ) {
+		popup_list.resize( 0 );
+		popup_list.push_back( popup.m_list );
+		render_lists( draw_data, popup_list, popup.m_alpha );
+	}
+
 	render_lists( draw_data, after, 1.f );
 }
 

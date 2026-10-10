@@ -857,7 +857,7 @@ static n_misc::media_look_t media_player_look( const int style )
 	}
 }
 
-/* the style's watermark box grown to [ min, max ]. bare styles ( 2, 5 ) never get here */
+/* the style's watermark box grown to [ min, max ]. bare styles ( m_box false ) pass 0 */
 static void media_player_frame( ImDrawList* list, const ImVec2 min, const ImVec2 max, const int style )
 {
 	switch ( style ) {
@@ -902,10 +902,86 @@ static void media_player_frame( ImDrawList* list, const ImVec2 min, const ImVec2
 	}
 }
 
+// "4:11 / 6:09", hours once a track runs past one. empty = length unknown
+static std::string media_time_text( )
+{
+	const long long total = g_media_player.get_total_ms( );
+	if ( total <= 0 )
+		return { };
+
+	const auto format = [ ]( const double ms ) {
+		const long long s = static_cast< long long >( ms / 1000.0 );
+		char out[ 32 ]{ };
+		if ( s >= 3600 )
+			snprintf( out, sizeof( out ), "%lld:%02lld:%02lld", s / 3600, s / 60 % 60, s % 60 );
+		else
+			snprintf( out, sizeof( out ), "%lld:%02lld", s / 60, s % 60 );
+		return std::string( out );
+	};
+
+	const double total_ms = static_cast< double >( total );
+	return format( std::clamp( g_media_player.get_position_ms( ), 0.0, total_ms ) ) + " / " + format( total_ms );
+}
+
+/* fires on press. a tap shorter than one frame only shows as a release, so the release counter catches it */
+static void media_player_binds( )
+{
+	struct bind_t {
+		int m_key;
+		std::uint32_t m_seq;
+		bool m_fired;
+	};
+	static bind_t binds[ 3 ]{ };
+
+	const key_bind_t* keys[ 3 ]{ &GET_VARIABLE( g_variables.m_media_player_previous_key, key_bind_t ),
+		                         &GET_VARIABLE( g_variables.m_media_player_toggle_key, key_bind_t ),
+		                         &GET_VARIABLE( g_variables.m_media_player_next_key, key_bind_t ) };
+	static constexpr n_media_player::impl_t::e_command k_commands[ 3 ]{ n_media_player::impl_t::command_previous, n_media_player::impl_t::command_toggle,
+		                                                                 n_media_player::impl_t::command_next };
+
+	const bool on      = GET_VARIABLE( g_variables.m_media_player_ingame_control, bool );
+	const bool blocked = g_input.keys_blocked( );
+
+	for ( int i = 0; i < 3; i++ ) {
+		auto& bind    = binds[ i ];
+		const int key = keys[ i ]->m_key;
+
+		// media keys already reach the player through windows, firing too would skip twice
+		if ( !on || key <= 0 || key > 255 || ( key >= VK_MEDIA_NEXT_TRACK && key <= VK_MEDIA_PLAY_PAUSE ) ) {
+			bind.m_key = 0;
+			continue;
+		}
+
+		const std::uint32_t seq = g_input.m_release_seq[ key ];
+		const bool down         = g_input.is_key_down( key );
+
+		if ( bind.m_key != key ) {
+			bind = { key, seq, down };
+			continue;
+		}
+
+		bool fire = false;
+		if ( seq != bind.m_seq ) {
+			fire         = !bind.m_fired;
+			bind.m_seq   = seq;
+			bind.m_fired = false;
+		}
+		if ( down && !bind.m_fired ) {
+			fire         = true;
+			bind.m_fired = true;
+		}
+
+		if ( fire && !blocked )
+			g_media_player.request( k_commands[ i ] );
+	}
+}
+
 void n_misc::impl_t::draw_media_player( )
 {
 	if ( !GET_VARIABLE( g_variables.m_media_player, bool ) )
 		return;
+
+	media_player_binds( );
 
 	if ( g_ctx.m_width <= 0 || g_ctx.m_height <= 0 )
 		return;
@@ -943,7 +1019,8 @@ void n_misc::impl_t::draw_media_player( )
 
 	const int style           = GET_VARIABLE( g_variables.m_watermark_style, int );
 	const media_look_t look   = media_player_look( style );
-	const bool background     = GET_VARIABLE( g_variables.m_media_player_background, bool ) && look.m_box;
+	const bool background     = GET_VARIABLE( g_variables.m_media_player_background, bool );
+	const int frame_style     = look.m_box ? style : 0;
 	const int bare_fx         = look.m_fx == 2 || look.m_fx == 3 ? look.m_fx : 1;
 	const int fx              = background ? look.m_fx : bare_fx;
 
@@ -966,7 +1043,7 @@ void n_misc::impl_t::draw_media_player( )
 
 	constexpr float art_size = 30.f, bar_height = 1.f, row_gap = 4.f;
 
-	const auto draw_lyrics = [ & ]( ImDrawList* list, const float edge, const float player_w, const bool boxed, const int effect ) {
+	const auto draw_lyrics = [ & ]( ImDrawList* list, const float edge, const float player_w, const bool boxed, const int effect, ImRect& bounds ) {
 		static std::vector< n_media_player::impl_t::lyric_line_t > lines{ };
 		static int generation = -1;
 		static float scroll = 0.f, box_w = 0.f;
@@ -1007,9 +1084,10 @@ void n_misc::impl_t::draw_media_player( )
 
 		const ImVec2 min( left_of( box_w ), top );
 		const ImVec2 max( min.x + box_w, top + box_h );
+		bounds.Add( ImRect( min, max ) );
 
 		if ( boxed )
-			media_player_frame( list, min, max, style );
+			media_player_frame( list, min, max, frame_style );
 
 		list->PushClipRect( min, max, true );
 
@@ -1035,15 +1113,83 @@ void n_misc::impl_t::draw_media_player( )
 		list->PopClipRect( );
 	};
 
+	/* prev / play-pause / next while the menu is open. drawn last: the hit test needs the whole block's bounds,
+	   dpi panel scale pivots on them ( same mapping as the spectator list drag ) */
+	const bool buttons         = g_menu.m_opened;
+	const std::string time_now = GET_VARIABLE( g_variables.m_media_player_time, bool ) ? media_time_text( ) : std::string{ };
+	const float icon           = std::clamp( std::floor( artist_px * 0.7f ), 7.f, 14.f );
+	const float cell           = std::floor( icon * 1.6f ), cell_gap = std::floor( icon * 0.4f );
+	const float buttons_w      = buttons ? cell * 3.f + cell_gap * 2.f : 0.f;
+	const ImU32 accent         = ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent );
+
+	const auto draw_buttons = [ & ]( ImDrawList* list, const float x, const float mid_y, const int effect, const ImRect& bounds ) {
+		const ImVec2 at = g_render.panel_mouse( bounds.Min, bounds.GetSize( ) );
+		const bool live = !GImGui->HoveredWindow; // a menu window over the player eats the click
+		const bool click = ImGui::IsMouseClicked( ImGuiMouseButton_::ImGuiMouseButton_Left );
+
+		const ImU32 hover_color = look.m_title != look.m_artist ? look.m_title : accent;
+		const float h           = icon * 0.5f;
+
+		static constexpr n_media_player::impl_t::e_command k_commands[ 3 ]{ n_media_player::impl_t::command_previous,
+			                                                                 n_media_player::impl_t::command_toggle, n_media_player::impl_t::command_next };
+
+		int hit = -1;
+		for ( int b = 0; b < 3; b++ ) {
+			const float cx     = x + static_cast< float >( b ) * ( cell + cell_gap ) + cell * 0.5f;
+			const bool hovered = live && std::abs( at.x - cx ) <= cell * 0.5f + 1.f && std::abs( at.y - mid_y ) <= cell * 0.5f + 1.f;
+
+			if ( hovered && click ) {
+				hit = b;
+				g_media_player.request( k_commands[ b ] );
+			}
+
+			// clockwise on screen, the aa fringe goes outward
+			const auto shape = [ & ]( const float sx, const float sy, const ImU32 color ) {
+				if ( b == 0 ) {
+					list->AddTriangleFilled( ImVec2( sx - h, sy ), ImVec2( sx, sy - h ), ImVec2( sx, sy + h ), color );
+					list->AddTriangleFilled( ImVec2( sx, sy ), ImVec2( sx + h, sy - h ), ImVec2( sx + h, sy + h ), color );
+				} else if ( b == 2 ) {
+					list->AddTriangleFilled( ImVec2( sx + h, sy ), ImVec2( sx, sy + h ), ImVec2( sx, sy - h ), color );
+					list->AddTriangleFilled( ImVec2( sx, sy ), ImVec2( sx - h, sy + h ), ImVec2( sx - h, sy - h ), color );
+				} else if ( g_media_player.m_is_playing ) {
+					list->AddRectFilled( ImVec2( sx - h * 0.8f, sy - h ), ImVec2( sx - h * 0.2f, sy + h ), color );
+					list->AddRectFilled( ImVec2( sx + h * 0.2f, sy - h ), ImVec2( sx + h * 0.8f, sy + h ), color );
+				} else
+					list->AddTriangleFilled( ImVec2( sx - h * 0.7f, sy - h ), ImVec2( sx + h * 0.9f, sy ), ImVec2( sx - h * 0.7f, sy + h ), color );
+			};
+
+			const ImU32 color = hovered ? hover_color : look.m_artist;
+			if ( effect )
+				shape( cx + ( effect == 3 ? -1.f : 1.f ), mid_y + 1.f, color & IM_COL32_A_MASK );
+			shape( cx, mid_y, color );
+		}
+
+		// click off the menu or near the block: which button, where the mouse mapped, what window ate it
+		const bool by_block = at.x >= bounds.Min.x - 20.f && at.x <= bounds.Max.x + 20.f && at.y >= bounds.Min.y - 20.f && at.y <= bounds.Max.y + 20.f;
+		if ( click && ( by_block || live ) ) {
+			const ImVec2 mouse = g_render.screen_mouse( );
+			botox_dbg_log( "MEDIA: click hit=%d mouse=%.0f,%.0f at=%.0f,%.0f row=%.0f..%.0f,%.0f win=%s", hit, mouse.x, mouse.y, at.x, at.y, x, x + buttons_w,
+			               mid_y, live ? "-" : GImGui->HoveredWindow->Name );
+		}
+	};
+
 	if ( GET_VARIABLE( g_variables.m_media_player_simple, bool ) ) {
-		const auto line      = artist.empty( ) ? title : title + " - " + artist;
+		auto line = artist.empty( ) ? title : title + " - " + artist;
+		if ( !time_now.empty( ) )
+			line += "  " + time_now;
 		const auto line_size = artist_font->CalcTextSizeA( artist_px, FLT_MAX, 0.f, line.c_str( ) );
+		const float total_w  = line_size.x + ( buttons ? cell_gap * 2.f + buttons_w : 0.f );
 
 		const auto draw_list = ImGui::GetForegroundDrawList( );
 		const auto block     = g_render.begin_stretch_block( draw_list );
 		const float line_y   = from_bottom ? anchor_y - line_size.y : anchor_y;
-		put( draw_list, bare_fx, artist_font, artist_px, ImVec2( std::floor( left_of( line_size.x ) ), line_y ), look.m_title, line );
-		draw_lyrics( draw_list, from_bottom ? line_y - row_gap : line_y + line_size.y + row_gap, line_size.x, false, bare_fx );
+		const float line_x   = std::floor( left_of( total_w ) );
+		put( draw_list, bare_fx, artist_font, artist_px, ImVec2( line_x, line_y ), look.m_title, line );
+
+		ImRect bounds( ImVec2( line_x, line_y ), ImVec2( line_x + total_w, line_y + line_size.y ) );
+		draw_lyrics( draw_list, from_bottom ? line_y - row_gap : line_y + line_size.y + row_gap, total_w, false, bare_fx, bounds );
+		if ( buttons )
+			draw_buttons( draw_list, line_x + line_size.x + cell_gap * 2.f, std::floor( line_y + line_size.y * 0.5f ), bare_fx, bounds );
 		g_render.end_stretch_block( block );
 		return;
 	}
@@ -1070,8 +1216,13 @@ void n_misc::impl_t::draw_media_player( )
 
 	const float content_h = art ? ( std::max )( art_size, text_col_h ) : text_col_h;
 
-	const float width  = ( std::max )( text_col_w + art_offset_x + padding * 2.f, min_width );
-	const float height = padding + content_h + ( progress_bar || visualizer ? row_gap + bar_height : 0.f ) + padding;
+	const float time_w     = time_now.empty( ) ? 0.f : artist_font->CalcTextSizeA( artist_px, FLT_MAX, 0.f, time_now.c_str( ) ).x;
+	const bool control_row = buttons || time_w > 0.f;
+	const float control_h  = control_row ? ( std::max )( artist_size.y, cell ) : 0.f;
+	const float control_w  = buttons_w + time_w + ( buttons && time_w > 0.f ? 8.f : 0.f );
+
+	const float width  = ( std::max )( { text_col_w + art_offset_x + padding * 2.f, control_w + padding * 2.f, min_width } );
+	const float height = padding + content_h + ( progress_bar || visualizer ? row_gap + bar_height : 0.f ) + ( control_row ? row_gap + control_h : 0.f ) + padding;
 
 	const float pos_x = std::floor( left_of( width ) );
 	const float pos_y = from_bottom ? anchor_y - height : anchor_y;
@@ -1080,7 +1231,7 @@ void n_misc::impl_t::draw_media_player( )
 	const auto block     = g_render.begin_stretch_block( draw_list );
 
 	if ( background )
-		media_player_frame( draw_list, ImVec2( pos_x, pos_y ), ImVec2( pos_x + width, pos_y + height ), style );
+		media_player_frame( draw_list, ImVec2( pos_x, pos_y ), ImVec2( pos_x + width, pos_y + height ), frame_style );
 
 	const auto accent_color = static_cast< ImColor >( ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ) );
 
@@ -1170,7 +1321,21 @@ void n_misc::impl_t::draw_media_player( )
 		                          1.f );
 	}
 
-	draw_lyrics( draw_list, from_bottom ? pos_y - row_gap : pos_y + height + row_gap, width, background, fx );
+	ImRect bounds( ImVec2( pos_x, pos_y ), ImVec2( pos_x + width, pos_y + height ) );
+	draw_lyrics( draw_list, from_bottom ? pos_y - row_gap : pos_y + height + row_gap, width, background, fx, bounds );
+
+	if ( control_row ) {
+		const float row_y = pos_y + height - padding - control_h;
+
+		if ( time_w > 0.f ) {
+			const float time_x = left_side ? pos_x + width - padding - time_w : pos_x + padding;
+			put( draw_list, fx, artist_font, artist_px, ImVec2( std::floor( time_x ), std::floor( row_y + ( control_h - artist_size.y ) * 0.5f ) ), look.m_artist,
+			     time_now );
+		}
+
+		if ( buttons )
+			draw_buttons( draw_list, left_side ? pos_x + padding : pos_x + width - padding - buttons_w, std::floor( row_y + control_h * 0.5f ), fx, bounds );
+	}
 
 	g_render.end_stretch_block( block );
 }
@@ -1300,7 +1465,87 @@ void n_misc::impl_t::update_clantag( )
 	if ( speed < 0.1f )
 		speed = 0.1f;
 
-	if ( anim >= 3 ) {
+	const std::string song_title = anim == 4 && g_media_player.m_has_media ? g_utilities.truncate_utf8( g_media_player.get_title( ), 96 ) : std::string{ };
+
+	if ( anim == 4 && !song_title.empty( ) ) {
+		/* title, scroll left into artist, loop. each part waits 1 s once its end is shown.
+		   server keeps 15 bytes ( MAX_CLAN_TAG_LENGTH 16 ), 1 goes to the trailing space below */
+		constexpr int k_window_bytes = 14;
+
+		const std::string artist = g_utilities.truncate_utf8( g_media_player.get_artist( ), 96 );
+
+		std::vector< std::string > chars;
+		std::vector< std::pair< int, int > > parts;
+		const auto push = [ & ]( const std::string& text ) {
+			for ( size_t i = 0; i < text.size( ); ) {
+				size_t n = 1;
+				while ( i + n < text.size( ) && ( static_cast< unsigned char >( text[ i + n ] ) & 0xC0 ) == 0x80 )
+					n++;
+				chars.push_back( static_cast< unsigned char >( text[ i ] ) < 0x20 ? " " : text.substr( i, n ) );
+				i += n;
+			}
+		};
+		const auto push_part = [ & ]( const std::string& text, const char* gap ) {
+			const int start = static_cast< int >( chars.size( ) );
+			push( text );
+			parts.emplace_back( start, static_cast< int >( chars.size( ) ) );
+			push( gap );
+		};
+
+		push_part( song_title, artist.empty( ) ? "   " : " - " );
+		if ( !artist.empty( ) )
+			push_part( artist, " - " );
+
+		/* window no wider than the longest part: short title + artist never both on screen */
+		const int count = static_cast< int >( chars.size( ) );
+		int widest      = 0;
+		for ( const auto& [ start, end ] : parts )
+			widest = ( std::max )( widest, end - start );
+
+		const auto window = [ & ]( const int at ) {
+			int length = 0, bytes = 0;
+			while ( length < widest && bytes + static_cast< int >( chars[ ( at + length ) % count ].size( ) ) <= k_window_bytes )
+				bytes += static_cast< int >( chars[ ( at + length++ ) % count ].size( ) );
+			return length;
+		};
+
+		static std::string song_key = "";
+		static int song_stage       = 0;
+		static double song_step     = 0.0;
+
+		const std::string key = song_title + '\n' + artist;
+		if ( key != song_key ) {
+			song_key   = key;
+			song_stage = 0;
+			song_step  = time;
+		}
+
+		if ( artist.empty( ) && window( 0 ) >= parts[ 0 ].second )
+			tag = song_title;
+		else {
+			song_stage %= count;
+
+			bool pause = false;
+			for ( const auto& [ start, end ] : parts ) {
+				int at = start;
+				while ( at + window( at ) < end )
+					at++;
+				pause |= at == song_stage;
+			}
+
+			if ( time - song_step >= speed + ( pause ? 1.0 : 0.0 ) ) {
+				song_step  = time;
+				song_stage = ( song_stage + 1 ) % count;
+			}
+
+			const int length = window( song_stage );
+			for ( int i = 0; i < length; i++ )
+				tag += chars[ ( song_stage + i ) % count ];
+		}
+	}
+	else if ( anim == 4 )
+		tag = base;
+	else if ( anim == 3 ) {
 		auto frames = n_misc::parse_clantag_frames( GET_VARIABLE( g_variables.m_clantag_frames, std::string ), speed );
 		frames.erase( std::remove_if( frames.begin( ), frames.end( ), []( const n_misc::clantag_frame_t& frame ) { return frame.m_text.empty( ); } ),
 		              frames.end( ) );

@@ -5746,6 +5746,26 @@ ImVec2 ImGui::GetItemRectSize( )
 	return g.LastItemData.Rect.GetSize( );
 }
 
+/* titled group outline goes on the child's own list: on the parent list the opaque child bg painted over it */
+static void RenderChildBorder( ImGuiWindow* parent_window, ImGuiWindow* child_window, bool show_text )
+{
+	ImGuiContext& g        = *GImGui;
+	const ImVec2 top_left  = child_window->Pos - ImVec2( 0.f, show_text ? 20.f : 0.f );
+	const ImVec2 bot_right = child_window->Pos + child_window->Size;
+	ImDrawList* draw_list  = show_text ? child_window->DrawList : parent_window->DrawList;
+
+	if ( show_text ) {
+		ImRect clip( top_left, bot_right );
+		clip.ClipWithFull( parent_window->ClipRect );
+		draw_list->PushClipRect( clip.Min, clip.Max );
+	}
+
+	draw_list->AddRect( top_left, bot_right, ImColor( 50, 50, 50, 100 ), g.Style.WindowRounding - 2.f, ImDrawCornerFlags_Top );
+
+	if ( show_text )
+		draw_list->PopClipRect( );
+}
+
 bool ImGui::BeginChildEx( const char* name, ImGuiID id, const ImVec2& size_arg, bool border, ImGuiWindowFlags flags, bool show_text )
 {
 	if ( show_text )
@@ -5835,13 +5855,8 @@ bool ImGui::BeginChildEx( const char* name, ImGuiID id, const ImVec2& size_arg, 
 		                         ImColor( accent_color.Value.x, accent_color.Value.y, accent_color.Value.z ) );
 	}
 
-	if ( border ) {
-		parent_window->DrawList->AddRect(
-			child_window->Pos - ImVec2( 0.f, show_text ? 20.f : 0.f ),
-			child_window->Pos - ImVec2( 0.f, show_text ? 20.f : 0.f ) + child_window->Size + ImVec2( 0.f, show_text ? 20.f : 0.f ),
-			ImColor( 50, 50, 50, 100 ), g.Style.WindowRounding - 2.f /* NOTE ~ float ~ liga, if u see this baby , ,, . . . Am very Sorry X D */,
-			ImDrawCornerFlags_Top );
-	}
+	if ( border )
+		RenderChildBorder( parent_window, child_window, show_text );
 
 	return ret;
 }
@@ -5931,13 +5946,8 @@ bool ImGui::BeginChildEx( const char* name, ImGuiID id, const ImVec2& size_arg, 
 			ImColor( text_color.Value.x, text_color.Value.y, text_color.Value.z, text_color.Value.w * text_animation.AnimationData->second ), name );
 	}
 
-	if ( border ) {
-		parent_window->DrawList->AddRect(
-			child_window->Pos - ImVec2( 0.f, show_text ? 20.f : 0.f ),
-			child_window->Pos - ImVec2( 0.f, show_text ? 20.f : 0.f ) + child_window->Size + ImVec2( 0.f, show_text ? 20.f : 0.f ),
-			ImColor( 50, 50, 50, 100 ), g.Style.WindowRounding - 2.f /* NOTE ~ float ~ liga, if u see this baby , ,, . . . Am very Sorry X D */,
-			ImDrawCornerFlags_Top );
-	}
+	if ( border )
+		RenderChildBorder( parent_window, child_window, show_text );
 
 	const auto subtab_vector_size = subtab_names.size( );
 

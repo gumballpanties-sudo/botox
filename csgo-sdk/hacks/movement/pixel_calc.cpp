@@ -13,7 +13,7 @@ void n_movement::impl_t::pixel_calc_render( )
 {
 	if ( !g_ctx.m_local || !g_ctx.m_local->is_alive( ) )
 		return;
-	if ( !GET_VARIABLE( g_variables.m_pixel_calc, bool ) || !GET_VARIABLE( g_variables.m_pixel_calc_show_point, bool ) )
+	if ( !GET_VARIABLE( g_variables.m_pixel_calc, bool ) )
 		return;
 
 	auto& data = m_pixel_calc_data;
@@ -21,6 +21,11 @@ void n_movement::impl_t::pixel_calc_render( )
 	/* map changed = stale world point, drop it */
 	if ( !data.map.empty( ) && data.map != g_interfaces.m_engine_client->get_level_name_short( ) )
 		data.clear( );
+
+	n_route::g_pixel_popup.publish( data.rows, data.popup_started );
+
+	if ( !GET_VARIABLE( g_variables.m_pixel_calc_show_point, bool ) )
+		return;
 
 	if ( data.point_vec.is_zero( ) )
 		return;
@@ -317,5 +322,5 @@ void n_movement::impl_t::pixel_calc_ui( )
 		return;
 	if ( !GET_VARIABLE( g_variables.m_pixel_calc, bool ) )
 		return;
-	n_route::draw_popup( "pixel calculator", m_pixel_calc_data.rows, m_pixel_calc_data.popup_started );
+	n_route::g_pixel_popup.draw( "pixel calculator" );
 }

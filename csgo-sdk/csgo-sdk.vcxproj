@@ -94,6 +94,7 @@
     <ClCompile Include="hacks\visuals\bullets\bullets.cpp" />
     <ClCompile Include="hacks\visuals\weapon_sheen.cpp" />
     <ClCompile Include="hacks\visuals\players\dormancy\dormancy.cpp" />
+    <ClCompile Include="hacks\network\botox_net.cpp" />
     <ClCompile Include="hacks\visuals\players\sound_esp\sound_esp.cpp" />
     <ClCompile Include="hacks\visuals\players\players.cpp" />
     <ClCompile Include="hacks\visuals\screen\ambient_occlusion.cpp" />
@@ -171,6 +172,7 @@
     <ClCompile Include="hooks\functions\run_command.cpp" />
     <ClCompile Include="hooks\functions\send_datagram.cpp" />
     <ClCompile Include="hooks\functions\send_net_msg.cpp" />
+    <ClCompile Include="hooks\functions\svc_msg_voice_data.cpp" />
     <ClCompile Include="hooks\functions\set_image_data_r8g8b8a8.cpp" />
     <ClCompile Include="hooks\functions\wndproc.cpp" />
     <ClCompile Include="hooks\hooks.cpp">
@@ -462,6 +464,7 @@
     <ClInclude Include="game\sdk\classes\c_view_render_beams.h" />
     <ClInclude Include="hacks\visuals\players\chams\chams.h" />
     <ClInclude Include="hacks\visuals\players\dormancy\dormancy.h" />
+    <ClInclude Include="hacks\network\botox_net.h" />
     <ClInclude Include="hacks\visuals\players\sound_esp\sound_esp.h" />
     <ClInclude Include="hacks\visuals\players\players.h" />
     <ClInclude Include="hacks\visuals\screen\ambient_occlusion.h" />

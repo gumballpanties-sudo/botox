@@ -15,11 +15,18 @@ namespace n_skins
 		float m_rgb[ 4 ][ 3 ];
 	};
 
+	struct sticker_t {
+		int m_kit        = 0;
+		float m_wear     = 0.f;
+		float m_scale    = 1.f;
+		float m_rotation = 0.f;
+	};
+
 	bool custom_colors_for_material( const char* vmt_path, int paint_kit, paint_colors_t& out );
 
 	const char* knife_anim_redirect( const char* requested_model );
 
-	bool knife_anims_fit( int anim_index, int knife_index );
+	bool knife_anims_fit( int anim_index, int knife_index, bool model_changer );
 
 	const char* knife_killfeed_name( );
 
@@ -27,6 +34,14 @@ namespace n_skins
 	   server.dll before this GetTickCount64 returns the max = lookat02. one shot */
 	constexpr int k_deagle_lookat_weights = 11;
 	inline std::atomic< unsigned long long > g_rig_lookat_until{ 0 };
+
+	enum e_skin_group { skin_group_weapons, skin_group_player };
+
+	// written on the game thread, readable anywhere
+	inline std::atomic< bool > g_local_is_t{ false };
+
+	// local is t and that group isn't "same on both teams"
+	bool use_tside( e_skin_group group );
 
 	void cache_actual_colors( int paint_kit, const paint_colors_t& colors );
 
@@ -235,3 +250,7 @@ namespace n_skins
 }
 
 inline n_skins::impl_t g_skins{ };
+
+#define SKIN_VAR( name, group ) ( n_skins::use_tside( n_skins::group ) ? g_variables.name##_tside : g_variables.name )
+#define WEAPON_VAR( name ) SKIN_VAR( name, skin_group_weapons )
+#define PLAYER_VAR( name ) SKIN_VAR( name, skin_group_player )

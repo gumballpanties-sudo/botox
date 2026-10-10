@@ -126,16 +126,12 @@ namespace
 		std::string body;
 		if ( !n_image_cache::http_get_text( std::format( "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={}&dt=t&q={}",
 		                                                 job.m_language, url_encode( job.m_text ) ),
-		                                    body ) ) {
-			botox_dbg_log( "TRN: http fail \"%s\"", job.m_text.c_str( ) );
+		                                    body ) )
 			return false;
-		}
 
 		const nlohmann::json root = nlohmann::json::parse( body, nullptr, false );
-		if ( root.is_discarded( ) || !root.is_array( ) || root.empty( ) || !root[ 0 ].is_array( ) ) {
-			botox_dbg_log( "TRN: bad reply %.200s", body.c_str( ) );
+		if ( root.is_discarded( ) || !root.is_array( ) || root.empty( ) || !root[ 0 ].is_array( ) )
 			return false;
-		}
 
 		for ( const auto& segment : root[ 0 ] )
 			if ( segment.is_array( ) && !segment.empty( ) && segment[ 0 ].is_string( ) )
@@ -144,19 +140,8 @@ namespace
 		source            = root.size( ) > 2 && root[ 2 ].is_string( ) ? root[ 2 ].get< std::string >( ) : std::string( );
 		const double conf = root.size( ) > 6 && root[ 6 ].is_number( ) ? root[ 6 ].get< double >( ) : 0.0;
 
-		const char* drop = nullptr;
-		if ( out.empty( ) )
-			drop = "empty";
-		else if ( base_code( source ) == base_code( job.m_language ) )
-			drop = "same lang";
-		else if ( lower( out ) == lower( job.m_text ) )
-			drop = "unchanged";
-		else if ( conf < 0.7 && short_latin( job.m_text ) )
-			drop = "unsure short";
-
-		botox_dbg_log( "TRN: %s %s->%s conf=%.2f \"%s\" -> \"%s\"", drop ? drop : "ok", source.c_str( ), job.m_language.c_str( ), conf,
-		               job.m_text.c_str( ), out.c_str( ) );
-		return !drop;
+		return !out.empty( ) && base_code( source ) != base_code( job.m_language ) && lower( out ) != lower( job.m_text ) &&
+		       !( conf < 0.7 && short_latin( job.m_text ) );
 	}
 
 	void worker( )
@@ -282,20 +267,16 @@ void n_chat_extras::on_chat_message( const int type, const void* msg, const int 
 	std::string name, text;
 	const bool token = !say.m_msg_name.empty( ) && say.m_msg_name[ 0 ] == '#';
 	if ( type == 5 ) {
-		if ( !split_line( strip_controls( say.m_text ), say.m_ent_idx, name, text ) ) {
-			botox_dbg_log( "TRN: skip saytext no split \"%s\"", strip_controls( say.m_text ).c_str( ) );
+		if ( !split_line( strip_controls( say.m_text ), say.m_ent_idx, name, text ) )
 			return;
-		}
 	} else if ( say.m_msg_name.find( "Chat" ) != std::string::npos || ( !token && say.m_params.size( ) >= 2 && !strip_controls( say.m_params[ 1 ] ).empty( ) ) ) {
 		if ( say.m_params.size( ) < 2 )
 			return;
 		name = strip_controls( say.m_params[ 0 ] );
 		text = strip_controls( say.m_params[ 1 ] );
 	} else if ( !token ) {
-		if ( !split_line( strip_controls( say.m_msg_name ), say.m_ent_idx, name, text ) ) {
-			botox_dbg_log( "TRN: skip saytext2 no split \"%s\"", strip_controls( say.m_msg_name ).c_str( ) );
+		if ( !split_line( strip_controls( say.m_msg_name ), say.m_ent_idx, name, text ) )
 			return;
-		}
 	} else
 		return;
 
@@ -305,13 +286,9 @@ void n_chat_extras::on_chat_message( const int type, const void* msg, const int 
 	const int language = std::clamp( GET_VARIABLE( g_variables.m_chat_translator_language, int ), 0,
 	                                 static_cast< int >( std::size( k_language_codes ) ) - 1 );
 
-	botox_dbg_log( "TRN: in type=%d ent=%d name=\"%s\" text=\"%s\"", type, say.m_ent_idx, name.c_str( ), text.c_str( ) );
-
 	std::lock_guard< std::mutex > lock( s_lock );
-	if ( s_jobs.size( ) >= k_max_jobs ) {
-		botox_dbg_log( "TRN: queue full" );
+	if ( s_jobs.size( ) >= k_max_jobs )
 		return;
-	}
 
 	s_jobs.push_back( { std::move( name ), std::move( text ), k_language_codes[ language ] } );
 

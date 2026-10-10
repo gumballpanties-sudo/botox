@@ -56,9 +56,7 @@ void n_flip_world::impl_t::on_render_start( )
 	if ( !this->wanted( ) ) {
 		this->restore( this->m_engine );
 		this->restore( this->m_client );
-
-		if ( this->m_mirroring.exchange( false ) )
-			botox_dbg_log( "FLIP: off" );
+		this->m_mirroring.store( false );
 	}
 
 	this->hand( this->m_mirroring.load( std::memory_order_relaxed ) && !GET_VARIABLE( g_variables.m_flip_world_mirror_hand, bool ) );
@@ -88,9 +86,7 @@ void n_flip_world::impl_t::on_post_screen_space_effects( const c_view_setup* set
 		pass( );
 
 	this->m_frame_mirrored = true;
-
-	if ( !this->m_mirroring.exchange( true ) )
-		botox_dbg_log( "FLIP: on view %d,%d %dx%d", rect.x, rect.y, rect.w, rect.h );
+	this->m_mirroring.store( true );
 }
 
 // gun is inside the mirror: other hand model so it lands on the usual side, sway/tracers follow the mirror
@@ -106,13 +102,10 @@ void n_flip_world::impl_t::hand( const bool hold )
 		if ( this->m_hand_own < 0 )
 			this->m_hand_own = cur;
 
-		if ( const int want = this->m_hand_own ? 0 : 1; cur != want ) {
+		if ( const int want = this->m_hand_own ? 0 : 1; cur != want )
 			righthand->set_value( want );
-			botox_dbg_log( "FLIP: cl_righthand %d -> %d (own %d)", cur, want, this->m_hand_own );
-		}
 	} else if ( this->m_hand_own >= 0 ) {
 		righthand->set_value( this->m_hand_own );
-		botox_dbg_log( "FLIP: cl_righthand back to %d", this->m_hand_own );
 		this->m_hand_own = -1;
 	}
 }
@@ -136,20 +129,11 @@ void n_flip_world::impl_t::on_push_2d_view( )
 
 		if ( unsigned char* site = g_modules[ CLIENT_DLL ].find_pattern( "0F 10 05 ? ? ? ? 8D 85 ? ? ? ? B9" ) )
 			this->m_client.m_matrix = reinterpret_cast< float* >( *reinterpret_cast< std::uintptr_t* >( site + 3 ) + 176 );
-
-		botox_dbg_log( "FLIP: engine w2s %p client copy %p", engine, this->m_client.m_matrix );
 	}
 
-	if ( this->m_client.m_matrix && !( this->m_client.m_held && same( this->m_client.m_matrix, this->m_client.m_written ) ) ) {
-		if ( near_equal( this->m_client.m_matrix, engine ) )
-			this->apply( this->m_client );
-		else if ( !this->m_client_mismatch_logged ) {
-			this->m_client_mismatch_logged = true;
-			botox_dbg_log( "FLIP: client copy != engine w2s, left alone ( %.3f %.3f %.3f %.3f vs %.3f %.3f %.3f %.3f )", this->m_client.m_matrix[ 0 ],
-			               this->m_client.m_matrix[ 1 ], this->m_client.m_matrix[ 2 ], this->m_client.m_matrix[ 3 ], engine[ 0 ], engine[ 1 ],
-			               engine[ 2 ], engine[ 3 ] );
-		}
-	}
+	if ( this->m_client.m_matrix && !( this->m_client.m_held && same( this->m_client.m_matrix, this->m_client.m_written ) ) &&
+	     near_equal( this->m_client.m_matrix, engine ) )
+		this->apply( this->m_client );
 
 	this->apply( this->m_engine );
 }
@@ -234,9 +218,6 @@ bool n_flip_world::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DES
 	}
 
 	this->m_description = description;
-
-	botox_dbg_log( "FLIP: target %ux%u fmt %d msaa %d", description.Width, description.Height, static_cast< int >( description.Format ),
-	               static_cast< int >( description.MultiSampleType ) );
 	return true;
 }
 

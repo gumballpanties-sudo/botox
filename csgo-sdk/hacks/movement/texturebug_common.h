@@ -6,6 +6,7 @@
 #include "tick_scale.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 extern void CorrectMovement( c_user_cmd* cmd, c_angle wish_angle, c_angle old_angles );
 extern bool botox_is_ladder_trace( const trace_t& tr );
@@ -65,6 +66,17 @@ namespace n_tb
 		g_interfaces.m_engine_trace->trace_ray( ray, mask, filter, out );
 		QueryPerformanceCounter( &b );
 		s_trace_qpc_this_cmd += b.QuadPart - a.QuadPart;
+	}
+
+	/* hull hit plane dist. disp hits report the raw vert coord ( dispcoll AxisPlanesXYZ, min planes sign flipped: nuke 1636 wall read
+	   +1636 ), every hull hit stops DIST_EPSILON off its plane -> rebuild from the end */
+	inline float hull_plane_dist( const trace_t& tr, const c_vector& mins, const c_vector& maxs )
+	{
+		if ( !tr.surface.m_name || !strstr( tr.surface.m_name, "displacement" ) )
+			return tr.m_plane.m_distance;
+		const c_vector& p = tr.m_plane.m_normal;
+		return tr.m_end.m_x * p.m_x + tr.m_end.m_y * p.m_y + tr.m_end.m_z * p.m_z + std::min( p.m_x * mins.m_x, p.m_x * maxs.m_x ) +
+		       std::min( p.m_y * mins.m_y, p.m_y * maxs.m_y ) + std::min( p.m_z * mins.m_z, p.m_z * maxs.m_z ) - 0.03125f;
 	}
 
 	// skip redundant restores (full engine state copy): only a sim or fresh cmd dirties the frame,

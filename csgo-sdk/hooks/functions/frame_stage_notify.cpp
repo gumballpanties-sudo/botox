@@ -10,6 +10,7 @@
 #include "../../hacks/movement/edgebug.h"
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/movement/movement_recorder.h"
+#include "../../hacks/network/botox_net.h"
 #include "../../hacks/skins/skins.h"
 #include "../../hacks/chams/chams.h"
 #include "../../hacks/visuals/bullets/bullets.h"
@@ -65,6 +66,7 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 		g_movement.on_frame_stage_notify( stage );
 		g_animations.on_frame_stage_notify( stage );
 		g_skins.on_frame_stage_notify( stage );
+		g_botox_net.on_frame_stage_notify( stage );
 		g_bullets.on_frame_stage_notify( stage );
 	}
 

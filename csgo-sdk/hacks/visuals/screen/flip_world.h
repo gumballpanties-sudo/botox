@@ -53,7 +53,6 @@ namespace n_flip_world
 		slot_t m_engine{ };
 		slot_t m_client{ };
 		bool m_client_resolved = false;
-		bool m_client_mismatch_logged = false;
 
 		std::atomic< unsigned long > m_game_thread{ 0 };
 		std::atomic< unsigned long > m_render_thread{ 0 };

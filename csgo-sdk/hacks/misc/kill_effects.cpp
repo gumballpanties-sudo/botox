@@ -1609,7 +1609,7 @@ namespace
 	enum e_melt_stage : int { melt_dead = -1, melt_wait_ragdoll, melt_wait_capture, melt_run, melt_rest };
 
 	struct melt_t {
-		int m_victim = 0, m_team = 0, m_stage = melt_wait_ragdoll, m_capture_base = -1, m_slot = -1, m_id = 0, m_jobs = 0;
+		int m_victim = 0, m_team = 0, m_stage = melt_wait_ragdoll, m_capture_base = -1, m_slot = -1, m_id = 0;
 		bool m_busy            = false;
 		unsigned int m_ragdoll = 0;
 		float m_wait = 0.f, m_skin_wait = 0.f, m_age = 0.f, m_accum = 0.f, m_settle = 0.f, m_end = 0.f, m_speed = 1.f, m_alpha = 1.f;
@@ -1740,7 +1740,6 @@ namespace
 		std::shared_ptr< melt_template_t > m_made{ };
 		char m_name[ 260 ]{ };
 		int m_checksum = 0, m_body = 0;
-		float m_ms     = 0.f;
 	};
 
 	/* m_sim: body + pool + mesh for melt m_id; m_skin: a model's template to weld */
@@ -1778,11 +1777,9 @@ namespace
 				g_melt_worker.m_todo.erase( g_melt_worker.m_todo.begin( ) );
 			}
 
-			if ( job.m_skin ) {
-				const auto start = std::chrono::steady_clock::now( );
+			if ( job.m_skin )
 				melt_finish( *job.m_skin->m_made );
-				job.m_skin->m_ms = std::chrono::duration< float, std::milli >( std::chrono::steady_clock::now( ) - start ).count( );
-			} else if ( job.m_sim )
+			else if ( job.m_sim )
 				job.m_mesh = melt_advance( *job.m_sim, job.m_dt );
 
 			std::lock_guard< std::mutex > lock( g_melt_worker.m_lock );
@@ -1834,9 +1831,6 @@ namespace
 						slot.m_failed = skin.m_made->m_verts.empty( ) || skin.m_made->m_tris.empty( );
 						if ( !slot.m_failed )
 							slot.m_skin = skin.m_made;
-						botox_dbg_log( "MELT: skin %s body %d verts %d -> welded %d tris %d mesh volume %.0f %.2f ms ( worker )", slot.m_name, slot.m_body,
-						               skin.m_made->m_raw_verts, static_cast< int >( skin.m_made->m_verts.size( ) ), static_cast< int >( skin.m_made->m_tris.size( ) / 3 ),
-						               skin.m_made->m_volume, skin.m_ms );
 						break;
 					}
 				continue;
@@ -1849,14 +1843,6 @@ namespace
 				melt.m_busy = false;
 				melt.m_sim  = std::move( job.m_sim );
 				melt.m_mesh = std::move( job.m_mesh );
-				if ( melt.m_sim && melt.m_mesh && ( melt.m_jobs++ % 60 ) == 0 ) {
-					const melt_stats_t& stats = melt.m_sim->m_stats;
-					botox_dbg_log( "MELT: job %d age %.2f live %d trusted %d | pool %.0f / %.0f u3 lost %.0f wet %d split %d sub %d change %.2f | body %.2f pool %.2f mesh %.2f ms "
-					               "verts %d tris %d probes %d ( worker )",
-					               melt.m_jobs, melt.m_sim->m_age, stats.m_live, stats.m_trusted, stats.m_pool_volume, melt.m_sim->m_volume, stats.m_lost, stats.m_wet_cells,
-					               stats.m_split, stats.m_sub, stats.m_change, stats.m_body_ms, stats.m_pool_ms, stats.m_mesh_ms, static_cast< int >( melt.m_mesh->m_vertices.size( ) ),
-					               static_cast< int >( melt.m_mesh->m_indices.size( ) / 3 ), static_cast< int >( melt.m_sim->m_probes.size( ) ) );
-				}
 			}
 		}
 	}
@@ -1929,17 +1915,14 @@ namespace
 		const std::size_t dot = path.rfind( ".mdl" );
 		std::vector< unsigned char > vtx{ };
 		if ( dot == std::string::npos || !read_game_file( path.replace( dot, 4, ".dx90.vtx" ).c_str( ), vtx ) ) {
-			botox_dbg_log( "MELT: skin skipped ( no vtx %s )", path.c_str( ) );
 			slot.m_failed = true;
 			g_melt_skins.push_back( slot );
 			return nullptr;
 		}
 
 		const unsigned short handle = cache->find_mdl( model->m_name );
-		if ( handle == 0xffffu ) {
-			botox_dbg_log( "MELT: skin skipped ( find_mdl %s )", model->m_name );
+		if ( handle == 0xffffu )
 			return nullptr;
-		}
 
 		auto made = std::make_shared< melt_template_t >( );
 		cache->begin_lock( );
@@ -1953,7 +1936,6 @@ namespace
 		if ( !fail && static_cast< int >( made->m_pose.size( ) ) != hdr->n_bones )
 			fail = "bone layout";
 		if ( fail ) {
-			botox_dbg_log( "MELT: skin skipped ( %s ) %s", fail, model->m_name );
 			slot.m_failed = std::strcmp( fail, "no vvd" ) != 0;
 			if ( slot.m_failed )
 				g_melt_skins.push_back( slot );
@@ -2052,7 +2034,6 @@ namespace
 			bone_seen[ box->m_bone ] = static_cast< signed char >( ( std::max )( static_cast< int >( bone_seen[ box->m_bone ] ), seen ? 1 : 0 ) );
 		}
 
-		const bool from_vvd = skin != nullptr;
 		if ( !skin ) {
 			auto fallback = std::make_shared< melt_template_t >( );
 			melt_capsule_mesh( capsules, bone_count, *fallback );
@@ -2097,9 +2078,6 @@ namespace
 
 		melt.m_settle = k_melt_sink_time + 4.f;
 		melt.m_end    = k_melt_sink_time + 1.f + life * melt.m_speed;
-		botox_dbg_log( "MELT: build skin %s verts %d tris %d goo %.0f u3 ( mesh %.0f ) floor %.1f low %.1f bones %s %d skip %d", from_vvd ? "vvd" : "hitbox",
-		               static_cast< int >( n ), static_cast< int >( skin->m_tris.size( ) / 3 ), sim->m_volume, skin->m_volume, sim->m_base_floor, low,
-		               fresh.empty( ) ? "victim" : "fresh", bone_count, static_cast< int >( g_melt_skip.size( ) ) );
 		melt.m_sim = std::move( sim );
 		return 1;
 	}
@@ -2120,14 +2098,9 @@ namespace
 		}
 
 		sim.m_samples.assign( n, 0u );
-		int valid = 0;
 		if ( rgb )
-			for ( std::size_t i = 0; i < n; i++ ) {
-				sim.m_samples[ i ] = rgb[ i ];
-				valid += ( rgb[ i ] >> 24 ) ? 1 : 0;
-			}
+			std::copy( rgb, rgb + n, sim.m_samples.begin( ) );
 		sim.m_colors_ready = false;
-		botox_dbg_log( "MELT: colors %s valid %d/%d", rgb ? "capture" : "fallback", valid, static_cast< int >( n ) );
 	}
 
 	constexpr const char* k_melt_vs = R"(
@@ -2323,7 +2296,8 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 			failed = true;
 		}
 
-		botox_dbg_log( "%s: shaders %s", tag, ok ? "built" : "FAILED" );
+		if ( !ok )
+			botox_dbg_log( "%s: shaders FAILED", tag );
 		return ok;
 	}
 
@@ -2448,7 +2422,6 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 		device->SetPixelShaderConstantF( 2, eye_light[ 1 ], 1 );
 
 		static std::vector< unsigned short > short_indices{ };
-		static bool logged = false;
 
 		for ( const melt_draw_t& draw : draws ) {
 			const auto& vertices = draw.m_mesh->m_vertices;
@@ -2466,21 +2439,13 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 			device->SetTexture( 0, texture );
 			device->SetRenderState( D3DRS_ZWRITEENABLE, draw.m_alpha >= 0.999f ? TRUE : FALSE );
 
-			HRESULT result = S_OK;
 			if ( wide )
-				result = device->DrawIndexedPrimitiveUP( D3DPT_TRIANGLELIST, 0, static_cast< UINT >( vertices.size( ) ), static_cast< UINT >( indices.size( ) / 3 ),
-				                                         indices.data( ), D3DFMT_INDEX32, vertices.data( ), sizeof( melt_vertex_t ) );
+				device->DrawIndexedPrimitiveUP( D3DPT_TRIANGLELIST, 0, static_cast< UINT >( vertices.size( ) ), static_cast< UINT >( indices.size( ) / 3 ),
+				                                indices.data( ), D3DFMT_INDEX32, vertices.data( ), sizeof( melt_vertex_t ) );
 			else {
 				short_indices.assign( indices.begin( ), indices.end( ) );
-				result = device->DrawIndexedPrimitiveUP( D3DPT_TRIANGLELIST, 0, static_cast< UINT >( vertices.size( ) ),
-				                                         static_cast< UINT >( short_indices.size( ) / 3 ), short_indices.data( ), D3DFMT_INDEX16, vertices.data( ),
-				                                         sizeof( melt_vertex_t ) );
-			}
-
-			if ( !logged ) {
-				logged = true;
-				botox_dbg_log( "MELT: world draw hr %08lx verts %d tris %d tex %d", static_cast< unsigned long >( result ), static_cast< int >( vertices.size( ) ),
-				               static_cast< int >( indices.size( ) / 3 ), texture ? 1 : 0 );
+				device->DrawIndexedPrimitiveUP( D3DPT_TRIANGLELIST, 0, static_cast< UINT >( vertices.size( ) ), static_cast< UINT >( short_indices.size( ) / 3 ),
+				                                short_indices.data( ), D3DFMT_INDEX16, vertices.data( ), sizeof( melt_vertex_t ) );
 			}
 		}
 
@@ -2516,12 +2481,6 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 			result = device->DrawPrimitiveUP( D3DPT_TRIANGLELIST, static_cast< UINT >( count / 3 ), &quads[ first ], sizeof( kfx_vertex_t ) );
 		}
 
-		static HRESULT logged = 1;
-		if ( result != logged ) {
-			logged = result;
-			botox_dbg_log( "KFX: world draw hr %08lx quads %d", static_cast< unsigned long >( result ), static_cast< int >( quads.size( ) / 6 ) );
-		}
-
 		saved.restore( device );
 	}
 
@@ -2538,7 +2497,6 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 		if ( auto& bones = victim->get_cached_bone_data( ); bones.count( ) > 0 && bones.base( ) )
 			melt.m_bones.assign( bones.base( ), bones.base( ) + bones.count( ) );
 
-		botox_dbg_log( "MELT: spawn victim %d bones %d", victim_index, static_cast< int >( melt.m_bones.size( ) ) );
 		g_melts.push_back( std::move( melt ) );
 	}
 
@@ -2597,12 +2555,6 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 				}
 				melt.m_stage = built > 0 ? melt_wait_capture : melt_dead;
 				melt.m_wait  = 0.f;
-
-				int seen = 0;
-				for ( const unsigned char flag : melt.m_seen )
-					seen += flag;
-				botox_dbg_log( "MELT: build %s victim %d ragdoll %d verts %d seen %d eye %d", melt.m_stage == melt_dead ? "FAIL" : "ok", melt.m_victim, ragdoll ? 1 : 0,
-				               melt.m_sim ? static_cast< int >( melt.m_sim->m_skin->m_verts.size( ) ) : 0, seen, eye.is_zero( ) ? 0 : 1 );
 			}
 
 			if ( !melt.m_ragdoll && victim && melt_ragdoll( victim ) )
@@ -2687,11 +2639,6 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 					uv.push_back( v );
 				}
 			}
-
-			int on_screen = 0;
-			for ( std::size_t i = 0; i < uv.size( ); i += 2 )
-				on_screen += uv[ i ] >= 0.f ? 1 : 0;
-			botox_dbg_log( "MELT: capture request %d verts, %d facing on screen", static_cast< int >( uv.size( ) / 2 ), on_screen );
 
 			g_melt_capture.m_slot = g_melt_slot_next;
 			g_melt_slot_next      = ( g_melt_slot_next + 1 ) % static_cast< int >( k_melt_cap );
@@ -3131,12 +3078,6 @@ void on_death_particles( const int victim_index, const int attacker_index )
 	/* sparks, or a pick whose systems this map never precached */
 	if ( type == 1 )
 		g_virtual.call< void >( fx, 3, std::cref( at ), 8, 8, static_cast< const c_vector* >( nullptr ) );
-	else {
+	else
 		g_virtual.call< void >( fx, 7, std::cref( at ), std::cref( up ), true );
-		static int logged = -1;
-		if ( logged != type ) {
-			logged = type;
-			botox_dbg_log( "KFX: death particle %d not precached on this map, energy splash instead", type );
-		}
-	}
 }

@@ -16,6 +16,7 @@
 #include "../../hacks/movement/tick_scale.h"
 #include "../../hacks/movement/wall_climb.h"
 #include "../../hacks/movement/texturebug.h"
+#include "../../hacks/network/botox_net.h"
 #include "../../hacks/prediction/prediction.h"
 #include "../../hacks/skins/skins.h"
 #include "../../hacks/visuals/screen/flip_world.h"
@@ -546,6 +547,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 
 		if ( !g_hooks.m_send_datagram.is_hooked( ) )
 			g_hooks.m_send_datagram.create( g_virtual.get( net_channel, 46 ), &n_detoured_functions::send_datagram );
+
+		g_botox_net.on_create_move( );
 	}
 
 	if ( GET_VARIABLE( g_variables.m_tung_surf, bool ) && !g_hooks.m_process_movement_sv.is_hooked( ) ) {

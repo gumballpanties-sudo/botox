@@ -70,17 +70,13 @@ bool n_mc_clouds::impl_t::ensure( IDirect3DDevice9* device )
 	if ( this->m_shader && !this->m_cells )
 		this->m_cells = build_cells( device );
 
-	if ( this->m_shader && this->m_cells ) {
-		g_console.print( "mc clouds: ready" );
-		botox_dbg_log( "MCC: ready" );
+	if ( this->m_shader && this->m_cells )
 		return true;
-	}
 
 	this->on_device_lost( );
 	this->m_failed = true;
 
 	g_console.print< n_console::log_level::WARNING >( std::format( "mc clouds off: {}", error[ 0 ] ? error : "cell texture failed" ).c_str( ) );
-	botox_dbg_log( "MCC: off ( %s )", error[ 0 ] ? error : "cell texture failed" );
 	return false;
 }
 

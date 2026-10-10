@@ -410,6 +410,47 @@ namespace n_variables
 		ADD_VARIABLE( std::string, m_agent_ct_custom, "" );
 		ADD_VARIABLE( bool, m_agent_custom_models, false );
 
+		// vars above = ct set (+ both teams when same), _tside = t set, picked by SKIN_VAR
+		ADD_VARIABLE( bool, m_skins_same_weapons, true );
+		ADD_VARIABLE( bool, m_skins_same_player, true );
+		ADD_VARIABLE( bool, m_knife_enable_tside, false );
+		ADD_VARIABLE( int, m_knife_model_tside, 0 );
+		ADD_VARIABLE( bool, m_knife_fix_view_tside, false );
+		ADD_VARIABLE( bool, m_knife_anims_enable_tside, false );
+		ADD_VARIABLE( int, m_knife_anims_model_tside, 0 );
+		ADD_VARIABLE( int, m_knife_paint_kit_tside, 0 );
+		ADD_VARIABLE( float, m_knife_wear_tside, 0.0001f );
+		ADD_VARIABLE( int, m_knife_seed_tside, 0 );
+		ADD_VARIABLE( bool, m_knife_stattrak_tside, false );
+		ADD_VARIABLE( int, m_knife_stattrak_kills_tside, 0 );
+		ADD_VARIABLE( std::string, m_knife_custom_name_tside, "" );
+		ADD_VARIABLE( bool, m_knife_custom_color_tside, false );
+		ADD_VARIABLE( c_color, m_knife_color_1_tside, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( c_color, m_knife_color_2_tside, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( c_color, m_knife_color_3_tside, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( c_color, m_knife_color_4_tside, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( bool, m_gloves_enable_tside, false );
+		ADD_VARIABLE( int, m_gloves_model_tside, 0 );
+		ADD_VARIABLE( int, m_gloves_paint_kit_tside, 0 );
+		ADD_VARIABLE( float, m_gloves_wear_tside, 0.0001f );
+		ADD_VARIABLE( int, m_gloves_seed_tside, 0 );
+		ADD_VARIABLE( bool, m_weapon_skins_enable_tside, false );
+		ADD_VARIABLE_VECTOR( int, 34, m_weapon_skins_paint_kit_tside, 0 );
+		ADD_VARIABLE_VECTOR( float, 34, m_weapon_skins_wear_tside, 0.0001f );
+		ADD_VARIABLE_VECTOR( int, 34, m_weapon_skins_seed_tside, 0 );
+		ADD_VARIABLE_VECTOR( bool, 34, m_weapon_skins_stattrak_tside, false );
+		ADD_VARIABLE_VECTOR( int, 34, m_weapon_skins_stattrak_kills_tside, 0 );
+		ADD_VARIABLE_VECTOR( std::string, 34, m_weapon_skins_custom_name_tside, "" );
+		ADD_VARIABLE_VECTOR( bool, 34, m_weapon_skins_custom_color_tside, false );
+		ADD_VARIABLE_VECTOR( c_color, 34, m_weapon_skins_color_1_tside, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE_VECTOR( c_color, 34, m_weapon_skins_color_2_tside, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE_VECTOR( c_color, 34, m_weapon_skins_color_3_tside, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE_VECTOR( c_color, 34, m_weapon_skins_color_4_tside, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE_VECTOR( int, 170, m_weapon_skins_sticker_kit_tside, 0 );
+		ADD_VARIABLE_VECTOR( float, 170, m_weapon_skins_sticker_wear_tside, 0.f );
+		ADD_VARIABLE_VECTOR( float, 170, m_weapon_skins_sticker_scale_tside, 1.f );
+		ADD_VARIABLE_VECTOR( float, 170, m_weapon_skins_sticker_rotation_tside, 0.f );
+
 		ADD_VARIABLE( bool, m_players, false );
 		ADD_VARIABLE( bool, m_players_teammates, false );
 		ADD_VARIABLE( float, m_players_max_distance, 0.f );
@@ -974,6 +1015,11 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_wall_climb, false );
 		ADD_VARIABLE( key_bind_t, m_wall_climb_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_wall_climb_prevent_slow, true );
+		ADD_VARIABLE( bool, m_wall_climb_duck, false );
+		ADD_VARIABLE( int, m_wall_climb_duck_ticks, 2 );
+		ADD_VARIABLE( bool, m_wall_climb_visual_angles, false );
+		ADD_VARIABLE( bool, m_show_wall_slope, false );
+		ADD_VARIABLE( key_bind_t, m_show_wall_slope_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_auto_strafe, false );
 		ADD_VARIABLE( key_bind_t, m_auto_strafe_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( int, m_auto_strafe_type, 0 );
@@ -1507,6 +1553,11 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_media_player_lyrics, false );
 		ADD_VARIABLE( int, m_media_player_lyrics_rows, 3 );
 		ADD_VARIABLE( float, m_media_player_lyrics_offset, 0.f );
+		ADD_VARIABLE( bool, m_media_player_time, false );
+		ADD_VARIABLE( bool, m_media_player_ingame_control, false );
+		ADD_VARIABLE( key_bind_t, m_media_player_previous_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( key_bind_t, m_media_player_toggle_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( key_bind_t, m_media_player_next_key, key_bind_t( 0, 1 ) );
 
 		ADD_VARIABLE( bool, m_web, false );
 		ADD_VARIABLE( std::string, m_web_url, "https://www.youtube.com/" );
@@ -1636,6 +1687,9 @@ namespace n_variables
 
 		ADD_VARIABLE( bool, m_debug_log, false );
 		ADD_VARIABLE( bool, m_safe_mode, false );
+		ADD_VARIABLE( bool, m_botox_network, false );
+		ADD_VARIABLE( bool, m_botox_network_esp, true );
+		ADD_VARIABLE( bool, m_botox_network_skins, true );
 #ifdef _DEBUG
 		ADD_VARIABLE( bool, m_debugger_visual, false );
 		ADD_VARIABLE( bool, m_disable_interp, false );

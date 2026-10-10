@@ -17,10 +17,9 @@ static bool move_mask_combo( const char* label, int& stored )
 	return true;
 }
 
-static const ImVec2 k_route_calc_panel_size( 500.f, 364.f );
-
-static void route_calc_settings_body( )
+static void route_calc_page( )
 {
+	std::lock_guard< std::recursive_mutex > route_lock( n_route::g_route_lock );
 	auto& route = g_movement.m_route_calc_data;
 
 	static const std::vector< const char* > style_names( std::begin( n_route::k_style_names ),
@@ -43,101 +42,52 @@ static void route_calc_settings_body( )
 		return true;
 	};
 
-	/* two even columns; lower boxes take what's left so nothing runs past the panel */
-	const float column_width = ImFloor( ( ImGui::GetContentRegionAvail( ).x - ImGui::GetStyle( ).ItemSpacing.x ) / 2.f );
+	menu_columns_begin( );
 
-	ImGui::BeginGroup( );
+	if ( menu_group_begin( "route calculator" ) ) {
+		ImGui::Checkbox( "route calculator", &GET_VARIABLE( g_variables.m_route_calc, bool ) );
 
-	if ( ImGui::BeginChild( ( "master" ), ImVec2( column_width, 66.f ), true, 0, true ) ) {
-		ImGui::Checkbox( "enable pixel finder", &GET_VARIABLE( g_variables.m_pixel_finder, bool ) );
-		ImGui::OptionPopup(
-			"page pixel finder settings",
-			[ & ]( ) {
-				ImGui::Label( "scan key" );
-				ImGui::Keybind( "page pixel finder key", &GET_VARIABLE( g_variables.m_pixel_finder_key, key_bind_t ) );
-				ImGui::Checkbox( "pixelsurfs##page", &GET_VARIABLE( g_variables.m_pixel_finder_pixelsurfs, bool ) );
-				ImGui::Checkbox( "texturebugs##page", &GET_VARIABLE( g_variables.m_pixel_finder_texturebugs, bool ) );
-				ImGui::Checkbox( "headbounces##page", &GET_VARIABLE( g_variables.m_pixel_finder_headbounces, bool ) );
-				ImGui::Checkbox( "pixeljumps##page", &GET_VARIABLE( g_variables.m_pixel_finder_pixeljumps, bool ) );
-			},
-			ImVec2( 200.f, -1 ) );
-
-		ImGui::Checkbox( "enable pixel calculator", &GET_VARIABLE( g_variables.m_pixel_calc, bool ) );
-		ImGui::OptionPopup(
-			"page pixel calculator settings",
-			[ & ]( ) {
-				ImGui::Label( "aim key" );
-				ImGui::Keybind( "page pixel aim key", &GET_VARIABLE( g_variables.m_pixel_calc_aim_key, key_bind_t ) );
-				ImGui::Label( "solve key" );
-				ImGui::Keybind( "page pixel solve key", &GET_VARIABLE( g_variables.m_pixel_calc_solve_key, key_bind_t ) );
-				ImGui::Checkbox( "show point", &GET_VARIABLE( g_variables.m_pixel_calc_show_point, bool ) );
-				ImGui::Combo( "type##page pixel calculator type", &GET_VARIABLE( g_variables.m_pixel_calc_type, int ),
-				              "pixelsurf\0pixeljump\0" );
-				ImGui::Checkbox( "advanced readout##page pixel calculator",
-				                 &GET_VARIABLE( g_variables.m_pixel_calc_advanced_readout, bool ) );
-				ImGui::Label( "allowed jumps" );
-				move_mask_combo( "##page pixel calculator jump types", GET_VARIABLE( g_variables.m_pixel_calc_moves, int ) );
-			},
-			ImVec2( 200.f, -1 ) );
-
-		ImGui::Checkbox( "enable route calculator", &GET_VARIABLE( g_variables.m_route_calc, bool ) );
-		ImGui::OptionPopup(
-			"route calculator keys",
-			[ & ]( ) {
-				ImGui::Label( "add point" );
-				ImGui::Keybind( "route calc add key", &GET_VARIABLE( g_variables.m_route_calc_add_key, key_bind_t ) );
-				ImGui::Label( "calculate combos" );
-				ImGui::Keybind( "route calc solve key", &GET_VARIABLE( g_variables.m_route_calc_solve_key, key_bind_t ) );
-				ImGui::Label( "delete point" );
-				ImGui::Keybind( "route calc delete key", &GET_VARIABLE( g_variables.m_route_calc_delete_key, key_bind_t ) );
-				ImGui::Label( "clear all points" );
-				ImGui::Keybind( "route calc clear key", &GET_VARIABLE( g_variables.m_route_calc_clear_key, key_bind_t ) );
-				ImGui::Checkbox( "show key list", &GET_VARIABLE( g_variables.m_route_calc_show_keys, bool ) );
-				ImGui::Checkbox( "show combos on screen", &GET_VARIABLE( g_variables.m_route_calc_show_bar, bool ) );
-				ImGui::Checkbox( "advanced readout##route calc",
-				                 &GET_VARIABLE( g_variables.m_route_calc_advanced_readout, bool ) );
-				ImGui::SliderInt( "popup duration", &GET_VARIABLE( g_variables.m_route_calc_popup_time, int ), 1, 30,
-				                  "%d sec" );
-			},
-			ImVec2( 210.f, -1 ) );
-	}
-	ImGui::EndChild( );
-
-	if ( ImGui::BeginChild( ( "preferences" ), ImVec2( column_width, 0.f ), true, 0, true ) ) {
-		ImGui::Checkbox( "pin to menu", &GET_VARIABLE( g_variables.m_route_calc_pinned, bool ) );
-
-		if ( ImGui::Checkbox( "use current pos for start jump",
-		                      &GET_VARIABLE( g_variables.m_route_calc_start_here, bool ) ) )
+		if ( ImGui::Checkbox( "use current pos for start jump", &GET_VARIABLE( g_variables.m_route_calc_start_here, bool ) ) )
 			route.drop_solutions( );
 
-		if ( ImGui::Checkbox( "allow selecting invalid pixels",
-		                      &GET_VARIABLE( g_variables.m_route_calc_allow_invalid, bool ) ) )
+		if ( ImGui::Checkbox( "allow selecting invalid pixels", &GET_VARIABLE( g_variables.m_route_calc_allow_invalid, bool ) ) )
 			route.drop_solutions( );
 
 		ImGui::Checkbox( "snap points to nearest edge", &GET_VARIABLE( g_variables.m_route_calc_snap_edge, bool ) );
+		ImGui::Checkbox( "show key list", &GET_VARIABLE( g_variables.m_route_calc_show_keys, bool ) );
+		ImGui::Checkbox( "show combos on screen", &GET_VARIABLE( g_variables.m_route_calc_show_bar, bool ) );
+		ImGui::Checkbox( "advanced readout##route calc", &GET_VARIABLE( g_variables.m_route_calc_advanced_readout, bool ) );
 
-		ImGui::SliderInt( "max displayed combos", &GET_VARIABLE( g_variables.m_route_calc_max_results, int ), 1, 64,
-		                  "%d combos" );
+		ImGui::SliderInt( "popup duration", &GET_VARIABLE( g_variables.m_route_calc_popup_time, int ), 1, 30, "%d sec" );
+		ImGui::SliderInt( "max displayed combos", &GET_VARIABLE( g_variables.m_route_calc_max_results, int ), 1, 64, "%d combos" );
 
-		if ( ImGui::SliderInt( "delay hop ticks", &GET_VARIABLE( g_variables.m_route_calc_delay_ticks, int ), 0, 8,
-		                       "%d ticks" ) )
+		if ( ImGui::SliderInt( "delay hop ticks", &GET_VARIABLE( g_variables.m_route_calc_delay_ticks, int ), 0, 8, "%d ticks" ) )
 			route.drop_solutions( );
 
 		ImGui::Label( "jump types to calculate" );
 		if ( move_mask_combo( "##global jump types", GET_VARIABLE( g_variables.m_route_calc_global_moves, int ) ) )
 			route.drop_solutions( );
 	}
-	ImGui::EndChild( );
+	menu_group_end( );
 
-	ImGui::EndGroup( );
+	if ( menu_group_begin( "keys" ) ) {
+		ImGui::Label( "add point" );
+		ImGui::Keybind( "route calc add key", &GET_VARIABLE( g_variables.m_route_calc_add_key, key_bind_t ) );
+		ImGui::Label( "calculate combos" );
+		ImGui::Keybind( "route calc solve key", &GET_VARIABLE( g_variables.m_route_calc_solve_key, key_bind_t ) );
+		ImGui::Label( "delete point" );
+		ImGui::Keybind( "route calc delete key", &GET_VARIABLE( g_variables.m_route_calc_delete_key, key_bind_t ) );
+		ImGui::Label( "clear all points" );
+		ImGui::Keybind( "route calc clear key", &GET_VARIABLE( g_variables.m_route_calc_clear_key, key_bind_t ) );
+	}
+	menu_group_end( );
 
-	ImGui::SameLine( );
+	menu_columns_next( );
 
-	if ( ImGui::BeginChild( ( "added points" ), ImVec2( 0.f, 0.f ), true, 0, true ) ) {
-		if ( ImGui::BeginListBox( ( "##route points" ), ImVec2( 0.f, 92.f ) ) ) {
+	if ( menu_group_begin( "points" ) ) {
+		if ( ImGui::BeginListBox( "##route points", ImVec2( -1.f, 160.f ) ) ) {
 			const bool start_here = GET_VARIABLE( g_variables.m_route_calc_start_here, bool );
-			if ( ImGui::Selectable( start_here ? "starting jump (current position)" : "starting jump (point 1)",
-			                        route.selected_row == 0, ImGuiSelectableFlags_DontClosePopups ) )
+			if ( ImGui::Selectable( start_here ? "starting jump (current position)" : "starting jump (point 1)", route.selected_row == 0 ) )
 				route.selected_row = 0;
 
 			for ( std::size_t i = 0; i < route.points.size( ); ++i ) {
@@ -145,14 +95,13 @@ static void route_calc_settings_body( )
 				                        route_point_type_name( route_point_shown_type( route.points[ i ] ) ) + "   z " +
 				                        std::to_string( static_cast< int >( route_point_mark( route.points[ i ] ).m_z ) ) +
 				                        ( route.points[ i ].enabled ? "" : "   (off)" );
-				if ( ImGui::Selectable( row.c_str( ), route.selected_row == static_cast< int >( i ) + 1,
-				                        ImGuiSelectableFlags_DontClosePopups ) )
+				if ( ImGui::Selectable( row.c_str( ), route.selected_row == static_cast< int >( i ) + 1 ) )
 					route.selected_row = static_cast< int >( i ) + 1;
 			}
 			ImGui::EndListBox( );
 		}
 
-		if ( ImGui::Button( "clear all points" ) )
+		if ( ImGui::Button( "clear all points", ImVec2( -1.f, 15.f ) ) )
 			route.clear( );
 
 		if ( route.selected_row > static_cast< int >( route.points.size( ) ) )
@@ -173,19 +122,17 @@ static void route_calc_settings_body( )
 				route.drop_solutions( );
 
 			const int row = route.selected_row - 1;
-			if ( ImGui::Button( "move up" ) && row > 0 ) {
+			if ( ImGui::Button( "move up", ImVec2( -1.f, 15.f ) ) && row > 0 ) {
 				std::swap( route.points[ row ], route.points[ row - 1 ] );
 				route.selected_row -= 1;
 				route.drop_solutions( );
 			}
-			ImGui::SameLine( );
-			if ( ImGui::Button( "move down" ) && row + 1 < static_cast< int >( route.points.size( ) ) ) {
+			if ( ImGui::Button( "move down", ImVec2( -1.f, 15.f ) ) && row + 1 < static_cast< int >( route.points.size( ) ) ) {
 				std::swap( route.points[ row ], route.points[ row + 1 ] );
 				route.selected_row += 1;
 				route.drop_solutions( );
 			}
-			ImGui::SameLine( );
-			if ( ImGui::Button( "delete point" ) ) {
+			if ( ImGui::Button( "delete point", ImVec2( -1.f, 15.f ) ) ) {
 				route.points.erase( route.points.begin( ) + row );
 				if ( route.selected_row > static_cast< int >( route.points.size( ) ) )
 					route.selected_row = static_cast< int >( route.points.size( ) );
@@ -219,12 +166,11 @@ static void route_calc_settings_body( )
 					}
 				}
 
+				ImGui::Label( "types to calculate" );
 				if ( point.type == route_pt_ground || point.type == route_pt_pixeljump ) {
-					ImGui::Label( "types to calculate" );
 					if ( style_combo( "##types to calculate", point.styles, n_route::style_count - 1 ) )
 						route.drop_solutions( );
 				} else {
-					ImGui::Label( "types to calculate" );
 					if ( ImGui::Checkbox( "arrive standing", &point.allow_stand ) )
 						route.drop_solutions( );
 					if ( ImGui::Checkbox( "arrive ducked", &point.allow_duck ) )
@@ -233,52 +179,9 @@ static void route_calc_settings_body( )
 			}
 		}
 	}
-	ImGui::EndChild( );
-}
+	menu_group_end( );
 
-void n_menu::impl_t::route_calc_pinned( const bool no_inputs )
-{
-	this->m_route_calc_side = 0;
-	if ( !GET_VARIABLE( g_variables.m_route_calc_pinned, bool ) )
-		return;
-
-	const ImGuiWindow* menu = ImGui::FindWindowByName( "botox-ui" );
-	if ( !menu )
-		return;
-
-	constexpr float k_gap = 8.f;
-	const ImVec2 display  = ImGui::GetIO( ).DisplaySize;
-	float x               = menu->Pos.x + menu->Size.x + k_gap;
-	this->m_route_calc_side = 1;
-	if ( x + k_route_calc_panel_size.x > display.x ) {
-		x                       = menu->Pos.x - k_gap - k_route_calc_panel_size.x;
-		this->m_route_calc_side = -1;
-	}
-	ImGui::SetNextWindowPos( ImVec2( x, menu->Pos.y ), ImGuiCond_Always );
-	ImGui::SetNextWindowSize( k_route_calc_panel_size, ImGuiCond_Always );
-
-	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
-	                         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-	if ( no_inputs )
-		flags |= ImGuiWindowFlags_NoInputs;
-
-	if ( ImGui::Begin( "route calculator##pinned", nullptr, flags ) ) {
-		const auto draw_list = ImGui::GetWindowDrawList( );
-		const ImVec2 pos = ImGui::GetWindowPos( ), size = ImGui::GetWindowSize( );
-		const auto bold  = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ];
-		const char* title = "route calculator settings";
-		draw_list->AddRectFilled( pos, ImVec2( pos.x + size.x, pos.y + 20.f ), ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f ),
-		                          ImGui::GetStyle( ).WindowRounding - 2.f, ImDrawFlags_RoundCornersTop );
-		draw_list->AddRect( pos, ImVec2( pos.x + size.x, pos.y + size.y ), ImColor( 50, 50, 50, 100 ), ImGui::GetStyle( ).WindowRounding - 2.f );
-		const ImVec2 title_size = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.f, title );
-		draw_list->AddText( bold, bold->FontSize, ImVec2( pos.x + ( size.x - title_size.x ) / 2.f, pos.y + ( 20.f - title_size.y ) / 2.f ),
-		                    ImGui::GetColorU32( ImGuiCol_Text ), title );
-		RenderFadedGradientLine( draw_list, ImVec2( pos.x, pos.y + 20.f ), ImVec2( size.x, 1.f ), ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ) );
-		ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) + 20.f );
-
-		route_calc_settings_body( );
-	}
-	ImGui::End( );
+	menu_columns_end( );
 }
 
 void n_menu::impl_t::tab_movement( )
@@ -731,6 +634,15 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Label( "wall climb keybind" );
 						ImGui::Keybind( "wall climb key", &GET_VARIABLE( g_variables.m_wall_climb_key, key_bind_t ) );
 						ImGui::Checkbox( "prevent slow", &GET_VARIABLE( g_variables.m_wall_climb_prevent_slow, bool ) );
+						ImGui::Checkbox( "crouch catches", &GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) );
+						if ( GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) )
+							ImGui::SliderInt( "stand ticks before crouch", &GET_VARIABLE( g_variables.m_wall_climb_duck_ticks, int ), 2, 16, "%d ticks" );
+						ImGui::Checkbox( "turn view off wall", &GET_VARIABLE( g_variables.m_wall_climb_visual_angles, bool ) );
+						ImGui::Checkbox( "show wall slope", &GET_VARIABLE( g_variables.m_show_wall_slope, bool ) );
+						if ( GET_VARIABLE( g_variables.m_show_wall_slope, bool ) ) {
+							ImGui::Label( "show wall slope key" );
+							ImGui::Keybind( "show wall slope key", &GET_VARIABLE( g_variables.m_show_wall_slope_key, key_bind_t ) );
+						}
 					},
 					ImVec2( 220.f, -1 ) );
 			}
@@ -816,6 +728,98 @@ void n_menu::impl_t::tab_movement( )
 			safe_checkbox( "no crouch cooldown",&GET_VARIABLE( g_variables.m_no_crouch_cooldown, bool ) );
 
 			ImGui::Checkbox( "fast stop", &GET_VARIABLE( g_variables.m_fast_stop, bool ) );
+
+			ImGui::Checkbox( "pixel finder", &GET_VARIABLE( g_variables.m_pixel_finder, bool ) );
+			if ( GET_VARIABLE( g_variables.m_pixel_finder, bool ) ) {
+				ImGui::OptionPopup(
+					"pixel finder settings",
+					[ & ]( ) {
+						ImGui::Label( "scan key" );
+						ImGui::Keybind( "pixel finder key", &GET_VARIABLE( g_variables.m_pixel_finder_key, key_bind_t ) );
+						ImGui::Checkbox( "pixelsurfs", &GET_VARIABLE( g_variables.m_pixel_finder_pixelsurfs, bool ) );
+						ImGui::Checkbox( "texturebugs", &GET_VARIABLE( g_variables.m_pixel_finder_texturebugs, bool ) );
+						ImGui::Checkbox( "headbounces", &GET_VARIABLE( g_variables.m_pixel_finder_headbounces, bool ) );
+						ImGui::Checkbox( "pixeljumps", &GET_VARIABLE( g_variables.m_pixel_finder_pixeljumps, bool ) );
+					},
+					ImVec2( 200.f, -1 ) );
+			}
+
+			ImGui::Checkbox( "pixel calculator", &GET_VARIABLE( g_variables.m_pixel_calc, bool ) );
+			if ( GET_VARIABLE( g_variables.m_pixel_calc, bool ) ) {
+				ImGui::OptionPopup(
+					"pixel calculator settings",
+					[ & ]( ) {
+						ImGui::Label( "aim key" );
+						ImGui::Keybind( "pixel calculator place key", &GET_VARIABLE( g_variables.m_pixel_calc_aim_key, key_bind_t ) );
+						ImGui::Label( "solve key" );
+						ImGui::Keybind( "pixel calculator solve key", &GET_VARIABLE( g_variables.m_pixel_calc_solve_key, key_bind_t ) );
+						ImGui::Checkbox( "show point", &GET_VARIABLE( g_variables.m_pixel_calc_show_point, bool ) );
+						ImGui::Combo( "type##pixel calculator type", &GET_VARIABLE( g_variables.m_pixel_calc_type, int ), "pixelsurf\0pixeljump\0" );
+						ImGui::Checkbox( "advanced readout##pixel calculator", &GET_VARIABLE( g_variables.m_pixel_calc_advanced_readout, bool ) );
+						ImGui::Label( "allowed jumps" );
+						move_mask_combo( "##pixel calculator jump types", GET_VARIABLE( g_variables.m_pixel_calc_moves, int ) );
+					},
+					ImVec2( 200.f, -1 ) );
+			}
+
+			ImGui::Checkbox( "distance calculator", &GET_VARIABLE( g_variables.m_dist_calc, bool ) );
+			if ( GET_VARIABLE( g_variables.m_dist_calc, bool ) ) {
+				ImGui::OptionPopup(
+					"distance calculator settings",
+					[ & ]( ) {
+						ImGui::Label( "point key" );
+						ImGui::Keybind( "distance calculator key", &GET_VARIABLE( g_variables.m_dist_calc_key, key_bind_t ) );
+					},
+					ImVec2( 200.f, -1 ) );
+			}
+
+			ImGui::Checkbox( "practice window", &GET_VARIABLE( g_variables.m_practice_window, bool ) );
+			if ( GET_VARIABLE( g_variables.m_practice_window, bool ) ) {
+				ImGui::OptionPopup(
+					"practice window settings",
+					[ & ]( ) {
+						ImGui::Label( "practice checkpoint key" );
+						ImGui::Keybind( "practice cp key", &GET_VARIABLE( g_variables.m_practice_cp_key, key_bind_t ) );
+						ImGui::Label( "practice teleport key" );
+						ImGui::Keybind( "practice tp key", &GET_VARIABLE( g_variables.m_practice_tp_key, key_bind_t ) );
+						ImGui::Checkbox( "show window", &GET_VARIABLE( g_variables.m_practice_window_show, bool ) );
+					},
+					ImVec2( 220.f, -1 ) );
+			}
+
+			ImGui::Checkbox( "fake pov in demos", &GET_VARIABLE( g_variables.m_fake_pov, bool ) );
+			ImGui::OptionPopup(
+				"fake pov settings",
+				[ & ]( ) {
+					ImGui::Label( "fake pov keybind" );
+					ImGui::Keybind( "fake pov key", &GET_VARIABLE( g_variables.m_fake_pov_key, key_bind_t ) );
+					ImGui::Combo( "angle##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_mode, int ),
+					              "right\0left\0up\0bottom\0backwards\0spinning\0" );
+					if ( GET_VARIABLE( g_variables.m_fake_pov_mode, int ) == 5 )
+						ImGui::SliderFloat( "spin speed##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_spin_speed, float ), 10.f, 540.f, "%.0f deg/s" );
+					ImGui::SliderFloat( "smoothing##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_smooth, float ), 0.5f, 20.f, "%.1f" );
+					ImGui::Checkbox( "snap view on disable##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_snap_view, bool ) );
+
+					ImGui::Checkbox( "indicator arrow##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow, bool ) );
+					if ( GET_VARIABLE( g_variables.m_fake_pov_arrow, bool ) ) {
+						ImGui::ColorEdit4( "arrow color##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_color, c_color ), color_picker_alpha_flags );
+						ImGui::SliderFloat( "arrow size##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_size, float ), 4.f, 64.f, "%.0f" );
+						ImGui::SliderFloat( "arrow distance##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_dist, float ), 0.f, 400.f, "%.0f" );
+					}
+				},
+				ImVec2( 220.f, -1 ) );
+
+			ImGui::Checkbox( "hide y6o ps", &GET_VARIABLE( g_variables.m_hide_y6o_ps, bool ) );
+
+			ImGui::Checkbox( "jumpstats", &GET_VARIABLE( g_variables.m_jump_stats, bool ) );
+			if ( GET_VARIABLE( g_variables.m_jump_stats, bool ) ) {
+				ImGui::OptionPopup(
+					"jumpstats settings",
+					[ & ]( ) {
+						ImGui::Checkbox( "show fails##jumpstats", &GET_VARIABLE( g_variables.m_jump_stats_show_fails, bool ) );
+					},
+					ImVec2( 200.f, -1 ) );
+			}
 		}
 		menu_group_end( );
 
@@ -1259,113 +1263,7 @@ void n_menu::impl_t::tab_movement( )
 		break;
 	}
 	case 2: {
-		menu_columns_begin( );
-
-		if ( menu_group_begin( "calculators" ) ) {
-			ImGui::Checkbox( "pixel finder", &GET_VARIABLE( g_variables.m_pixel_finder, bool ) );
-			if ( GET_VARIABLE( g_variables.m_pixel_finder, bool ) ) {
-				ImGui::OptionPopup(
-					"pixel finder settings",
-					[ & ]( ) {
-						ImGui::Label( "scan key" );
-						ImGui::Keybind( "pixel finder key", &GET_VARIABLE( g_variables.m_pixel_finder_key, key_bind_t ) );
-						ImGui::Checkbox( "pixelsurfs", &GET_VARIABLE( g_variables.m_pixel_finder_pixelsurfs, bool ) );
-						ImGui::Checkbox( "texturebugs", &GET_VARIABLE( g_variables.m_pixel_finder_texturebugs, bool ) );
-						ImGui::Checkbox( "headbounces", &GET_VARIABLE( g_variables.m_pixel_finder_headbounces, bool ) );
-						ImGui::Checkbox( "pixeljumps", &GET_VARIABLE( g_variables.m_pixel_finder_pixeljumps, bool ) );
-					},
-					ImVec2( 200.f, -1 ) );
-			}
-
-			ImGui::Checkbox( "pixel calculator", &GET_VARIABLE( g_variables.m_pixel_calc, bool ) );
-			if ( GET_VARIABLE( g_variables.m_pixel_calc, bool ) ) {
-				ImGui::OptionPopup(
-					"pixel calculator settings",
-					[ & ]( ) {
-						ImGui::Label( "aim key" );
-						ImGui::Keybind( "pixel calculator place key", &GET_VARIABLE( g_variables.m_pixel_calc_aim_key, key_bind_t ) );
-						ImGui::Label( "solve key" );
-						ImGui::Keybind( "pixel calculator solve key", &GET_VARIABLE( g_variables.m_pixel_calc_solve_key, key_bind_t ) );
-						ImGui::Checkbox( "show point", &GET_VARIABLE( g_variables.m_pixel_calc_show_point, bool ) );
-						ImGui::Combo( "type##pixel calculator type", &GET_VARIABLE( g_variables.m_pixel_calc_type, int ), "pixelsurf\0pixeljump\0" );
-						ImGui::Checkbox( "advanced readout##pixel calculator", &GET_VARIABLE( g_variables.m_pixel_calc_advanced_readout, bool ) );
-						ImGui::Label( "allowed jumps" );
-						move_mask_combo( "##pixel calculator jump types", GET_VARIABLE( g_variables.m_pixel_calc_moves, int ) );
-					},
-					ImVec2( 200.f, -1 ) );
-			}
-
-			ImGui::Checkbox( "route calculator", &GET_VARIABLE( g_variables.m_route_calc, bool ) );
-			if ( !GET_VARIABLE( g_variables.m_route_calc_pinned, bool ) )
-				ImGui::OptionPopup( "route calculator settings", route_calc_settings_body, k_route_calc_panel_size );
-
-			ImGui::Checkbox( "distance calculator", &GET_VARIABLE( g_variables.m_dist_calc, bool ) );
-			if ( GET_VARIABLE( g_variables.m_dist_calc, bool ) ) {
-				ImGui::OptionPopup(
-					"distance calculator settings",
-					[ & ]( ) {
-						ImGui::Label( "point key" );
-						ImGui::Keybind( "distance calculator key", &GET_VARIABLE( g_variables.m_dist_calc_key, key_bind_t ) );
-					},
-					ImVec2( 200.f, -1 ) );
-			}
-		}
-		menu_group_end( );
-
-		menu_columns_next( );
-
-		if ( menu_group_begin( "practice" ) ) {
-			ImGui::Checkbox( "practice window", &GET_VARIABLE( g_variables.m_practice_window, bool ) );
-			if ( GET_VARIABLE( g_variables.m_practice_window, bool ) ) {
-				ImGui::OptionPopup(
-					"practice window settings",
-					[ & ]( ) {
-						ImGui::Label( "practice checkpoint key" );
-						ImGui::Keybind( "practice cp key", &GET_VARIABLE( g_variables.m_practice_cp_key, key_bind_t ) );
-						ImGui::Label( "practice teleport key" );
-						ImGui::Keybind( "practice tp key", &GET_VARIABLE( g_variables.m_practice_tp_key, key_bind_t ) );
-						ImGui::Checkbox( "show window", &GET_VARIABLE( g_variables.m_practice_window_show, bool ) );
-					},
-					ImVec2( 220.f, -1 ) );
-			}
-
-			ImGui::Checkbox( "fake pov in demos", &GET_VARIABLE( g_variables.m_fake_pov, bool ) );
-			ImGui::OptionPopup(
-				"fake pov settings",
-				[ & ]( ) {
-					ImGui::Label( "fake pov keybind" );
-					ImGui::Keybind( "fake pov key", &GET_VARIABLE( g_variables.m_fake_pov_key, key_bind_t ) );
-					ImGui::Combo( "angle##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_mode, int ),
-					              "right\0left\0up\0bottom\0backwards\0spinning\0" );
-					if ( GET_VARIABLE( g_variables.m_fake_pov_mode, int ) == 5 )
-						ImGui::SliderFloat( "spin speed##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_spin_speed, float ), 10.f, 540.f, "%.0f deg/s" );
-					ImGui::SliderFloat( "smoothing##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_smooth, float ), 0.5f, 20.f, "%.1f" );
-					ImGui::Checkbox( "snap view on disable##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_snap_view, bool ) );
-
-					ImGui::Checkbox( "indicator arrow##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow, bool ) );
-					if ( GET_VARIABLE( g_variables.m_fake_pov_arrow, bool ) ) {
-						ImGui::ColorEdit4( "arrow color##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_color, c_color ), color_picker_alpha_flags );
-						ImGui::SliderFloat( "arrow size##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_size, float ), 4.f, 64.f, "%.0f" );
-						ImGui::SliderFloat( "arrow distance##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_dist, float ), 0.f, 400.f, "%.0f" );
-					}
-				},
-				ImVec2( 220.f, -1 ) );
-
-			ImGui::Checkbox( "hide y6o ps", &GET_VARIABLE( g_variables.m_hide_y6o_ps, bool ) );
-
-			ImGui::Checkbox( "jumpstats", &GET_VARIABLE( g_variables.m_jump_stats, bool ) );
-			if ( GET_VARIABLE( g_variables.m_jump_stats, bool ) ) {
-				ImGui::OptionPopup(
-					"jumpstats settings",
-					[ & ]( ) {
-						ImGui::Checkbox( "show fails##jumpstats", &GET_VARIABLE( g_variables.m_jump_stats_show_fails, bool ) );
-					},
-					ImVec2( 200.f, -1 ) );
-			}
-		}
-		menu_group_end( );
-
-		menu_columns_end( );
+		route_calc_page( );
 		break;
 	}
 	case 3: {

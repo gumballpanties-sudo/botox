@@ -18,12 +18,17 @@
 #include <unordered_set>
 #include <vector>
 
-bool n_skins::knife_anims_fit( int anim_index, int knife_index )
+bool n_skins::use_tside( e_skin_group group )
+{
+	const bool same = GET_VARIABLE( group == skin_group_player ? g_variables.m_skins_same_player : g_variables.m_skins_same_weapons, bool );
+	return !same && g_local_is_t.load( std::memory_order_relaxed );
+}
+
+bool n_skins::knife_anims_fit( int anim_index, int knife_index, bool model_changer )
 {
 	if ( anim_index <= 0 || anim_index >= KNIFE_COUNT )
 		return true;
 
-	const bool model_changer = GET_VARIABLE( g_variables.m_knife_enable, bool );
 	const int mesh           = ( model_changer && knife_index > 0 && knife_index < KNIFE_COUNT ) ? knife_index : 15 ;
 
 	return ( KNIFE_ANIM_COMPAT[ anim_index ] & ( 1u << mesh ) ) != 0;
@@ -64,10 +69,10 @@ const char* n_skins::knife_anim_redirect( const char* requested_model )
 
 const char* n_skins::knife_killfeed_name( )
 {
-	if ( !GET_VARIABLE( g_variables.m_knife_enable, bool ) )
+	if ( !GET_VARIABLE( WEAPON_VAR( m_knife_enable ), bool ) )
 		return nullptr;
 
-	const int chosen = GET_VARIABLE( g_variables.m_knife_model, int );
+	const int chosen = GET_VARIABLE( WEAPON_VAR( m_knife_model ), int );
 	if ( chosen <= 0 || chosen >= KNIFE_COUNT )
 		return nullptr;
 
@@ -105,27 +110,27 @@ bool n_skins::custom_colors_for_material( const char* vmt_path, int paint_kit, p
 
 	/* knives paint from knife_<model> (gold knife's is "c4", never matches) */
 	if ( folder.rfind( "knife_", 0 ) == 0 ) {
-		if ( !GET_VARIABLE( g_variables.m_knife_enable, bool ) || !GET_VARIABLE( g_variables.m_knife_custom_color, bool ) )
+		if ( !GET_VARIABLE( WEAPON_VAR( m_knife_enable ), bool ) || !GET_VARIABLE( WEAPON_VAR( m_knife_custom_color ), bool ) )
 			return false;
 
-		if ( GET_VARIABLE( g_variables.m_knife_paint_kit, int ) != paint_kit )
+		if ( GET_VARIABLE( WEAPON_VAR( m_knife_paint_kit ), int ) != paint_kit )
 			return false;
 
-		fill( out, GET_VARIABLE( g_variables.m_knife_color_1, c_color ), GET_VARIABLE( g_variables.m_knife_color_2, c_color ),
-		      GET_VARIABLE( g_variables.m_knife_color_3, c_color ), GET_VARIABLE( g_variables.m_knife_color_4, c_color ) );
+		fill( out, GET_VARIABLE( WEAPON_VAR( m_knife_color_1 ), c_color ), GET_VARIABLE( WEAPON_VAR( m_knife_color_2 ), c_color ),
+		      GET_VARIABLE( WEAPON_VAR( m_knife_color_3 ), c_color ), GET_VARIABLE( WEAPON_VAR( m_knife_color_4 ), c_color ) );
 
 		return true;
 	}
 
-	if ( !GET_VARIABLE( g_variables.m_weapon_skins_enable, bool ) )
+	if ( !GET_VARIABLE( WEAPON_VAR( m_weapon_skins_enable ), bool ) )
 		return false;
 
-	auto& paint_kits = GET_VARIABLE( g_variables.m_weapon_skins_paint_kit, std::vector< int > );
-	auto& enabled    = GET_VARIABLE( g_variables.m_weapon_skins_custom_color, std::vector< bool > );
-	auto& colors_1   = GET_VARIABLE( g_variables.m_weapon_skins_color_1, std::vector< c_color > );
-	auto& colors_2   = GET_VARIABLE( g_variables.m_weapon_skins_color_2, std::vector< c_color > );
-	auto& colors_3   = GET_VARIABLE( g_variables.m_weapon_skins_color_3, std::vector< c_color > );
-	auto& colors_4   = GET_VARIABLE( g_variables.m_weapon_skins_color_4, std::vector< c_color > );
+	auto& paint_kits = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_paint_kit ), std::vector< int > );
+	auto& enabled    = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_custom_color ), std::vector< bool > );
+	auto& colors_1   = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_color_1 ), std::vector< c_color > );
+	auto& colors_2   = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_color_2 ), std::vector< c_color > );
+	auto& colors_3   = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_color_3 ), std::vector< c_color > );
+	auto& colors_4   = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_color_4 ), std::vector< c_color > );
 
 	for ( int i = 0; i < WEAPON_COUNT; i++ ) {
 		if ( folder != WEAPON_MATERIAL_NAMES[ i ] )
@@ -341,6 +346,8 @@ void n_skins::impl_t::on_level_pre_load( )
 
 void n_skins::impl_t::on_frame_stage_notify( int stage )
 {
+	if ( g_ctx.m_local )
+		g_local_is_t.store( g_ctx.m_local->get_team( ) == team_tt, std::memory_order_relaxed );
 
 	if ( stage == render_start )
 		fix_dagger_view( );
@@ -361,14 +368,14 @@ void n_skins::impl_t::on_frame_stage_notify( int stage )
 
 void n_skins::impl_t::publish_anim_donor( )
 {
-	const bool enable = GET_VARIABLE( g_variables.m_knife_anims_enable, bool );
-	const int model   = GET_VARIABLE( g_variables.m_knife_anims_model, int );
+	const bool enable = GET_VARIABLE( WEAPON_VAR( m_knife_anims_enable ), bool );
+	const int model   = GET_VARIABLE( WEAPON_VAR( m_knife_anims_model ), int );
 
 	const char* pick = enable && model > 0 && model < KNIFE_COUNT ? KNIFE_ANIM_MODELS[ model ] : nullptr;
 	g_anim_pick.store( pick, std::memory_order_relaxed );
 
-	const int mesh             = GET_VARIABLE( g_variables.m_knife_model, int );
-	const unsigned int targets = GET_VARIABLE( g_variables.m_knife_enable, bool ) && mesh > 0 && mesh < KNIFE_COUNT
+	const int mesh             = GET_VARIABLE( WEAPON_VAR( m_knife_model ), int );
+	const unsigned int targets = GET_VARIABLE( WEAPON_VAR( m_knife_enable ), bool ) && mesh > 0 && mesh < KNIFE_COUNT
 	                                 ? 1u << mesh
 	                                 : ( 1u << 15 ) | ( 1u << 16 ) ;
 	g_anim_targets_pick.store( targets, std::memory_order_relaxed );
@@ -381,7 +388,7 @@ void n_skins::impl_t::publish_anim_donor( )
 
 void n_skins::impl_t::fix_dagger_view( )
 {
-	if ( !GET_VARIABLE( g_variables.m_knife_fix_view, bool ) )
+	if ( !GET_VARIABLE( WEAPON_VAR( m_knife_fix_view ), bool ) )
 		return;
 
 	const auto vm = g_interfaces.m_client_entity_list->get< c_base_entity >( g_ctx.m_local->get_view_model_handle( ) );
@@ -490,13 +497,11 @@ void n_skins::impl_t::deagle_spinner( )
 	static bool rolling      = false;
 	static float last_send   = -1.f;
 	static float last_cancel = -9.f;
-	static int rolls         = 0;
 
 	const float now = g_interfaces.m_global_vars_base->m_real_time;
 
-	const auto send = [ & ]( bool hold, float cycle ) {
+	const auto send = [ & ]( bool hold ) {
 		g_interfaces.m_engine_client->client_cmd_unrestricted( hold ? "+lookatweapon" : "-lookatweapon" );
-		botox_dbg_log( "[spin] %s cycle %.3f", hold ? "+" : "-", cycle );
 		held      = hold;
 		last_send = now;
 	};
@@ -506,9 +511,8 @@ void n_skins::impl_t::deagle_spinner( )
 
 	if ( !GET_VARIABLE( g_variables.m_deagle_spinner, bool ) || !weapon || weapon->get_item_definition_index( ) != weapon_deagle ) {
 		rolling = false;
-		rolls   = 0;
 		if ( held )
-			send( false, -1.f );
+			send( false );
 		return;
 	}
 
@@ -531,7 +535,6 @@ void n_skins::impl_t::deagle_spinner( )
 			if ( now - last_cancel > echo && g_ctx.m_cmd ) {
 				g_ctx.m_cmd->m_buttons |= in_second_attack;
 				last_cancel = now;
-				botox_dbg_log( "[spin] miss %d, cancel", rolls );
 			}
 			return;
 		}
@@ -542,19 +545,15 @@ void n_skins::impl_t::deagle_spinner( )
 				// own server: rig the roll (hooks/functions/random_int.cpp), real lookat02 = demos + spectators see it
 				if ( const auto nci = g_interfaces.m_engine_client->get_net_channel_info( ); nci && nci->is_loopback( ) )
 					g_rig_lookat_until.store( GetTickCount64( ) + 1000ull, std::memory_order_relaxed );
-				send( true, -1.f );
-				rolls++;
+				send( true );
 			}
 		} else if ( settled && held )
-			send( false, -1.f );
+			send( false );
 		return;
 	}
 
-	if ( rolling )
-		botox_dbg_log( "[spin] hit after %d rolls", rolls );
 	g_rig_lookat_until.store( 0, std::memory_order_relaxed );
 	rolling = false;
-	rolls   = 0;
 
 	const float cycle = vm->get_cycle( );
 	// the "-" must land before the loop event: round trip + frame / packet jitter
@@ -562,7 +561,7 @@ void n_skins::impl_t::deagle_spinner( )
 	const bool want  = want_spin_hold( key, held, cycle, lead, echo );
 
 	if ( want != held || ( settled && local->is_holding_look_at_weapon( ) != want ) )
-		send( want, cycle );
+		send( want );
 }
 
 void n_skins::impl_t::animation_hook( )

@@ -257,18 +257,42 @@ static unsigned long __stdcall media_player_thread( void* )
 	}
 
 	while ( !g_ctx.m_unloading ) {
-		if ( GET_VARIABLE( g_variables.m_media_player, bool ) )
+		if ( GET_VARIABLE( g_variables.m_media_player, bool ) ||
+		     ( GET_VARIABLE( g_variables.m_clantag, bool ) && GET_VARIABLE( g_variables.m_clantag_animation, int ) == 4 ) )
 			g_media_player.on_update( );
 
-		g_media_player.update_lyrics( GET_VARIABLE( g_variables.m_media_player, bool ) && GET_VARIABLE( g_variables.m_media_player_lyrics, bool ) );
-
-		for ( int i = 0; i < 4 && !g_ctx.m_unloading; i++ )
-			std::this_thread::sleep_for( std::chrono::milliseconds( 250 ) );
+		// a control click refreshes 250 ms later, the app needs that long to switch track
+		for ( int i = 0; i < 20 && !g_ctx.m_unloading; i++ ) {
+			if ( g_media_player.run_command( ) ) {
+				std::this_thread::sleep_for( std::chrono::milliseconds( 250 ) );
+				break;
+			}
+			std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
+		}
 	}
 
 	g_media_player.shutdown( );
 
 	g_media_thread_alive = false;
+
+	return 0;
+}
+
+static std::atomic< bool > g_lyrics_thread_alive{ false };
+
+/* lrclib fetch blocks up to its http timeouts on every track change: on the media thread that froze title, art and every control */
+static unsigned long __stdcall lyrics_thread( void* )
+{
+	g_lyrics_thread_alive = true;
+
+	LI_FN( SetThreadPriority )( LI_FN( GetCurrentThread )( ), THREAD_PRIORITY_BELOW_NORMAL );
+
+	while ( !g_ctx.m_unloading ) {
+		g_media_player.update_lyrics( GET_VARIABLE( g_variables.m_media_player, bool ) && GET_VARIABLE( g_variables.m_media_player_lyrics, bool ) );
+		std::this_thread::sleep_for( std::chrono::milliseconds( 250 ) );
+	}
+
+	g_lyrics_thread_alive = false;
 
 	return 0;
 }
@@ -366,6 +390,7 @@ static unsigned long __stdcall on_attach( void* instance )
 	g_console.print( "initialising media player" );
 	g_utilities.create_thread( media_player_thread, nullptr );
 	g_utilities.create_thread( visualizer_thread, nullptr );
+	g_utilities.create_thread( lyrics_thread, nullptr );
 
 	discord_rpc_start( );
 
@@ -391,7 +416,7 @@ static unsigned long __stdcall on_attach( void* instance )
 
 	/* media thread (winrt call), image cache worker (download), font worker (atlas build) must drop out
 	   before the module goes, or they return into freed code */
-	for ( int i = 0; i < 100 && ( g_media_thread_alive || g_visualizer_thread_alive || g_image_cache.m_worker_alive || g_moi_hud.m_workers > 0 ||
+	for ( int i = 0; i < 100 && ( g_media_thread_alive || g_visualizer_thread_alive || g_lyrics_thread_alive || g_image_cache.m_worker_alive || g_moi_hud.m_workers > 0 ||
 	                              g_render.m_font_build_running || g_bot_names_fetching || g_discord_rpc_alive || g_image_pick_alive || g_url_image_downloads > 0 ||
 	                              n_chat_extras::g_worker_alive );
 	      i++ ) {

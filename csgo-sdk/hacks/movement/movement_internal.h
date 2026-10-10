@@ -19,7 +19,7 @@ extern bool should_align;
 extern int aa_gate_skips;
 extern int aa_reach_skips;
 extern int aa_fail_skips;
-enum e_aa_out { aa_out_near, aa_out_face, aa_out_away, aa_out_angle, aa_out_pin, aa_out_touch, aa_out_miss, aa_out_fine, aa_out_park, aa_out_unstick, aa_out_keep, aa_out_tb, aa_out_stomp, aa_out_park_off, aa_out_slant, aa_out_count };
+enum e_aa_out { aa_out_near, aa_out_face, aa_out_away, aa_out_angle, aa_out_pin, aa_out_touch, aa_out_miss, aa_out_fine, aa_out_park, aa_out_unstick, aa_out_keep, aa_out_tb, aa_out_stomp, aa_out_park_off, aa_out_slant, aa_out_lip, aa_out_count };
 extern int aa_outs[ aa_out_count ];
 
 extern bool g_air_stuck_noclip_active;

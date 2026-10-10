@@ -22,6 +22,11 @@ namespace n_wall_climb
 		int m_act_tick = -1000;
 
 	private:
+		void reset_latch( );
+
+		void show_wall_slope( );
+
+		bool m_slope_down  = false;
 		int m_catch_cmd    = -1;
 		int m_active_cmd   = -1;
 		float m_sent_fwd   = 0.f;
@@ -29,13 +34,26 @@ namespace n_wall_climb
 		int m_sent_buttons = 0;
 		float m_sent_yaw   = 0.f;
 		int m_stomp_cmd    = -1;
-		int m_pred_cmd     = -1; /* debug log: END of what wc sent, checked against the next START ( `div` ) */
-		bool m_pred_stomped = false;
-		c_vector m_pred_org{ }, m_pred_vel{ };
-		float m_ground_z = -1e9f;
-		bool m_holding   = false;
-		int m_free_cmd   = -1; /* cmd wc sent off a sim that ended unpinned */
-		bool m_park_off  = false;
+
+		int m_div_cmd             = -1;
+		c_vector m_div_org        = { };
+		c_vector m_div_vel        = { };
+		const char* m_div_branch  = "";
+
+		float m_scan_angle    = 0.f;
+		int m_last_tick       = -1000;
+		float m_last_off      = 0.f;
+		float m_last_fwd      = 0.f;
+		float m_last_wall_yaw = 0.f;
+		float m_last_side     = 0.f;
+
+		bool m_latch_arm    = false;
+		bool m_latch_hold   = false;
+		int m_latch_wait    = 0;
+		float m_latch_yaw   = 0.f;
+		float m_latch_fwd   = 0.f;
+		int m_latch_stand   = 0;
+		int m_latch_duck    = 0;
 	};
 }
 

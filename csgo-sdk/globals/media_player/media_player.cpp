@@ -75,6 +75,20 @@ namespace
 		return name;
 	}
 
+	// apple music desktop sends "artist — album": cut at em dash so lyrics lookup works
+	std::wstring strip_album( std::wstring artist )
+	{
+		const auto dash = artist.find( L'—' );
+		if ( dash == std::wstring::npos )
+			return artist;
+
+		artist.resize( dash );
+		while ( !artist.empty( ) && std::iswspace( artist.back( ) ) )
+			artist.pop_back( );
+
+		return artist;
+	}
+
 	// a hung app must not freeze the media thread: null on timeout / error
 	template< typename op_t >
 	auto await_for( const op_t& op ) -> decltype( op.GetResults( ) )
@@ -131,6 +145,72 @@ namespace
 				return { };
 
 			return { read.data( ), read.data( ) + read.Length( ) };
+		} catch ( ... ) {
+			return { };
+		}
+	}
+
+	// d3dx reads jpg / png / bmp only: webp, avif, gif ( browsers, some apps ) go through windows' own decoders into a 32 bit bmp, max 256 px
+	std::vector< unsigned char > decodable_art( std::vector< unsigned char > bytes )
+	{
+		const auto starts = [ & ]( const std::initializer_list< unsigned char > magic ) {
+			return bytes.size( ) >= magic.size( ) && std::equal( magic.begin( ), magic.end( ), bytes.begin( ) );
+		};
+		if ( bytes.empty( ) || starts( { 0xFF, 0xD8 } ) || starts( { 0x89, 'P', 'N', 'G' } ) || starts( { 'B', 'M' } ) )
+			return bytes;
+
+		try {
+			Buffer buffer( static_cast< uint32_t >( bytes.size( ) ) );
+			std::copy( bytes.begin( ), bytes.end( ), buffer.data( ) );
+			buffer.Length( static_cast< uint32_t >( bytes.size( ) ) );
+
+			InMemoryRandomAccessStream stream{ };
+			stream.WriteAsync( buffer ).get( );
+			stream.Seek( 0 );
+
+			const auto decoder = await_for( BitmapDecoder::CreateAsync( stream ) );
+			if ( !decoder )
+				return { };
+
+			uint32_t width = decoder.PixelWidth( ), height = decoder.PixelHeight( );
+			const uint32_t side = ( std::max )( width, height );
+			BitmapTransform transform{ };
+			if ( side > 256 ) {
+				width  = ( std::max )( 1u, width * 256 / side );
+				height = ( std::max )( 1u, height * 256 / side );
+				transform.ScaledWidth( width );
+				transform.ScaledHeight( height );
+			}
+
+			const auto provider = await_for( decoder.GetPixelDataAsync( BitmapPixelFormat::Bgra8, BitmapAlphaMode::Ignore, transform,
+			                                                            ExifOrientationMode::IgnoreExifOrientation, ColorManagementMode::DoNotColorManage ) );
+			if ( !provider || !width || !height )
+				return { };
+
+			const auto pixels    = provider.DetachPixelData( );
+			const uint32_t pitch = width * 4;
+			if ( pixels.size( ) < pitch * height )
+				return { };
+
+			BITMAPFILEHEADER file{ };
+			BITMAPINFOHEADER info{ };
+			info.biSize        = sizeof( info );
+			info.biWidth       = static_cast< LONG >( width );
+			info.biHeight      = static_cast< LONG >( height );
+			info.biPlanes      = 1;
+			info.biBitCount    = 32;
+			info.biCompression = BI_RGB;
+			file.bfType        = 0x4D42;
+			file.bfOffBits     = sizeof( file ) + sizeof( info );
+			file.bfSize        = file.bfOffBits + pitch * height;
+
+			std::vector< unsigned char > out( file.bfSize );
+			memcpy( out.data( ), &file, sizeof( file ) );
+			memcpy( out.data( ) + sizeof( file ), &info, sizeof( info ) );
+			// bottom-up rows
+			for ( uint32_t row = 0; row < height; row++ )
+				memcpy( out.data( ) + file.bfOffBits + row * pitch, pixels.data( ) + ( height - 1 - row ) * pitch, pitch );
+			return out;
 		} catch ( ... ) {
 			return { };
 		}
@@ -261,7 +341,8 @@ namespace
 		const std::wstring self = process_path( GetCurrentProcessId( ) );
 		std::vector< std::wstring > titled{ };
 		for ( const auto& app : playing ) {
-			if ( app == self || std::find( talking.begin( ), talking.end( ), app ) != talking.end( ) ||
+			// discord / ptb / canary: call + notification sounds, never a song
+			if ( app == self || exe_stem( app ).starts_with( L"discord" ) || std::find( talking.begin( ), talking.end( ), app ) != talking.end( ) ||
 			     std::find( titled.begin( ), titled.end( ), app ) != titled.end( ) )
 				continue;
 
@@ -313,11 +394,13 @@ void n_media_player::impl_t::on_update( )
 		this->m_is_playing = false;
 		std::lock_guard< std::mutex > lock( this->m_mutex );
 		this->m_source_app.clear( );
+		this->m_source_kind = source_none;
 	};
 
 	struct now_t {
 		std::string m_title{ }, m_artist{ };
 		std::wstring m_source{ };
+		e_source m_kind{ };
 		std::optional< std::vector< unsigned char > > m_thumbnail{ }; // nullopt = keep
 		long long m_total_ms{ }, m_current_ms{ };
 		std::chrono::steady_clock::time_point m_stamp{ std::chrono::steady_clock::now( ) };
@@ -329,9 +412,12 @@ void n_media_player::impl_t::on_update( )
 		{
 			std::lock_guard< std::mutex > lock( this->m_mutex );
 
-			this->m_title      = std::move( now.m_title );
+			this->m_title     = std::move( now.m_title );
 			this->m_artist     = std::move( now.m_artist );
-			this->m_source_app = std::move( now.m_source );
+			this->m_source_app  = std::move( now.m_source );
+			this->m_source_kind = now.m_kind;
+			if ( now.m_kind != source_app )
+				this->m_app_paused = false;
 
 			if ( now.m_thumbnail && *now.m_thumbnail != this->m_thumbnail ) {
 				this->m_thumbnail       = std::move( *now.m_thumbnail );
@@ -348,14 +434,23 @@ void n_media_player::impl_t::on_update( )
 		this->m_has_media  = true;
 	};
 
-	// art only on track change or while still missing ( some apps set it after the title ), a bad thumbnail never hides the player
+	/* art on track change, again the next 5 updates ( a skip shows the new title with the old or no art first ), then every 3rd
+	   while still missing. a failed re-read never wipes shown art, a bad thumbnail never hides the player */
 	const auto thumbnail = [ this ]( const std::wstring& key, const auto& read, const bool retry = true ) -> std::optional< std::vector< unsigned char > > {
-		if ( key == this->m_thumbnail_key && ( !retry || !this->m_thumbnail.empty( ) || ++this->m_thumbnail_wait < 3 ) )
+		if ( key != this->m_thumbnail_key ) {
+			this->m_thumbnail_key  = key;
+			this->m_thumbnail_wait = 0;
+			return decodable_art( read( ) );
+		}
+
+		const int wait = ++this->m_thumbnail_wait;
+		if ( !retry || ( wait > 5 && ( !this->m_thumbnail.empty( ) || wait % 3 ) ) )
 			return std::nullopt;
 
-		this->m_thumbnail_key  = key;
-		this->m_thumbnail_wait = 0;
-		return read( );
+		auto art = decodable_art( read( ) );
+		if ( art.empty( ) && !this->m_thumbnail.empty( ) )
+			return std::nullopt;
+		return art;
 	};
 
 	const auto from_session = [ & ]( const GlobalSystemMediaTransportControlsSession& session ) {
@@ -365,8 +460,9 @@ void n_media_player::impl_t::on_update( )
 
 		now_t now{ };
 		now.m_source    = session.SourceAppUserModelId( );
+		now.m_kind      = source_session;
 		now.m_title     = to_utf8( info.Title( ) );
-		now.m_artist    = to_utf8( info.Artist( ) );
+		now.m_artist    = to_utf8( strip_album( std::wstring{ info.Artist( ) } ) );
 		now.m_thumbnail = thumbnail( now.m_source + L'\n' + std::wstring{ info.Title( ) } + L'\n' + std::wstring{ info.Artist( ) },
 		                             [ & ] { return read_thumbnail( info ); } );
 
@@ -394,6 +490,7 @@ void n_media_player::impl_t::on_update( )
 	const auto from_kopuz = [ & ]( n_kopuz::state_t& kopuz ) {
 		now_t now{ };
 		now.m_source     = kopuz.m_app;
+		now.m_kind       = source_kopuz;
 		now.m_title      = std::move( kopuz.m_title );
 		now.m_artist     = std::move( kopuz.m_artist );
 		now.m_total_ms   = kopuz.m_total_ms;
@@ -414,13 +511,22 @@ void n_media_player::impl_t::on_update( )
 		std::wstring path{ }, window{ };
 		std::vector< std::wstring > files{ };
 		if ( !find_audio_app( path, window, files ) ) {
-			// gap between songs: hold what's shown a few updates
+			// paused from here: stays until the app closes, gap between songs: hold what's shown a few updates
+			if ( this->m_app_paused && !s_app.empty( ) && this->m_has_media && !window_title( s_app ).empty( ) )
+				return true;
+
 			if ( ++s_quiet > 3 )
 				s_app.clear( );
 			return !s_app.empty( ) && this->m_has_media;
 		}
 
 		s_quiet = 0;
+
+		// sounding again ( resumed in the app itself ). the pause needs a moment to go quiet, so not right after it
+		if ( this->m_app_paused && path == s_app && std::chrono::steady_clock::now( ) - this->m_app_paused_at > std::chrono::seconds( 2 ) )
+			this->m_app_paused = false;
+		if ( this->m_app_paused && path == s_app )
+			return true;
 
 		// two updates in a row, a notification ding is shorter
 		if ( path != s_app ) {
@@ -454,6 +560,7 @@ void n_media_player::impl_t::on_update( )
 
 		now_t now{ };
 		now.m_source  = path;
+		now.m_kind    = source_app;
 		now.m_title   = to_utf8( title );
 		now.m_artist  = to_utf8( artist );
 		now.m_playing = true;
@@ -967,6 +1074,139 @@ float n_media_player::impl_t::get_progress( )
 		return 0.f;
 
 	return std::clamp( static_cast< float >( this->get_position_ms( ) / static_cast< double >( total_ms ) ), 0.f, 1.f );
+}
+
+long long n_media_player::impl_t::get_total_ms( )
+{
+	std::lock_guard< std::mutex > lock( this->m_mutex );
+	return this->m_total_ms;
+}
+
+namespace
+{
+	bool session_command( const GlobalSystemMediaTransportControlsSessionManager& manager, const std::wstring& source, const std::wstring& title,
+	                      const int command, bool& found )
+	{
+		// browsers share one id across tabs: the shown title picks the tab
+		GlobalSystemMediaTransportControlsSession pick{ nullptr };
+		for ( const auto& session : manager.GetSessions( ) ) {
+			if ( std::wstring_view{ session.SourceAppUserModelId( ) } != source )
+				continue;
+
+			const auto info = await_for( session.TryGetMediaPropertiesAsync( ) );
+			if ( !pick || ( info && std::wstring_view{ info.Title( ) } == title ) )
+				pick = session;
+		}
+
+		found = static_cast< bool >( pick );
+		if ( !pick )
+			return false;
+
+		const auto run = [ ]( const auto& op ) {
+			if ( op.wait_for( std::chrono::seconds( 2 ) ) == winrt::Windows::Foundation::AsyncStatus::Completed )
+				return op.GetResults( );
+			op.Cancel( );
+			return false;
+		};
+
+		if ( command == n_media_player::impl_t::command_previous )
+			return run( pick.TrySkipPreviousAsync( ) );
+		if ( command == n_media_player::impl_t::command_next )
+			return run( pick.TrySkipNextAsync( ) );
+
+		// some apps only expose play + pause, no toggle
+		return run( pick.TryTogglePlayPauseAsync( ) ) || run( is_playing( pick ) ? pick.TryPauseAsync( ) : pick.TryPlayAsync( ) );
+	}
+
+	// no SMTC ( vlc 3, winamp, mpc ): the player's own windows, the way a keyboard media key reaches them
+	bool app_command( const std::wstring& path, const int command )
+	{
+		static constexpr short k_commands[ ]{ 0, APPCOMMAND_MEDIA_PREVIOUSTRACK, APPCOMMAND_MEDIA_PLAY_PAUSE, APPCOMMAND_MEDIA_NEXTTRACK };
+
+		struct search_t {
+			const std::wstring* m_path;
+			std::vector< HWND > m_windows;
+		} search{ &path, { } };
+
+		EnumWindows(
+			[ ]( HWND window, LPARAM param ) -> BOOL {
+				auto& search = *reinterpret_cast< search_t* >( param );
+
+				DWORD pid = 0;
+				GetWindowThreadProcessId( window, &pid );
+				if ( IsWindowVisible( window ) && !GetWindow( window, GW_OWNER ) && pid != GetCurrentProcessId( ) && process_path( pid ) == *search.m_path )
+					search.m_windows.push_back( window );
+				return TRUE;
+			},
+			reinterpret_cast< LPARAM >( &search ) );
+
+		for ( const HWND window : search.m_windows ) {
+			DWORD_PTR handled = 0;
+			if ( SendMessageTimeoutW( window, WM_APPCOMMAND, reinterpret_cast< WPARAM >( window ), MAKELPARAM( 0, k_commands[ command ] ), SMTO_ABORTIFHUNG,
+			                          500, &handled ) &&
+			     handled )
+				return true;
+		}
+
+		return false;
+	}
+
+	// last resort: a real media key, windows routes it to whatever answers media keys
+	void media_key( const int command )
+	{
+		static constexpr WORD k_keys[ ]{ 0, VK_MEDIA_PREV_TRACK, VK_MEDIA_PLAY_PAUSE, VK_MEDIA_NEXT_TRACK };
+
+		INPUT input[ 2 ]{ };
+		for ( int i = 0; i < 2; i++ ) {
+			input[ i ].type       = INPUT_KEYBOARD;
+			input[ i ].ki.wVk     = k_keys[ command ];
+			input[ i ].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | ( i ? KEYEVENTF_KEYUP : 0 );
+		}
+		SendInput( 2, input, sizeof( INPUT ) );
+	}
+}
+
+bool n_media_player::impl_t::run_command( )
+{
+	const int command = this->m_command.exchange( command_none );
+	if ( command < command_previous || command > command_next )
+		return false;
+
+	std::wstring source{ }, title{ };
+	e_source kind{ };
+	{
+		std::lock_guard< std::mutex > lock( this->m_mutex );
+		source = this->m_source_app;
+		kind   = this->m_source_kind;
+		title  = winrt::to_hstring( this->m_title ).c_str( );
+	}
+
+	static constexpr const char* k_kopuz[ ]{ "", "Previous", "Toggle", "Next" };
+
+	try {
+		bool found = false;
+		const bool sent =
+			( kind == source_session && this->m_session_manager.has_value( ) && ( session_command( *this->m_session_manager, source, title, command, found ) || found ) ) ||
+			( kind == source_kopuz && !n_kopuz::detail::call( k_kopuz[ command ], { } ).empty( ) ) || ( kind == source_app && app_command( source, command ) );
+		if ( !sent )
+			media_key( command );
+	} catch ( ... ) {
+		media_key( command );
+	}
+
+	if ( kind == source_app ) {
+		this->m_app_paused = command == command_toggle && this->m_is_playing;
+		if ( this->m_app_paused ) {
+			const auto frozen = static_cast< long long >( this->get_position_ms( ) );
+			std::lock_guard< std::mutex > lock( this->m_mutex );
+			this->m_current_ms     = frozen;
+			this->m_position_stamp = std::chrono::steady_clock::now( );
+			this->m_app_paused_at  = this->m_position_stamp;
+			this->m_is_playing     = false;
+		}
+	}
+
+	return true;
 }
 
 namespace

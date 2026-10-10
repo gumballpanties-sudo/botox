@@ -10,8 +10,6 @@
 #include <string>
 #include <thread>
 
-void botox_dbg_log( const char* fmt, ... );
-
 namespace
 {
 	constexpr const char* k_client_id = "1554733253632720926";
@@ -71,9 +69,7 @@ namespace
 			if ( s_pipe == INVALID_HANDLE_VALUE )
 				continue;
 
-			if ( send_frame( op_handshake, std::format( R"({{"v":1,"client_id":"{}"}})", k_client_id ) ) )
-				botox_dbg_log( "RPC: pipe %d open", i );
-
+			send_frame( op_handshake, std::format( R"({{"v":1,"client_id":"{}"}})", k_client_id ) );
 			return;
 		}
 	}
@@ -117,7 +113,6 @@ namespace
 				send_frame( op_pong, body );
 				break;
 			case op_close:
-				botox_dbg_log( "RPC: closed %s", body.c_str( ) );
 				close_pipe( );
 				break;
 			}
@@ -152,9 +147,6 @@ namespace
 
 			if ( !state.m_enabled ) {
 				/* discord drops the presence when the pipe closes */
-				if ( s_pipe != INVALID_HANDLE_VALUE )
-					botox_dbg_log( "RPC: off" );
-
 				close_pipe( );
 				ready = false;
 				sent  = "\x01";
@@ -184,10 +176,8 @@ namespace
 						const std::string json = std::format( R"({{"cmd":"SET_ACTIVITY","args":{{"pid":{},"activity":{}}},"nonce":"{}"}})",
 						                                      GetCurrentProcessId( ), activity, ++nonce );
 
-						if ( send_frame( op_frame, json ) ) {
+						if ( send_frame( op_frame, json ) )
 							sent = activity;
-							botox_dbg_log( "RPC: %s", activity.c_str( ) );
-						}
 					}
 				}
 			}

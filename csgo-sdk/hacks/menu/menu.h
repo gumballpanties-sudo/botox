@@ -14,14 +14,27 @@ namespace n_menu
 		void tab_inventory( );
 		void tab_fonts( );
 		void tab_settings( );
-		void route_calc_pinned( bool no_inputs );
-		void player_list_window( bool no_inputs );
+		void player_list_page( );
 
-		float fade_draw_lists( ImVector< ImDrawList* >& out );
+		struct faded_list_t {
+			ImDrawList* m_list;
+			float m_alpha;
+		};
 
-		bool m_opened             = false;
-		bool m_player_list_opened = false;
-		int m_route_calc_side     = 0;
+		/* confirm popups: live = drawn this frame, ghost = last frame copy drawn while fading out */
+		struct popup_fade_t {
+			ImGuiID m_window_id;
+			float m_alpha;
+			bool m_live;
+			ImDrawList* m_ghost;
+		};
+
+		float fade_draw_lists( ImVector< ImDrawList* >& out, ImVector< faded_list_t >& popups );
+		void popup_live( ImGuiID window_id );
+
+		ImVector< popup_fade_t > m_popups;
+
+		bool m_opened = false;
 
 		int m_tab    = 0;
 		int m_subtab = 0;

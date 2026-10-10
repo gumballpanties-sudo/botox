@@ -54,10 +54,10 @@ namespace n_players
 			c_weapon_data* m_weapon_data   = nullptr;
 			float m_animated_health        = 1.f;
 			float m_ammo                   = 1.f;
-		} m_backup_player_data[ 64 ];
+		} m_backup_player_data[ 65 ];
 
-		float m_fading_alpha[ 64 ]    = { };
-		float m_stored_cur_time[ 64 ] = { };
+		float m_fading_alpha[ 65 ]    = { };
+		float m_stored_cur_time[ 65 ] = { };
 
 	private:
 		struct god_t {

@@ -1,6 +1,7 @@
 #include "menu_internal.h"
 #include "../misc/misc.h"
 #include "../misc/chat_extras.h"
+#include "../network/botox_net.h"
 #include "../../game/sdk/includes/includes.h"
 
 #include <shellapi.h>
@@ -15,8 +16,6 @@
 
 #pragma comment( lib, "comdlg32.lib" )
 #pragma comment( lib, "winhttp.lib" )
-
-void botox_dbg_log( const char* fmt, ... );
 
 namespace
 {
@@ -129,7 +128,6 @@ namespace
 			}
 
 			const std::string url = image_upload( path );
-			botox_dbg_log( "PICK: upload %s", url.empty( ) ? "failed" : url.c_str( ) );
 			pick_finish( url.empty( ) ? "upload failed" : "uploaded", url );
 		}
 
@@ -354,24 +352,94 @@ void n_menu::impl_t::tab_inventory( )
 			g_skins.m_forcing_update = true;
 	};
 
+	static bool edit_t = false;
+
+	const auto team_bar = []( std::uint32_t same_var, const auto& copy_from_other ) {
+		bool& same = GET_VARIABLE( same_var, bool );
+
+		if ( !same ) {
+			for ( const bool t : { false, true } ) {
+				const bool on = edit_t == t;
+				if ( on )
+					ImGui::PushStyleColor( ImGuiCol_Text, ImGui::GetStyleColorVec4( ImGuiCol_Accent ) );
+				if ( ImGui::Button( t ? "terrorist" : "counter terrorist", ImVec2( -1.f, 15.f ) ) )
+					edit_t = t;
+				if ( on )
+					ImGui::PopStyleColor( );
+			}
+		}
+
+		ImGui::Checkbox( "same skins on both teams", &same );
+
+		if ( !same && ImGui::Button( edit_t ? "copy from counter terrorist" : "copy from terrorist", ImVec2( -1.f, 15.f ) ) )
+			copy_from_other( edit_t );
+	};
+
+	// GET_VARIABLE( dst ) = GET_VARIABLE( src ): same size vectors keep their buffer, frame stage holds refs
+	const auto copy_team = []( auto* type, std::uint32_t ct, std::uint32_t t, bool to_t ) {
+		using T = std::remove_pointer_t< decltype( type ) >;
+		GET_VARIABLE( to_t ? t : ct, T ) = GET_VARIABLE( to_t ? ct : t, T );
+	};
+
+#define TV( name ) ( tside ? g_variables.name##_tside : g_variables.name )
+#define COPY_TEAM( name, type ) copy_team( static_cast< type* >( nullptr ), g_variables.name, g_variables.name##_tside, to_t )
+
 	switch ( this->m_subtab ) {
 	case 0: {
+		const bool tside = !GET_VARIABLE( g_variables.m_skins_same_weapons, bool ) && edit_t;
+
 		menu_columns_begin( );
 
 		if ( menu_group_begin( "weapons" ) ) {
-			ImGui::Checkbox( "enable weapon skins", &GET_VARIABLE( g_variables.m_weapon_skins_enable, bool ) );
+			team_bar( g_variables.m_skins_same_weapons, [ & ]( bool to_t ) {
+				COPY_TEAM( m_weapon_skins_enable, bool );
+				COPY_TEAM( m_weapon_skins_paint_kit, std::vector< int > );
+				COPY_TEAM( m_weapon_skins_wear, std::vector< float > );
+				COPY_TEAM( m_weapon_skins_seed, std::vector< int > );
+				COPY_TEAM( m_weapon_skins_stattrak, std::vector< bool > );
+				COPY_TEAM( m_weapon_skins_stattrak_kills, std::vector< int > );
+				COPY_TEAM( m_weapon_skins_custom_name, std::vector< std::string > );
+				COPY_TEAM( m_weapon_skins_custom_color, std::vector< bool > );
+				COPY_TEAM( m_weapon_skins_color_1, std::vector< c_color > );
+				COPY_TEAM( m_weapon_skins_color_2, std::vector< c_color > );
+				COPY_TEAM( m_weapon_skins_color_3, std::vector< c_color > );
+				COPY_TEAM( m_weapon_skins_color_4, std::vector< c_color > );
+				COPY_TEAM( m_weapon_skins_sticker_kit, std::vector< int > );
+				COPY_TEAM( m_weapon_skins_sticker_wear, std::vector< float > );
+				COPY_TEAM( m_weapon_skins_sticker_scale, std::vector< float > );
+				COPY_TEAM( m_weapon_skins_sticker_rotation, std::vector< float > );
+				COPY_TEAM( m_knife_enable, bool );
+				COPY_TEAM( m_knife_model, int );
+				COPY_TEAM( m_knife_fix_view, bool );
+				COPY_TEAM( m_knife_anims_enable, bool );
+				COPY_TEAM( m_knife_anims_model, int );
+				COPY_TEAM( m_knife_paint_kit, int );
+				COPY_TEAM( m_knife_wear, float );
+				COPY_TEAM( m_knife_seed, int );
+				COPY_TEAM( m_knife_stattrak, bool );
+				COPY_TEAM( m_knife_stattrak_kills, int );
+				COPY_TEAM( m_knife_custom_name, std::string );
+				COPY_TEAM( m_knife_custom_color, bool );
+				COPY_TEAM( m_knife_color_1, c_color );
+				COPY_TEAM( m_knife_color_2, c_color );
+				COPY_TEAM( m_knife_color_3, c_color );
+				COPY_TEAM( m_knife_color_4, c_color );
+				g_skins.m_forcing_update = true;
+			} );
+
+			ImGui::Checkbox( "enable weapon skins", &GET_VARIABLE( TV( m_weapon_skins_enable ), bool ) );
 			ImGui::Combo( "weapon", &GET_VARIABLE( g_variables.m_weapon_skins_selected, int ),
 			              "usp-s\0p2000\0glock-18\0p250\0five-seven\0tec-9\0cz75-auto\0dual berettas\0deagle\0r8 revolver\0famas\0galil "
 			              "ar\0m4a4\0m4a1-s\0ak-47\0sg 553\0aug\0ssg 08\0awp\0scar-20\0g3sg1\0sawed-off\0m249\0negev\0mag-7\0xm1014\0nova\0pp-"
 			              "bizon\0mp5-sd\0mp7\0mp9\0mac-10\0p90\0ump-45\0" );
 
 			const int sel        = GET_VARIABLE( g_variables.m_weapon_skins_selected, int );
-			auto& paint_kits     = GET_VARIABLE( g_variables.m_weapon_skins_paint_kit, std::vector< int > );
-			auto& wears          = GET_VARIABLE( g_variables.m_weapon_skins_wear, std::vector< float > );
-			auto& seeds          = GET_VARIABLE( g_variables.m_weapon_skins_seed, std::vector< int > );
-			auto& stattraks      = GET_VARIABLE( g_variables.m_weapon_skins_stattrak, std::vector< bool > );
-			auto& stattrak_kills = GET_VARIABLE( g_variables.m_weapon_skins_stattrak_kills, std::vector< int > );
-			auto& custom_names   = GET_VARIABLE( g_variables.m_weapon_skins_custom_name, std::vector< std::string > );
+			auto& paint_kits     = GET_VARIABLE( TV( m_weapon_skins_paint_kit ), std::vector< int > );
+			auto& wears          = GET_VARIABLE( TV( m_weapon_skins_wear ), std::vector< float > );
+			auto& seeds          = GET_VARIABLE( TV( m_weapon_skins_seed ), std::vector< int > );
+			auto& stattraks      = GET_VARIABLE( TV( m_weapon_skins_stattrak ), std::vector< bool > );
+			auto& stattrak_kills = GET_VARIABLE( TV( m_weapon_skins_stattrak_kills ), std::vector< int > );
+			auto& custom_names   = GET_VARIABLE( TV( m_weapon_skins_custom_name ), std::vector< std::string > );
 
 			if ( sel >= 0 && sel < static_cast< int >( paint_kits.size( ) ) && sel < static_cast< int >( wears.size( ) ) &&
 			     sel < static_cast< int >( seeds.size( ) ) && sel < static_cast< int >( stattraks.size( ) ) &&
@@ -402,11 +470,11 @@ void n_menu::impl_t::tab_inventory( )
 				else if ( !ImGui::IsItemActive( ) && custom_names[ sel ] != weapon_name )
 					copy_to_buffer( weapon_name, sizeof( weapon_name ), custom_names[ sel ] );
 
-				auto& custom_colors = GET_VARIABLE( g_variables.m_weapon_skins_custom_color, std::vector< bool > );
-				auto& colors_1      = GET_VARIABLE( g_variables.m_weapon_skins_color_1, std::vector< c_color > );
-				auto& colors_2      = GET_VARIABLE( g_variables.m_weapon_skins_color_2, std::vector< c_color > );
-				auto& colors_3      = GET_VARIABLE( g_variables.m_weapon_skins_color_3, std::vector< c_color > );
-				auto& colors_4      = GET_VARIABLE( g_variables.m_weapon_skins_color_4, std::vector< c_color > );
+				auto& custom_colors = GET_VARIABLE( TV( m_weapon_skins_custom_color ), std::vector< bool > );
+				auto& colors_1      = GET_VARIABLE( TV( m_weapon_skins_color_1 ), std::vector< c_color > );
+				auto& colors_2      = GET_VARIABLE( TV( m_weapon_skins_color_2 ), std::vector< c_color > );
+				auto& colors_3      = GET_VARIABLE( TV( m_weapon_skins_color_3 ), std::vector< c_color > );
+				auto& colors_4      = GET_VARIABLE( TV( m_weapon_skins_color_4 ), std::vector< c_color > );
 
 				if ( sel < static_cast< int >( custom_colors.size( ) ) && sel < static_cast< int >( colors_1.size( ) ) &&
 				     sel < static_cast< int >( colors_2.size( ) ) && sel < static_cast< int >( colors_3.size( ) ) &&
@@ -426,10 +494,10 @@ void n_menu::impl_t::tab_inventory( )
 					}
 				}
 
-				auto& sticker_kits      = GET_VARIABLE( g_variables.m_weapon_skins_sticker_kit, std::vector< int > );
-				auto& sticker_wears     = GET_VARIABLE( g_variables.m_weapon_skins_sticker_wear, std::vector< float > );
-				auto& sticker_scales    = GET_VARIABLE( g_variables.m_weapon_skins_sticker_scale, std::vector< float > );
-				auto& sticker_rotations = GET_VARIABLE( g_variables.m_weapon_skins_sticker_rotation, std::vector< float > );
+				auto& sticker_kits      = GET_VARIABLE( TV( m_weapon_skins_sticker_kit ), std::vector< int > );
+				auto& sticker_wears     = GET_VARIABLE( TV( m_weapon_skins_sticker_wear ), std::vector< float > );
+				auto& sticker_scales    = GET_VARIABLE( TV( m_weapon_skins_sticker_scale ), std::vector< float > );
+				auto& sticker_rotations = GET_VARIABLE( TV( m_weapon_skins_sticker_rotation ), std::vector< float > );
 
 				ImGui::Combo( "sticker slot", &GET_VARIABLE( g_variables.m_weapon_skins_sticker_slot, int ),
 				              "slot 1\0slot 2\0slot 3\0slot 4\0slot 5\0" );
@@ -460,22 +528,30 @@ void n_menu::impl_t::tab_inventory( )
 			if ( open_reset_popup ) {
 				save_popup( "reset all weapon skins", open_reset_popup, ImVec2( 220.f, -1.f ), []( ) {
 					if ( ImGui::Button( "yes", ImVec2( ( ImGui::GetRowFrameWidth( ) - 14.f ) * 0.5f, 15.f ) ) ) {
-						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_paint_kit, g_variables.m_weapon_skins_seed,
-						                                       g_variables.m_weapon_skins_stattrak_kills, g_variables.m_weapon_skins_sticker_kit } )
+						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_paint_kit, g_variables.m_weapon_skins_paint_kit_tside,
+						                                       g_variables.m_weapon_skins_seed, g_variables.m_weapon_skins_seed_tside,
+						                                       g_variables.m_weapon_skins_stattrak_kills, g_variables.m_weapon_skins_stattrak_kills_tside,
+						                                       g_variables.m_weapon_skins_sticker_kit, g_variables.m_weapon_skins_sticker_kit_tside } )
 							g_config.reset< std::vector< int > >( variable );
 
-						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_wear, g_variables.m_weapon_skins_sticker_wear,
-						                                       g_variables.m_weapon_skins_sticker_scale, g_variables.m_weapon_skins_sticker_rotation } )
+						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_wear, g_variables.m_weapon_skins_wear_tside,
+						                                       g_variables.m_weapon_skins_sticker_wear, g_variables.m_weapon_skins_sticker_wear_tside,
+						                                       g_variables.m_weapon_skins_sticker_scale, g_variables.m_weapon_skins_sticker_scale_tside,
+						                                       g_variables.m_weapon_skins_sticker_rotation, g_variables.m_weapon_skins_sticker_rotation_tside } )
 							g_config.reset< std::vector< float > >( variable );
 
-						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_stattrak, g_variables.m_weapon_skins_custom_color } )
+						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_stattrak, g_variables.m_weapon_skins_stattrak_tside,
+						                                       g_variables.m_weapon_skins_custom_color, g_variables.m_weapon_skins_custom_color_tside } )
 							g_config.reset< std::vector< bool > >( variable );
 
-						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_color_1, g_variables.m_weapon_skins_color_2,
-						                                       g_variables.m_weapon_skins_color_3, g_variables.m_weapon_skins_color_4 } )
+						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_color_1, g_variables.m_weapon_skins_color_1_tside,
+						                                       g_variables.m_weapon_skins_color_2, g_variables.m_weapon_skins_color_2_tside,
+						                                       g_variables.m_weapon_skins_color_3, g_variables.m_weapon_skins_color_3_tside,
+						                                       g_variables.m_weapon_skins_color_4, g_variables.m_weapon_skins_color_4_tside } )
 							g_config.reset< std::vector< c_color > >( variable );
 
 						g_config.reset< std::vector< std::string > >( g_variables.m_weapon_skins_custom_name );
+						g_config.reset< std::vector< std::string > >( g_variables.m_weapon_skins_custom_name_tside );
 
 						g_logger.print( "reset all weapon skins" );
 						open_reset_popup = false;
@@ -493,62 +569,62 @@ void n_menu::impl_t::tab_inventory( )
 		menu_columns_next( );
 
 		if ( menu_group_begin( "knife" ) ) {
-			ImGui::Checkbox( "enable knife anims", &GET_VARIABLE( g_variables.m_knife_anims_enable, bool ) );
-			if ( GET_VARIABLE( g_variables.m_knife_anims_enable, bool ) ) {
+			ImGui::Checkbox( "enable knife anims", &GET_VARIABLE( TV( m_knife_anims_enable ), bool ) );
+			if ( GET_VARIABLE( TV( m_knife_anims_enable ), bool ) ) {
 				// applies live, knife_anim_live
-				if ( !n_skins::knife_anims_fit( GET_VARIABLE( g_variables.m_knife_anims_model, int ),
-				                                GET_VARIABLE( g_variables.m_knife_model, int ) ) )
+				if ( !n_skins::knife_anims_fit( GET_VARIABLE( TV( m_knife_anims_model ), int ),
+				                                GET_VARIABLE( TV( m_knife_model ), int ), GET_VARIABLE( TV( m_knife_enable ), bool ) ) )
 					ImGui::TextColored( ImVec4( 1.f, 0.4f, 0.4f, 1.f ), "wrong bones for this knife — draw will not play" );
 
-				ImGui::Combo( "knife anims", &GET_VARIABLE( g_variables.m_knife_anims_model, int ),
+				ImGui::Combo( "knife anims", &GET_VARIABLE( TV( m_knife_anims_model ), int ),
 				              "default\0bayonet\0m9 bayonet\0karambit\0bowie\0butterfly\0falchion\0flip\0gut\0huntsman\0shadow "
 				              "daggers\0navaja\0stiletto\0talon\0ursus\0default ct\0default t\0gold knife\0css "
 				              "knife\0outdoor\0canis\0cord\0skeleton\0" );
 			}
 
-			ImGui::Checkbox( "enable knife", &GET_VARIABLE( g_variables.m_knife_enable, bool ) );
-			if ( GET_VARIABLE( g_variables.m_knife_enable, bool ) ) {
-				ImGui::Combo( "knife model", &GET_VARIABLE( g_variables.m_knife_model, int ),
+			ImGui::Checkbox( "enable knife", &GET_VARIABLE( TV( m_knife_enable ), bool ) );
+			if ( GET_VARIABLE( TV( m_knife_enable ), bool ) ) {
+				ImGui::Combo( "knife model", &GET_VARIABLE( TV( m_knife_model ), int ),
 				              "default\0bayonet\0m9 bayonet\0karambit\0bowie\0butterfly\0falchion\0flip\0gut\0huntsman\0shadow "
 				              "daggers\0navaja\0stiletto\0talon\0ursus\0default ct\0default t\0gold knife\0css "
 				              "knife\0outdoor\0canis\0cord\0skeleton\0" );
 
-				if ( GET_VARIABLE( g_variables.m_knife_model, int ) == 10 )
-					ImGui::Checkbox( "fix view", &GET_VARIABLE( g_variables.m_knife_fix_view, bool ) );
+				if ( GET_VARIABLE( TV( m_knife_model ), int ) == 10 )
+					ImGui::Checkbox( "fix view", &GET_VARIABLE( TV( m_knife_fix_view ), bool ) );
 
 				static ImGuiTextFilter knife_skin_filter{ };
-				skin_selector( "paint kit", g_skins.m_parser_skins, &GET_VARIABLE( g_variables.m_knife_paint_kit, int ),
+				skin_selector( "paint kit", g_skins.m_parser_skins, &GET_VARIABLE( TV( m_knife_paint_kit ), int ),
 				               knife_skin_filter );
 
-				ImGui::SliderFloat( "knife wear", &GET_VARIABLE( g_variables.m_knife_wear, float ), 0.0001f, 1.f, "%.4f" );
-				ImGui::SliderInt( "knife pattern", &GET_VARIABLE( g_variables.m_knife_seed, int ), 0, 1023, "%d" );
+				ImGui::SliderFloat( "knife wear", &GET_VARIABLE( TV( m_knife_wear ), float ), 0.0001f, 1.f, "%.4f" );
+				ImGui::SliderInt( "knife pattern", &GET_VARIABLE( TV( m_knife_seed ), int ), 0, 1023, "%d" );
 
-				ImGui::Checkbox( "knife stattrak", &GET_VARIABLE( g_variables.m_knife_stattrak, bool ) );
-				if ( GET_VARIABLE( g_variables.m_knife_stattrak, bool ) )
-					ImGui::SliderInt( "knife kills", &GET_VARIABLE( g_variables.m_knife_stattrak_kills, int ), 0, 99999, "%d" );
+				ImGui::Checkbox( "knife stattrak", &GET_VARIABLE( TV( m_knife_stattrak ), bool ) );
+				if ( GET_VARIABLE( TV( m_knife_stattrak ), bool ) )
+					ImGui::SliderInt( "knife kills", &GET_VARIABLE( TV( m_knife_stattrak_kills ), int ), 0, 99999, "%d" );
 
 				static char knife_name[ 41 ] = { };
-				auto& knife_name_var         = GET_VARIABLE( g_variables.m_knife_custom_name, std::string );
+				auto& knife_name_var         = GET_VARIABLE( TV( m_knife_custom_name ), std::string );
 
 				if ( ImGui::InputText( "knife name tag", knife_name, sizeof( knife_name ) ) )
 					knife_name_var = knife_name;
 				else if ( !ImGui::IsItemActive( ) && knife_name_var != knife_name )
 					copy_to_buffer( knife_name, sizeof( knife_name ), knife_name_var );
 
-				if ( ImGui::Checkbox( "custom color##knife", &GET_VARIABLE( g_variables.m_knife_custom_color, bool ) ) ) {
+				if ( ImGui::Checkbox( "custom color##knife", &GET_VARIABLE( TV( m_knife_custom_color ), bool ) ) ) {
 					g_skins.m_forcing_update = true;
 
-					if ( GET_VARIABLE( g_variables.m_knife_custom_color, bool ) )
-						seed_actual_colors( GET_VARIABLE( g_variables.m_knife_paint_kit, int ),
-						                     { &GET_VARIABLE( g_variables.m_knife_color_1, c_color ),
-						                       &GET_VARIABLE( g_variables.m_knife_color_2, c_color ),
-						                       &GET_VARIABLE( g_variables.m_knife_color_3, c_color ),
-						                       &GET_VARIABLE( g_variables.m_knife_color_4, c_color ) } );
+					if ( GET_VARIABLE( TV( m_knife_custom_color ), bool ) )
+						seed_actual_colors( GET_VARIABLE( TV( m_knife_paint_kit ), int ),
+						                     { &GET_VARIABLE( TV( m_knife_color_1 ), c_color ),
+						                       &GET_VARIABLE( TV( m_knife_color_2 ), c_color ),
+						                       &GET_VARIABLE( TV( m_knife_color_3 ), c_color ),
+						                       &GET_VARIABLE( TV( m_knife_color_4 ), c_color ) } );
 				}
-				if ( GET_VARIABLE( g_variables.m_knife_custom_color, bool ) ) {
+				if ( GET_VARIABLE( TV( m_knife_custom_color ), bool ) ) {
 					c_color* knife_colors[ 4 ] = {
-						&GET_VARIABLE( g_variables.m_knife_color_1, c_color ), &GET_VARIABLE( g_variables.m_knife_color_2, c_color ),
-						&GET_VARIABLE( g_variables.m_knife_color_3, c_color ), &GET_VARIABLE( g_variables.m_knife_color_4, c_color )
+						&GET_VARIABLE( TV( m_knife_color_1 ), c_color ), &GET_VARIABLE( TV( m_knife_color_2 ), c_color ),
+						&GET_VARIABLE( TV( m_knife_color_3 ), c_color ), &GET_VARIABLE( TV( m_knife_color_4 ), c_color )
 					};
 
 					color_row( "knife", knife_colors );
@@ -563,9 +639,24 @@ void n_menu::impl_t::tab_inventory( )
 		break;
 	}
 	case 1: {
+		const bool same  = GET_VARIABLE( g_variables.m_skins_same_player, bool );
+		const bool tside = !same && edit_t;
+
 		menu_columns_begin( );
 
 		if ( menu_group_begin( "agents" ) ) {
+			team_bar( g_variables.m_skins_same_player, [ & ]( bool to_t ) {
+				COPY_TEAM( m_gloves_enable, bool );
+				COPY_TEAM( m_gloves_model, int );
+				COPY_TEAM( m_gloves_paint_kit, int );
+				COPY_TEAM( m_gloves_wear, float );
+				COPY_TEAM( m_gloves_seed, int );
+				// agents were always per team: m_agent_t / m_agent_ct
+				copy_team( static_cast< int* >( nullptr ), g_variables.m_agent_ct, g_variables.m_agent_t, to_t );
+				copy_team( static_cast< std::string* >( nullptr ), g_variables.m_agent_ct_custom, g_variables.m_agent_t_custom, to_t );
+				g_skins.m_forcing_update = true;
+			} );
+
 			ImGui::Checkbox( "enable agents", &GET_VARIABLE( g_variables.m_agent_enable, bool ) );
 			if ( GET_VARIABLE( g_variables.m_agent_enable, bool ) ) {
 				ImGui::Checkbox( "custom models", &GET_VARIABLE( g_variables.m_agent_custom_models, bool ) );
@@ -600,10 +691,12 @@ void n_menu::impl_t::tab_inventory( )
 				}
 
 				static ImGuiTextFilter t_agent_filter{ }, ct_agent_filter{ };
-				name_selector( "t agent", n_skins::AGENT_NAMES, n_skins::AGENT_NAME_COUNT, &GET_VARIABLE( g_variables.m_agent_t, int ),
-				               t_agent_filter, show_custom ? &custom_models : nullptr, &GET_VARIABLE( g_variables.m_agent_t_custom, std::string ) );
-				name_selector( "ct agent", n_skins::AGENT_NAMES, n_skins::AGENT_NAME_COUNT, &GET_VARIABLE( g_variables.m_agent_ct, int ),
-				               ct_agent_filter, show_custom ? &custom_models : nullptr, &GET_VARIABLE( g_variables.m_agent_ct_custom, std::string ) );
+				if ( same || edit_t )
+					name_selector( "t agent", n_skins::AGENT_NAMES, n_skins::AGENT_NAME_COUNT, &GET_VARIABLE( g_variables.m_agent_t, int ),
+					               t_agent_filter, show_custom ? &custom_models : nullptr, &GET_VARIABLE( g_variables.m_agent_t_custom, std::string ) );
+				if ( same || !edit_t )
+					name_selector( "ct agent", n_skins::AGENT_NAMES, n_skins::AGENT_NAME_COUNT, &GET_VARIABLE( g_variables.m_agent_ct, int ),
+					               ct_agent_filter, show_custom ? &custom_models : nullptr, &GET_VARIABLE( g_variables.m_agent_ct_custom, std::string ) );
 			}
 
 			update_button( );
@@ -613,20 +706,20 @@ void n_menu::impl_t::tab_inventory( )
 		menu_columns_next( );
 
 		if ( menu_group_begin( "gloves" ) ) {
-			ImGui::Checkbox( "enable gloves", &GET_VARIABLE( g_variables.m_gloves_enable, bool ) );
-			if ( GET_VARIABLE( g_variables.m_gloves_enable, bool ) ) {
+			ImGui::Checkbox( "enable gloves", &GET_VARIABLE( TV( m_gloves_enable ), bool ) );
+			if ( GET_VARIABLE( TV( m_gloves_enable ), bool ) ) {
 				static const char* const glove_models[] = { "default", "broken fang", "bloodhound", "sport", "slick",
 					                                        "leather wrap", "moto", "specialist", "hydra" };
 				static ImGuiTextFilter glove_model_filter{ };
-				name_selector( "glove model", glove_models, IM_ARRAYSIZE( glove_models ), &GET_VARIABLE( g_variables.m_gloves_model, int ),
+				name_selector( "glove model", glove_models, IM_ARRAYSIZE( glove_models ), &GET_VARIABLE( TV( m_gloves_model ), int ),
 				               glove_model_filter );
 
 				static ImGuiTextFilter glove_skin_filter{ };
-				skin_selector( "paint kit", g_skins.m_parser_gloves, &GET_VARIABLE( g_variables.m_gloves_paint_kit, int ),
+				skin_selector( "paint kit", g_skins.m_parser_gloves, &GET_VARIABLE( TV( m_gloves_paint_kit ), int ),
 				               glove_skin_filter );
 
-				ImGui::SliderFloat( "glove wear", &GET_VARIABLE( g_variables.m_gloves_wear, float ), 0.0001f, 1.f, "%.4f" );
-				ImGui::SliderInt( "glove pattern", &GET_VARIABLE( g_variables.m_gloves_seed, int ), 0, 1023, "%d" );
+				ImGui::SliderFloat( "glove wear", &GET_VARIABLE( TV( m_gloves_wear ), float ), 0.0001f, 1.f, "%.4f" );
+				ImGui::SliderInt( "glove pattern", &GET_VARIABLE( TV( m_gloves_seed ), int ), 0, 1023, "%d" );
 			}
 
 			update_button( );
@@ -637,6 +730,9 @@ void n_menu::impl_t::tab_inventory( )
 		break;
 	}
 	}
+
+#undef TV
+#undef COPY_TEAM
 }
 
 void n_menu::impl_t::tab_fonts( )
@@ -789,161 +885,114 @@ void n_menu::impl_t::tab_fonts( )
 	}
 }
 
-void n_menu::impl_t::player_list_window( const bool no_inputs )
+void n_menu::impl_t::player_list_page( )
 {
-	if ( !this->m_player_list_opened )
-		return;
+	const auto engine = g_interfaces.m_engine_client;
+	const int local   = engine->get_local_player( );
+	const int clients = engine->is_connected_safe( ) ? ImMin( engine->get_max_clients( ), 64 ) : 0;
+	int shown         = 0;
 
-	const ImGuiWindow* menu = ImGui::FindWindowByName( "botox-ui" );
-	if ( !menu )
-		return;
+	/* negative y = sized after show_text's 20 px title shift */
+	if ( ImGui::BeginChild( "players", ImVec2( 0.f, -menu_bottom_band_height ), true, 0, true ) ) {
+		/* name gets ~36%, the 4 cells split the rest evenly, header centred in its slot */
+		const float row_width = ImGui::GetContentRegionAvail( ).x;
+		const float name_width = ImFloor( row_width * 0.36f ), slot = ( row_width - name_width ) / 4.f;
+		const auto slot_x = [ & ]( const int index, const char* header ) {
+			return ImFloor( name_width + slot * index + ( slot - ImGui::CalcTextSize( header ).x ) / 2.f );
+		};
+		const float k_team = slot_x( 0, "team" ), k_revive = slot_x( 1, "auto revive" ), k_ignore = slot_x( 2, "aimbot ignore" ),
+		            k_only = slot_x( 3, "only aimbot" );
+		const float base_x = ImGui::GetCursorScreenPos( ).x;
+		const auto column  = [ base_x ]( const float offset, const char* header = nullptr, const float width = 0.f ) {
+			const float centre = header ? ImMax( 0.f, ( ImGui::CalcTextSize( header ).x - width ) / 2.f ) : 0.f;
+			ImGui::SameLine( base_x - ImGui::GetWindowPos( ).x + offset + centre );
+		};
 
-	constexpr float k_gap = 8.f;
-	const ImVec2 window_size( 460.f, menu->Size.y );
-	const float left_x = menu->Pos.x - k_gap - window_size.x, right_x = menu->Pos.x + menu->Size.x + k_gap;
-	float x            = left_x < 0.f ? right_x : left_x;
-	if ( this->m_route_calc_side != 0 )
-		x = this->m_route_calc_side > 0 ? left_x : right_x;
-	x = ImClamp( x, 0.f, ImMax( 0.f, ImGui::GetIO( ).DisplaySize.x - window_size.x ) );
-	ImGui::SetNextWindowPos( ImVec2( x, menu->Pos.y ), ImGuiCond_Always );
-	ImGui::SetNextWindowSize( window_size, ImGuiCond_Always );
+		ImGui::Label( "name" );
+		column( k_team );
+		ImGui::Label( "team" );
+		column( k_revive );
+		ImGui::Label( "auto revive" );
+		column( k_ignore );
+		ImGui::Label( "aimbot ignore" );
+		column( k_only );
+		ImGui::Label( "only aimbot" );
 
-	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse |
-	                         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-	if ( no_inputs )
-		flags |= ImGuiWindowFlags_NoInputs;
+		if ( ImGui::BeginChild( "##player list rows", ImVec2( 0.f, 0.f ), false, 0, false ) ) {
+			const float square = ImGui::GetFrameHeight( );
 
-	if ( ImGui::Begin( "player list##window", nullptr, flags ) ) {
-		constexpr auto background_height = menu_band_height;
-		const auto draw_list  = ImGui::GetWindowDrawList( );
-		const ImVec2 pos = ImGui::GetWindowPos( ), size = ImGui::GetWindowSize( );
-		const auto bold       = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ];
-		const float rounding  = ImGui::GetStyle( ).WindowRounding;
-		const ImU32 accent    = ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent );
-		const ImColor band_bg = ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f );
+			for ( int i = 1; i <= clients; i++ ) {
+				player_info_t info{ };
+				if ( !engine->get_player_info( i, &info ) || info.m_is_hltv )
+					continue;
 
-		draw_list->AddRectFilled( pos, ImVec2( pos.x + size.x, pos.y + background_height ), band_bg, rounding, ImDrawFlags_RoundCornersTop );
-		draw_list->AddRectFilled( ImVec2( pos.x, pos.y + size.y - background_height ), ImVec2( pos.x + size.x, pos.y + size.y ), band_bg, rounding,
-		                          ImDrawFlags_RoundCornersBottom );
-		draw_list->AddRect( pos, ImVec2( pos.x + size.x, pos.y + size.y ), ImColor( 50, 50, 50, 255 ), rounding );
-		RenderFadedGradientLine( draw_list, ImVec2( pos.x, pos.y + background_height - 1.f ), ImVec2( size.x, 1.f ), accent );
-		RenderFadedGradientLine( draw_list, ImVec2( pos.x, pos.y + size.y - background_height ), ImVec2( size.x, 1.f ), accent );
+				player_list_stamp( i, info );
+				auto& entry = g_player_list[ i ];
 
-		const char* title       = "player list";
-		const ImVec2 title_size = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.f, title );
-		draw_list->AddText( bold, bold->FontSize,
-		                    ImVec2( pos.x + ( size.x - title_size.x ) / 2.f, pos.y + ( background_height - title_size.y ) / 2.f ),
-		                    ImColor( 1.f, 1.f, 1.f ), title );
+				const auto entity = g_interfaces.m_client_entity_list->get< c_base_entity >( i );
+				const int team    = entity ? entity->get_team( ) : 0;
 
-		const auto engine = g_interfaces.m_engine_client;
-		const int local   = engine->get_local_player( );
-		const int clients = engine->is_connected_safe( ) ? ImMin( engine->get_max_clients( ), 64 ) : 0;
-		int shown         = 0;
+				std::string name = std::string( info.m_name ).substr( 0, 18 );
+				if ( info.m_fake_player )
+					name = "BOT " + name;
+				if ( i == local )
+					name += " (you)";
 
-		ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) + 25.f );
-		if ( ImGui::BeginChild( "players", ImVec2( 0.f, ImGui::GetContentRegionAvail( ).y - background_height - 20.f ), true, 0, true ) ) {
-			/* name gets ~36%, the 4 cells split the rest evenly, header centred in its slot */
-			const float row_width = ImGui::GetContentRegionAvail( ).x;
-			const float name_width = ImFloor( row_width * 0.36f ), slot = ( row_width - name_width ) / 4.f;
-			const auto slot_x = [ & ]( const int index, const char* header ) {
-				return ImFloor( name_width + slot * index + ( slot - ImGui::CalcTextSize( header ).x ) / 2.f );
-			};
-			const float k_team = slot_x( 0, "team" ), k_revive = slot_x( 1, "auto revive" ), k_ignore = slot_x( 2, "aimbot ignore" ),
-			            k_only = slot_x( 3, "only aimbot" );
-			const float base_x = ImGui::GetCursorScreenPos( ).x;
-			const auto column  = [ base_x ]( const float offset, const char* header = nullptr, const float width = 0.f ) {
-				const float centre = header ? ImMax( 0.f, ( ImGui::CalcTextSize( header ).x - width ) / 2.f ) : 0.f;
-				ImGui::SameLine( base_x - ImGui::GetWindowPos( ).x + offset + centre );
-			};
+				ImGui::PushID( i );
 
-			ImGui::Label( "name" );
-			column( k_team );
-			ImGui::Label( "team" );
-			column( k_revive );
-			ImGui::Label( "auto revive" );
-			column( k_ignore );
-			ImGui::Label( "aimbot ignore" );
-			column( k_only );
-			ImGui::Label( "only aimbot" );
+				ImGui::SetCursorScreenPos( ImVec2( base_x, ImGui::GetCursorScreenPos( ).y ) );
+				ImGui::AlignTextToFramePadding( );
+				ImGui::Text( "%s", name.c_str( ) );
 
-			if ( ImGui::BeginChild( "##player list rows", ImVec2( 0.f, 0.f ), false, 0, false ) ) {
-				const float square = ImGui::GetFrameHeight( );
+				const char* team_text = team == 2 ? "T" : team == 3 ? "CT" : "-";
+				column( k_team, "team", ImGui::CalcTextSize( team_text ).x );
+				if ( team == 2 )
+					ImGui::TextColored( ImVec4( 0.92f, 0.75f, 0.33f, 1.f ), "%s", team_text );
+				else if ( team == 3 )
+					ImGui::TextColored( ImVec4( 0.36f, 0.55f, 0.85f, 1.f ), "%s", team_text );
+				else
+					ImGui::TextDisabled( "%s", team_text );
 
-				for ( int i = 1; i <= clients; i++ ) {
-					player_info_t info{ };
-					if ( !engine->get_player_info( i, &info ) || info.m_is_hltv )
-						continue;
+				column( k_revive, "auto revive", square );
+				if ( ImGui::Checkbox( "##revive", &entry.m_revive ) )
+					player_list_save( i, info );
 
-					player_list_stamp( i, info );
-					auto& entry = g_player_list[ i ];
-
-					const auto entity = g_interfaces.m_client_entity_list->get< c_base_entity >( i );
-					const int team    = entity ? entity->get_team( ) : 0;
-
-					std::string name = std::string( info.m_name ).substr( 0, 18 );
-					if ( info.m_fake_player )
-						name = "BOT " + name;
-					if ( i == local )
-						name += " (you)";
-
-					ImGui::PushID( i );
-
-					ImGui::SetCursorScreenPos( ImVec2( base_x, ImGui::GetCursorScreenPos( ).y ) );
-					ImGui::AlignTextToFramePadding( );
-					ImGui::Text( "%s", name.c_str( ) );
-
-					const char* team_text = team == 2 ? "T" : team == 3 ? "CT" : "-";
-					column( k_team, "team", ImGui::CalcTextSize( team_text ).x );
-					if ( team == 2 )
-						ImGui::TextColored( ImVec4( 0.92f, 0.75f, 0.33f, 1.f ), "%s", team_text );
-					else if ( team == 3 )
-						ImGui::TextColored( ImVec4( 0.36f, 0.55f, 0.85f, 1.f ), "%s", team_text );
-					else
-						ImGui::TextDisabled( "%s", team_text );
-
-					column( k_revive, "auto revive", square );
-					if ( ImGui::Checkbox( "##revive", &entry.m_revive ) )
+				/* aimbot never targets you: "-" like a teamless team cell keeps the grid whole */
+				if ( i == local ) {
+					const float dash = ImGui::CalcTextSize( "-" ).x;
+					column( k_ignore, "aimbot ignore", dash );
+					ImGui::TextDisabled( "-" );
+					column( k_only, "only aimbot", dash );
+					ImGui::TextDisabled( "-" );
+				}
+				else {
+					column( k_ignore, "aimbot ignore", square );
+					if ( ImGui::Checkbox( "##ignore", &entry.m_ignore ) )
 						player_list_save( i, info );
-
-					/* aimbot never targets you: "-" like a teamless team cell keeps the grid whole */
-					if ( i == local ) {
-						const float dash = ImGui::CalcTextSize( "-" ).x;
-						column( k_ignore, "aimbot ignore", dash );
-						ImGui::TextDisabled( "-" );
-						column( k_only, "only aimbot", dash );
-						ImGui::TextDisabled( "-" );
-					}
-					else {
-						column( k_ignore, "aimbot ignore", square );
-						if ( ImGui::Checkbox( "##ignore", &entry.m_ignore ) )
-							player_list_save( i, info );
-						column( k_only, "only aimbot", square );
-						if ( ImGui::Checkbox( "##only", &entry.m_only ) )
-							player_list_save( i, info );
-					}
-
-					ImGui::PopID( );
-					shown++;
+					column( k_only, "only aimbot", square );
+					if ( ImGui::Checkbox( "##only", &entry.m_only ) )
+						player_list_save( i, info );
 				}
 
-				if ( !shown )
-					ImGui::TextDisabled( "no players" );
+				ImGui::PopID( );
+				shown++;
 			}
-			ImGui::EndChild( );
+
+			if ( !shown )
+				ImGui::TextDisabled( "no players" );
 		}
 		ImGui::EndChild( );
-
-		const std::string count = std::to_string( shown ) + ( shown == 1 ? " player" : " players" );
-		const ImVec2 count_size = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.f, count.c_str( ) );
-		draw_list->AddText( bold, bold->FontSize,
-		                    ImVec2( pos.x + ( size.x - count_size.x ) / 2.f, pos.y + size.y - ( background_height + count_size.y ) / 2.f - 1.f ),
-		                    ImColor( 1.f, 1.f, 1.f ), count.c_str( ) );
 	}
-	ImGui::End( );
+	ImGui::EndChild( );
 }
 
 void n_menu::impl_t::tab_misc( )
 {
+	if ( this->m_subtab == 1 ) {
+		this->player_list_page( );
+		return;
+	}
+
 	menu_columns_begin( );
 
 	if ( menu_group_begin( "overlays" ) ) {
@@ -1394,6 +1443,18 @@ void n_menu::impl_t::tab_misc( )
 						ImGui::SliderFloat( "offset##lyrics", &GET_VARIABLE( g_variables.m_media_player_lyrics_offset, float ), -3000.f, 3000.f, "%.0f ms",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					}
+
+					ImGui::Checkbox( "precise time", &GET_VARIABLE( g_variables.m_media_player_time, bool ) );
+
+					ImGui::Checkbox( "in game control", &GET_VARIABLE( g_variables.m_media_player_ingame_control, bool ) );
+					if ( GET_VARIABLE( g_variables.m_media_player_ingame_control, bool ) ) {
+						ImGui::Label( "previous song" );
+						ImGui::Keybind( "previous##media key", &GET_VARIABLE( g_variables.m_media_player_previous_key, key_bind_t ), false );
+						ImGui::Label( "pause / play" );
+						ImGui::Keybind( "pause##media key", &GET_VARIABLE( g_variables.m_media_player_toggle_key, key_bind_t ), false );
+						ImGui::Label( "next song" );
+						ImGui::Keybind( "next##media key", &GET_VARIABLE( g_variables.m_media_player_next_key, key_bind_t ), false );
+					}
 				},
 				ImVec2( 200.f, -1.f ) );
 		}
@@ -1558,10 +1619,10 @@ void n_menu::impl_t::tab_misc( )
 				"clantag configuration",
 				[]( ) {
 					auto& anim = GET_VARIABLE( g_variables.m_clantag_animation, int );
-					if ( anim > 3 )
-						anim = 3;
+					if ( anim > 4 )
+						anim = 4;
 
-					ImGui::Combo( "animation##clantag", &anim, "static\0typewriter\0scroll\0frame by frame\0" );
+					ImGui::Combo( "animation##clantag", &anim, "static\0typewriter\0scroll\0frame by frame\0now playing\0" );
 
 					static char tag_buffer[ 25 ] = { };
 					auto& tag_var                = GET_VARIABLE( g_variables.m_clantag_text, std::string );
@@ -1654,7 +1715,9 @@ void n_menu::impl_t::tab_misc( )
 						}
 					}
 
-					if ( anim == 1 || anim == 2 )
+					if ( anim == 4 )
+						ImGui::TextDisabled( "tag text shows when nothing plays" );
+					if ( anim == 1 || anim == 2 || anim == 4 )
 						ImGui::SliderFloat( "speed##clantag", &GET_VARIABLE( g_variables.m_clantag_speed, float ), 0.1f, 2.f, "%.1fs" );
 					if ( anim == 1 )
 						ImGui::SliderFloat( "hold time##clantag", &GET_VARIABLE( g_variables.m_clantag_hold, float ), 0.5f, 10.f, "%.1fs" );
@@ -1781,8 +1844,6 @@ void n_menu::impl_t::tab_misc( )
 			{ "give deagle",   "sv_cheats 1; give weapon_deagle" },
 			{ "give usp",      "sv_cheats 1; give weapon_usp_silencer"     },
 		};
-
-		ImGui::Checkbox( "player list", &this->m_player_list_opened );
 
 		if ( ImGui::Button( "connect y6o EU", ImVec2( -1.f, 15.f ) ) )
 			g_interfaces.m_engine_client->client_cmd_unrestricted( "connect 193.23.209.155:27015" );
@@ -1936,6 +1997,13 @@ void n_menu::impl_t::tab_settings( )
 	if ( menu_group_begin( "system" ) ) {
 		ImGui::Checkbox( "debug log", &GET_VARIABLE( g_variables.m_debug_log, bool ) );
 		ImGui::Checkbox( "safe mode", &GET_VARIABLE( g_variables.m_safe_mode, bool ) );
+
+		safe_checkbox( "botox network", &GET_VARIABLE( g_variables.m_botox_network, bool ) );
+		if ( GET_VARIABLE( g_variables.m_botox_network, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) ) {
+			ImGui::Checkbox( "share esp", &GET_VARIABLE( g_variables.m_botox_network_esp, bool ) );
+			ImGui::Checkbox( "share skins", &GET_VARIABLE( g_variables.m_botox_network_skins, bool ) );
+			ImGui::Text( "botox users here: %d", g_botox_net.m_users.load( std::memory_order_relaxed ) );
+		}
 	}
 	menu_group_end( );
 

@@ -388,36 +388,6 @@ namespace
     };
     specLoop();
 
-    /* PROBE 09-30, hint only (verifies the grow fix above), remove once read. per panorama frame
-       ms:bg width after each show/hide flip, a tween shows middle widths. console "moi probe:" lines */
-    var say = function ( s ) {
-        s = ( 'moi probe: ' + s ).replace( /["';]/g, '' );
-        try { GameInterfaceAPI.ConsoleCommand( 'echo "' + s + '"' ); } catch ( e ) { $.Msg( s ); }
-    };
-    var pr = { hvis: null, ht: 0, hw: [] };
-    var probe = function () {
-        if ( MoiGen !== gen || !MoiOn )
-            return;
-        var t = Date.now();
-
-        var box = get( 'box', function () { return first( root, 'hud-hint' ); } );
-        var bg = box ? get( 'bg', function () { return first( box, 'hud-hint_bg' ); } ) : null;
-        if ( box && bg ) {
-            var vis = box.BHasClass( 'hud-hint--visible' );
-            if ( pr.hvis !== null && vis !== pr.hvis ) { pr.ht = t; pr.hw = []; pr.hdir = vis ? 'show' : 'hide'; }
-            pr.hvis = vis;
-            if ( pr.ht && t - pr.ht <= 400 )
-                pr.hw.push( ( t - pr.ht ) + ':' + Math.round( bg.actuallayoutwidth ) );
-            else if ( pr.ht ) {
-                say( 'hint ' + pr.hdir + ' ' + pr.hw.join( ' ' ) );
-                pr.ht = 0;
-            }
-        }
-
-        $.Schedule( 0.001, probe );
-    };
-    probe();
-
     // alphachanger.js: cl_hud_background_alpha on moi's plates, borders off below 0.001. C++ calls on change
     MoiAlpha = function ( a ) {
         var set = function ( c, v ) { var p = first( root, c ); if ( p ) S( p, 'opacity', '' + v ); };
@@ -505,8 +475,6 @@ void n_moi_hud::impl_t::start_downloads( )
 	for ( const char* name : k_select_icons )
 		add( std::string( k_raw_base ) + "addons/p_weaponselection_override/materials/panorama/images/icons/equipment/" + name + ".svg", select_path( name ) );
 
-	g_console.print( std::format( "moi hud: {} files, {} to download\n", m_total, s_jobs.size( ) ).c_str( ) );
-
 	const int workers = static_cast< int >( std::min< size_t >( k_worker_count, s_jobs.size( ) ) );
 	m_workers += workers; // before the threads: a worker finishing early must not see 0 for the rest
 
@@ -530,8 +498,8 @@ bool n_moi_hud::impl_t::build_served( )
 
 	// before anything is served: panorama must never load the 4159px original (no-op once shrunk)
 	for ( const char* rel : k_images ) {
-		if ( const int shrunk = n_moi_image::shrink_if_oversize( image_path( rel ) ) )
-			botox_dbg_log( "moi hud: %s %s", shrunk > 0 ? "shrunk" : "CAN'T shrink", rel );
+		if ( n_moi_image::shrink_if_oversize( image_path( rel ) ) < 0 )
+			botox_dbg_log( "moi hud: CAN'T shrink %s", rel );
 	}
 
 	std::unordered_map< std::string, std::string > served;
@@ -689,8 +657,6 @@ void n_moi_hud::impl_t::update( c_uipanel* hud_root, bool wanted )
 			run_js( hud_root, k_alpha_clear );
 			reload_all( hud_root );
 			m_js_off_pending = true;
-			g_console.print( "moi hud: off, stock files reloaded\n" );
-			botox_dbg_log( "SF: moi off, root=%d", hud_root != nullptr );
 		}
 
 		if ( m_js_off_pending && hud_root ) {
@@ -726,14 +692,10 @@ void n_moi_hud::impl_t::update( c_uipanel* hud_root, bool wanted )
 			botox_dbg_log( "moi hud: not served, text_ready=%d done=%d failed=%d total=%d", ( int )text_ready, m_done.load( ), m_failed.load( ), m_total );
 			return;
 		}
-		botox_dbg_log( "moi hud: on, %d served, %d/%d cached, %d failed", ( int )m_served.size( ), m_done.load( ), m_total, m_failed.load( ) );
 
 		m_serving = true;
 		patch_killfeed( true );
 		reload_all( hud_root );
-		g_console.print( std::format( "moi hud: on, {} files served, {}/{} cached, {} failed\n", m_served.size( ), m_done.load( ), m_total,
-		                              m_failed.load( ) )
-		                     .c_str( ) );
 	}
 
 	// weapon select svgs: built once when downloads end, immutable after (decode threads read it)
@@ -785,10 +747,6 @@ const char* n_moi_hud::impl_t::redirect( const char* path )
 	if ( it == m_served.end( ) )
 		return nullptr;
 
-	static std::unordered_set< std::string > logged;
-	if ( logged.insert( key ).second )
-		g_console.print( ( "moi hud: served " + std::string( path ) + "\n" ).c_str( ) );
-
 	return it->second.c_str( );
 }
 
@@ -822,8 +780,6 @@ void n_moi_hud::impl_t::reload_icons( )
 
 	for ( const char* name : k_select_icons )
 		images->reload_changed_file( ( std::string( "materials\\panorama\\images\\icons\\equipment\\" ) + name + ".vsvg" ).c_str( ) );
-
-	botox_dbg_log( "SF: icons re-decoded, %d names", ( int )std::size( k_select_icons ) );
 }
 
 const char* n_moi_hud::impl_t::killfeed_format( const char* stock_format, const char* weapon )

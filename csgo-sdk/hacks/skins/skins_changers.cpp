@@ -121,8 +121,8 @@ void n_skins::impl_t::agent_changer( )
 			return;
 
 		// gloves changer on: it draws hands, spend the string on a sleeve; off: must be hands
-		const bool gloves_active = GET_VARIABLE( g_variables.m_gloves_enable, bool )
-		                        && GET_VARIABLE( g_variables.m_gloves_model, int ) > 0;
+		const bool gloves_active = GET_VARIABLE( PLAYER_VAR( m_gloves_enable ), bool )
+		                        && GET_VARIABLE( PLAYER_VAR( m_gloves_model ), int ) > 0;
 
 		const char* const* list = gloves_active ? fb->m_sleeves : fb->m_hands;
 
@@ -225,17 +225,17 @@ void n_skins::impl_t::knife_changer( )
 	if ( !weapons )
 		return;
 
-	const bool knife_enable = GET_VARIABLE( g_variables.m_knife_enable, bool );
-	const int knife_model   = GET_VARIABLE( g_variables.m_knife_model, int );
-	const int knife_paint   = GET_VARIABLE( g_variables.m_knife_paint_kit, int );
-	const int knife_seed    = GET_VARIABLE( g_variables.m_knife_seed, int );
+	const bool knife_enable = GET_VARIABLE( WEAPON_VAR( m_knife_enable ), bool );
+	const int knife_model   = GET_VARIABLE( WEAPON_VAR( m_knife_model ), int );
+	const int knife_paint   = GET_VARIABLE( WEAPON_VAR( m_knife_paint_kit ), int );
+	const int knife_seed    = GET_VARIABLE( WEAPON_VAR( m_knife_seed ), int );
 
-	float knife_wear = GET_VARIABLE( g_variables.m_knife_wear, float );
+	float knife_wear = GET_VARIABLE( WEAPON_VAR( m_knife_wear ), float );
 
-	if ( GET_VARIABLE( g_variables.m_knife_custom_color, bool ) ) {
+	if ( GET_VARIABLE( WEAPON_VAR( m_knife_custom_color ), bool ) ) {
 		const c_color* const knife_colors[ 4 ] = {
-			&GET_VARIABLE( g_variables.m_knife_color_1, c_color ), &GET_VARIABLE( g_variables.m_knife_color_2, c_color ),
-			&GET_VARIABLE( g_variables.m_knife_color_3, c_color ), &GET_VARIABLE( g_variables.m_knife_color_4, c_color )
+			&GET_VARIABLE( WEAPON_VAR( m_knife_color_1 ), c_color ), &GET_VARIABLE( WEAPON_VAR( m_knife_color_2 ), c_color ),
+			&GET_VARIABLE( WEAPON_VAR( m_knife_color_3 ), c_color ), &GET_VARIABLE( WEAPON_VAR( m_knife_color_4 ), c_color )
 		};
 
 		knife_wear = wear_with_color_key( knife_wear, knife_colors );
@@ -272,25 +272,25 @@ void n_skins::impl_t::knife_changer( )
 
 	static const std::string no_name{ };
 
-	const bool weapon_skins_enable = GET_VARIABLE( g_variables.m_weapon_skins_enable, bool );
+	const bool weapon_skins_enable = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_enable ), bool );
 	if ( weapon_skins_enable )
 		weapons_touched = true;
 
-	auto& paint_kits               = GET_VARIABLE( g_variables.m_weapon_skins_paint_kit, std::vector< int > );
-	auto& wears                    = GET_VARIABLE( g_variables.m_weapon_skins_wear, std::vector< float > );
-	auto& seeds                    = GET_VARIABLE( g_variables.m_weapon_skins_seed, std::vector< int > );
-	auto& stattraks                = GET_VARIABLE( g_variables.m_weapon_skins_stattrak, std::vector< bool > );
-	auto& stattrak_kills           = GET_VARIABLE( g_variables.m_weapon_skins_stattrak_kills, std::vector< int > );
-	auto& custom_names             = GET_VARIABLE( g_variables.m_weapon_skins_custom_name, std::vector< std::string > );
-	auto& custom_colors            = GET_VARIABLE( g_variables.m_weapon_skins_custom_color, std::vector< bool > );
-	auto& colors_1                 = GET_VARIABLE( g_variables.m_weapon_skins_color_1, std::vector< c_color > );
-	auto& colors_2                 = GET_VARIABLE( g_variables.m_weapon_skins_color_2, std::vector< c_color > );
-	auto& colors_3                 = GET_VARIABLE( g_variables.m_weapon_skins_color_3, std::vector< c_color > );
-	auto& colors_4                 = GET_VARIABLE( g_variables.m_weapon_skins_color_4, std::vector< c_color > );
-	auto& sticker_kits             = GET_VARIABLE( g_variables.m_weapon_skins_sticker_kit, std::vector< int > );
-	auto& sticker_wears            = GET_VARIABLE( g_variables.m_weapon_skins_sticker_wear, std::vector< float > );
-	auto& sticker_scales           = GET_VARIABLE( g_variables.m_weapon_skins_sticker_scale, std::vector< float > );
-	auto& sticker_rotations        = GET_VARIABLE( g_variables.m_weapon_skins_sticker_rotation, std::vector< float > );
+	auto& paint_kits               = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_paint_kit ), std::vector< int > );
+	auto& wears                    = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_wear ), std::vector< float > );
+	auto& seeds                    = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_seed ), std::vector< int > );
+	auto& stattraks                = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_stattrak ), std::vector< bool > );
+	auto& stattrak_kills           = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_stattrak_kills ), std::vector< int > );
+	auto& custom_names             = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_custom_name ), std::vector< std::string > );
+	auto& custom_colors            = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_custom_color ), std::vector< bool > );
+	auto& colors_1                 = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_color_1 ), std::vector< c_color > );
+	auto& colors_2                 = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_color_2 ), std::vector< c_color > );
+	auto& colors_3                 = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_color_3 ), std::vector< c_color > );
+	auto& colors_4                 = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_color_4 ), std::vector< c_color > );
+	auto& sticker_kits             = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_kit ), std::vector< int > );
+	auto& sticker_wears            = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_wear ), std::vector< float > );
+	auto& sticker_scales           = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_scale ), std::vector< float > );
+	auto& sticker_rotations        = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_rotation ), std::vector< float > );
 
 	unsigned int weapon_state_hash = weapon_skins_enable ? 2166136261u : 16777619u;
 
@@ -361,9 +361,9 @@ void n_skins::impl_t::knife_changer( )
 				apply_knife_skin( weapon, KNIFE_IDS[ knife_model ], knife_paint, knife_indexes[ knife_model ], knife_wear );
 				weapon->get_fall_back_seed( ) = knife_seed;
 
-				apply_extras( weapon, GET_VARIABLE( g_variables.m_knife_stattrak, bool ),
-				              GET_VARIABLE( g_variables.m_knife_stattrak_kills, int ),
-				              GET_VARIABLE( g_variables.m_knife_custom_name, std::string ), quality_unusual  );
+				apply_extras( weapon, GET_VARIABLE( WEAPON_VAR( m_knife_stattrak ), bool ),
+				              GET_VARIABLE( WEAPON_VAR( m_knife_stattrak_kills ), int ),
+				              GET_VARIABLE( WEAPON_VAR( m_knife_custom_name ), std::string ), quality_unusual  );
 				continue;
 			}
 		} else if ( knife_touched && is_knife_class( weapon_class ) ) {
@@ -496,50 +496,6 @@ void n_skins::impl_t::knife_changer( )
 		weapons_touched = false;
 }
 
-namespace
-{
-	using equip_wearable_t = void( __thiscall* )( void* wearable, void* owner );
-	using this_only_t      = void( __thiscall* )( void* self );
-
-	// hands loadout lookup (0x3E0840) reads CS game rules unchecked: null while loading / after disconnect = crash
-	bool game_rules_up( )
-	{
-		static const auto site =
-			g_modules[ CLIENT_DLL ].find_pattern( "8B 4D 04 E8 ? ? ? ? 8B 0D ? ? ? ? 8B 01 FF 90 98 04 00 00 C6 45 FC 00" );
-		return site && **reinterpret_cast< void*** >( site + 10 );
-	}
-
-	/* evolve's glove apply. unique on the final client.dll: CEconWearable::Equip (0x723170),
-	   C_CSPlayer::InvalidateViewModelArmConfig (0x3EF290, nulls cfg + drops arms on all 3 viewmodels),
-	   C_BaseViewModel::UpdateAllViewmodelAddons (0x215080, rebuilds arms from the equipped glove). glove null = no equip. */
-	void rebuild_arms( c_base_entity* local, c_base_entity* glove, const char* why )
-	{
-		if ( !g_interfaces.m_engine_client->is_in_game( ) || !game_rules_up( ) ) {
-			botox_dbg_log( "GLV: arms %s skipped, game rules down", why );
-			return;
-		}
-
-		static const auto equip = reinterpret_cast< equip_wearable_t >(
-			g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 EC 10 53 8B 5D 08 57 8B F9" ) );
-		static const auto invalidate_arms = reinterpret_cast< this_only_t >(
-			g_modules[ CLIENT_DLL ].find_pattern( "51 56 57 8B F9 33 F6 C7 87 ? ? ? ? 00 00 00 00 56 8B CF E8" ) );
-		static const auto update_addons = reinterpret_cast< this_only_t >(
-			g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 E4 F8 83 EC 2C 53 8B D9 56 57 8B 03 FF 90 F0 03 00 00 8B F8" ) );
-
-		const auto viewmodel = g_interfaces.m_client_entity_list->get< c_base_entity >( local->get_view_model_handle( ) );
-
-		botox_dbg_log( "GLV: arms %s equip %p inval %p addons %p vm %p glove %p", why, equip, invalidate_arms, update_addons, viewmodel,
-		               glove );
-
-		if ( glove && equip )
-			equip( glove, local );
-		if ( invalidate_arms )
-			invalidate_arms( local );
-		if ( viewmodel && update_addons )
-			update_addons( viewmodel );
-	}
-}
-
 void n_skins::impl_t::gloves_changer( )
 {
 	if ( !g_interfaces.m_engine_client->is_connected( ) && !g_interfaces.m_engine_client->is_in_game( ) )
@@ -549,9 +505,9 @@ void n_skins::impl_t::gloves_changer( )
 	if ( !local )
 		return;
 
-	const int glove_model = GET_VARIABLE( g_variables.m_gloves_model, int );
+	const int glove_model = GET_VARIABLE( PLAYER_VAR( m_gloves_model ), int );
 
-	const bool gloves_wanted = GET_VARIABLE( g_variables.m_gloves_enable, bool ) && glove_model > 0 && glove_model < GLOVE_COUNT;
+	const bool gloves_wanted = GET_VARIABLE( PLAYER_VAR( m_gloves_enable ), bool ) && glove_model > 0 && glove_model < GLOVE_COUNT;
 
 	const auto wearables = local->get_wearables_handle( );
 	if ( !wearables )
@@ -595,7 +551,7 @@ void n_skins::impl_t::gloves_changer( )
 			m_forcing_update    = true;
 
 			if ( local->is_alive( ) )
-				rebuild_arms( local, nullptr, "off" );
+				rebuild_player_arms( local, nullptr, "off" );
 		}
 		regen_at  = 0.f;
 		re_arm_at = 0.f;
@@ -614,9 +570,9 @@ void n_skins::impl_t::gloves_changer( )
 		m_forcing_update = true;
 	}
 
-	const float wear      = GET_VARIABLE( g_variables.m_gloves_wear, float );
-	const int paint_kit   = GET_VARIABLE( g_variables.m_gloves_paint_kit, int );
-	const int seed        = GET_VARIABLE( g_variables.m_gloves_seed, int );
+	const float wear      = GET_VARIABLE( PLAYER_VAR( m_gloves_wear ), float );
+	const int paint_kit   = GET_VARIABLE( PLAYER_VAR( m_gloves_paint_kit ), int );
+	const int seed        = GET_VARIABLE( PLAYER_VAR( m_gloves_seed ), int );
 	const int model_index = g_interfaces.m_model_info->get_model_index( GLOVE_MODELS[ glove_model ] );
 
 	const float now = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_current_time : 0.f;
@@ -648,50 +604,18 @@ void n_skins::impl_t::gloves_changer( )
 	const bool regen = regen_at > 0.f && ( now >= regen_at || now < regen_at - 1.f );
 	if ( regen ) {
 		regen_at = 0.f;
-
-		const auto glove_view = item_view_of( glove );
-		const auto view_cmo   = glove_view + ITEM_VIEW_CMO;
-		const auto cmo        = weapon_cmo_offset( );
-		const auto glove_cmo  = cmo ? reinterpret_cast< std::uintptr_t >( glove ) + cmo : 0;
-
-		set_view_attribute( glove_view, "set item texture prefab", static_cast< float >( paint_kit > 0 ? paint_kit : 0 ) );
-		set_view_attribute( glove_view, "set item texture seed", static_cast< float >( paint_kit > 0 ? seed : 0 ) );
-		set_view_attribute( glove_view, "set item texture wear", paint_kit > 0 ? wear : 0.f );
-
-		// game composites a glove once (InitializeAttributes), arms copy the old one off the entity
-		clear_owner( reinterpret_cast< void* >( view_cmo ) );
-		if ( glove_cmo )
-			clear_owner( reinterpret_cast< void* >( glove_cmo ) );
-
-		// arms take the FIRST visuals processor by name (0x717850), stale ones win. ponytail: old ones leak, Release is non-virtual
-		constexpr std::uintptr_t ITEM_VIEW_PROCESSOR_COUNT = 0x23C;
-		*reinterpret_cast< int* >( glove_view + ITEM_VIEW_PROCESSOR_COUNT ) = 0;
-
-		if ( paint_kit > 0 ) {
-			if ( const auto generate = get_update_generated_material( ) )
-				generate( reinterpret_cast< void* >( glove_view ), 0, 0xFFFF, 9 );
-		}
-
-		if ( glove_cmo && custom_material_count( view_cmo ) > 0 && custom_material_count( glove_cmo ) <= 0 ) {
-			using duplicate_t = void( __thiscall* )( void* owner, void* other );
-			const auto vtable = *reinterpret_cast< void*** >( view_cmo );
-			if ( vtable && vtable[ 3 ] )
-				reinterpret_cast< duplicate_t >( vtable[ 3 ] )( reinterpret_cast< void* >( view_cmo ), reinterpret_cast< void* >( glove_cmo ) );
-		}
-
-		botox_dbg_log( "GLV: regen paint %d view mats %d glove mats %d procs %d", paint_kit, custom_material_count( view_cmo ),
-		               glove_cmo ? custom_material_count( glove_cmo ) : -1, *reinterpret_cast< int* >( glove_view + ITEM_VIEW_PROCESSOR_COUNT ) );
+		regen_glove_material( glove, paint_kit, seed, wear );
 	}
 
 	static_cast< c_client_networkable* >( glove )->pre_data_update( 0  );
 
 	// rebuild now, and once more after the skin composite settles
 	if ( regen ) {
-		rebuild_arms( local, glove, "change" );
+		rebuild_player_arms( local, glove, "change" );
 		re_arm_at = now + 0.5f;
 	}
 	else if ( re_arm_at > 0.f && ( now >= re_arm_at || now < re_arm_at - 1.f ) ) {
-		rebuild_arms( local, nullptr, "settle" );
+		rebuild_player_arms( local, nullptr, "settle" );
 		re_arm_at = 0.f;
 	}
 }
@@ -869,7 +793,7 @@ void n_skins::impl_t::knife_anim_live( )
 	const auto viewmodel = g_interfaces.m_client_entity_list->get< c_base_entity >( local->get_view_model_handle( ) );
 	for ( const auto& entry : held ) {
 		if ( entry.m_entity == viewmodel ) {
-			rebuild_arms( local, nullptr, "knife anims" );
+			rebuild_player_arms( local, nullptr, "knife anims" );
 			break;
 		}
 	}

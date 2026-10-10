@@ -15,8 +15,6 @@
 
 #include <cstring>
 
-extern void botox_dbg_log( const char* fmt, ... );
-
 bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, game_event_t* game_event )
 {
 	static auto original = g_hooks.m_fire_event_intern.get_original< decltype( &n_detoured_functions::fire_event_intern ) >( );
@@ -37,13 +35,13 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 		c_base_entity* m_attacker_ent{ };
 
 		switch ( hashed_event ) {
-		case HASH_BT( "game_newmawp" ):
+		case HASH_BT( "game_newmap" ):
 			g_scaleform.m_should_force_update = true;
-			for ( int i = 0; i < 64; i++ ) {
+			for ( int i = 1; i <= 64; i++ ) {
 				g_players.m_stored_cur_time[ i ] = 0.f;
 				g_players.m_fading_alpha[ i ] = 0.f;
 				g_dormancy.m_sound_players[ i ].reset( );
-				g_players.god_on_hurt( i + 1 );
+				g_players.god_on_hurt( i );
 			}
 			break;
 		case HASH_BT( "bot_takeover" ):
@@ -57,11 +55,11 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 			}
 
 			g_scaleform.m_should_update_teamcount_avatar = true;
-			for ( int i = 0; i < 64; i++ ) {
+			for ( int i = 1; i <= 64; i++ ) {
 				g_players.m_stored_cur_time[ i ] = 0.f;
 				g_players.m_fading_alpha[ i ]    = 0.f;
 				g_dormancy.m_sound_players[ i ].reset( );
-				g_players.god_on_hurt( i + 1 );
+				g_players.god_on_hurt( i );
 			}
 			break;
 		case HASH_BT( "player_team" ):
@@ -108,7 +106,6 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 			       ( is_target && ( revive_mode == 2 || revive_mode == 3 ) ) ) ) {
 				const std::string revive = "sm_respawn #" + std::to_string( game_event->get_int( "userid" ) );
 				g_interfaces.m_engine_client->execute_client_cmd( revive.c_str( ) );
-				botox_dbg_log( "REVIVE: %s", revive.c_str( ) );
 			}
 
 			if ( attacker_id == local_id && attacker_id != victim_id ) {
@@ -197,7 +194,6 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 
 				g_interfaces.m_convar->console_color_printf( accent_color, "[hurt] " );
 				g_interfaces.m_convar->console_color_printf( c_unsigned_char_color::console_text_color( ), "%s", out.c_str( ) );
-				botox_dbg_log( "HURT %.*s", static_cast< int >( out.size( ) - 1 ), out.c_str( ) );
 				break;
 			}
 
@@ -206,8 +202,6 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 				break;
 
 			m_group = game_event->get_int( "hitgroup" );
-
-			botox_dbg_log( "HIT: victim=%d group=%d dmg=%d", m_victim, m_group, game_event->get_int( "dmg_health" ) );
 
 			on_hit_marker( );
 			on_hit_sound( );
@@ -268,7 +262,6 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 				g_interfaces.m_convar->console_color_printf( accent_color, "[damage] " );
 				/* "%s", never out as format: enemy names can hold %s / %n */
 				g_interfaces.m_convar->console_color_printf( c_unsigned_char_color::console_text_color( ), "%s", out.c_str( ) );
-				botox_dbg_log( "DMG %.*s", static_cast< int >( out.size( ) - 1 ), out.c_str( ) );
 			}
 			break;
 		}

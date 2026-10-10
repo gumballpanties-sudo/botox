@@ -15,7 +15,6 @@
 #include <deque>
 #include <string_view>
 
-extern void botox_dbg_log( const char* fmt, ... );
 extern bool point_menu_is_opened( );
 
 using namespace n_mc_assets;
@@ -100,12 +99,6 @@ namespace
 			const HRESULT result  = SUCCEEDED( managed ) ? managed : load( D3DUSAGE_DYNAMIC, D3DPOOL_DEFAULT );
 
 			if ( SUCCEEDED( result ) && t.m_texture ) {
-				if ( sprite == sprite_hotbar ) {
-					const char* const line = SUCCEEDED( managed ) ? "MC: textures in managed pool" : "MC: textures in default pool (d3d9ex)";
-					botox_dbg_log( "%s", line );
-					g_console.print( line );
-				}
-
 				D3DSURFACE_DESC desc{ };
 				if ( SUCCEEDED( t.m_texture->GetLevelDesc( 0, &desc ) ) && desc.Width && desc.Height ) {
 					t.m_u = static_cast< float >( s.m_w ) / static_cast< float >( desc.Width );
@@ -116,7 +109,6 @@ namespace
 				t.m_texture = nullptr;
 				char line[ 96 ]{ };
 				sprintf_s( line, "MC: texture %d failed managed=%08lx default=%08lx", sprite, managed, result );
-				botox_dbg_log( "%s", line );
 				g_console.print( line );
 			}
 		}
@@ -328,10 +320,6 @@ void n_mc_hud::impl_t::drain_chat( bool active )
 void n_mc_hud::impl_t::on_paint_traverse( )
 {
 	const bool on = n_mc_hud::enabled( );
-	if ( on != m_was_enabled ) {
-		botox_dbg_log( "MC: hud %s", on ? "on" : "off" );
-		m_was_enabled = on;
-	}
 
 	auto* const engine = g_interfaces.m_engine_client;
 	const bool in_game = engine && engine->is_in_game( ) && g_ctx.m_local;
@@ -349,7 +337,6 @@ void n_mc_hud::impl_t::on_paint_traverse( )
 			g_convars.set_if_present( HASH_BT( "crosshair" ), static_cast< float >( m_saved_crosshair ) );
 
 		m_crosshair_hidden = hide_crosshair;
-		botox_dbg_log( "MC: crosshair %s, saved %d", hide_crosshair ? "hidden" : "restored", m_saved_crosshair );
 	}
 
 	drain_chat( on && in_game );
@@ -357,22 +344,6 @@ void n_mc_hud::impl_t::on_paint_traverse( )
 	snapshot_t s{ };
 	const int draw_hud = g_convars.int_or( HASH_BT( "cl_drawhud" ), 1 );
 	s.m_in_game        = on && in_game && draw_hud != 0;
-
-	{
-		const bool engine_in_game = engine && engine->is_in_game( );
-		const int state = static_cast< int >( on ) | static_cast< int >( engine_in_game ) << 1 | static_cast< int >( g_ctx.m_local != nullptr ) << 2 |
-		                  static_cast< int >( draw_hud != 0 ) << 3 | static_cast< int >( GET_VARIABLE( g_variables.m_mc_hud_crosshair, bool ) ) << 4 |
-		                  static_cast< int >( g_ctx.m_local && g_ctx.m_local->is_alive( ) ) << 5;
-		static int s_state = -1;
-		if ( state != s_state ) {
-			s_state = state;
-			char line[ 160 ]{ };
-			sprintf_s( line, "MC: state on=%d in_game=%d local=%d drawhud=%d xhair_opt=%d alive=%d", on, engine_in_game, g_ctx.m_local != nullptr,
-			           draw_hud, ( state >> 4 ) & 1, ( state >> 5 ) & 1 );
-			botox_dbg_log( "%s", line );
-			g_console.print( line );
-		}
-	}
 
 	if ( s.m_in_game ) {
 		c_base_entity* const local = g_ctx.m_local;
@@ -609,25 +580,12 @@ void n_mc_hud::impl_t::on_end_scene( )
 	if ( !n_mc_hud::enabled( ) )
 		return;
 
-	static int s_drawn = -1;
-	const auto draw_log = [ & ]( int key, const char* why, int a = 0, int b = 0, int c = 0 ) {
-		if ( key != s_drawn ) {
-			s_drawn = key;
-			char line[ 160 ]{ };
-			sprintf_s( line, "MC: draw %s %d %d %d", why, a, b, c );
-			botox_dbg_log( "%s", line );
-			g_console.print( line );
-		}
-	};
-
 	snapshot_t s{ };
 	std::vector< line_t > lines{ };
 	{
 		std::lock_guard< std::mutex > lock( m_lock );
-		if ( !m_snapshot.m_in_game ) {
-			draw_log( 0, "skip, snapshot not in game" );
+		if ( !m_snapshot.m_in_game )
 			return;
-		}
 
 		s = m_snapshot;
 		const size_t keep = std::min< size_t >( s_lines.size( ), 20 );
@@ -645,17 +603,10 @@ void n_mc_hud::impl_t::on_end_scene( )
 	}
 
 	const int w = static_cast< int >( g_ctx.m_width ), h = static_cast< int >( g_ctx.m_height );
-	if ( w <= 0 || h <= 0 ) {
-		draw_log( 1, "skip, screen size", w, h );
+	if ( w <= 0 || h <= 0 )
 		return;
-	}
 
 	const int scale = n_mc_logic::gui_scale( w, h, std::max( GET_VARIABLE( g_variables.m_mc_hud_gui_scale, int ), 0 ) );
-	draw_log( 2 + scale * 2 + s.m_alive, "frame w h scale", w, h, scale );
-	if ( static bool s_logged = false; !s_logged && !texture( sprite_hotbar ) ) {
-		s_logged = true;
-		botox_dbg_log( "MC: draw hotbar texture missing, device=%p", g_interfaces.m_direct_device );
-	}
 	const int sw = n_mc_logic::scaled( w, scale ), sh = n_mc_logic::scaled( h, scale );
 	const int cx = sw / 2;
 

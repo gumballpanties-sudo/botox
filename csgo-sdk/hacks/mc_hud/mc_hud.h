@@ -49,7 +49,6 @@ namespace n_mc_hud
 		snapshot_t m_snapshot{ };
 		std::mutex m_lock{ }; // m_snapshot + chat history (mc_hud.cpp)
 
-		bool m_was_enabled      = false;
 		bool m_crosshair_hidden = false;
 		int m_saved_crosshair   = 1;
 

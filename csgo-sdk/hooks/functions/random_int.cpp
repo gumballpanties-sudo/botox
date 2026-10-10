@@ -27,6 +27,5 @@ int __cdecl n_detoured_functions::random_int( int min, int max )
 		return original( min, max );
 
 	original( min, max ); // stream advances like a real roll
-	botox_dbg_log( "[spin] local roll rigged -> lookat02" );
 	return max;
 }

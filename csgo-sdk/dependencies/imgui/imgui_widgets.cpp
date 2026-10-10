@@ -2039,8 +2039,14 @@ inline const char* key_names[] = {
 	"[f1]",  "[f2]",  "[f3]",  "[f4]",  "[f5]",  "[f6]",  "[f7]",  "[f8]",  "[f9]",  "[f10]", "[f11]", "[f12]", "[f13]", "[f14]", "[f15]", "[f16]",
 	"[f17]", "[f18]", "[f19]", "[f20]", "[f21]", "[f22]", "[f23]", "[f24]", "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",
 	"[num]", "[scr]", "[equ]", "[mas]", "[toy]", "[oya]", "[oya]", "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",
-	"[shi]", "[shi]", "[ctr]", "[ctr]", "[alt]", "[alt]"
+	"[shi]", "[shi]", "[ctr]", "[ctr]", "[alt]", "[alt]", "[bbk]", "[bfw]", "[brf]", "[bst]", "[bse]", "[bfa]", "[bho]", "[mut]", "[vo-]", "[vo+]",
+	"[nxt]", "[prv]", "[stp]", "[ply]", "[mai]", "[sel]", "[ap1]", "[ap2]", "[-]",   "[-]",   "[;]",   "[=]",   "[,]",   "[dsh]", "[.]",   "[/]",
+	"[`]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",
+	"[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[-]",   "[[]",   "[\\]", "[]]",   "[']",   "[oe8]",
+	"[-]",   "[oem]", "[<>]",  "[oem]", "[oem]", "[ime]", "[oem]", "[pkt]", "[-]",   "[oem]", "[oem]", "[oem]", "[oem]", "[oem]", "[oem]", "[oem]",
+	"[oem]", "[oem]", "[oem]", "[oem]", "[oem]", "[oem]", "[att]", "[crs]", "[exs]", "[eof]", "[ply]", "[zoo]", "[-]",   "[pa1]", "[clr]", "[-]"
 };
+static_assert( IM_ARRAYSIZE( key_names ) == 256, "key_names covers every vk" );
 
 bool ImGui::Keybind( const char* label, key_bind_t* key_data, bool has_style )
 {
@@ -2055,6 +2061,9 @@ bool ImGui::Keybind( const char* label, key_bind_t* key_data, bool has_style )
 	const ImGuiID id        = window->GetID( label );
 
 	char buf_display[ 64 ] = ( "[none]" );
+
+	if ( key_data->m_key < 0 || key_data->m_key > 255 )
+		key_data->m_key = 0;
 
 	if ( key_data->m_key != 0 && g.ActiveId != id )
 		strcpy_s( buf_display, key_names[ key_data->m_key ] );
@@ -2123,8 +2132,9 @@ bool ImGui::Keybind( const char* label, key_bind_t* key_data, bool has_style )
 		}
 
 		if ( !value_changed ) {
-			for ( auto i = 0x08; i <= 0xA5; i++ ) {
-				if ( io.KeysDown[ i ] ) {
+			// every vk but ime-composition / injected-unicode, which carry no real key
+			for ( auto i = 0x08; i <= 0xFE; i++ ) {
+				if ( io.KeysDown[ i ] && i != 0xE5 && i != 0xE7 ) {
 					k             = i;
 					value_changed = true;
 					ImGui::ClearActiveID( );

@@ -440,9 +440,6 @@ void n_scaleform::impl_t::hud_removal( )
 			m_should_force_update = true;
 	}
 
-	if ( change )
-		botox_dbg_log( "HUDRM: mask=%x was=%x chud=%d hide=[%s]", mask, s_hud_rm_mask, chud, hide.c_str( ) );
-
 	s_hud_rm_mask = mask;
 	s_hud_rm_chud = chud;
 }
@@ -1612,8 +1609,6 @@ void n_scaleform::impl_t::classic_off( )
 	if ( !m_uiengine || !m_hud_panel )
 		return;
 
-	botox_dbg_log( "SF: classic off -> %s", GET_VARIABLE( g_variables.m_scaleform, bool ) ? "moi" : "stock" );
-
 	run_on( m_hud_panel, k_classic_off );
 
 	g_moi_hud.reload( m_hud_panel );
@@ -1630,7 +1625,6 @@ void n_scaleform::impl_t::restore_showloadout( )
 		return;
 
 	g_convars.set_if_present( HASH_BT( "cl_showloadout" ), static_cast< float >( m_saved_showloadout ) );
-	botox_dbg_log( "SF: cl_showloadout back to %d", m_saved_showloadout );
 	m_saved_showloadout = -1;
 }
 
@@ -1760,8 +1754,6 @@ void n_scaleform::impl_t::on_createmove( )
 
 		if ( !m_uiengine )
 			m_uiengine = g_interfaces.m_panorama->access_ui_engine( );
-
-		botox_dbg_log( "SF: force hud update, classic applied=%d moi=%d", ( int )m_classic_applied, ( int )g_moi_hud.serving( ) );
 
 		if ( m_classic_applied ) {
 			classic_off( );

@@ -88,6 +88,7 @@
     <ClCompile Include="hacks\mc_hud\mc_hud.cpp" />
     <ClCompile Include="hacks\animations\animations.cpp" />
     <ClCompile Include="hacks\visuals\players\dormancy\dormancy.cpp" />
+    <ClCompile Include="hacks\network\botox_net.cpp" />
     <ClCompile Include="hacks\visuals\players\sound_esp\sound_esp.cpp" />
     <ClCompile Include="hacks\avatar_cache\avatar_cache.cpp" />
     <ClCompile Include="game\sdk\classes\c_key_values.cpp" />
@@ -159,6 +160,7 @@
     <ClCompile Include="hooks\functions\sv_pure.cpp" />
     <ClCompile Include="hooks\functions\tier0_warning.cpp" />
     <ClCompile Include="hooks\functions\send_net_msg.cpp" />
+    <ClCompile Include="hooks\functions\svc_msg_voice_data.cpp" />
     <ClCompile Include="hooks\functions\set_image_data_r8g8b8a8.cpp" />
     <ClCompile Include="hooks\functions\set_visuals_data.cpp" />
     <ClCompile Include="hooks\functions\view_draw_fade.cpp" />
@@ -385,6 +387,7 @@
     <ClInclude Include="hacks\animations\animations.h" />
     <ClInclude Include="game\sdk\structs\renderable_info_t.h" />
     <ClInclude Include="hacks\visuals\players\dormancy\dormancy.h" />
+    <ClInclude Include="hacks\network\botox_net.h" />
     <ClInclude Include="hacks\visuals\players\sound_esp\sound_esp.h" />
     <ClInclude Include="game\sdk\classes\c_engine_sound.h" />
     <ClInclude Include="game\sdk\classes\c_csgo_hud_radar.h" />

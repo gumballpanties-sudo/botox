@@ -73,6 +73,7 @@ namespace n_hooks
 		c_detour_hook m_is_paused{ };
 		c_detour_hook m_is_playing_demo{ };
 		c_detour_hook m_send_net_msg{ };
+		c_detour_hook m_svc_msg_voice_data{ };
 		c_detour_hook m_draw_static_prop_array_fast{ };
 		c_detour_hook m_push_notice{ };
 		c_detour_hook m_set_visuals_data{ };
@@ -167,6 +168,7 @@ namespace n_detoured_functions
 	bool __fastcall is_paused( void* ecx, void* edx );
 	bool __fastcall is_playing_demo( void* ecx, void* edx );
 	bool __fastcall send_net_msg( void* ecx, void* edx, c_net_message* message, bool force_reliable, bool voice );
+	bool __fastcall svc_msg_voice_data( void* ecx, void* edx, const void* message );
 	void __fastcall push_notice( void* ecx, void* edx, const char* text, int str_len, const char* null );
 	void __fastcall set_visuals_data( void* ecx, void* edx, const char* shader_name );
 

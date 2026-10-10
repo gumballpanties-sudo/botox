@@ -440,13 +440,13 @@ void n_movement::impl_t::on_create_move_pre( )
 					if ( aa_calls )
 						botox_dbg_log(
 						    "AA: calls=%lld avg=%lldus worst=%lldus total=%lldus/s sims=%lld simavg=%.1f simworst=%lld gate=%d reach=%d fail=%d ipt=%.5f "
-						    "nowall=%d noface=%d away=%d angle=%d pin=%d touch=%d miss=%d fine=%d park=%d unstick=%d keep=%d tb=%d stomp=%d poff=%d slant=%d",
+						    "nowall=%d noface=%d away=%d angle=%d pin=%d touch=%d miss=%d fine=%d park=%d unstick=%d keep=%d tb=%d stomp=%d poff=%d slant=%d lip=%d",
 						    aa_calls, aa_total / aa_calls, aa_worst, aa_total, aa_sim_total,
 						    static_cast< float >( aa_sim_total ) / static_cast< float >( aa_calls ), aa_sim_worst, aa_gate_skips, aa_reach_skips,
 						    aa_fail_skips, n_tick::interval( ), aa_outs[ aa_out_near ], aa_outs[ aa_out_face ], aa_outs[ aa_out_away ],
 						    aa_outs[ aa_out_angle ], aa_outs[ aa_out_pin ], aa_outs[ aa_out_touch ], aa_outs[ aa_out_miss ], aa_outs[ aa_out_fine ],
 						    aa_outs[ aa_out_park ], aa_outs[ aa_out_unstick ], aa_outs[ aa_out_keep ], aa_outs[ aa_out_tb ], aa_outs[ aa_out_stomp ], aa_outs[ aa_out_park_off ],
-							    aa_outs[ aa_out_slant ] );
+							    aa_outs[ aa_out_slant ], aa_outs[ aa_out_lip ] );
 					aa_total = aa_calls = aa_worst = aa_sim_total = aa_sim_worst = 0ll;
 					aa_gate_skips = aa_reach_skips = aa_fail_skips = 0;
 					std::fill( std::begin( aa_outs ), std::end( aa_outs ), 0 );

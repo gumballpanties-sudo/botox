@@ -50,8 +50,15 @@ namespace n_media_player
 
 		float get_progress( );
 		double get_position_ms( );
+		long long get_total_ms( );
 
-		/* synced lyrics from lrclib, fetched on the media thread when the track changes. empty = none / not found */
+		enum e_command : int { command_none, command_previous, command_toggle, command_next };
+		// any thread: queued, the media thread runs it on the shown source
+		void request( const e_command command ) { this->m_command = command; }
+		// media thread: true = ran one
+		bool run_command( );
+
+		/* synced lyrics from lrclib, fetched on the lyrics thread when the track changes. empty = none / not found */
 		struct lyric_line_t {
 			double m_start_ms;
 			std::string m_text;
@@ -76,6 +83,11 @@ namespace n_media_player
 		std::mutex m_mutex{ };
 		std::string m_title{ }, m_artist{ };
 		std::wstring m_source_app{ }; // session's AppUserModelId ( no session: audible app's exe path ), empty = nothing
+		enum e_source : int { source_none, source_session, source_kopuz, source_app } m_source_kind{ };
+		std::atomic< int > m_command{ };
+		// media thread only. an audible-only app ( no SMTC, e.g. opera ) goes silent once paused, keep it shown as paused
+		bool m_app_paused{ };
+		std::chrono::steady_clock::time_point m_app_paused_at{ };
 		std::vector< unsigned char > m_thumbnail{ };
 		bool m_thumbnail_dirty{ };
 		std::wstring m_thumbnail_key{ }; // media thread only

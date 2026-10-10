@@ -4,7 +4,6 @@
 #include "../prediction/prediction.h"
 #include "tick_scale.h"
 #include "wall_climb.h"
-#include "edge_skip.h"
 #include <cstring>
 
 extern bool g_air_stuck_owns_cmd;
@@ -683,9 +682,9 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			break;
 		}
 		const int now_tick = g_interfaces.m_global_vars_base->m_tick_count;
-		const bool every_tick = ( m_last_contact_tick >= 0 && m_last_contact_tick <= n_tick::ticks( 4 ) );
-		const bool mid_range  = ( m_last_contact_tick >= 0 && m_last_contact_tick <= n_tick::ticks( 12 ) );
-		if ( m_last_search_tick >= 0 && now_tick - m_last_search_tick < n_tick::ticks( mid_range ? 2 : 3 ) && !every_tick ) {
+		// every tick within 12 of contact: 10-10 log short falls got 5 searches at 2/3 gaps
+		const bool every_tick = ( m_last_contact_tick >= 0 && m_last_contact_tick <= n_tick::ticks( 12 ) );
+		if ( m_last_search_tick >= 0 && now_tick - m_last_search_tick < n_tick::ticks( 2 ) && !every_tick ) {
 			eb_n_gap++;
 			break;
 		}
@@ -753,28 +752,10 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			r.last     = -1;
 			r.complete = false;
 		}
-		constexpr float k_nudge_yaw = 4.f, k_nudge_cap = 15.f;
-		float nudge_yaw = 0.f;
 		constexpr float k_land_air = 1e9f, k_land_bad = -1e9f;
 		float yaw_off = 0.f, last_land = k_land_bad;
 		bool in_bracket = false;
 		long long rst_us = 0ll;
-		int burst_ticks  = 0;
-		float burst_side = 0.f;
-		const auto burst_strafe = [ & ]( ) {
-			cmd->m_forward_move = 0.f;
-			cmd->m_side_move    = 0.f;
-			const c_vector vel  = g_ctx.m_local->get_velocity( );
-			if ( vel.length_2d( ) < 1.f )
-				return;
-			const float ang     = n_edge_skip::perfect_angle( vel, g_ctx.m_local->get_surface_friction( ), g_ctx.m_local->get_max_speed( ) );
-			c_angle wish        = cmd->m_view_point;
-			wish.m_x            = 0.f;
-			wish.m_z            = 0.f;
-			wish.m_y            = rad2deg( atan2f( vel.m_y, vel.m_x ) ) + ( burst_side > 0.f ? ang : -ang );
-			cmd->m_side_move    = burst_side > 0.f ? 450.f : -450.f;
-			CommitStrafe( cmd, wish );
-		};
 		int sweep_first[ 8 ]{ }, sweep_last[ 8 ]{ };
 		const int snap_slots = std::min( g_prediction.snapshot_slots( ), static_cast< int >( std::size( m_snap_aux ) ) );
 		int snap_used = 0, snap_runs = 0, snap_ticks = 0;
@@ -792,7 +773,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			   begin( ) never steps the tickbase, restore puts it back */
 			const int tick_base0 = g_ctx.m_local->get_tick_base( );
 			start_ducked         = ( g_ctx.m_local->get_flags( ) & fl_ducking ) != 0;
-			base_ref_t* ref = ( duck_at < 0 && undo_at < 0 && turn == 1.f && burst_ticks == 0 && yaw_off == 0.f ) ? &m_base_ref[ v ] : nullptr;
+			base_ref_t* ref = ( duck_at < 0 && undo_at < 0 && turn == 1.f && yaw_off == 0.f ) ? &m_base_ref[ v ] : nullptr;
 			float land      = k_land_air;
 			if ( ref ) {
 				ref->last      = -1;
@@ -809,7 +790,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			cmd->m_buttons = user_buttons;
 			c_angle current_angle = cmd->m_view_point;
 			contact_tick = -1;
-			const int snap_fam  = ( snap_off || nudge_yaw != 0.f || ( v & 1 ) ) ? -1
+			const int snap_fam  = ( snap_off || ( v & 1 ) ) ? -1
 			                      : ( duck_at > 0 && undo_at < 0 ) ? v
 			                      : ( duck_at == 0 && undo_at > 0 ) ? v + 1 : -1;
 			const int switch_at = undo_at > 0 ? undo_at : duck_at;
@@ -843,10 +824,6 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				cmd->m_forward_move = user_fwd;
 				cmd->m_side_move = user_side;
 				advance_view( );
-				if ( nudge_yaw != 0.f )
-					current_angle.m_y = std::remainderf(
-						orig_viewangle.m_y + std::clamp( std::remainderf( current_angle.m_y + nudge_yaw - orig_viewangle.m_y, 360.f ), -k_nudge_cap, k_nudge_cap ),
-						360.f );
 				cmd->m_view_point = current_angle;
 				cmd->m_view_point.m_y += yaw_off;
 				start_movement_fix( cmd );
@@ -869,7 +846,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				pl.ticks   = tick_index;
 				pl.variant = v;
 				pl.turn    = turn;
-				pl.src     = in_bracket ? 7 : burst_ticks > 0 ? 6 : undo_at >= 0 ? 4 : duck_at >= 0 ? 3 : ( turn < 0.f || nudge_yaw != 0.f ) ? 5 : turn < 1.f ? 2 : 1;
+				pl.src     = in_bracket ? 7 : undo_at >= 0 ? 4 : duck_at >= 0 ? 3 : turn < 1.f ? 2 : 1;
 				pl.end_pos = end_pos;
 			};
 			for ( int i = resume; i < run_ticks || ( pending >= 0 && i < max_ticks ); i++ ) {
@@ -899,8 +876,6 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 						cmd->m_buttons &= ~in_duck;
 					cmd->m_forward_move = 0.f;
 					cmd->m_side_move = 0.f;
-					if ( i < burst_ticks )
-						burst_strafe( );
 					break;
 				case 2:
 				case 3:
@@ -1022,10 +997,10 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				}
 				search_vel_backup = g_ctx.m_local->get_velocity( );
 				// still pair probes its own 1u ballistic hull: the 32u one keeps a wall beside the path in reach. never before a pending
-				// release ( it drops the feet 9u under the probed hull ). a burst still pushing bends the arc: 32u hull until it ends
+				// release ( it drops the feet 9u under the probed hull )
 				if ( pending < 0 && i > reach_tick && i + probe_every < run_ticks && ( undo_at < 0 || i >= undo_at ) &&
 				     ( ( i - reach_tick ) % probe_every ) == 0 &&
-				     ( ( v < 2 && i + 1 >= burst_ticks ) ? eb_first_reach_tick( still_hull, g_ctx.m_local->get_origin( ), search_vel_backup, run_ticks - i - 1, still_segs )
+				     ( v < 2 ? eb_first_reach_tick( still_hull, g_ctx.m_local->get_origin( ), search_vel_backup, run_ticks - i - 1, still_segs )
 				             : eb_first_reach_tick( hull, g_ctx.m_local->get_origin( ), search_vel_backup, run_ticks - i - 1 ) ) < 0 ) {
 					tail_cut_ticks += run_ticks - i - 1;
 					if ( ref )
@@ -1104,129 +1079,6 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		}
 		float sweep_turn[ 8 ] = { 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f };
 		int fan_runs          = 0;
-		if ( !enough( ) && fabsf( delta_angle.m_y ) * static_cast< float >( run_ticks ) >= 0.5f ) {
-			const int fan_n = std::max( depth, 2 );
-			for ( int k = fan_n - 1; k >= 0 && !enough( ); k-- ) {
-				const float turn = static_cast< float >( k ) / static_cast< float >( fan_n );
-				for ( int v = steer ? 2 : 4; v <= 5 && !enough( ); v++ ) {
-					if ( !base_ran[ v ] )
-						continue;
-					if ( out_of_budget( ) ) {
-						k = -1;
-						break;
-					}
-					run_variant( v, -1, -1, turn );
-					fan_runs++;
-					if ( br_turn_n[ v ] < 6 )
-						br_turn[ v ][ br_turn_n[ v ]++ ] = { turn, last_land };
-					if ( contact_tick > best_contact )
-						best_contact = contact_tick;
-					if ( v == 4 && sweep_approx[ v ] && contact_tick > 0 ) {
-						sweep_center[ v ] = contact_tick;
-						sweep_approx[ v ] = false;
-						sweep_turn[ v ]   = turn;
-					}
-				}
-			}
-		}
-		// 111 delta sweep ( types 2 / 3 ): your keys turned the other way, or nudged both ways with a still mouse.
-		// shifts where a small lip is crossed; never a sweep reference ( turn != 1 )
-		int delta_runs     = 0;
-		const bool turning = fabsf( delta_angle.m_y ) * static_cast< float >( run_ticks ) >= 0.5f;
-		for ( int pass = 0; pass < ( turning ? 1 : 2 ) && !enough( ) && !replan; pass++ ) {
-			nudge_yaw = turning ? 0.f : ( pass == 0 ? k_nudge_yaw : -k_nudge_yaw );
-			for ( int v = 4; v <= 5 && !enough( ); v++ ) {
-				if ( !base_ran[ v ] )
-					continue;
-				if ( out_of_budget( ) ) {
-					pass = 2;
-					break;
-				}
-				run_variant( v, -1, -1, turning ? -1.f : 0.f );
-				delta_runs++;
-				if ( contact_tick > best_contact )
-					best_contact = contact_tick;
-			}
-		}
-		nudge_yaw = 0.f;
-		int br_runs = 0, br_pairs = 0;
-		if ( !enough( ) && !replan ) {
-			constexpr float k_br_off[ ] = { 4.f, -4.f, 10.f, -10.f };
-			constexpr int k_br_iters    = 5;
-			br_pt_t br_off[ 8 ][ 1 + std::size( k_br_off ) ];
-			int br_off_n[ 8 ]{ };
-			const auto differ = [ & ]( const float a, const float b ) {
-				return ( a >= k_land_air ) != ( b >= k_land_air ) || ( a < k_land_air && fabsf( a - b ) > 0.25f );
-			};
-			bool stop  = false;
-			in_bracket = true;
-			for ( int v = 2; v <= 5; v++ )
-				if ( base_ran[ v ] && br_turn_n[ v ] > 0 && br_turn[ v ][ 0 ].land != k_land_bad )
-					br_off[ v ][ br_off_n[ v ]++ ] = { 0.f, br_turn[ v ][ 0 ].land };
-			for ( const float off : k_br_off ) {
-				for ( int v = 2; v <= 5 && !stop; v++ ) {
-					if ( br_off_n[ v ] == 0 )
-						continue;
-					if ( enough( ) || out_of_budget( ) ) {
-						stop = true;
-						break;
-					}
-					yaw_off = off;
-					run_variant( v, -1 );
-					yaw_off = 0.f;
-					br_runs++;
-					if ( last_land != k_land_bad )
-						br_off[ v ][ br_off_n[ v ]++ ] = { off, last_land };
-				}
-			}
-			// air vs ground first, then the tallest step: a slope differs on every pair and must not eat the clock
-			constexpr int k_br_pairs = 4;
-			struct br_pair_t {
-				int v;
-				bool by_turn;
-				br_pt_t lo, hi;
-				float score;
-			};
-			br_pair_t pairs[ 4 * 2 * 5 ];
-			int n_pairs     = 0;
-			const auto scan = [ & ]( const int v, br_pt_t* pts, const int n, const bool by_turn ) {
-				std::sort( pts, pts + n, [ ]( const br_pt_t& a, const br_pt_t& b ) { return a.p < b.p; } );
-				for ( int j = 0; j + 1 < n; j++ ) {
-					const br_pt_t &a = pts[ j ], &b = pts[ j + 1 ];
-					if ( a.land == k_land_bad || b.land == k_land_bad || !differ( a.land, b.land ) )
-						continue;
-					const bool air = ( a.land >= k_land_air ) != ( b.land >= k_land_air );
-					pairs[ n_pairs++ ] = { v, by_turn, a, b, air ? k_land_air : fabsf( a.land - b.land ) };
-				}
-			};
-			for ( int v = 2; v <= 5; v++ ) {
-				scan( v, br_turn[ v ], br_turn_n[ v ], true );
-				scan( v, br_off[ v ], br_off_n[ v ], false );
-			}
-			std::sort( pairs, pairs + n_pairs, [ ]( const br_pair_t& a, const br_pair_t& b ) { return a.score > b.score; } );
-			for ( int j = 0; j < std::min( n_pairs, k_br_pairs ) && !stop; j++ ) {
-				br_pair_t& pr = pairs[ j ];
-				br_pairs++;
-				for ( int it = 0; it < k_br_iters; it++ ) {
-					if ( enough( ) || out_of_budget( ) ) {
-						stop = true;
-						break;
-					}
-					const float mid = ( pr.lo.p + pr.hi.p ) * 0.5f;
-					yaw_off         = pr.by_turn ? 0.f : mid;
-					run_variant( pr.v, -1, -1, pr.by_turn ? mid : 1.f );
-					yaw_off = 0.f;
-					br_runs++;
-					if ( last_found || last_land == k_land_bad )
-						break;
-					if ( differ( pr.lo.land, last_land ) )
-						pr.hi = { mid, last_land };
-					else
-						pr.lo = { mid, last_land };
-				}
-			}
-			in_bracket = false;
-		}
 		int press_skips = 0, release_skips = 0;
 		const auto near3 = []( const c_vector& a, const c_vector& b ) {
 			return fabsf( a.m_x - b.m_x ) < 0.001f && fabsf( a.m_y - b.m_y ) < 0.001f && fabsf( a.m_z - b.m_z ) < 0.001f;
@@ -1292,8 +1144,9 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			               duck_at, undo_at, resumed, d, flags, g_ctx.m_local->get_flags( ), contact, contact_tick, last_found ? 1 : 0 );
 		};
 		int max_off = -1;
-		int burst_runs = 0;
-		if ( !enough( ) && !replan ) {
+		const auto run_sweeps = [ & ]( ) {
+			if ( enough( ) || replan )
+				return;
 			for ( int v = 0; v < 8; v += 2 ) {
 				sweep_last[ v ] = -1;
 				if ( sweep_center[ v ] <= 0 )
@@ -1304,9 +1157,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				if ( const int span = sweep_last[ v ] - sweep_first[ v ]; span > max_off )
 					max_off = span;
 			}
-			const int burst_max = autostrafe ? std::min( depth + 2, run_ticks - 1 ) : 0;
-			const float burst_first = user_side > 0.1f ? 1.f : user_side < -0.1f ? -1.f : delta_angle.m_y > 0.f ? -1.f : 1.f;
-			const int off_end       = std::max( max_off, burst_max - 1 );
+			const int off_end = max_off;
 			for ( int off = 0; off <= off_end && !enough( ); off++ ) {
 				for ( int idx = 0; idx < search_count && !enough( ); idx++ ) {
 					const int v = variant_at( idx );
@@ -1337,24 +1188,113 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 						}
 					}
 				}
-				for ( int s = 0; s < 4 && off < burst_max && !enough( ); s++ ) {
-					const int v = ( s & 1 ) ? 1 - own_first : own_first;
-					if ( ( v & 1 ) && !allow_duck )
+			}
+		};
+		if ( !enough( ) && fabsf( delta_angle.m_y ) * static_cast< float >( run_ticks ) >= 0.5f ) {
+			const int fan_n = std::max( depth, 2 );
+			for ( int k = fan_n - 1; k >= 0 && !enough( ); k-- ) {
+				const float turn = static_cast< float >( k ) / static_cast< float >( fan_n );
+				for ( int v = steer ? 2 : 4; v <= 5 && !enough( ); v++ ) {
+					if ( !base_ran[ v ] )
 						continue;
 					if ( out_of_budget( ) ) {
-						off = off_end;
+						k = -1;
 						break;
 					}
-					burst_ticks = off + 1;
-					burst_side  = s < 2 ? burst_first : -burst_first;
-					run_variant( v, -1 );
-					burst_ticks = 0;
-					burst_runs++;
+					run_variant( v, -1, -1, turn );
+					fan_runs++;
+					if ( br_turn_n[ v ] < 6 )
+						br_turn[ v ][ br_turn_n[ v ]++ ] = { turn, last_land };
 					if ( contact_tick > best_contact )
 						best_contact = contact_tick;
+					if ( v == 4 && sweep_approx[ v ] && contact_tick > 0 ) {
+						sweep_center[ v ] = contact_tick;
+						sweep_approx[ v ] = false;
+						sweep_turn[ v ]   = turn;
+					}
 				}
 			}
 		}
+		int br_runs = 0, br_pairs = 0;
+		if ( !enough( ) && !replan ) {
+			// wide: +-4 rarely straddled a lip ( 10-10 log 6 pairs / 180 searches ). model 103 -> 147 caught at same sims
+			constexpr float k_br_off[ ] = { 10.f, -10.f, 25.f, -25.f, 45.f, -45.f };
+			constexpr int k_br_iters    = 5;
+			br_pt_t br_off[ 8 ][ 1 + std::size( k_br_off ) ];
+			int br_off_n[ 8 ]{ };
+			const auto differ = [ & ]( const float a, const float b ) {
+				return ( a >= k_land_air ) != ( b >= k_land_air ) || ( a < k_land_air && fabsf( a - b ) > 0.25f );
+			};
+			bool stop  = false;
+			in_bracket = true;
+			for ( int v = 2; v <= 5; v++ )
+				if ( base_ran[ v ] && br_turn_n[ v ] > 0 && br_turn[ v ][ 0 ].land != k_land_bad )
+					br_off[ v ][ br_off_n[ v ]++ ] = { 0.f, br_turn[ v ][ 0 ].land };
+			for ( const float off : k_br_off ) {
+				for ( int v = 2; v <= 5 && !stop; v++ ) {
+					if ( br_off_n[ v ] == 0 )
+						continue;
+					if ( enough( ) || out_of_budget( ) ) {
+						stop = true;
+						break;
+					}
+					yaw_off = off;
+					run_variant( v, -1 );
+					yaw_off = 0.f;
+					br_runs++;
+					if ( last_land != k_land_bad )
+						br_off[ v ][ br_off_n[ v ]++ ] = { off, last_land };
+				}
+			}
+			// air vs ground first, then the tallest step: a slope differs on every pair and must not eat the clock
+			constexpr int k_br_pairs = 4;
+			struct br_pair_t {
+				int v;
+				bool by_turn;
+				br_pt_t lo, hi;
+				float score;
+			};
+			br_pair_t pairs[ 4 * ( 5 + std::size( k_br_off ) ) ];
+			int n_pairs     = 0;
+			const auto scan = [ & ]( const int v, br_pt_t* pts, const int n, const bool by_turn ) {
+				std::sort( pts, pts + n, [ ]( const br_pt_t& a, const br_pt_t& b ) { return a.p < b.p; } );
+				for ( int j = 0; j + 1 < n; j++ ) {
+					const br_pt_t &a = pts[ j ], &b = pts[ j + 1 ];
+					if ( a.land == k_land_bad || b.land == k_land_bad || !differ( a.land, b.land ) )
+						continue;
+					const bool air = ( a.land >= k_land_air ) != ( b.land >= k_land_air );
+					pairs[ n_pairs++ ] = { v, by_turn, a, b, air ? k_land_air : fabsf( a.land - b.land ) };
+				}
+			};
+			for ( int v = 2; v <= 5; v++ ) {
+				scan( v, br_turn[ v ], br_turn_n[ v ], true );
+				scan( v, br_off[ v ], br_off_n[ v ], false );
+			}
+			std::sort( pairs, pairs + n_pairs, [ ]( const br_pair_t& a, const br_pair_t& b ) { return a.score > b.score; } );
+			for ( int j = 0; j < std::min( n_pairs, k_br_pairs ) && !stop; j++ ) {
+				br_pair_t& pr = pairs[ j ];
+				br_pairs++;
+				for ( int it = 0; it < k_br_iters; it++ ) {
+					if ( enough( ) || out_of_budget( ) ) {
+						stop = true;
+						break;
+					}
+					const float mid = ( pr.lo.p + pr.hi.p ) * 0.5f;
+					yaw_off         = pr.by_turn ? 0.f : mid;
+					run_variant( pr.v, -1, -1, pr.by_turn ? mid : 1.f );
+					yaw_off = 0.f;
+					br_runs++;
+					if ( last_found || last_land == k_land_bad )
+						break;
+					if ( differ( pr.lo.land, last_land ) )
+						pr.hi = { mid, last_land };
+					else
+						pr.lo = { mid, last_land };
+				}
+			}
+			in_bracket = false;
+		}
+		run_sweeps( );
 		m_last_contact_tick = best_contact >= 0 ? best_contact : reach_tick;
 		float sel_err = 0.f;
 		for ( int p = 0; p < m_plan_count; p++ ) {
@@ -1421,9 +1361,9 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			viz_alts( sel );
 			eb_n_hit++;
 		}
-		botox_dbg_log( "EB: mode=%d dep=%d ty=%d%d as=%d win=%d run=%d reach=%d sreach=%d edge=%d et=%d base=%d st=%d fan=%d dsw=%d br=%d/%d bu=%d sw=%d psk=%d rel=%d rsk=%d snp=%d/%d/%d rs=%d rr=%d ru=%d cg=%d cl=%d sims=%d/%d cut=%d us=%lld/%lld rst=%lld con=%d ipt=%.5f vz=%.2f found=%d src=%d var=%d turn=%.2f at=%d tick=%d pth=%d/%d sel=%d err=%.1f rp=%d kp=%d str=%.2f\n",
+		botox_dbg_log( "EB: mode=%d dep=%d ty=%d%d as=%d win=%d run=%d reach=%d sreach=%d edge=%d et=%d base=%d st=%d fan=%d br=%d/%d sw=%d psk=%d rel=%d rsk=%d snp=%d/%d/%d rs=%d rr=%d ru=%d cg=%d cl=%d sims=%d/%d cut=%d us=%lld/%lld rst=%lld con=%d ipt=%.5f vz=%.2f found=%d src=%d var=%d turn=%.2f at=%d tick=%d pth=%d/%d sel=%d err=%.1f rp=%d kp=%d str=%.2f\n",
 		               detection_mode, depth, allow_duck ? 1 : 0, allow_stand ? 1 : 0, autostrafe ? 1 : 0, max_ticks, run_ticks, reach_tick, still_reach,
-		               m_edge_target_valid ? 1 : 0, m_edge_target_valid ? m_edge_target_tick : -1, base_runs, still_skips, fan_runs, delta_runs, br_runs, br_pairs, burst_runs, sweep_runs, press_skips, release_runs, release_skips, snap_runs, snap_ticks, snap_used, rej_stance, rej_slope, rej_rise,
+		               m_edge_target_valid ? 1 : 0, m_edge_target_valid ? m_edge_target_tick : -1, base_runs, still_skips, fan_runs, br_runs, br_pairs, sweep_runs, press_skips, release_runs, release_skips, snap_runs, snap_ticks, snap_used, rej_stance, rej_slope, rej_rise,
 		               confirm_grounded, clip_lands, total_predictions, MAX_PREDICTIONS, tail_cut_ticks, budget.used_us( ),
 		               static_cast< long long >( n_tick::interval( ) * 1000000.f * budget_share ), rst_us, best_contact, n_tick::interval( ),
 		               m_backup_velocity.m_z, sel >= 0 ? 1 : 0, sel >= 0 ? found_src : 0, m_last_variant, sel >= 0 ? found_turn : 0.f, sel >= 0 ? m_prediction_ticks : -1,

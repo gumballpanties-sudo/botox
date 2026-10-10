@@ -14,10 +14,12 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -136,6 +138,32 @@ namespace
 	constexpr float k_non_jump_velocity = 140.f;
 	constexpr float k_step_size = 18.f;
 	constexpr int k_pj_creep_ticks = 3;
+	constexpr float k_min_move_frac = 0.0001f; // MINIMUM_MOVE_FRACTION
+
+	/* TracePlayerBBox vs one box brush face, z only ( the route is 1-D ), float for float: Ray_t::Init centres the hull
+	   ( cmodel.h:88 ), IntersectRayWithBoxBrush ( cmodel.cpp:936 ) hits only a move that crosses the TRUE face and enters
+	   DIST_EPSILON early, CM_ComputeTraceEndpoints ( cmodel.cpp:2254 ) un-centres and adds frac * delta. an end inside
+	   the 1/32 skin is no hit; the next move into the face is then frac 0. up = face over the head ( box mins ) */
+	struct ztrace_t {
+		bool hit   = false;
+		float frac = 1.f;
+		float end  = 0.f;
+	};
+	ztrace_t trace_z( float z, float to, float hull, float face, bool up )
+	{
+		const float half  = hull * 0.5f;
+		const float start = z + half;
+		const float delta = to - z;
+		const float off   = up ? ( face - start ) - half : ( face - start ) + half;
+		ztrace_t t;
+		if ( up ? 0.f < off && !( delta < off ) : 0.f > off && !( delta > off ) ) {
+			const float f = ( up ? off - k_dist_eps : off + k_dist_eps ) * ( 1.f / delta );
+			t.hit  = true;
+			t.frac = f > 0.f ? f : 0.f;
+		}
+		t.end = t.hit ? start + -half + t.frac * delta : start + -half + delta;
+		return t;
+	}
 
 	float approach( float target, float value, float speed )
 	{
@@ -217,13 +245,27 @@ namespace
 			s.on_ground = false;
 			return;
 		}
-		if ( !solid || s.vz > k_non_jump_velocity ||
-		     ( skin ? over <= n_route::k_skin_lo || over >= n_route::k_skin_hi : over > k_ground_catch - k_dist_eps ) )
+		if ( !solid || s.vz > k_non_jump_velocity || ( skin && ( over <= n_route::k_skin_lo || over >= n_route::k_skin_hi ) ) )
+			return;
+		if ( skin ) {
+			s.on_ground = true;
+			s.vz        = 0.f;
+			return;
+		}
+		/* CategorizePosition ( gamemovement.cpp:4609 ): hull traced 2 down ( + step size while grounded ), grounded = it
+		   hits the floor face ( floor_z = standing origin, face 1/32 under it ). snaps only for 0 < frac < 1 */
+		const float face = floor_z - k_dist_eps;
+		const float to   = move_to_end ? ( s.z - k_ground_catch ) - k_step_size : s.z - k_ground_catch;
+		const ztrace_t t = trace_z( s.z, to, hull_top( s ), face, false );
+		const bool in_face = !( s.z > face ); /* never in a 1-D arc: grounded + put on top, as before */
+		if ( !t.hit && !in_face )
 			return;
 		s.on_ground = true;
-		s.vz = 0.f;
-		if ( move_to_end && s.z - floor_z <= k_step_size )
+		s.vz        = 0.f;
+		if ( move_to_end && in_face )
 			s.z = floor_z;
+		else if ( move_to_end && t.frac > 0.f )
+			s.z = t.end;
 	}
 
 	bool duck_allowed( const n_route::sim_t& s )
@@ -309,7 +351,8 @@ namespace
 		s.stamina = ( std::min )( s.stamina + stamina_jump_cost( ) * ( s.vz - startz ), stamina_max( ) );
 	}
 
-	void sim_tick( n_route::sim_t& s, bool jump, bool duck_held, float floor_z, bool solid, bool skin = false )
+	/* walk = a ground tick while moving ( delay hop wait ): WalkMove runs StayOnGround */
+	void sim_tick( n_route::sim_t& s, bool jump, bool duck_held, float floor_z, bool solid, bool skin = false, bool walk = false )
 	{
 		const float half_g = half_gravity_per_tick( );
 
@@ -337,17 +380,30 @@ namespace
 		if ( s.on_ground ) {
 			s.vz   = 0.f;
 			s.fall = 0.f;
-		} else {
-			const float head_pre = s.z + hull_top( s );
-			s.z += s.vz * tick_dt( );
-			if ( s.vz > 0.f && head_pre <= s.roof + k_dist_eps && s.z + hull_top( s ) > s.roof ) {
-				s.z        = s.roof - hull_top( s );
-				s.vz       = 0.f;
-				s.roof_hit = true;
-				s.ceiling  = ( std::min )( s.ceiling, s.roof );
+			/* StayOnGround ( gamemovement.cpp:2494 ): up 2, down to step size under; a hull more than 1/64 off the floor face's
+			   stop goes onto it. a landing inside the 1/32 skin stays there otherwise ( CategorizePosition's frac is 0 ) */
+			if ( walk && solid && !skin ) {
+				const float up    = trace_z( s.z, s.z + 2.f, hull_top( s ), 3.4e38f, true ).end;
+				const ztrace_t dn = trace_z( up, s.z - k_step_size, hull_top( s ), floor_z - k_dist_eps, false );
+				if ( dn.hit && dn.frac > 0.f && std::fabs( s.z - dn.end ) > 0.5f / 32.f )
+					s.z = dn.end;
 			}
-			if ( solid && !skin && s.vz < 0.f && s.z < floor_z )
-				s.z = floor_z;
+		} else {
+			/* TryPlayerMove ( gamemovement.cpp:3266 ), z: one trace into the roof face ( roof = its head trace's end, face 1/32
+			   over ) or the floor face. a tiny fraction moves nothing, a hit clips vz to 0 ( ClipVelocity, axial face,
+			   overbounce 1 ); the rest of the tick and bumps 2-4 go sideways */
+			const bool up    = s.vz > 0.f;
+			const float face = up ? s.roof + k_dist_eps : ( solid && !skin ? floor_z - k_dist_eps : -3.4e38f );
+			const ztrace_t t = trace_z( s.z, s.z + tick_dt( ) * s.vz, hull_top( s ), face, up );
+			if ( !t.hit || t.frac >= k_min_move_frac )
+				s.z = t.end;
+			if ( t.hit ) {
+				s.vz = 0.f;
+				if ( up ) {
+					s.roof_hit = true;
+					s.ceiling  = ( std::min )( s.ceiling, s.roof );
+				}
+			}
 		}
 
 		sim_categorize( s, floor_z, solid, ground_entity, skin );
@@ -442,6 +498,16 @@ namespace
 		float stam_out = 0.f;
 	};
 
+	/* live counts for the split budget: free_virtual never comes back after a free ( the heap keeps the pages ) */
+	std::atomic< long > g_live_steps{ 0 }, g_live_alts{ 0 };
+	template < std::atomic< long >& N >
+	struct live_t {
+		live_t( ) { N.fetch_add( 1, std::memory_order_relaxed ); }
+		live_t( const live_t& ) { N.fetch_add( 1, std::memory_order_relaxed ); }
+		live_t& operator=( const live_t& ) { return *this; }
+		~live_t( ) { N.fetch_sub( 1, std::memory_order_relaxed ); }
+	};
+
 	struct step_t;
 	/* a merged twin's way in, as pointers: prefix = head's prefix + path's elements from `from` on ( head null =
 	   all of path's ). listed as prefix + the lead's elements from len on. strings are only built to compare
@@ -453,6 +519,7 @@ namespace
 		std::size_t len         = 0;
 		unsigned long long hash = 0; /* of route_text( prefix ), continued per merge without building it */
 		bool empty              = false; /* route_text( prefix ) == "" */
+		live_t< g_live_alts > live{ };
 	};
 	/* persistent list: a merge into a twin that shares its list stacks a link on top, never copies the list
 	   ( a copy per twin was most of the memory on big routes ) */
@@ -497,12 +564,28 @@ namespace
 		dep_t dep{ };
 		arr_t arr{ };
 		bool roof = false;
+		/* whole path's route_text hash ( empty = no text yet ) + summed element lengths, without building it */
+		unsigned long long hash = 14695981039346656037ull;
+		bool empty              = true;
+		std::size_t text_len    = 0;
+		live_t< g_live_steps > live{ };
 		int n_el( ) const { return arr.kind == arr_t::none ? 1 : 2; }
 		std::string name( ) const { return roof ? dep.text( ) + " [roof]" : dep.text( ); }
 	};
 
+	/* another state the same presses can leave you in: a box top near the apex lands on whichever tick the hull
+	   crosses onto it ( 10-10 log: one lj hop landed -112.179 and -111.507 on two tries ) */
+	struct shadow_t {
+		n_route::sim_t st{ };
+		bool jb_ok = false;
+		n_route::sim_t jb{ };
+	};
+
 	struct node_t {
 		n_route::sim_t st{ };
+		/* st + others = every state this route can be in; odds = share of landings it still works from */
+		std::vector< shadow_t > others{ };
+		float odds = 1.f;
 		std::shared_ptr< const step_t > path{ };
 		/* only the serial admit writes it, and only while it is the sole owner */
 		std::shared_ptr< alt_list_t > alts{ };
@@ -511,7 +594,8 @@ namespace
 		int cost = 0;
 		float floor       = 0.f;
 		unsigned int mask = n_route::k_all_styles;
-		long long paths = 1;
+		/* rows this node lists: the lead + every merged twin's, same text once ( alts holds only the shown few ) */
+		long long combos = 1;
 		bool jb_ok = false;
 		n_route::sim_t jb{ };
 		bool hop_only = false;
@@ -582,26 +666,45 @@ namespace
 			h = ( h ^ c ) * 1099511628211ull;
 		return h;
 	}
-	std::vector< const step_t* > steps_of( const node_t& n )
+	/* route_text maps each element on its own, so the path's text hash continues per step */
+	void stamp_text( step_t& s )
 	{
-		std::vector< const step_t* > out( static_cast< std::size_t >( n.n_legs ) );
-		std::size_t i = out.size( );
-		for ( const step_t* s = n.path.get( ); s; s = s->up.get( ) )
-			out[ --i ] = s;
-		return out;
+		if ( const step_t* up = s.up.get( ) ) {
+			s.hash     = up->hash;
+			s.empty    = up->empty;
+			s.text_len = up->text_len;
+		}
+		const auto add = [ & ]( const std::string& e ) {
+			s.text_len += e.size( );
+			const std::string t = n_route::route_text( { e } );
+			if ( t.empty( ) )
+				return;
+			if ( !s.empty )
+				s.hash = text_hash( " -> ", s.hash );
+			s.hash  = text_hash( t, s.hash );
+			s.empty = false;
+		};
+		add( s.dep.text( ) );
+		if ( s.arr.kind != arr_t::none )
+			add( s.arr.text( ) );
 	}
-
-	void merge_alts( node_t& keep, const node_t& drop )
+	/* alts past keep_max are never listed ( the list stops at max_results ): counted in combos only */
+	void merge_alts( node_t& keep, const node_t& drop, std::size_t keep_max )
 	{
-		const std::vector< std::string > drop_els = elements_of( drop );
+		const auto full = [ & ]( ) { return keep.alts && keep.alts->size >= keep_max; };
+		if ( full( ) )
+			return;
+		std::vector< std::string > drop_els; /* built on the first alt that needs a tail */
 		const std::size_t len              = static_cast< std::size_t >( keep.n_els );
-		const unsigned long long keep_hash = text_hash( n_route::route_text( elements_of( keep ) ) );
+		const unsigned long long keep_hash = keep.path ? keep.path->hash : text_hash( "" );
 		/* route_text( drop_els from i on ), built once per i: route_text( a + b ) = text a + " -> " + text b ( either
 		   empty = no arrow; no element's text is empty ), so an alt's hash continues over this tail alone */
-		std::vector< std::string > tails( drop_els.size( ) + 1 );
-		std::vector< char > tail_done( drop_els.size( ) + 1, 0 );
+		std::vector< std::string > tails( static_cast< std::size_t >( drop.n_els ) + 1 );
+		std::vector< char > tail_done( tails.size( ), 0 );
 		const auto tail = [ & ]( std::size_t from ) -> const std::string& {
 			if ( !tail_done[ from ] ) {
+				if ( drop_els.empty( ) )
+					drop_els = elements_of( drop );
 				tails[ from ]     = n_route::route_text( std::vector< std::string >( drop_els.begin( ) + static_cast< std::ptrdiff_t >( from ), drop_els.end( ) ) );
 				tail_done[ from ] = 1;
 			}
@@ -621,16 +724,18 @@ namespace
 		};
 		/* same 64 bit text hash = same text ( the lead's, or an alt's of this len ): a collision needs ~2^32 alts on one state */
 		const auto offer = [ & ]( std::shared_ptr< const alt_t > head, std::size_t from, unsigned long long hash, bool empty ) {
-			if ( hash == keep_hash )
+			if ( hash == keep_hash || full( ) )
 				return;
 			for ( const alt_list_t* l = keep.alts.get( ); here( l ); l = l->base.get( ) )
 				if ( l->has( hash ) )
 					return;
 			top( ).push( std::make_shared< const alt_t >( alt_t{ std::move( head ), drop.path, from, len, hash, empty } ) );
 		};
-		offer( nullptr, 0, text_hash( tail( 0 ) ), tail( 0 ).empty( ) );
+		offer( nullptr, 0, drop.path ? drop.path->hash : text_hash( "" ), !drop.path || drop.path->empty );
 		if ( drop.alts )
 			drop.alts->each( [ & ]( const std::shared_ptr< const alt_t >& a ) {
+				if ( full( ) )
+					return;
 				const std::string& t = tail( a->len );
 				unsigned long long h = a->hash;
 				if ( !a->empty && !t.empty( ) )
@@ -703,9 +808,11 @@ namespace
 	}
 	/* dedup key = exact sim state + jumpbug origin + bind history. crouch tier never merges into a crouch-free
 	   twin: the crouch-free search stays the pre-crouch one to the node */
+	/* extra = other states + odds ( 0 for a one-state route, so those keys are what they always were ) */
 	struct node_key_t {
 		unsigned int w[ 15 ]{ };
-		bool operator==( const node_key_t& o ) const { return memcmp( w, o.w, sizeof( w ) ) == 0; }
+		unsigned long long extra = 0;
+		bool operator==( const node_key_t& o ) const { return extra == o.extra && memcmp( w, o.w, sizeof( w ) ) == 0; }
 	};
 	struct node_key_hash_t {
 		std::size_t operator( )( const node_key_t& k ) const
@@ -713,30 +820,79 @@ namespace
 			std::size_t h = 2166136261u;
 			for ( const unsigned int v : k.w )
 				h = ( h ^ v ) * 16777619u;
-			return h;
+			return h ^ static_cast< std::size_t >( k.extra ^ ( k.extra >> 32 ) );
 		}
 	};
-	node_key_t node_key( const node_t& n )
+	node_key_t state_key( const node_t& n, const n_route::sim_t& st, bool jb_ok, const n_route::sim_t& jb )
 	{
-		const n_route::sim_t& st = n.st;
 		const float since = ( std::min )( st.time - st.last_duck_time, 1.f );
 		const unsigned int flags = ( n.crouch_only ? 1u : 0u ) | ( n.crouches > 0 ? 2u : 0u ) | ( st.fl_ducking ? 4u : 0u ) |
 		                           ( st.raw_duck ? 8u : 0u ) | ( st.ducking ? 16u : 0u ) | ( n.hop_only ? 32u : 0u ) |
 		                           ( n.skin ? 64u : 0u ) | ( st.on_player ? 128u : 0u ) | ( st.ducked ? 256u : 0u ) |
-		                           ( st.on_ground ? 512u : 0u ) | ( n.jb_ok ? 1024u : 0u );
+		                           ( st.on_ground ? 512u : 0u ) | ( jb_ok ? 1024u : 0u );
 		return { { n.bind_mask, static_cast< unsigned int >( n.last_bind ), flags, bits( st.z ), bits( st.vz ), bits( st.stamina ),
 		           bits( st.duck_amount ), bits( st.duck_speed ), bits( since ), bits( duck_recover_since( st ) ), bits( st.fall ),
-		           bits( st.ceiling ), n.jb_ok ? bits( n.jb.z ) : 0u, n.jb_ok ? bits( n.jb.vz ) : 0u, n.jb_ok ? bits( n.jb.stamina ) : 0u } };
+		           bits( st.ceiling ), jb_ok ? bits( jb.z ) : 0u, jb_ok ? bits( jb.vz ) : 0u, jb_ok ? bits( jb.stamina ) : 0u } };
+	}
+	unsigned long long key_hash( const node_key_t& k )
+	{
+		unsigned long long h = 14695981039346656037ull;
+		for ( const unsigned int v : k.w )
+			h = ( h ^ v ) * 1099511628211ull;
+		return h;
+	}
+	node_key_t node_key( const node_t& n )
+	{
+		node_key_t k = state_key( n, n.st, n.jb_ok, n.jb );
+		if ( n.others.empty( ) && n.odds >= 1.f )
+			return k;
+		/* ponytail: 64 bit set hash, a false merge needs a collision between two state sets of one point */
+		std::vector< unsigned long long > hs;
+		hs.reserve( n.others.size( ) );
+		for ( const shadow_t& o : n.others )
+			hs.push_back( key_hash( state_key( n, o.st, o.jb_ok, o.jb ) ) );
+		std::sort( hs.begin( ), hs.end( ) );
+		unsigned long long h = 14695981039346656037ull ^ bits( n.odds );
+		for ( const unsigned long long v : hs )
+			h = ( h ^ v ) * 1099511628211ull;
+		k.extra = h | 1ull;
+		return k;
 	}
 
 	/* no beam: a big enough route outgrows the 32 bit address space. stop the solve while the game still has
-	   room to allocate, never crash it */
-	constexpr unsigned long long k_memory_reserve = 512ull << 20;
-	bool low_memory( )
+	   room to allocate, never crash it. floor is relative to what was free at solve start: csgo often sits under
+	   512 MB free ( 10-10 log: a fixed 512 MB floor tripped on 81 arcs in 5 ms ) */
+	unsigned long long free_virtual( )
 	{
 		MEMORYSTATUSEX ms{ };
 		ms.dwLength = sizeof( ms );
-		return GlobalMemoryStatusEx( &ms ) && ms.ullAvailVirtual < k_memory_reserve;
+		return GlobalMemoryStatusEx( &ms ) ? ms.ullAvailVirtual : ~0ull;
+	}
+	unsigned long long memory_floor( unsigned long long start_free )
+	{
+		return ( std::min )( 512ull << 20, ( std::max )( 64ull << 20, start_free / 2 ) );
+	}
+	unsigned int physical_cores( )
+	{
+		DWORD len = 0;
+		GetLogicalProcessorInformationEx( RelationProcessorCore, nullptr, &len );
+		std::vector< unsigned char > buf( len );
+		auto* info = reinterpret_cast< SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX* >( buf.data( ) );
+		if ( len == 0 || !GetLogicalProcessorInformationEx( RelationProcessorCore, info, &len ) )
+			return ( std::max )( 1u, std::thread::hardware_concurrency( ) / 2u );
+		unsigned int n = 0;
+		for ( DWORD at = 0; at < len; at += reinterpret_cast< SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX* >( buf.data( ) + at )->Size )
+			++n;
+		return ( std::max )( 1u, n );
+	}
+
+	bool low_memory_now( unsigned long long floor )
+	{
+		const unsigned long long now = free_virtual( );
+		if ( now >= floor )
+			return false;
+		botox_dbg_log( "[rc mem] %llu MB free < floor %llu MB - stopping\n", now >> 20, floor >> 20 );
+		return true;
 	}
 
 	/* closest-first log rows, only the shown ones kept: every arc used to format and hold its line */
@@ -771,6 +927,7 @@ namespace
 	struct expand_t {
 		std::vector< node_t > made{ };
 		std::vector< node_key_t > keys{ };
+		std::vector< unsigned long long > sigs{ }; /* per made: the press + arrival the player sees */
 		long long opts = 0;
 		float best_gap = FLT_MAX, closest_z = 0.f;
 		unsigned int blocked = 0u, refused = 0u;
@@ -815,7 +972,7 @@ namespace
 		for ( int i = 0; i < wait; ++i ) {
 			if ( m.timing == timing_rest && i > 0 && s.stamina <= 0.f && !s.ducking && !s.ducked )
 				break;
-			sim_tick( s, false, false, floor_z, true );
+			sim_tick( s, false, false, floor_z, true, false, m.timing == timing_delay );
 			if ( !s.on_ground ) {
 				r.why = "fell";
 				return r;
@@ -1081,12 +1238,22 @@ namespace n_route
 		/* warm the static convar lookup in IsEdgeBugTick here: /Zc:threadSafeInit- statics race on the workers */
 		(void)g_edgebug.IsEdgeBugTick( 0.f, 0.f, false, false );
 		const int lj_air_ticks = lj_bind_air_ticks( );
-		/* helpers = cores - 2: the game thread keeps one, this thread admits and expands too */
-		const unsigned int hw      = std::thread::hardware_concurrency( );
-		const unsigned int helpers = ( std::min )( hw > 2u ? hw - 2u : 0u, 64u );
+		/* helpers = PHYSICAL cores - 2, this thread the other one: 10-10 log, logical - 2 ( 10 of 12 ) took every SMT
+		   sibling and the game's own threads shared cores ( frames 16 -> 20..45 ms while solving ) */
+		const unsigned int cores   = physical_cores( );
+		const unsigned int helpers = ( std::min )( cores > 2u ? cores - 2u : 0u, 64u );
+		const unsigned long long start_free = free_virtual( );
+		const unsigned long long mem_floor  = memory_floor( start_free );
+		/* logged only on a trip: free MB differs run to run, byte-exact gates replay this log */
+		const auto low_memory = [ & ]( unsigned long long floor ) {
+			if ( !low_memory_now( floor ) )
+				return false;
+			botox_dbg_log( "[rc mem] %llu MB free at start, floor %llu MB\n", start_free >> 20, floor >> 20 );
+			return true;
+		};
 
 		/* deque: a million arcs never need one contiguous block of the 32 bit address space */
-		std::deque< node_t > frontier;
+		std::deque< node_t > root;
 		node_t seed;
 		seed.st.z         = in.start_z;
 		seed.st.on_ground = in.start_on_ground;
@@ -1105,7 +1272,7 @@ namespace n_route
 		}
 		seed.floor        = in.start_z;
 		seed.mask         = in.start_styles == 0u ? k_all_styles : in.start_styles;
-		frontier.emplace_back( seed );
+		root.emplace_back( seed );
 
 		// one marker = one move, never a hidden hop. a point one move can't reach is reported unreachable
 		const std::vector< route_point_t >& points = in.points;
@@ -1115,10 +1282,92 @@ namespace n_route
 			return std::string( buf );
 		};
 		int deepest = -1;
-		long double nodes_done = 0.L;
-		std::size_t prev_width = 1;
 
-		for ( std::size_t p = 0; p < points.size( ); ++p ) {
+		std::size_t pending = 0; /* arcs in halves waiting on the split stack */
+		int splits          = 0;
+		int trims           = 0; /* harder halves dropped ( out.trimmed ) */
+		bool cancelled      = false;
+		/* time limit: past it the solve stops and lists the combos finished ( timed_out ) */
+		const auto t_start = std::chrono::steady_clock::now( );
+		const auto past    = [ & ]( int ms ) {
+			return in.time_limit_ms > 0 && std::chrono::steady_clock::now( ) - t_start >= std::chrono::milliseconds( ms );
+		};
+		bool timed_out = false;
+		/* progress share of one run ( halves split it ), and its own growth estimate */
+		struct span_t {
+			int lo = 0, hi = 999;
+			long double done       = 0.L;
+			std::size_t prev_width = 1;
+		};
+		/* split solves: dead halves keep the deepest point's misses, the rest is summed / maxed per point */
+		int dead_p = -1;
+		top_t dead_misses{ 12 };
+		bool reach_set = false;
+
+		/* the list, across halves: first-come dedup by text, the cap best rows kept in list order */
+		const int cap = in.max_results > 0 ? in.max_results : 1;
+		/* every merged row is held and listed while that's cheap ( exact count ). past exact_alts held ( 10-10: 11 ground
+		   markers = 8.7M rows, 45 s listing them to show 6 ) rows are counted per arc ( combos ), a node keeps twice the
+		   shown rows ( an alt the list skips as a repeat leaves room for the next ) and the list stops once full */
+		bool approx          = false;
+		std::size_t alt_keep = SIZE_MAX;
+		using row_key_t = std::tuple< int, int, float, int, int, int, int, int, int, int, int, std::size_t, long long >;
+		struct row_t {
+			row_key_t key{ };
+			solution_t sol{ };
+			std::string line{ }; /* [rc list] after the row number, empty = no path */
+			std::shared_ptr< const step_t > lead{ };
+			int lead_legs = 0;
+		};
+		std::vector< row_t > rows;
+		std::unordered_set< unsigned long long > printed, outcomes;
+		long long row_seq      = 0;
+		int alt_rows           = 0;
+		std::size_t rows_seen  = 0;
+		/* exact = per listed text ( outcomes ), counted = per arc ( combos ); approx picks which one is reported */
+		long long alts_held = 0, combos_total = 0;
+		long long reach_rows[ 16 ]{ }, reach_combos[ 16 ]{ };
+		bool finals            = false;
+
+		/* too many arcs for the room: past 3/4 of it a point's expansion is dropped and its frontier solved in two halves,
+		   one after the other, down to single arcs. slower ( a half redoes the merges the whole shared ), out of memory
+		   only past the floor. freed memory stays with the heap ( free_virtual never comes back ), so the budget is the
+		   counted arcs, scaled by heap bytes per counted byte as measured before the first split */
+		const double room = start_free > mem_floor ? static_cast< double >( start_free - mem_floor ) : 0.0;
+		double heap_ratio = 1.0;
+		unsigned long long low_seen = start_free;
+		const char* split_why = "memory";
+		const auto over = [ & ]( std::size_t n_front, std::size_t nodes ) {
+			/* past half the time limit: chunks of <= 1024 arcs run to the last point one after the other, so whole combos
+			   finish before the stop instead of one wide point nobody gets to the end of */
+			constexpr std::size_t k_late_chunk = 1024;
+			if ( n_front > k_late_chunk && past( in.time_limit_ms / 2 ) ) {
+				split_why = "time";
+				return true;
+			}
+			split_why = "memory";
+			const double counted = static_cast< double >( nodes ) * sizeof( node_t ) +
+			                       static_cast< double >( g_live_steps.load( std::memory_order_relaxed ) ) * ( sizeof( step_t ) + 24.0 ) +
+			                       static_cast< double >( g_live_alts.load( std::memory_order_relaxed ) ) * ( sizeof( alt_t ) + 32.0 ) +
+			                       static_cast< double >( printed.size( ) + outcomes.size( ) ) * 40.0;
+			const unsigned long long now = free_virtual( );
+			const double used            = static_cast< double >( start_free > now ? start_free - now : 0ull );
+			if ( splits + trims == 0 ) {
+				if ( counted > room / 8.0 )
+					heap_ratio = ( std::min )( 4.0, ( std::max )( heap_ratio, used / counted ) );
+				low_seen = now;
+				return used > room * 0.75;
+			}
+			/* the heap grew past its low water since: the ratio was short */
+			if ( now + static_cast< unsigned long long >( room / 16.0 ) < low_seen ) {
+				low_seen = now;
+				heap_ratio *= 1.25;
+			}
+			return counted * heap_ratio > room * 0.7;
+		};
+
+		enum : int { k_next, k_dead, k_split };
+		const auto point_step = [ & ]( std::deque< node_t >& frontier, const std::size_t p, span_t& span ) -> int {
 			route_point_t point = points[ p ];
 			const int shown_type = route_point_shown_type( point );
 			if ( point.type == route_pt_headbounce && point.hb_ceiling )
@@ -1143,7 +1392,24 @@ namespace n_route
 			}
 
 			std::deque< node_t > next;
-			std::unordered_map< node_key_t, std::size_t, node_key_hash_t > seen;
+			/* dedup by 64 bit key hash, the full key checked against the arc it points at ( a 68 byte key per entry was
+			   ~100 B of map per arc, a third of the room ). a real collision goes to seen_rare */
+			std::unordered_map< unsigned long long, unsigned int > seen;
+			std::unordered_map< node_key_t, std::size_t, node_key_hash_t > seen_rare;
+			const auto key_id = []( const node_key_t& key ) { return key_hash( key ) ^ ( key.extra * 0x9E3779B97F4A7C15ull ); };
+			const auto twin_of = [ & ]( const node_key_t& key ) -> std::size_t {
+				const auto it = seen.find( key_id( key ) );
+				if ( it == seen.end( ) )
+					return SIZE_MAX;
+				if ( node_key( next[ it->second ] ) == key )
+					return it->second;
+				const auto rare = seen_rare.find( key );
+				return rare == seen_rare.end( ) ? SIZE_MAX : rare->second;
+			};
+			const auto remember = [ & ]( const node_key_t& key, std::size_t at ) {
+				if ( !seen.emplace( key_id( key ), static_cast< unsigned int >( at ) ).second )
+					seen_rare.emplace( key, at );
+			};
 			std::vector< long long > fan;
 			fan.reserve( frontier.size( ) );
 			top_t misses{ 12 };
@@ -1158,7 +1424,7 @@ namespace n_route
 			const long double width = static_cast< long double >( frontier.size( ) );
 			long double later       = 0.L;
 			{
-				const long double grow = ( std::max )( 1.L, width / static_cast< long double >( prev_width ) );
+				const long double grow = ( std::max )( 1.L, width / static_cast< long double >( span.prev_width ) );
 				long double w          = width;
 				for ( std::size_t j = p + 1; j < points.size( ); ++j ) {
 					w *= grow;
@@ -1167,18 +1433,27 @@ namespace n_route
 			}
 
 			/* any thread: one node's arcs into its own slot. nothing shared is written here */
-			const auto expand = [ & ]( const node_t& node, expand_t& r ) {
+			/* one state's arcs ( keys come after expand( ) groups the states ) */
+			const auto expand_one = [ & ]( const node_t& node, expand_t& r ) {
 				const bool node_ducked = node.st.ducked || node.st.ducking;
 				/* roof pass whose head never hit the roof = the open pass's arc again: dropped, not counted twice */
 				bool roof_pass = false;
+				int cur_pass   = 0;
 				const auto admit = [ & ]( node_t& made ) {
 					if ( roof_pass && !made.st.roof_hit )
 						return;
 					++r.opts;
-					made.paths = node.paths;
+					made.combos = node.combos;
 					made.alts  = node.alts;
-					if ( !last )
-						r.keys.emplace_back( node_key( made ) );
+					const dep_t& d = made.path->dep;
+					const arr_t& a = made.path->arr;
+					r.sigs.emplace_back( static_cast< unsigned long long >( d.style ) | static_cast< unsigned long long >( d.timing ) << 4 |
+					                     static_cast< unsigned long long >( d.delay ) << 8 | static_cast< unsigned long long >( d.from_ground ) << 16 |
+					                     static_cast< unsigned long long >( d.hop_only ) << 17 | static_cast< unsigned long long >( d.press_ducked ) << 18 |
+					                     static_cast< unsigned long long >( d.hold_crouch ) << 19 | static_cast< unsigned long long >( cur_pass ) << 20 |
+					                     static_cast< unsigned long long >( a.kind ) << 28 | static_cast< unsigned long long >( a.type ) << 32 |
+					                     static_cast< unsigned long long >( a.ducked ) << 40 | static_cast< unsigned long long >( a.late ) << 48 |
+					                     static_cast< unsigned long long >( made.path->roof ) << 56 );
 					r.made.emplace_back( std::move( made ) );
 				};
 				for ( int style = 0; style < style_count; ++style ) {
@@ -1246,6 +1521,7 @@ namespace n_route
 							const bool ceil_over  = pass >= 4 && point.type == route_pt_headbang;
 							const bool under_roof = pass >= 4 && roof_leg;
 							roof_pass             = under_roof;
+							cur_pass              = pass;
 							const int hold_crouch = variant == 1 ? 1 : 0;
 							const bool duck_late  = variant == 3;
 							const bool duck_air   = variant == 2 || duck_late; /* both must ARRIVE ducked */
@@ -1282,7 +1558,7 @@ namespace n_route
 								   snaps onto the plane ( else the departure hovers ) */
 								if ( timing == timing_rest && i > 0 && s.stamina <= 0.f && !s.ducking && !s.ducked )
 									break;
-								sim_tick( s, false, false, node.floor, true );
+								sim_tick( s, false, false, node.floor, true, false, timing == timing_delay );
 								if ( !s.on_ground ) {
 									bailed = true;
 									break;
@@ -1324,7 +1600,8 @@ namespace n_route
 
 							if ( ceil_over )
 								s.ceiling = ( std::min )( s.ceiling, target_z );
-							s.roof     = under_roof ? point.roof : 3.4e38f;
+							/* a headbang is TryPlayerMove into the ceiling: the marker is the head's stop, like a leg roof */
+							s.roof     = point.type == route_pt_headbang ? target_z : ( under_roof ? point.roof : 3.4e38f );
 							s.roof_hit = false;
 
 							const sim_t s_launch_in = s;
@@ -1365,6 +1642,7 @@ namespace n_route
 								step->dep  = dep;
 								step->arr  = arrival;
 								step->roof = made.st.roof_hit;
+								stamp_text( *step );
 								leg_t& leg   = step->leg;
 								leg.type     = shown_type;
 								leg.dep_z    = dep_z;
@@ -1395,38 +1673,33 @@ namespace n_route
 									++made.presses;
 								}
 							};
-							const auto try_bang = [ & ]( float z_in, float hull_in, bool ducked_in ) {
-								if ( z_in + hull_in > target_z + 0.001f || s.z + hull_in <= target_z )
-									return false;
-								if ( ( ducked_in && !point.allow_duck ) || ( !ducked_in && !point.allow_stand ) )
-									return true;
-								if ( duck_air && !ducked_in )
-									return true;
+							/* s just hit the ceiling ( roof_hit ): the move stopped there and vz clipped. gap = head at tick start */
+							const auto try_bang = [ & ]( float head_in ) {
+								const bool ducked = s.ducked;
+								if ( ( ducked && !point.allow_duck ) || ( !ducked && !point.allow_stand ) || ( duck_air && !ducked ) )
+									return;
 
 								node_t made;
 								made.st           = s;
-								made.st.z         = target_z - hull_in;
 								made.st.vz        = eb_null;
 								made.st.on_ground = false;
 								made.st.fall      = -eb_null;
 								made.st.ceiling   = target_z;
+								made.st.roof_hit  = false;
 								made.cost         = node.cost + leg_cost;
-								push_leg( made, arr_named( shown_type, ducked_in ), made.st.z, 0.f, 0.f, std::fabs( ( z_in + hull_in ) - target_z ) );
+								push_leg( made, arr_named( shown_type, ducked ), made.st.z, 0.f, 0.f, std::fabs( head_in - target_z ) );
 								admit( made );
 								made_any = true;
-								return true;
 							};
-							const float launch_hull = hull_top( s_launch_in );
-							const bool launch_cross = point.type == route_pt_headbang && style != style_walk_off &&
-							                          s.ducked == s_launch_in.ducked && s_launch_in.z + launch_hull <= target_z + 0.001f &&
-							                          s.z + launch_hull > target_z;
-							if ( duck_air && launch_cross )
+							const bool launch_bang = point.type == route_pt_headbang && s.roof_hit;
+							if ( duck_air && launch_bang )
 								continue;
-							const bool launch_bang = launch_cross && try_bang( s_launch_in.z, launch_hull, s_launch_in.ducked );
+							if ( launch_bang )
+								try_bang( s_launch_in.z + hull_top( s_launch_in ) );
 
-							const auto armed = [ & ]( ) { return s.z >= target_z && s.vz - half_g < 0.f; };
+							/* the floor catches a move that starts over its face ( 1/32 under the marker ), not over the marker */
+							const auto armed = [ & ]( ) { return ( skin ? s.z >= target_z : s.z > target_z - k_dist_eps ) && s.vz - half_g < 0.f; };
 							bool above = armed( );
-							bool rise_landed = false;
 							int creep_ticks = 0;
 							bool lip_missed = false;
 							int tb_catches = 0, tb_first = -1;
@@ -1492,13 +1765,13 @@ namespace n_route
 								if ( s.z > apex )
 									apex = s.z;
 
-								if ( !above_used && !rise_landed && !s.on_ground && s_tick_in.vz - half_g > 0.f && lip_in &&
+								/* every rising tick in reach can land: the one you get is the tick you cross onto the box */
+								if ( !above_used && !s.on_ground && s_tick_in.vz - half_g > 0.f && lip_in &&
 								     ( point.type == route_pt_ground || point.type == route_pt_pixeljump ) ) {
 									sim_t probe = s_tick_in;
 									sim_tick( probe, false, held, target_z, true, skin );
 									if ( probe.on_ground && probe.z >= target_z && probe.ducked == s_tick_in.ducked &&
 									     ( !duck_air || probe.ducked || probe.ducking ) ) {
-										rise_landed = true;
 										land_floor( probe, s_tick_in, vz_in, held );
 										if ( probe.z - target_z < attempt_gap ) {
 											attempt_gap = probe.z - target_z;
@@ -1652,13 +1925,10 @@ namespace n_route
 								if ( point.type == route_pt_headbang ) {
 									if ( s.on_ground )
 										break;
-									if ( vz_in <= 0.f )
+									if ( !s.roof_hit )
 										continue;
-									if ( s.ducked != ducked_in )
-										continue;
-									if ( try_bang( z_in, hull_in, ducked_in ) )
-										break;
-									continue;
+									try_bang( z_in + hull_in );
+									break;
 								}
 
 								if ( point.type == route_pt_headbounce ) {
@@ -1762,36 +2032,128 @@ namespace n_route
 				}
 			};
 
+			/* every state the route can be in takes the same press. outputs with one press + arrival ( sig ) are one
+			   route and their states one set; a press that misses from some states keeps the ones it hits, odds shrink */
+			const auto expand = [ & ]( const node_t& node, expand_t& r ) {
+				expand_one( node, r );
+				const std::size_t n_states = node.others.size( ) + 1;
+				if ( n_states == 1 && std::adjacent_find( r.sigs.begin( ), r.sigs.end( ) ) == r.sigs.end( ) ) {
+					for ( node_t& made : r.made ) {
+						made.odds = node.odds;
+						if ( !last )
+							r.keys.emplace_back( node_key( made ) );
+					}
+					return;
+				}
+				std::vector< std::size_t > from( r.made.size( ), 0 );
+				for ( std::size_t j = 1; j < n_states; ++j ) {
+					node_t other = node;
+					other.st     = node.others[ j - 1 ].st;
+					other.jb_ok  = node.others[ j - 1 ].jb_ok;
+					other.jb     = node.others[ j - 1 ].jb;
+					other.others.clear( );
+					expand_t tmp;
+					expand_one( other, tmp );
+					for ( std::size_t k = 0; k < tmp.made.size( ); ++k ) {
+						r.made.emplace_back( std::move( tmp.made[ k ] ) );
+						r.sigs.emplace_back( tmp.sigs[ k ] );
+						from.emplace_back( j );
+					}
+				}
+
+				std::vector< node_t > leads;
+				std::vector< unsigned long long > lead_sig;
+				std::vector< std::vector< unsigned long long > > lead_seen; /* state hashes in the set */
+				std::vector< std::vector< char > > lead_hit;                /* which of node's states got there */
+				std::unordered_map< unsigned long long, std::size_t > at;
+				for ( std::size_t k = 0; k < r.made.size( ); ++k ) {
+					/* one state's same-sig outputs are always adjacent ( one press loop ): no map needed then */
+					std::size_t g = leads.size( );
+					if ( n_states == 1 ) {
+						if ( g > 0 && lead_sig.back( ) == r.sigs[ k ] )
+							g = leads.size( ) - 1;
+					} else if ( const auto it = at.find( r.sigs[ k ] ); it != at.end( ) )
+						g = it->second;
+					node_t& made = r.made[ k ];
+					if ( g == leads.size( ) ) {
+						if ( n_states > 1 )
+							at.emplace( r.sigs[ k ], g );
+						lead_sig.emplace_back( r.sigs[ k ] );
+						lead_seen.emplace_back( );
+						lead_hit.emplace_back( n_states, 0 );
+						lead_hit.back( )[ from[ k ] ] = 1;
+						leads.emplace_back( std::move( made ) );
+						continue;
+					}
+					lead_hit[ g ][ from[ k ] ] = 1;
+					if ( lead_seen[ g ].empty( ) )
+						lead_seen[ g ].emplace_back( key_hash( state_key( leads[ g ], leads[ g ].st, leads[ g ].jb_ok, leads[ g ].jb ) ) );
+					const unsigned long long h = key_hash( state_key( made, made.st, made.jb_ok, made.jb ) );
+					if ( std::find( lead_seen[ g ].begin( ), lead_seen[ g ].end( ), h ) != lead_seen[ g ].end( ) )
+						continue;
+					lead_seen[ g ].emplace_back( h );
+					/* shown leg stays the earliest tick: in game a marginal box is crossed onto rising ( logs 4344, 10-10 ) */
+					leads[ g ].others.push_back( { made.st, made.jb_ok, made.jb } );
+				}
+				/* ponytail: every landing tick counts the same, real odds lean on how you approach the box */
+				for ( std::size_t g = 0; g < leads.size( ); ++g ) {
+					const auto hits = std::count( lead_hit[ g ].begin( ), lead_hit[ g ].end( ), 1 );
+					leads[ g ].odds = hits == static_cast< std::ptrdiff_t >( n_states )
+					                      ? node.odds
+					                      : node.odds * static_cast< float >( hits ) / static_cast< float >( n_states );
+				}
+				r.made = std::move( leads );
+				r.sigs = std::move( lead_sig );
+				if ( !last )
+					for ( const node_t& made : r.made )
+						r.keys.emplace_back( node_key( made ) );
+			};
+
 			/* fold one slot, in frontier order: the dedup ( first key wins its seat ), merges, and every min / list
 			   come out exactly as a single thread walking the frontier would make them */
 			const auto fold = [ & ]( expand_t& r ) {
+				/* one node's two presses that print the same end in the same rows: counted once */
+				std::vector< unsigned long long > last_texts;
 				for ( std::size_t k = 0; k < r.made.size( ); ++k ) {
 					node_t& made = r.made[ k ];
 					if ( last ) {
+						if ( made.path ) {
+							if ( std::find( last_texts.begin( ), last_texts.end( ), made.path->hash ) != last_texts.end( ) )
+								made.combos = 0;
+							else
+								last_texts.push_back( made.path->hash );
+						}
 						next.emplace_back( std::move( made ) );
 						continue;
 					}
-					if ( const auto it = seen.find( r.keys[ k ] ); it != seen.end( ) ) {
-						node_t& twin     = next[ it->second ];
-						const long long sum =
-							( twin.paths > LLONG_MAX - made.paths ) ? LLONG_MAX : twin.paths + made.paths;
+					if ( const std::size_t at = twin_of( r.keys[ k ] ); at != SIZE_MAX ) {
+						if ( !approx && g_live_alts.load( std::memory_order_relaxed ) > in.exact_alts ) {
+							approx   = true;
+							alt_keep = static_cast< std::size_t >( cap ) * 2;
+						}
+						node_t& twin     = next[ at ];
+						/* same text twice = one row ( two passes that fly the same press ) */
+						const long long sum = made.path && twin.path && made.path->hash == twin.path->hash
+						                          ? ( std::max )( twin.combos, made.combos )
+						                          : ( twin.combos > LLONG_MAX - made.combos ? LLONG_MAX : twin.combos + made.combos );
 						if ( easier( made, twin ) ) {
-							merge_alts( made, twin );
+							merge_alts( made, twin, alt_keep );
 							twin = std::move( made );
 						} else
-							merge_alts( twin, made );
-						twin.paths = sum;
+							merge_alts( twin, made, alt_keep );
+						twin.combos = sum;
 						continue;
 					}
-					seen.emplace( r.keys[ k ], next.size( ) );
+					remember( r.keys[ k ], next.size( ) );
 					next.emplace_back( std::move( made ) );
 				}
 				fan.emplace_back( r.opts );
-				if ( r.best_gap < out.best_gap ) {
+				if ( r.best_gap < out.best_gap && static_cast< int >( p ) == deepest ) {
 					out.best_gap  = r.best_gap;
 					out.closest_z = r.closest_z;
 				}
-				out.blocked_moves |= r.blocked;
+				if ( static_cast< int >( p ) == deepest )
+					out.blocked_moves |= r.blocked;
 				out.refused_moves |= r.refused;
 				for ( int n = 0; n < 16; ++n )
 					best_by_presses[ n ] = ( std::min )( best_by_presses[ n ], r.best_by_presses[ n ] );
@@ -1832,6 +2194,7 @@ namespace n_route
 					try {
 						pool.emplace_back( [ & ]( ) {
 							n_perf::background_thread( );
+							SetThreadPriority( GetCurrentThread( ), THREAD_PRIORITY_LOWEST );
 							for ( ;; ) {
 								const std::size_t i = claim.fetch_add( 1, std::memory_order_relaxed );
 								if ( i >= n_front )
@@ -1871,38 +2234,54 @@ namespace n_route
 				ready[ i % ring ].store( false, std::memory_order_relaxed );
 				folded.store( i + 1, std::memory_order_release );
 				if ( ( ( i + 1 ) & 63u ) == 0u ) {
-					if ( in.cancel && in.cancel->load( std::memory_order_relaxed ) )
-						return;
-					if ( low_memory( ) )
+					if ( in.cancel && in.cancel->load( std::memory_order_relaxed ) ) {
+						cancelled = true;
+						return k_dead;
+					}
+					if ( past( in.time_limit_ms ) ) {
+						timed_out = true;
+						return k_dead;
+					}
+					if ( low_memory( mem_floor ) )
 						throw std::bad_alloc( );
-					/* one writer: a re-estimate at a new point never shows the bar stepping back */
-					if ( const int permille = static_cast< int >( 999.L * ( nodes_done + ( i + 1 ) ) / ( nodes_done + width + later ) );
-					     in.progress && permille > in.progress->load( std::memory_order_relaxed ) )
-						in.progress->store( permille, std::memory_order_relaxed );
+					if ( n_front >= 2 && over( n_front, pending + n_front + next.size( ) ) )
+						return k_split;
+					/* one writer: a re-estimate at a new point never shows the bar stepping back. a time limit fills the bar by
+					   the clock when that is further */
+					int permille = span.lo + static_cast< int >( ( span.hi - span.lo ) * ( span.done + ( i + 1 ) ) / ( span.done + width + later ) );
+					if ( in.time_limit_ms > 0 )
+						permille = ( std::max )( permille, static_cast< int >( 999 * std::chrono::duration_cast< std::chrono::milliseconds >(
+						                                                                   std::chrono::steady_clock::now( ) - t_start ).count( ) /
+						                                                       in.time_limit_ms ) );
+					if ( in.progress && permille > in.progress->load( std::memory_order_relaxed ) )
+						in.progress->store( ( std::min )( permille, 999 ), std::memory_order_relaxed );
 				}
 			}
 			/* this point's dedup sets are done: free them before the next point inherits the links */
 			for ( node_t& n : next )
 				if ( n.alts && !n.alts->hashes.empty( ) )
 					std::unordered_set< unsigned long long >( ).swap( n.alts->hashes );
-			nodes_done += width;
-			prev_width = frontier.size( );
+			span.done += width;
+			span.prev_width = frontier.size( );
 
 			{
 				long long fan_max = 1;
 				for ( const long long f : fan )
 					fan_max = ( std::max )( fan_max, f );
-				branch_max.emplace_back( static_cast< long double >( fan_max ) );
+				if ( branch_max.size( ) <= p )
+					branch_max.resize( p + 1, 1.L );
+				branch_max[ p ] = ( std::max )( branch_max[ p ], static_cast< long double >( fan_max ) );
 			}
 
 			if ( last && !next.empty( ) ) {
 				out.jumps = next.front( ).n_legs;
 				for ( int n = 0; n < 16; ++n )
-					out.reach_gap[ n ] = best_by_presses[ n ];
+					out.reach_gap[ n ] = reach_set ? ( std::min )( out.reach_gap[ n ], best_by_presses[ n ] ) : best_by_presses[ n ];
+				reach_set = true;
 			}
 
 			/* [rc reach]: best gap per route length at this marker ( absent = never tried; window ~0.03 ) */
-			{
+			if ( splits == 0 ) {
 				std::string reach;
 				for ( int n = 1; n < 16; ++n ) {
 					if ( best_by_presses[ n ] == FLT_MAX )
@@ -1916,13 +2295,23 @@ namespace n_route
 					                   route_point_type_name( shown_type ), reach.c_str( ) );
 			}
 
-			if ( edge.count > 0 ) {
+			if ( edge.count > 0 && splits == 0 ) {
 				botox_dbg_log( "[rc edge] %s: %d catches on the W-held band edge or under it ( gentle press ) - KEPT, ranked under:\n",
 				                   point_label( p ).c_str( ), static_cast< int >( edge.count ) );
 				for ( const auto& e : edge.rows )
 					botox_dbg_log( "[rc edge]   %s\n", e.second.c_str( ) );
 			}
 
+			if ( next.empty( ) && splits > 0 ) {
+				/* one half dead: the solve fails only if every half does, reported at the deepest point */
+				if ( static_cast< int >( p ) > dead_p ) {
+					dead_p      = static_cast< int >( p );
+					dead_misses = top_t{ 12 };
+				}
+				if ( static_cast< int >( p ) == dead_p )
+					dead_misses.merge( misses );
+				return k_dead;
+			}
 			if ( next.empty( ) ) {
 				commit_counts( );
 				out.failed_at = static_cast< int >( p );
@@ -1935,46 +2324,30 @@ namespace n_route
 					botox_dbg_log( "[rc miss]   %s\n", m.second.c_str( ) );
 					out.miss_lines.emplace_back( m.second );
 				}
-				return;
+				return k_dead;
 			}
 
-			out.arcs_after.emplace_back( static_cast< int >( next.size( ) ) );
+			if ( out.arcs_after.size( ) <= p )
+				out.arcs_after.resize( p + 1, 0 );
+			out.arcs_after[ p ] += static_cast< int >( next.size( ) );
 
-			if ( !last ) {
+			if ( !last && splits == 0 ) {
 				const std::size_t n_plain =
 					static_cast< std::size_t >( std::count_if( next.begin( ), next.end( ), []( const node_t& n ) { return n.crouches == 0; } ) );
-				botox_dbg_log( "[rc beam] %s: %d arcs ( %d with an optional crouch )\n", point_label( p ).c_str( ),
-				                   static_cast< int >( next.size( ) ), static_cast< int >( next.size( ) - n_plain ) );
+				const auto n_multi  = std::count_if( next.begin( ), next.end( ), []( const node_t& n ) { return !n.others.empty( ); } );
+				const auto n_chancy = std::count_if( next.begin( ), next.end( ), []( const node_t& n ) { return n.odds < 1.f; } );
+				char sets[ 96 ]{ };
+				if ( n_multi > 0 || n_chancy > 0 )
+					sprintf_s( sets, " | %d land on more than one tick, %d chancy", static_cast< int >( n_multi ), static_cast< int >( n_chancy ) );
+				botox_dbg_log( "[rc beam] %s: %d arcs ( %d with an optional crouch )%s\n", point_label( p ).c_str( ),
+				                   static_cast< int >( next.size( ) ), static_cast< int >( next.size( ) - n_plain ), sets );
 			}
 			frontier = std::move( next );
-		}
+			return k_next;
+		};
 
 		const auto final_gap = []( const node_t& n ) { return n.path ? n.path->leg.gap : 0.f; };
 		const auto tier_of = []( const node_t& n ) { return n.path ? n.path->leg.tier : 0; };
-		/* sort keys once per node ( the old comparator walked every element string per compare ) */
-		std::vector< std::size_t > text_len( frontier.size( ), 0 );
-		for ( std::size_t i = 0; i < frontier.size( ); ++i )
-			for ( const std::string& e : elements_of( frontier[ i ] ) )
-				text_len[ i ] += e.size( );
-		std::vector< std::size_t > order( frontier.size( ) );
-		for ( std::size_t i = 0; i < order.size( ); ++i )
-			order[ i ] = i;
-		std::stable_sort( order.begin( ), order.end( ), [ & ]( std::size_t ia, std::size_t ib ) {
-			const node_t &a = frontier[ ia ], &b = frontier[ ib ];
-			if ( tier_of( a ) != tier_of( b ) )
-				return tier_of( a ) < tier_of( b );
-			if ( easier( a, b ) )
-				return true;
-			if ( easier( b, a ) )
-				return false;
-			if ( a.n_legs != b.n_legs )
-				return a.n_legs < b.n_legs;
-			const int ga = static_cast< int >( final_gap( a ) * 2000.f ), gb = static_cast< int >( final_gap( b ) * 2000.f );
-			if ( ga != gb )
-				return ga < gb;
-			return text_len[ ia ] < text_len[ ib ];
-		} );
-
 		const auto last_press_plain = []( std::string e ) {
 			if ( e == "jump (ducked)" || e == "jump (release duck)" )
 				e = "jump (duck*)";
@@ -1988,17 +2361,37 @@ namespace n_route
 					return true;
 			return false;
 		};
-		const int cap = in.max_results > 0 ? in.max_results : 1;
-		std::unordered_set< std::string > printed;
-		std::unordered_set< std::string > outcomes;
-		bool chained = false;
-		int alt_rows = 0;
-		std::size_t rows_seen = 0;
-		const auto list_row = [ & ]( const node_t& n, const std::vector< std::string >& els, bool alt ) {
-			if ( ( ++rows_seen & 4095u ) == 0u && low_memory( ) )
-				throw std::bad_alloc( );
-			if ( !printed.insert( route_text( els ) ).second )
-				return;
+		/* chancy routes ( odds < 1 ) list after every safe one */
+		const auto list_tier = [ & ]( const node_t& n ) { return ( std::min )( tier_of( n ), 2 ) + ( n.odds < 1.f ? 3 : 0 ); };
+		/* text_len = the lead's: an alt sorts with its lead. false = the list is full and this row can't make it: one
+		   walk's rows come in key order, so no later row of it can either */
+		const auto list_row = [ & ]( const node_t& n, const alt_t* alt, std::size_t text_len ) -> bool {
+			if ( timed_out )
+				return false;
+			if ( ( ++rows_seen & 4095u ) == 0u ) {
+				if ( low_memory( mem_floor ) )
+					throw std::bad_alloc( );
+				if ( past( in.time_limit_ms ) ) {
+					timed_out = true;
+					return false;
+				}
+			}
+			/* list order = one frontier's walk: tier, leads before alts, the frontier sort, walk order */
+			const row_key_t row_key{ list_tier( n ), alt ? 1 : 0, -n.odds, tier_of( n ), n.crouches, bind_count( n ), n.switches, n.presses,
+			                         n.cost, n.n_legs, static_cast< int >( final_gap( n ) * 2000.f ), text_len, row_seq };
+			/* exact count: every row still goes through the dedup below, listed or not */
+			const bool fits = rows.size( ) < static_cast< std::size_t >( cap ) || row_key < rows.back( ).key;
+			if ( approx && !fits )
+				return false;
+			std::vector< std::string > els = elements_of( n );
+			if ( alt ) {
+				std::vector< std::string > pre = alt_prefix( *alt );
+				pre.insert( pre.end( ), els.begin( ) + static_cast< std::ptrdiff_t >( alt->len ), els.end( ) );
+				els = std::move( pre );
+			}
+			/* 64 bit text hashes: a false dedup needs a collision among one solve's rows */
+			if ( !printed.insert( text_hash( route_text( els ) ) ).second )
+				return true;
 			{
 				std::string key;
 				int last_press = static_cast< int >( els.size( ) ) - 1;
@@ -2009,71 +2402,221 @@ namespace n_route
 				char tail[ 48 ]{ };
 				sprintf_s( tail, "|%d|%d", n.path ? static_cast< int >( std::lround( n.path->leg.arrive_z * 10000.f ) ) : 0,
 				           n.st.ducked ? 1 : 0 );
-				if ( !outcomes.insert( key + tail ).second )
-					return;
+				if ( !outcomes.insert( text_hash( key + tail ) ).second )
+					return true;
 			}
-			alt_rows += alt;
+			alt_rows += alt ? 1 : 0;
 			if ( n.n_legs < 16 )
-				out.reach_hits[ n.n_legs ]++;
-			if ( !chained ) {
-				chained = true;
-				const std::vector< const step_t* > steps = steps_of( n );
-				for ( std::size_t i = 0; i < steps.size( ); ++i ) {
-					const leg_t& l = steps[ i ]->leg;
-					botox_dbg_log( "[rc chain] %d %-9s %-11s from %9.3f stam %5.2f -> apex %9.3f %s %9.3f fall %6.1f "
-					                   "hover %5.3f gap %6.3f stam %5.2f\n",
-					                   static_cast< int >( i ) + 1, route_point_type_name( l.type ), steps[ i ]->name( ).c_str( ), l.dep_z,
-					                   l.dep_stam, l.apex, ( l.type == route_pt_ground || l.type == route_pt_pixeljump ) ? "land " : "catch", l.arrive_z, l.fall,
-					                   l.hover, l.gap, l.stam_out );
+				reach_rows[ n.n_legs ]++;
+			++row_seq;
+			if ( !fits )
+				return true;
+			row_t row;
+			row.key = row_key;
+			if ( n.path ) {
+				std::string text;
+				for ( const auto& e : els ) {
+					if ( e.empty( ) )
+						continue;
+					text += e == "fall (ducked)" ? std::string( "fall" ) : e;
+					text += '>';
 				}
+				const leg_t& l = n.path->leg;
+				char chancy[ 24 ]{ };
+				if ( n.odds < 1.f )
+					sprintf_s( chancy, "[chancy %d%%] ", static_cast< int >( n.odds * 100.f ) );
+				char line[ 160 ]{ };
+				sprintf_s( line, "gap %6.4f  band %s  catch %9.4f  %s  keys %d  switches %d  presses %d  cost %d  %s%s",
+				           l.gap, l.tier == 0 ? "GOOD" : ( l.tier == 1 ? "iffy" : "poor" ), l.arrive_z, n.st.ducked ? "ducked" : "stand ",
+				           bind_count( n ), n.switches, n.presses, n.cost, alt ? "[alt] " : "", chancy );
+				row.line = line + text;
 			}
-			if ( static_cast< int >( out.routes.size( ) ) < cap ) {
-				if ( n.path ) {
-					std::string text;
-					for ( const auto& e : els ) {
-						if ( e.empty( ) )
-							continue;
-						text += e == "fall (ducked)" ? std::string( "fall" ) : e;
-						text += '>';
-					}
-					const leg_t& l = n.path->leg;
-					botox_dbg_log( "[rc list] %2d  gap %6.4f  band %s  catch %9.4f  %s  keys %d  switches %d  presses %d  "
-					                   "cost %d  %s%s\n",
-					                   static_cast< int >( out.routes.size( ) ) + 1, l.gap,
-					                   l.tier == 0 ? "GOOD" : ( l.tier == 1 ? "iffy" : "poor" ), l.arrive_z,
-					                   n.st.ducked ? "ducked" : "stand ", bind_count( n ), n.switches, n.presses, n.cost,
-					                   alt ? "[alt] " : "", text.c_str( ) );
+			row.sol.elements = els;
+			row.sol.cost     = n.cost;
+			row.sol.gap      = final_gap( n );
+			row.sol.odds     = n.odds;
+			row.lead         = n.path;
+			row.lead_legs    = n.n_legs;
+			rows.insert( std::upper_bound( rows.begin( ), rows.end( ), row.key, []( const row_key_t& k, const row_t& r ) { return k < r.key; } ),
+			             std::move( row ) );
+			if ( rows.size( ) > static_cast< std::size_t >( cap ) )
+				rows.pop_back( );
+			return true;
+		};
+		/* one solved frontier into the list. per band tier: every lead first ( the easiest ways in, popup order ), then
+		   every alt in the same node order. an alt shares its lead's catch, so a W-held alt never lands under a
+		   gentle-press-only lead */
+		const auto list_final = [ & ]( const std::deque< node_t >& frontier ) {
+			if ( timed_out )
+				return;
+			finals = true;
+			/* both counts every half: a later half can switch to approx, the total is then the per-arc one throughout */
+			std::vector< std::size_t > text_len( frontier.size( ), 0 );
+			for ( std::size_t i = 0; i < frontier.size( ); ++i ) {
+				const node_t& n = frontier[ i ];
+				combos_total    = combos_total > LLONG_MAX - n.combos ? LLONG_MAX : combos_total + n.combos;
+				if ( n.n_legs < 16 )
+					reach_combos[ n.n_legs ] += n.combos;
+				text_len[ i ] = n.path ? n.path->text_len : 0;
+			}
+			if ( !approx && static_cast< long long >( frontier.size( ) ) > in.exact_alts )
+				approx = true;
+			std::vector< std::size_t > order( frontier.size( ) );
+			for ( std::size_t i = 0; i < order.size( ); ++i )
+				order[ i ] = i;
+			std::stable_sort( order.begin( ), order.end( ), [ & ]( std::size_t ia, std::size_t ib ) {
+				const node_t &a = frontier[ ia ], &b = frontier[ ib ];
+				/* works whatever tick you cross onto a box first */
+				if ( a.odds != b.odds )
+					return a.odds > b.odds;
+				if ( tier_of( a ) != tier_of( b ) )
+					return tier_of( a ) < tier_of( b );
+				if ( easier( a, b ) )
+					return true;
+				if ( easier( b, a ) )
+					return false;
+				if ( a.n_legs != b.n_legs )
+					return a.n_legs < b.n_legs;
+				const int ga = static_cast< int >( final_gap( a ) * 2000.f ), gb = static_cast< int >( final_gap( b ) * 2000.f );
+				if ( ga != gb )
+					return ga < gb;
+				return text_len[ ia ] < text_len[ ib ];
+			} );
+			for ( int tier = 0; tier <= 5; ++tier ) {
+				for ( const std::size_t i : order )
+					if ( list_tier( frontier[ i ] ) == tier && !list_row( frontier[ i ], nullptr, text_len[ i ] ) )
+						return;
+				for ( const std::size_t i : order ) {
+					const node_t& n = frontier[ i ];
+					if ( !n.alts || list_tier( n ) != tier )
+						continue;
+					alts_held += static_cast< long long >( n.alts->size );
+					bool more = true;
+					n.alts->each( [ & ]( const std::shared_ptr< const alt_t >& a ) {
+						if ( more )
+							more = list_row( n, a.get( ), text_len[ i ] );
+					} );
+					if ( !more )
+						return;
 				}
-				solution_t s;
-				s.elements = els;
-				s.cost     = n.cost;
-				s.gap      = final_gap( n );
-				out.routes.emplace_back( std::move( s ) );
 			}
 		};
-		/* per band tier: every lead first ( the easiest ways in, popup order ), then every alt in the same node order.
-		   an alt shares its lead's catch, so a W-held alt never lands under a gentle-press-only lead */
-		std::size_t alts_total = 0;
-		const auto list_tier = [ & ]( const node_t& n ) { return ( std::min )( tier_of( n ), 2 ); };
-		for ( int tier = 0; tier <= 2; ++tier ) {
-			for ( const std::size_t i : order )
-				if ( list_tier( frontier[ i ] ) == tier )
-					list_row( frontier[ i ], elements_of( frontier[ i ] ), false );
-			for ( const std::size_t i : order ) {
-				const node_t& n = frontier[ i ];
-				if ( !n.alts || list_tier( n ) != tier )
+
+		std::function< void( std::deque< node_t >&, std::size_t, span_t ) > solve_from;
+		solve_from = [ & ]( std::deque< node_t >& frontier, std::size_t p0, span_t span ) {
+			for ( std::size_t p = p0; p < points.size( ); ++p ) {
+				const int r = point_step( frontier, p, span );
+				if ( r == k_dead )
+					return;
+				/* more than 2 points to go: halves re-grow apart ( no merges between them ) and a deep split never ends
+				   ( 20 ground markers: 31896 splits, 45 s, best = whatever half finished first ). drop the harder half
+				   instead, list order ( works on every tick, fewest crouches / binds / switches / presses / cost ) */
+				if ( r == k_split && points.size( ) - p > 2 ) {
+					std::vector< std::size_t > order( frontier.size( ) );
+					for ( std::size_t i = 0; i < order.size( ); ++i )
+						order[ i ] = i;
+					std::stable_sort( order.begin( ), order.end( ), [ & ]( std::size_t ia, std::size_t ib ) {
+						const node_t &a = frontier[ ia ], &b = frontier[ ib ];
+						if ( a.odds != b.odds )
+							return a.odds > b.odds;
+						return easier( a, b );
+					} );
+					const std::size_t keep = frontier.size( ) / 2;
+					{
+						std::deque< node_t > best;
+						for ( std::size_t i = 0; i < keep; ++i )
+							best.emplace_back( std::move( frontier[ order[ i ] ] ) );
+						frontier.swap( best );
+					}
+					if ( ++trims <= 8 )
+						botox_dbg_log( "[rc trim] %s ( %s ): kept the easiest %d of %d arcs, %llu MB free\n", point_label( p ).c_str( ), split_why,
+						               static_cast< int >( keep ), static_cast< int >( keep + ( order.size( ) - keep ) ), free_virtual( ) >> 20 );
+					--p; /* this point again, from the kept half ( unsigned wrap at 0 is undone by ++p ) */
 					continue;
-				alts_total += n.alts->size;
-				const std::vector< std::string > lead = elements_of( n );
-				n.alts->each( [ & ]( const std::shared_ptr< const alt_t >& a ) {
-					std::vector< std::string > els = alt_prefix( *a );
-					els.insert( els.end( ), lead.begin( ) + static_cast< std::ptrdiff_t >( a->len ), lead.end( ) );
-					list_row( n, els, true );
-				} );
+				}
+				if ( r == k_split ) {
+					const std::size_t half = frontier.size( ) / 2;
+					std::deque< node_t > rest( std::make_move_iterator( frontier.begin( ) + static_cast< std::ptrdiff_t >( half ) ),
+					                           std::make_move_iterator( frontier.end( ) ) );
+					frontier.resize( half );
+					frontier.shrink_to_fit( );
+					if ( ++splits <= 8 )
+						botox_dbg_log( "[rc split] %s ( %s ): %d arcs held, %llu MB free - its %d arcs solved as two halves, one after the other\n",
+						               point_label( p ).c_str( ), split_why, static_cast< int >( pending + half + rest.size( ) ), free_virtual( ) >> 20,
+						               static_cast< int >( half + rest.size( ) ) );
+					const int mid = span.lo + ( span.hi - span.lo ) / 2;
+					pending += rest.size( );
+					solve_from( frontier, p, span_t{ span.lo, mid, 0.L, span.prev_width } );
+					pending -= rest.size( );
+					std::deque< node_t >( ).swap( frontier );
+					if ( !cancelled && !timed_out )
+						solve_from( rest, p, span_t{ mid, span.hi, 0.L, span.prev_width } );
+					return;
+				}
+			}
+			list_final( frontier );
+		};
+		solve_from( root, 0, span_t{ } );
+		if ( cancelled )
+			return;
+		const long long total = approx ? combos_total : static_cast< long long >( outcomes.size( ) );
+		if ( timed_out ) {
+			out.timed_out = true;
+			finals        = total > 0;
+			botox_dbg_log( "[rc time] stopped at %d s: %lld combos finished\n", in.time_limit_ms / 1000, total );
+		}
+		if ( splits > 0 )
+			botox_dbg_log( "[rc split] %d splits, %s ( %llu MB free at start, %llu now, heap %.2fx the counted arcs )\n", splits,
+			               timed_out ? "stopped at the time limit" : ( finals ? "solved" : "no half got through" ), start_free >> 20,
+			               free_virtual( ) >> 20, heap_ratio );
+		if ( trims > 0 )
+			botox_dbg_log( "[rc trim] %d times: the harder half of the arcs dropped, combos counted are a floor\n", trims );
+		out.trimmed = trims > 0;
+		if ( !finals ) {
+			if ( splits > 0 && dead_p >= 0 ) {
+				const route_point_t& point = points[ static_cast< std::size_t >( dead_p ) ];
+				commit_counts( );
+				out.failed_at = dead_p;
+				out.want_z    = point.quantized_z;
+				botox_dbg_log( "[rc miss] %s ( %s ) wants z %.4f - %d departures tried, closest first:\n",
+				               point_label( static_cast< std::size_t >( dead_p ) ).c_str( ),
+				               route_point_type_name( route_point_shown_type( point ) ), point.quantized_z,
+				               static_cast< int >( dead_misses.count ) );
+				for ( const auto& m : dead_misses.rows ) {
+					botox_dbg_log( "[rc miss]   %s\n", m.second.c_str( ) );
+					out.miss_lines.emplace_back( m.second );
+				}
+			}
+			return;
+		}
+
+		if ( !rows.empty( ) ) {
+			std::vector< const step_t* > steps( static_cast< std::size_t >( rows.front( ).lead_legs ) );
+			std::size_t at = steps.size( );
+			for ( const step_t* s = rows.front( ).lead.get( ); s && at > 0; s = s->up.get( ) )
+				steps[ --at ] = s;
+			for ( std::size_t i = 0; i < steps.size( ); ++i ) {
+				const leg_t& l = steps[ i ]->leg;
+				botox_dbg_log( "[rc chain] %d %-9s %-11s from %9.3f stam %5.2f -> apex %9.3f %s %9.3f fall %6.1f "
+				                   "hover %5.3f gap %6.3f stam %5.2f\n",
+				                   static_cast< int >( i ) + 1, route_point_type_name( l.type ), steps[ i ]->name( ).c_str( ), l.dep_z,
+				                   l.dep_stam, l.apex, ( l.type == route_pt_ground || l.type == route_pt_pixeljump ) ? "land " : "catch", l.arrive_z, l.fall,
+				                   l.hover, l.gap, l.stam_out );
 			}
 		}
-		botox_dbg_log( "[rc alts] %d unique rows from %d merged sequences\n", alt_rows, static_cast< int >( alts_total ) );
-		out.total     = static_cast< long long >( outcomes.size( ) );
+		for ( std::size_t i = 0; i < rows.size( ); ++i ) {
+			if ( !rows[ i ].line.empty( ) )
+				botox_dbg_log( "[rc list] %2d  %s\n", static_cast< int >( i ) + 1, rows[ i ].line.c_str( ) );
+			out.routes.emplace_back( std::move( rows[ i ].sol ) );
+		}
+		if ( approx )
+			botox_dbg_log( "[rc alts] %lld rows counted per arc ( too many to list: %d alts listed )\n", combos_total, alt_rows );
+		else
+			botox_dbg_log( "[rc alts] %d unique rows from %d merged sequences\n", alt_rows, static_cast< int >( alts_held ) );
+		for ( int n = 0; n < 16; ++n )
+			out.reach_hits[ n ] = static_cast< int >( ( std::min )( static_cast< long long >( INT_MAX ), approx ? reach_combos[ n ] : reach_rows[ n ] ) );
+		out.total        = total;
+		out.total_approx = approx;
 		out.failed_at = -1;
 		commit_counts( );
 	}
@@ -2087,7 +2630,8 @@ namespace n_route
 			out.routes.clear( );
 			out.total         = 0;
 			out.out_of_memory = true;
-			botox_dbg_log( "[rc] out of memory at point %d: more arcs than the game's address space holds\n", out.failed_at + 1 );
+			botox_dbg_log( "[rc] out of memory at point %d: more arcs than the game's address space holds ( %llu MB free now )\n",
+			               out.failed_at + 1, free_virtual( ) >> 20 );
 		}
 	}
 

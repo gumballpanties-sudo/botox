@@ -1,5 +1,6 @@
 #pragma once
 #include "skins.h"
+#include "../network/botox_net.h"
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include <algorithm>
@@ -291,6 +292,59 @@ constexpr int AGENT_COUNT = sizeof( AGENT_MODELS ) / sizeof( AGENT_MODELS[ 0 ] )
 
 inline std::unordered_set< std::string > g_agent_tried{ };
 inline int g_agent_last_table_count = 0;
+
+inline std::unordered_set< std::string > g_precache_tried{ };
+inline int g_precache_last_count = 0;
+
+/* model index, loading + adding it to modelprecache first if the map never did (agent changer's order:
+   load FIRST, add_string second, a dead networked entry poisons later lookups). -1 = unavailable */
+inline int precache_model( const char* path )
+{
+	if ( !path || !*path )
+		return -1;
+
+	if ( const int index = g_interfaces.m_model_info->get_model_index( path ); index > 0 )
+		return index;
+
+	const auto table = g_interfaces.m_string_tables ? g_interfaces.m_string_tables->find_table( "modelprecache" ) : nullptr;
+	if ( !table )
+		return -1;
+
+	const int count = table->get_num_strings( );
+	if ( count < g_precache_last_count )
+		g_precache_tried.clear( );
+	g_precache_last_count = count;
+
+	if ( !g_precache_tried.insert( path ).second )
+		return -1;
+
+	if ( !g_interfaces.m_model_info->find_or_load_model( path ) ) {
+		botox_dbg_log( "NET: precache load failed %s", path );
+		return -1;
+	}
+
+	if ( const int max = table->get_max_strings( ); max > 0 && count >= max - 16 ) {
+		botox_dbg_log( "NET: precache table full %d/%d %s", count, max, path );
+		return -1;
+	}
+
+	const int added = table->add_string( false, path );
+	const int index = g_interfaces.m_model_info->get_model_index( path );
+	botox_dbg_log( "NET: precache %s slot=%d index=%d", path, added, index );
+	return index > 0 ? index : -1;
+}
+
+/* models/weapons/v_models/arms/glove_x/v_glove_x.mdl -> models/weapons/w_models/arms/w_glove_x.mdl (all 8 in pak01) */
+inline int glove_world_model_index( const char* view_model )
+{
+	const char* file = view_model ? std::strstr( view_model, "/v_glove" ) : nullptr;
+	if ( !file )
+		return -1;
+
+	char path[ 128 ]{ };
+	std::snprintf( path, sizeof( path ), "models/weapons/w_models/arms/w%s", file + 2 );
+	return precache_model( path );
+}
 inline bool g_agent_prev_t          = false;
 inline bool g_agent_prev_ct         = false;
 
@@ -498,10 +552,11 @@ inline c_base_entity* make_glove( int entry, int serial )
 	return glove;
 }
 
-inline void apply_glove_model( c_base_entity* glove )
+/* owner = player whose account id the glove carries (0 = local) */
+inline void apply_glove_model( c_base_entity* glove, int owner = 0 )
 {
 	player_info_t info{ };
-	g_interfaces.m_engine_client->get_player_info( g_interfaces.m_engine_client->get_local_player( ), &info );
+	g_interfaces.m_engine_client->get_player_info( owner > 0 ? owner : g_interfaces.m_engine_client->get_local_player( ), &info );
 
 	glove->get_account_id( )                                                                   = info.m_xuid_low;
 	*reinterpret_cast< int* >( reinterpret_cast< std::uintptr_t >( glove ) + 0x64  ) = -1;
@@ -656,38 +711,57 @@ inline void refresh_world_stickers( c_base_entity* weapon )
 	parent_prop.m_recv_prop->m_proxy_fn( &data, world_model, reinterpret_cast< void* >( field ) );
 }
 
-inline void apply_stickers( c_base_entity* weapon, std::uintptr_t item_view )
+inline int gun_index_of( short definition )
+{
+	for ( int i = 0; i < WEAPON_COUNT; i++ ) {
+		if ( definition == WEAPON_IDS[ i ] )
+			return i;
+	}
+	return -1;
+}
+
+/* our config for this gun's slots (all kit 0 when weapon skins are off) */
+inline n_skins::sticker_t config_sticker( int gun, int slot )
+{
+	n_skins::sticker_t sticker{ };
+
+	const int index = gun * STICKER_SLOTS + slot;
+	if ( gun < 0 || !GET_VARIABLE( WEAPON_VAR( m_weapon_skins_enable ), bool ) )
+		return sticker;
+
+	auto& kits      = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_kit ), std::vector< int > );
+	auto& wears     = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_wear ), std::vector< float > );
+	auto& scales    = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_scale ), std::vector< float > );
+	auto& rotations = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_rotation ), std::vector< float > );
+
+	sticker.m_kit = index < static_cast< int >( kits.size( ) ) ? kits[ index ] : 0;
+	if ( sticker.m_kit <= 0 )
+		return sticker;
+
+	sticker.m_wear     = index < static_cast< int >( wears.size( ) ) ? wears[ index ] : 0.f;
+	sticker.m_scale    = index < static_cast< int >( scales.size( ) ) ? scales[ index ] : 1.f;
+	sticker.m_rotation = index < static_cast< int >( rotations.size( ) ) ? rotations[ index ] : 0.f;
+	return sticker;
+}
+
+/* remote = STICKER_SLOTS entries from another botox user, never our config */
+inline void apply_stickers( c_base_entity* weapon, std::uintptr_t item_view, const n_skins::sticker_t* remote = nullptr )
 {
 	const auto generate = get_generate_sticker_materials( );
 	if ( !generate )
 		return;
 
-	int gun = -1;
-	for ( int i = 0; i < WEAPON_COUNT; i++ ) {
-		if ( weapon->get_item_definition_index( ) == WEAPON_IDS[ i ] ) {
-			gun = i;
-			break;
-		}
-	}
-
+	const int gun = gun_index_of( weapon->get_item_definition_index( ) );
 	if ( gun < 0 )
 		return;
 
-	const bool enable = GET_VARIABLE( g_variables.m_weapon_skins_enable, bool );
-
-	auto& kits      = GET_VARIABLE( g_variables.m_weapon_skins_sticker_kit, std::vector< int > );
-	auto& wears     = GET_VARIABLE( g_variables.m_weapon_skins_sticker_wear, std::vector< float > );
-	auto& scales    = GET_VARIABLE( g_variables.m_weapon_skins_sticker_scale, std::vector< float > );
-	auto& rotations = GET_VARIABLE( g_variables.m_weapon_skins_sticker_rotation, std::vector< float > );
-
 	for ( int slot = 0; slot < STICKER_SLOTS; slot++ ) {
-		const int index = gun * STICKER_SLOTS + slot;
+		const n_skins::sticker_t sticker = remote ? remote[ slot ] : config_sticker( gun, slot );
 
-		const int kit = enable && index < static_cast< int >( kits.size( ) ) ? kits[ index ] : 0;
-
-		const float wear     = kit > 0 && index < static_cast< int >( wears.size( ) ) ? wears[ index ] : 0.f;
-		const float scale    = kit > 0 && index < static_cast< int >( scales.size( ) ) ? scales[ index ] : 1.f;
-		const float rotation = kit > 0 && index < static_cast< int >( rotations.size( ) ) ? rotations[ index ] : 0.f;
+		const int kit        = sticker.m_kit > 0 ? sticker.m_kit : 0;
+		const float wear     = kit > 0 ? sticker.m_wear : 0.f;
+		const float scale    = kit > 0 ? sticker.m_scale : 1.f;
+		const float rotation = kit > 0 ? sticker.m_rotation : 0.f;
 
 		char name[ 32 ];
 
@@ -705,8 +779,6 @@ inline void apply_stickers( c_base_entity* weapon, std::uintptr_t item_view )
 	}
 
 	generate( reinterpret_cast< void* >( item_view ) );
-
-	refresh_world_stickers( weapon );
 }
 
 inline std::uintptr_t item_view_of( c_base_entity* weapon )
@@ -770,13 +842,8 @@ inline void invalidate_custom_materials( c_base_entity* weapon )
 		*reinterpret_cast< bool* >( base + init ) = false;
 }
 
-inline void rebuild_custom_materials( c_base_entity* weapon )
+inline void rebuild_weapon_materials( c_base_entity* weapon, const n_skins::sticker_t* remote_stickers )
 {
-	if ( !weapon )
-		return;
-
-	invalidate_custom_materials( weapon );
-
 	const auto item_view   = item_view_of( weapon );
 	const auto view_cmo    = item_view + ITEM_VIEW_CMO;
 	const auto networkable = static_cast< c_client_networkable* >( weapon );
@@ -787,7 +854,7 @@ inline void rebuild_custom_materials( c_base_entity* weapon )
 	set_view_attribute( item_view, "set item texture seed", static_cast< float >( paint > 0 ? weapon->get_fall_back_seed( ) : 0 ) );
 	set_view_attribute( item_view, "set item texture wear", paint > 0 ? weapon->get_fall_back_wear( ) : 0.f );
 
-	apply_stickers( weapon, item_view );
+	apply_stickers( weapon, item_view, remote_stickers );
 
 	apply_kill_eater( weapon, item_view );
 
@@ -821,6 +888,117 @@ inline void rebuild_custom_materials( c_base_entity* weapon )
 		                                                reinterpret_cast< void* >( weapon_owner ) );
 }
 
+/* remote_stickers: someone else's gun (botox network), their STICKER_SLOTS stickers instead of our config.
+   world model copies the weapon's materials only when the counts differ: sync at 0 (clears it), again once the weapon has them */
+inline void rebuild_custom_materials( c_base_entity* weapon, const n_skins::sticker_t* remote_stickers = nullptr )
+{
+	if ( !weapon )
+		return;
+
+	invalidate_custom_materials( weapon );
+	refresh_world_stickers( weapon );
+
+	rebuild_weapon_materials( weapon, remote_stickers );
+	refresh_world_stickers( weapon );
+}
+
+/* game composites a glove once (InitializeAttributes), arms copy the old one off the entity */
+inline void regen_glove_material( c_base_entity* glove, int paint_kit, int seed, float wear )
+{
+	const auto glove_view = item_view_of( glove );
+	const auto view_cmo   = glove_view + ITEM_VIEW_CMO;
+	const auto cmo        = weapon_cmo_offset( );
+	const auto glove_cmo  = cmo ? reinterpret_cast< std::uintptr_t >( glove ) + cmo : 0;
+
+	set_view_attribute( glove_view, "set item texture prefab", static_cast< float >( paint_kit > 0 ? paint_kit : 0 ) );
+	set_view_attribute( glove_view, "set item texture seed", static_cast< float >( paint_kit > 0 ? seed : 0 ) );
+	set_view_attribute( glove_view, "set item texture wear", paint_kit > 0 ? wear : 0.f );
+
+	clear_owner( reinterpret_cast< void* >( view_cmo ) );
+	if ( glove_cmo )
+		clear_owner( reinterpret_cast< void* >( glove_cmo ) );
+
+	// arms take the FIRST visuals processor by name (0x717850), stale ones win. ponytail: old ones leak, Release is non-virtual
+	constexpr std::uintptr_t ITEM_VIEW_PROCESSOR_COUNT = 0x23C;
+	*reinterpret_cast< int* >( glove_view + ITEM_VIEW_PROCESSOR_COUNT ) = 0;
+
+	if ( paint_kit > 0 ) {
+		if ( const auto generate = get_update_generated_material( ) )
+			generate( reinterpret_cast< void* >( glove_view ), 0, 0xFFFF, 9 );
+	}
+
+	if ( glove_cmo && custom_material_count( view_cmo ) > 0 && custom_material_count( glove_cmo ) <= 0 ) {
+		using duplicate_t = void( __thiscall* )( void* owner, void* other );
+		const auto vtable = *reinterpret_cast< void*** >( view_cmo );
+		if ( vtable && vtable[ 3 ] )
+			reinterpret_cast< duplicate_t >( vtable[ 3 ] )( reinterpret_cast< void* >( view_cmo ), reinterpret_cast< void* >( glove_cmo ) );
+	}
+
+	botox_dbg_log( "GLV: regen paint %d view mats %d glove mats %d procs %d", paint_kit, custom_material_count( view_cmo ),
+	               glove_cmo ? custom_material_count( glove_cmo ) : -1, *reinterpret_cast< int* >( glove_view + ITEM_VIEW_PROCESSOR_COUNT ) );
+}
+
+// hands loadout lookup (0x3E0840) reads CS game rules unchecked: null while loading / after disconnect = crash
+inline bool game_rules_up( )
+{
+	static const auto site =
+		g_modules[ CLIENT_DLL ].find_pattern( "8B 4D 04 E8 ? ? ? ? 8B 0D ? ? ? ? 8B 01 FF 90 98 04 00 00 C6 45 FC 00" );
+	return site && **reinterpret_cast< void*** >( site + 10 );
+}
+
+/* evolve's glove apply. unique on the final client.dll: CEconWearable::Equip (0x723170),
+   C_CSPlayer::InvalidateViewModelArmConfig (0x3EF290, nulls cfg + drops arms on all 3 viewmodels),
+   C_BaseViewModel::UpdateAllViewmodelAddons (0x215080, rebuilds arms from the equipped glove). glove null = no equip. */
+inline void rebuild_player_arms( c_base_entity* player, c_base_entity* glove, const char* why )
+{
+	if ( !g_interfaces.m_engine_client->is_in_game( ) || !game_rules_up( ) ) {
+		botox_dbg_log( "GLV: arms %s skipped, game rules down", why );
+		return;
+	}
+
+	using equip_wearable_t = void( __thiscall* )( void* wearable, void* owner );
+	using this_only_t      = void( __thiscall* )( void* self );
+
+	static const auto equip = reinterpret_cast< equip_wearable_t >(
+		g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 EC 10 53 8B 5D 08 57 8B F9" ) );
+	static const auto invalidate_arms = reinterpret_cast< this_only_t >(
+		g_modules[ CLIENT_DLL ].find_pattern( "51 56 57 8B F9 33 F6 C7 87 ? ? ? ? 00 00 00 00 56 8B CF E8" ) );
+	static const auto update_addons = reinterpret_cast< this_only_t >(
+		g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 E4 F8 83 EC 2C 53 8B D9 56 57 8B 03 FF 90 F0 03 00 00 8B F8" ) );
+
+	const auto viewmodel = g_interfaces.m_client_entity_list->get< c_base_entity >( player->get_view_model_handle( ) );
+
+	botox_dbg_log( "GLV: arms %s player %d equip %p inval %p addons %p vm %p glove %p", why, player->get_index( ), equip, invalidate_arms,
+	               update_addons, viewmodel, glove );
+
+	if ( glove && equip )
+		equip( glove, player );
+	if ( invalidate_arms )
+		invalidate_arms( player );
+	if ( viewmodel && update_addons )
+		update_addons( viewmodel );
+}
+
+/* models/weapons/v_knife_x.mdl -> w_knife_x.mdl (every knife in pak01 pairs 1:1). not precached = old +1 guess */
+inline int knife_world_model_index( const char* view_model, int view_index )
+{
+	char path[ 128 ]{ };
+	std::snprintf( path, sizeof( path ), "%s", view_model ? view_model : "" );
+
+	if ( char* found = std::strstr( path, "/v_knife" ) )
+		found[ 1 ] = 'w';
+
+	const int index = precache_model( path );
+	if ( index > 0 )
+		return index;
+
+	static int log_left = 8;
+	if ( log_left > 0 && log_left-- )
+		botox_dbg_log( "NET: knife world model %s not precached, using %d", path, view_index + 1 );
+
+	return view_index + 1;
+}
+
 inline bool apply_knife_model( c_base_entity* weapon, const char* model )
 {
 	const auto local = g_ctx.m_local;
@@ -844,7 +1022,7 @@ inline bool apply_knife_model( c_base_entity* weapon, const char* model )
 
 	if ( const auto world_model_handle = vm_weapon->get_world_model_handle( ) ) {
 		if ( const auto world_model = g_interfaces.m_client_entity_list->get< c_base_entity >( world_model_handle ) )
-			world_model->get_model_index( ) = model_index + 1;
+			world_model->get_model_index( ) = knife_world_model_index( model, model_index );
 	}
 
 	if ( std::strstr( model, "knife_gg" ) )
@@ -1142,10 +1320,10 @@ inline const char* stock_anim_model( const char* mesh_model )
 
 inline const char* intended_knife_mesh( const char* current_model_name )
 {
-	if ( !GET_VARIABLE( g_variables.m_knife_enable, bool ) )
+	if ( !GET_VARIABLE( WEAPON_VAR( m_knife_enable ), bool ) )
 		return current_model_name;
 
-	const int chosen = GET_VARIABLE( g_variables.m_knife_model, int );
+	const int chosen = GET_VARIABLE( WEAPON_VAR( m_knife_model ), int );
 	if ( chosen <= 0 || chosen >= KNIFE_COUNT )
 		return current_model_name;
 
@@ -1211,12 +1389,40 @@ inline bool want_spin_hold( bool key, bool held, float cycle, float lead, float 
 inline recv_var_proxy_fn g_original_sequence_proxy    = nullptr;
 inline recv_var_proxy_fn g_original_model_index_proxy = nullptr;
 
+/* view model of a botox network user we spectate: their knife slot, 0 = none / ours / not theirs */
+inline int remote_view_knife( c_base_entity* viewmodel )
+{
+	if ( !viewmodel || !g_ctx.m_local )
+		return 0;
+
+	const auto owner = g_interfaces.m_client_entity_list->get< c_base_entity >( viewmodel->get_owner_handle( ) );
+	if ( !owner || owner == g_ctx.m_local )
+		return 0;
+
+	const auto weapon = g_interfaces.m_client_entity_list->get< c_base_entity >( owner->get_active_weapon_handle( ) );
+	if ( !weapon || !is_knife_class( class_id_of( weapon ) ) )
+		return 0;
+
+	return g_botox_net.knife_slot_of( owner->get_index( ) );
+}
+
 inline void __cdecl model_index_proxy( const c_recv_proxy_data* data, void* structure, void* output )
 {
-	const bool enabled = GET_VARIABLE( g_variables.m_knife_enable, bool );
-	const int chosen   = GET_VARIABLE( g_variables.m_knife_model, int );
+	const bool enabled = GET_VARIABLE( WEAPON_VAR( m_knife_enable ), bool );
+	const int chosen   = GET_VARIABLE( WEAPON_VAR( m_knife_model ), int );
 
-	if ( enabled && chosen > 0 && chosen < KNIFE_COUNT && g_ctx.m_local && g_ctx.m_local->is_alive( ) &&
+	if ( const int remote = g_interfaces.m_engine_client->is_connected( ) ? remote_view_knife( static_cast< c_base_entity* >( structure ) ) : 0 ) {
+		int knife_indexes[ KNIFE_COUNT ];
+		fill_knife_indexes( knife_indexes );
+
+		const auto mutable_data = const_cast< c_recv_proxy_data* >( data );
+		for ( int i = 1; i < KNIFE_COUNT; i++ ) {
+			if ( mutable_data->m_value.m_int == knife_indexes[ i ] && knife_indexes[ remote ] > 0 ) {
+				mutable_data->m_value.m_int = knife_indexes[ remote ];
+				break;
+			}
+		}
+	} else if ( enabled && chosen > 0 && chosen < KNIFE_COUNT && g_ctx.m_local && g_ctx.m_local->is_alive( ) &&
 		 g_interfaces.m_engine_client->is_connected( ) ) {
 		int knife_indexes[ KNIFE_COUNT ];
 		fill_knife_indexes( knife_indexes );
@@ -1272,6 +1478,17 @@ inline void __cdecl sequence_proxy( const c_recv_proxy_data* data, void* structu
 						botox_dbg_log( "KSEQ: in=%d pred=%d out=%d keep=%d", incoming, predicted, mutable_data->m_value.m_int, keep );
 					}
 				}
+			}
+		} else if ( const int remote = remote_view_knife( viewmodel ) ) {
+			/* server picks sequences off the stock knife table, the spectated botox user's knife numbers them differently */
+			const char* anim_model = effective_anim_model( KNIFE_MODELS[ remote ] );
+			const char* from       = server_sequence_table( );
+
+			if ( anim_model && ( !from || !same_model_file( from, anim_model ) ) ) {
+				const auto mutable_data     = const_cast< c_recv_proxy_data* >( data );
+				const int incoming          = mutable_data->m_value.m_int;
+				mutable_data->m_value.m_int = remap_knife_sequence( anim_model, incoming );
+				botox_dbg_log( "NET: kseq %d in=%d out=%d", remote, incoming, mutable_data->m_value.m_int );
 			}
 		}
 	}

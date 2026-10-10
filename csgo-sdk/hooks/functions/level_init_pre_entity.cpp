@@ -5,6 +5,7 @@
 #include "../../hacks/entity_cache/entity_cache.h"
 #include "../../hacks/avatar_cache/avatar_cache.h"
 #include "../../hacks/misc/scaleform/scaleform.h"
+#include "../../hacks/network/botox_net.h"
 #include "../../hacks/skins/skins.h"
 #include "../../hacks/visuals/edicts/edicts.h"
 
@@ -20,6 +21,8 @@ void __stdcall n_detoured_functions::level_init_pre_entity( const char* map_name
 	g_entity_cache.reset( );
 
 	g_skins.on_level_pre_load( );
+
+	g_botox_net.on_level_init( );
 
 	g_convars.rescan( );
 

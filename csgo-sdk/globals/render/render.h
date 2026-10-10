@@ -293,6 +293,7 @@ namespace n_render
 
 		ImVec2 dpi_panel_pos( ImVec2 pos, ImVec2 size );
 		ImVec2 dpi_panel_layout_pos( ImVec2 shown, ImVec2 size );
+		ImVec2 panel_mouse( ImVec2 pos, ImVec2 size );
 
 		void on_release( );
 

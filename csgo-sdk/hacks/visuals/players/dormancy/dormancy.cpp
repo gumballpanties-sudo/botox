@@ -20,7 +20,7 @@ void n_dormancy::impl_t::think( )
 
 		auto player = g_interfaces.m_client_entity_list->get< c_base_entity >( sound.m_sound_source );
 
-		if ( !player->is_valid_enemy( ) )
+		if ( !player || !player->is_valid_enemy( ) )
 			continue;
 
 		setup_adjust_player( player, sound );

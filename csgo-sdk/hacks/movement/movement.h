@@ -2,6 +2,7 @@
 #define WINDOWS_IGNORE_PACKING_MISMATCH
 #include <algorithm>
 #include <atomic>
+#include <mutex>
 #include <vector>
 #include <Windows.h>
 #include <string>
@@ -203,6 +204,7 @@ namespace n_route
 		std::vector< std::string > elements{ };
 		int cost = 0;
 		float gap = 0.f;
+		float odds = 1.f; /* < 1 = works only for some of the ticks you can cross onto a marginal box */
 	};
 
 	bool measure_launch( c_user_cmd* cmd );
@@ -223,6 +225,10 @@ namespace n_route
 		float travel              = k_route_travel;
 		int delay_ticks           = 2;
 		int max_results           = 16;
+		/* > 0: stop after this long and list the combos finished by then ( timed_out ) */
+		int time_limit_ms = 0;
+		/* merged rows held for an exact count; past it rows are counted per arc ( total_approx ) and only the shown kept */
+		long exact_alts = 100000;
 		/* route calc worker: progress 0..999 out, stop flag in ( null = sync caller ) */
 		std::atomic< int >* progress      = nullptr;
 		const std::atomic< bool >* cancel = nullptr;
@@ -230,6 +236,10 @@ namespace n_route
 	struct solve_output_t {
 		std::vector< solution_t > routes{ };
 		long long total = 0;
+		/* total counted per arc, not per listed text: two presses that print the same can count twice */
+		bool total_approx = false;
+		/* too many arcs for the room / time: the harder half dropped mid-route, total is a floor */
+		bool trimmed = false;
 		/* jumps = route length: one move per point, never more */
 		int jumps        = 0;
 		/* per route length (console): best gap at the destination + hit count. neither set = that
@@ -240,6 +250,8 @@ namespace n_route
 		long double searched = 0.L;
 		/* the search outgrew the address space at failed_at and stopped ( no beam, every arc is kept ) */
 		bool out_of_memory   = false;
+		/* hit time_limit_ms: routes / total = the combos finished, more exist */
+		bool timed_out       = false;
 		int failed_at   = -1;
 		float want_z    = 0.f;
 		float closest_z = 0.f;
@@ -274,6 +286,21 @@ namespace n_route
 		int kind = popup_row_combo;
 	};
 	void draw_popup( const char* title, const std::vector< popup_row_t >& rows, float started );
+
+	/* publish on the game thread, draw on the d3d thread: never hand draw_popup a vector create_move writes */
+	struct popup_slot_t {
+		void publish( std::vector< popup_row_t > rows, float started );
+		void draw( const char* title );
+
+	private:
+		std::mutex m_lock;
+		std::vector< popup_row_t > m_rows;
+		float m_started = 0.f;
+	};
+	inline popup_slot_t g_route_popup, g_pixel_popup;
+
+	/* m_route_calc_data: game thread + menu ( d3d thread ) both write it, hold this for any touch */
+	inline std::recursive_mutex g_route_lock;
 }
 
 enum edgebug_type_t : int {
@@ -713,8 +740,9 @@ namespace n_movement
 			std::vector< route_point_t > points{ };
 			std::vector< n_route::solution_t > solutions{ };
 			long long total_solutions = 0;
-			/* GetTickCount64 seconds of the calculate press, 0 = no popup. written on create_move, read on
-			   the d3d thread; float write is atomic enough ( worst case one frame of stale alpha ). */
+			bool total_approx         = false;
+			bool total_floor          = false; /* solve_output_t::trimmed */
+			/* GetTickCount64 seconds of the calculate press, 0 = no popup. d3d thread reads n_route::g_route_popup, never this */
 			float popup_started       = 0.f;
 			bool solved               = false;
 			std::string message{ };
@@ -735,6 +763,8 @@ namespace n_movement
 				++gen;
 				solutions.clear( );
 				total_solutions = 0;
+				total_approx    = false;
+				total_floor     = false;
 				popup_started   = 0.f;
 				solved          = false;
 				message.clear( );
