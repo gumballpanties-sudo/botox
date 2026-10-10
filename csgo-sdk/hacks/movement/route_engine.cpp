@@ -579,6 +579,7 @@ namespace
 		n_route::sim_t st{ };
 		bool jb_ok = false;
 		n_route::sim_t jb{ };
+		float p = 1.f;
 	};
 
 	struct node_t {
@@ -586,6 +587,8 @@ namespace
 		/* st + others = every state this route can be in; odds = share of landings it still works from */
 		std::vector< shadow_t > others{ };
 		float odds = 1.f;
+		/* st's share of the set ( others carry theirs ). fresh out of a press = its landing tick's weight */
+		float p = 1.f;
 		std::shared_ptr< const step_t > path{ };
 		/* only the serial admit writes it, and only while it is the sole owner */
 		std::shared_ptr< alt_list_t > alts{ };
@@ -850,9 +853,9 @@ namespace
 		std::vector< unsigned long long > hs;
 		hs.reserve( n.others.size( ) );
 		for ( const shadow_t& o : n.others )
-			hs.push_back( key_hash( state_key( n, o.st, o.jb_ok, o.jb ) ) );
+			hs.push_back( ( key_hash( state_key( n, o.st, o.jb_ok, o.jb ) ) ^ bits( o.p ) ) * 1099511628211ull );
 		std::sort( hs.begin( ), hs.end( ) );
-		unsigned long long h = 14695981039346656037ull ^ bits( n.odds );
+		unsigned long long h = ( ( 14695981039346656037ull ^ bits( n.odds ) ) * 1099511628211ull ) ^ bits( n.p );
 		for ( const unsigned long long v : hs )
 			h = ( h ^ v ) * 1099511628211ull;
 		k.extra = h | 1ull;
@@ -1311,7 +1314,7 @@ namespace n_route
 		   shown rows ( an alt the list skips as a repeat leaves room for the next ) and the list stops once full */
 		bool approx          = false;
 		std::size_t alt_keep = SIZE_MAX;
-		using row_key_t = std::tuple< int, int, float, int, int, int, int, int, int, int, int, std::size_t, long long >;
+		using row_key_t = std::tuple< int, float, int, int, int, int, int, int, int, int, int, std::size_t, long long >;
 		struct row_t {
 			row_key_t key{ };
 			solution_t sol{ };
@@ -1703,9 +1706,14 @@ namespace n_route
 							int creep_ticks = 0;
 							bool lip_missed = false;
 							int tb_catches = 0, tb_first = -1;
+							/* ticks the feet cleared the box top since the last landing: crossing the edge on any of them
+							   lands on the next catch ( 10-10 log: 6/6 tries crossed high, landed the falling tick ) */
+							int clear_ticks = 0;
 
 							const auto land_floor = [ & ]( const sim_t& st, const sim_t& st_in, float vz_in, bool held_now ) {
 								node_t made;
+								made.p            = static_cast< float >( ( std::max )( clear_ticks, 1 ) );
+								clear_ticks       = 0;
 								made.st           = st;
 								made.st.on_player = point.ent > 0;
 								made.cost         = node.cost + leg_cost;
@@ -1760,6 +1768,8 @@ namespace n_route
 									}
 								}
 								sim_tick( s, false, held, target_z, solid && above && lip_in, skin );
+								if ( s.z >= target_z )
+									++clear_ticks;
 								if ( !lip_in && s.vz < 0.f && s.z < target_z - k_dist_eps )
 									lip_missed = true;
 								if ( s.z > apex )
@@ -2040,6 +2050,7 @@ namespace n_route
 				if ( n_states == 1 && std::adjacent_find( r.sigs.begin( ), r.sigs.end( ) ) == r.sigs.end( ) ) {
 					for ( node_t& made : r.made ) {
 						made.odds = node.odds;
+						made.p    = 1.f;
 						if ( !last )
 							r.keys.emplace_back( node_key( made ) );
 					}
@@ -2061,46 +2072,73 @@ namespace n_route
 					}
 				}
 
-				std::vector< node_t > leads;
+				/* sig groups first: a state's share splits over its landings in a group by tick weight */
+				std::vector< std::size_t > grp( r.made.size( ) );
 				std::vector< unsigned long long > lead_sig;
-				std::vector< std::vector< unsigned long long > > lead_seen; /* state hashes in the set */
-				std::vector< std::vector< char > > lead_hit;                /* which of node's states got there */
 				std::unordered_map< unsigned long long, std::size_t > at;
 				for ( std::size_t k = 0; k < r.made.size( ); ++k ) {
 					/* one state's same-sig outputs are always adjacent ( one press loop ): no map needed then */
-					std::size_t g = leads.size( );
+					std::size_t g = lead_sig.size( );
 					if ( n_states == 1 ) {
 						if ( g > 0 && lead_sig.back( ) == r.sigs[ k ] )
-							g = leads.size( ) - 1;
+							g = lead_sig.size( ) - 1;
 					} else if ( const auto it = at.find( r.sigs[ k ] ); it != at.end( ) )
 						g = it->second;
-					node_t& made = r.made[ k ];
-					if ( g == leads.size( ) ) {
+					if ( g == lead_sig.size( ) ) {
 						if ( n_states > 1 )
 							at.emplace( r.sigs[ k ], g );
 						lead_sig.emplace_back( r.sigs[ k ] );
-						lead_seen.emplace_back( );
-						lead_hit.emplace_back( n_states, 0 );
-						lead_hit.back( )[ from[ k ] ] = 1;
+					}
+					grp[ k ] = g;
+				}
+				std::vector< float > tick_w( lead_sig.size( ) * n_states, 0.f ); /* 0 = that state misses the group */
+				for ( std::size_t k = 0; k < r.made.size( ); ++k )
+					tick_w[ grp[ k ] * n_states + from[ k ] ] += r.made[ k ].p;
+				const auto share = [ & ]( std::size_t j ) { return j == 0 ? node.p : node.others[ j - 1 ].p; };
+
+				std::vector< node_t > leads;
+				std::vector< std::vector< unsigned long long > > lead_seen( lead_sig.size( ) ); /* state hashes, [ 0 ] = lead */
+				for ( std::size_t k = 0; k < r.made.size( ); ++k ) {
+					const std::size_t g = grp[ k ];
+					node_t& made        = r.made[ k ];
+					const float p       = share( from[ k ] ) * made.p / tick_w[ g * n_states + from[ k ] ];
+					const unsigned long long h = key_hash( state_key( made, made.st, made.jb_ok, made.jb ) );
+					if ( g == leads.size( ) ) {
+						made.p = p;
+						lead_seen[ g ].emplace_back( h );
 						leads.emplace_back( std::move( made ) );
 						continue;
 					}
-					lead_hit[ g ][ from[ k ] ] = 1;
-					if ( lead_seen[ g ].empty( ) )
-						lead_seen[ g ].emplace_back( key_hash( state_key( leads[ g ], leads[ g ].st, leads[ g ].jb_ok, leads[ g ].jb ) ) );
-					const unsigned long long h = key_hash( state_key( made, made.st, made.jb_ok, made.jb ) );
-					if ( std::find( lead_seen[ g ].begin( ), lead_seen[ g ].end( ), h ) != lead_seen[ g ].end( ) )
+					if ( const auto it = std::find( lead_seen[ g ].begin( ), lead_seen[ g ].end( ), h ); it != lead_seen[ g ].end( ) ) {
+						const std::size_t i = static_cast< std::size_t >( it - lead_seen[ g ].begin( ) );
+						( i == 0 ? leads[ g ].p : leads[ g ].others[ i - 1 ].p ) += p;
 						continue;
+					}
 					lead_seen[ g ].emplace_back( h );
 					/* shown leg stays the earliest tick: in game a marginal box is crossed onto rising ( logs 4344, 10-10 ) */
-					leads[ g ].others.push_back( { made.st, made.jb_ok, made.jb } );
+					leads[ g ].others.push_back( { made.st, made.jb_ok, made.jb, p } );
 				}
-				/* ponytail: every landing tick counts the same, real odds lean on how you approach the box */
+				/* odds = share of landings still alive: crossing the edge on each tick the feet clear the top is one
+				   landing. ponytail: no wall hugs ( blocked under the top, pops over on the first clear tick ) */
 				for ( std::size_t g = 0; g < leads.size( ); ++g ) {
-					const auto hits = std::count( lead_hit[ g ].begin( ), lead_hit[ g ].end( ), 1 );
-					leads[ g ].odds = hits == static_cast< std::ptrdiff_t >( n_states )
-					                      ? node.odds
-					                      : node.odds * static_cast< float >( hits ) / static_cast< float >( n_states );
+					int hits    = 0;
+					float alive = 0.f;
+					for ( std::size_t j = 0; j < n_states; ++j )
+						if ( tick_w[ g * n_states + j ] > 0.f ) {
+							++hits;
+							alive += share( j );
+						}
+					const bool all = hits == static_cast< int >( n_states );
+					leads[ g ].odds = all ? node.odds : node.odds * alive;
+					float sum       = leads[ g ].p;
+					for ( const shadow_t& o : leads[ g ].others )
+						sum += o.p;
+					const float scale = sum > 0.f ? 1.f / sum : 1.f;
+					leads[ g ].p *= scale;
+					for ( shadow_t& o : leads[ g ].others )
+						o.p *= scale;
+					if ( leads[ g ].others.empty( ) )
+						leads[ g ].p = 1.f;
 				}
 				r.made = std::move( leads );
 				r.sigs = std::move( lead_sig );
@@ -2377,7 +2415,7 @@ namespace n_route
 				}
 			}
 			/* list order = one frontier's walk: tier, leads before alts, the frontier sort, walk order */
-			const row_key_t row_key{ list_tier( n ), alt ? 1 : 0, -n.odds, tier_of( n ), n.crouches, bind_count( n ), n.switches, n.presses,
+			const row_key_t row_key{ list_tier( n ), -n.odds, alt ? 1 : 0, tier_of( n ), n.crouches, bind_count( n ), n.switches, n.presses,
 			                         n.cost, n.n_legs, static_cast< int >( final_gap( n ) * 2000.f ), text_len, row_seq };
 			/* exact count: every row still goes through the dedup below, listed or not */
 			const bool fits = rows.size( ) < static_cast< std::size_t >( cap ) || row_key < rows.back( ).key;
@@ -2424,7 +2462,7 @@ namespace n_route
 				const leg_t& l = n.path->leg;
 				char chancy[ 24 ]{ };
 				if ( n.odds < 1.f )
-					sprintf_s( chancy, "[chancy %d%%] ", static_cast< int >( n.odds * 100.f ) );
+					sprintf_s( chancy, "[chancy %d%%] ", static_cast< int >( std::lround( n.odds * 100.f ) ) );
 				char line[ 160 ]{ };
 				sprintf_s( line, "gap %6.4f  band %s  catch %9.4f  %s  keys %d  switches %d  presses %d  cost %d  %s%s",
 				           l.gap, l.tier == 0 ? "GOOD" : ( l.tier == 1 ? "iffy" : "poor" ), l.arrive_z, n.st.ducked ? "ducked" : "stand ",
@@ -2482,22 +2520,28 @@ namespace n_route
 					return ga < gb;
 				return text_len[ ia ] < text_len[ ib ];
 			} );
+			/* per tier, per odds ( order is odds first; safe rows are all 1 ): leads, then their alts */
 			for ( int tier = 0; tier <= 5; ++tier ) {
-				for ( const std::size_t i : order )
-					if ( list_tier( frontier[ i ] ) == tier && !list_row( frontier[ i ], nullptr, text_len[ i ] ) )
-						return;
-				for ( const std::size_t i : order ) {
-					const node_t& n = frontier[ i ];
-					if ( !n.alts || list_tier( n ) != tier )
-						continue;
-					alts_held += static_cast< long long >( n.alts->size );
-					bool more = true;
-					n.alts->each( [ & ]( const std::shared_ptr< const alt_t >& a ) {
-						if ( more )
-							more = list_row( n, a.get( ), text_len[ i ] );
-					} );
-					if ( !more )
-						return;
+				for ( std::size_t lo = 0, hi = 0; lo < order.size( ); lo = hi ) {
+					while ( hi < order.size( ) && frontier[ order[ hi ] ].odds == frontier[ order[ lo ] ].odds )
+						++hi;
+					for ( std::size_t o = lo; o < hi; ++o )
+						if ( list_tier( frontier[ order[ o ] ] ) == tier && !list_row( frontier[ order[ o ] ], nullptr, text_len[ order[ o ] ] ) )
+							return;
+					for ( std::size_t o = lo; o < hi; ++o ) {
+						const std::size_t i = order[ o ];
+						const node_t& n     = frontier[ i ];
+						if ( !n.alts || list_tier( n ) != tier )
+							continue;
+						alts_held += static_cast< long long >( n.alts->size );
+						bool more = true;
+						n.alts->each( [ & ]( const std::shared_ptr< const alt_t >& a ) {
+							if ( more )
+								more = list_row( n, a.get( ), text_len[ i ] );
+						} );
+						if ( !more )
+							return;
+					}
 				}
 			}
 		};

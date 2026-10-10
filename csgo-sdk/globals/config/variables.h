@@ -1015,7 +1015,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_wall_climb, false );
 		ADD_VARIABLE( key_bind_t, m_wall_climb_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_wall_climb_prevent_slow, true );
-		ADD_VARIABLE( bool, m_wall_climb_duck, false );
+		ADD_VARIABLE( bool, m_wall_climb_duck, true );
 		ADD_VARIABLE( int, m_wall_climb_duck_ticks, 2 );
 		ADD_VARIABLE( bool, m_wall_climb_visual_angles, false );
 		ADD_VARIABLE( bool, m_show_wall_slope, false );

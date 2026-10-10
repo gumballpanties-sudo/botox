@@ -68,13 +68,23 @@ namespace n_tb
 		s_trace_qpc_this_cmd += b.QuadPart - a.QuadPart;
 	}
 
-	/* hull hit plane dist. disp hits report the raw vert coord ( dispcoll AxisPlanesXYZ, min planes sign flipped: nuke 1636 wall read
-	   +1636 ), every hull hit stops DIST_EPSILON off its plane -> rebuild from the end */
+	/* hull hit plane dist, world space. world brush = raw. brush entity = model space ( CM_TransformedBoxTrace never shifts dist back:
+	   agency y 510 func wall read 0.5 ) -> + n.origin. disp = raw vert coord ( dispcoll AxisPlanesXYZ, nuke 1636 read +1636 ), static
+	   prop / vphysics = end.n ( hull center ) -> rebuild from the end, every hull hit stops DIST_EPSILON off its plane */
 	inline float hull_plane_dist( const trace_t& tr, const c_vector& mins, const c_vector& maxs )
 	{
-		if ( !tr.surface.m_name || !strstr( tr.surface.m_name, "displacement" ) )
-			return tr.m_plane.m_distance;
 		const c_vector& p = tr.m_plane.m_normal;
+		const bool disp   = tr.surface.m_name && strstr( tr.surface.m_name, "displacement" );
+		if ( !disp ) {
+			c_base_entity* ent = tr.m_hit_entity;
+			if ( !ent || ent->get_index( ) == 0 ) {
+				if ( tr.m_hitbox == 0 )
+					return tr.m_plane.m_distance;
+			} else if ( auto* col = ent->get_collideable( ); col && col->get_solid( ) == 1 /* SOLID_BSP */ ) {
+				const c_vector& o = col->get_collision_origin( );
+				return tr.m_plane.m_distance + o.m_x * p.m_x + o.m_y * p.m_y + o.m_z * p.m_z;
+			}
+		}
 		return tr.m_end.m_x * p.m_x + tr.m_end.m_y * p.m_y + tr.m_end.m_z * p.m_z + std::min( p.m_x * mins.m_x, p.m_x * maxs.m_x ) +
 		       std::min( p.m_y * mins.m_y, p.m_y * maxs.m_y ) + std::min( p.m_z * mins.m_z, p.m_z * maxs.m_z ) - 0.03125f;
 	}

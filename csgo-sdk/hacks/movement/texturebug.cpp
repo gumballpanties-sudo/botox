@@ -654,6 +654,9 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 			constexpr int k_look         = 10;
 			constexpr int k_look_cap     = 100;
 			constexpr float k_look_ratio = 2.f;
+			/* branches capped by k_look_cap + the time share, not k_cmd_sim_cap: log 10-10 agency 6/25 skip branches starved at 192
+			   ( lk=2 = take ). lab TB_SIMCAP 192 vs off 5 maps: ride ticks dust2 +7% inferno +5%, catches same */
+			const auto look_out = [ & ]( ) { return ( s_budget_live && s_budget.expired( ) ) || ( s_sim_reserve > 0 && sims_left( ) <= 0 ); };
 			const auto pinned_now = [ & ]( const float vz_start ) {
 				const c_vector v = local->get_velocity( );
 				return !( local->get_flags( ) & fl_onground ) && local->get_move_type( ) == e_move_types::move_type_walk &&
@@ -661,7 +664,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 			};
 			const auto rollout = [ & ]( c_user_cmd first, int st ) -> int {
 				const int s0 = sims;
-				if ( sims_left( ) <= 0 )
+				if ( look_out( ) )
 					return -1;
 				tb_restore( frame );
 				pred_simulate( &first );
@@ -676,7 +679,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 				for ( int i = 0; i < k_look && sims - s0 < k_look_cap; ++i ) {
 					if ( ( local->get_flags( ) & fl_onground ) || local->get_move_type( ) != e_move_types::move_type_walk )
 						break;
-					if ( sims_left( ) <= 0 || !g_prediction.snapshot_save( 0 ) )
+					if ( look_out( ) || !g_prediction.snapshot_save( 0 ) )
 						return -1;
 					const c_vector o = local->get_origin( ), v = local->get_velocity( );
 					const bool dk    = ( local->get_flags( ) & fl_ducking ) != 0;
@@ -690,7 +693,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 							break;
 						const float hi = std::max( ( k_eps - gk ) * dzk / ( ( ( d || dk ) ? 54.f : 72.f ) + k_eps ), gk * 1.5f );
 						for ( float dx = gk * 1.0005f + 1e-7f; dx <= hi && sims - s0 < k_look_cap; dx = std::max( dx * k_look_ratio, dx + ulp ) ) {
-							if ( sims_left( ) <= 0 )
+							if ( look_out( ) )
 								return -1;
 							from_here( press_from( vo, dk, dx / ipt, d, v.m_z ) );
 							if ( pinned_now( v.m_z ) ) {
@@ -707,7 +710,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 						last = 1;
 						continue;
 					}
-					if ( sims_left( ) <= 0 )
+					if ( look_out( ) )
 						return -1;
 					from_here( with_duck( in, st ) );
 					last = 0;

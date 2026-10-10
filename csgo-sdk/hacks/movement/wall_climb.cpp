@@ -35,6 +35,8 @@ namespace
 	constexpr float k_dead_xy       = 1.f;
 	constexpr float k_bad_xy        = 5.f;
 	constexpr float k_bad_gap       = -0.5f;
+	// engine rest = hull DIST_EPSILON off the plane = gap 0; under it the server goes allsolid ( vel 0,0,-6.25 ), sims never see it
+	constexpr float k_flush_gap     = -0.001f;
 	constexpr float k_xy_tie        = 0.5f;
 	constexpr float k_duck_gap      = 0.05f;
 	constexpr float k_bail_start_xy = 10.f;
@@ -53,7 +55,7 @@ namespace
 	constexpr float k_div_vel       = 1.f;
 	constexpr int k_div_lines       = 64;
 
-	enum e_wc_count { wc_ticks, wc_sims, wc_refine, wc_full, wc_pin, wc_park, wc_arm, wc_hold, wc_bail, wc_kill, wc_keys, wc_flip, wc_duck, wc_cut, wc_yield, wc_div, wc_max };
+	enum e_wc_count { wc_ticks, wc_sims, wc_refine, wc_full, wc_pin, wc_park, wc_arm, wc_hold, wc_bail, wc_kill, wc_keys, wc_flush, wc_flip, wc_duck, wc_cut, wc_yield, wc_div, wc_max };
 	int s_count[ wc_max ]{ };
 	long long s_us = 0ll, s_us_worst = 0ll;
 	unsigned long long s_log_next = 0ull;
@@ -183,9 +185,9 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	if ( const unsigned long long now = GetTickCount64( ); now >= s_log_next ) {
 		s_log_next = now + 1000ull;
 		if ( s_count[ wc_ticks ] || s_count[ wc_yield ] )
-			botox_dbg_log( "WC: ticks=%d sims=%d refine=%d full=%d pin=%d park=%d arm=%d hold=%d bail=%d kill=%d keys=%d flip=%d duck=%d cut=%d yield=%d div=%d us=%lld worst=%lld",
+			botox_dbg_log( "WC: ticks=%d sims=%d refine=%d full=%d pin=%d park=%d arm=%d hold=%d bail=%d kill=%d keys=%d flush=%d flip=%d duck=%d cut=%d yield=%d div=%d us=%lld worst=%lld",
 			               s_count[ wc_ticks ], s_count[ wc_sims ], s_count[ wc_refine ], s_count[ wc_full ], s_count[ wc_pin ], s_count[ wc_park ],
-			               s_count[ wc_arm ], s_count[ wc_hold ], s_count[ wc_bail ], s_count[ wc_kill ], s_count[ wc_keys ], s_count[ wc_flip ],
+			               s_count[ wc_arm ], s_count[ wc_hold ], s_count[ wc_bail ], s_count[ wc_kill ], s_count[ wc_keys ], s_count[ wc_flush ], s_count[ wc_flip ],
 			               s_count[ wc_duck ], s_count[ wc_cut ], s_count[ wc_yield ], s_count[ wc_div ], s_us, s_us_worst );
 		for ( int& c : s_count )
 			c = 0;
@@ -229,7 +231,8 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	const c_vector mins = collideable->get_obb_mins( ), maxs = collideable->get_obb_maxs( );
 	const float hx = std::max( std::fabsf( mins.m_x ), std::fabsf( maxs.m_x ) );
 	const float hy = std::max( std::fabsf( mins.m_y ), std::fabsf( maxs.m_y ) );
-	c_trace_filter filter( local );
+	// donor filter 0x107263ec: world + static props, every entity skipped
+	c_trace_filter_trace_type_everything_filter_props filter{ };
 
 	// FUN_100ea5e0: closest vertical wall within hull edge + 2, line traces at feet + 1..4, 16 dirs from last hit
 	trace_t wall_tr{ };
@@ -316,7 +319,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		const c_vector from( o.m_x, o.m_y, wall_z );
 		trace_t tr{ };
 		ray_t ray( from, from - c_vector( wall_n.m_x, wall_n.m_y, 0.f ) * k_gap_reach );
-		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
+		g_interfaces.m_engine_trace->trace_ray( ray, mask_all, &filter, &tr );
 		return tr.m_fraction * k_gap_reach - ( std::fabsf( wall_n.m_x ) * hx + std::fabsf( wall_n.m_y ) * hy );
 	};
 
@@ -492,10 +495,12 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		reset_latch( );
 		++s_count[ wc_bail ];
 		branch = "bail";
-	} else if ( bad( fin ) && fin.pins <= 0 && !m_latch_arm && !m_latch_hold ) {
-		// nothing catches and the best move is near still: donor parks you on it ( hover, your keys dropped ), here your keys
-		++s_count[ wc_keys ];
-		branch = "keys";
+	} else if ( fin.pins <= 0 && !m_latch_arm && !m_latch_hold ) {
+		// nothing catches: donor parks you on the smallest gap ( your keys dropped ). log 17:42: 25/27 allsolid freezes after a park,
+		// 0 in 462 key ticks by the same walls, 0 pins all session -> your keys. flush = park would have gone past engine rest
+		const bool flush = fin.gap < k_flush_gap;
+		++s_count[ flush ? wc_flush : wc_keys ];
+		branch = flush ? "flush" : "keys";
 	} else {
 		const bool falling_free = !pinned( start_vel.m_z ) && start_vel.m_z < k_fall_vz;
 		if ( user_duck ) {
@@ -550,12 +555,12 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				++s_count[ wc_arm ];
 			}
 		} else {
-			branch = fin.pins > 0 ? "pin" : "park";
+			branch = "pin";
 			reset_latch( );
-			if ( fin.pins > 0 && kills( fin.buttons, fin.yaw, fin.fwd ) )
+			if ( kills( fin.buttons, fin.yaw, fin.fwd ) )
 				++s_count[ wc_kill ];
 			else {
-				caught_now = fin.pins > 0;
+				caught_now = true;
 				apply( fin.buttons, fin.yaw, fin.fwd );
 			}
 		}

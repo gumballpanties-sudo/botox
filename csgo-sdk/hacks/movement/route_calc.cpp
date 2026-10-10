@@ -65,8 +65,9 @@ namespace n_route
 	{
 		if ( s.odds >= 1.f )
 			return route_text( s.elements );
+		/* odds = share of box-edge crossings that land on a tick this route still works from */
 		char tag[ 32 ]{ };
-		sprintf_s( tag, "  (chancy %d%%)", static_cast< int >( s.odds * 100.f ) );
+		sprintf_s( tag, "  (works %d%% of tries)", static_cast< int >( std::lround( s.odds * 100.f ) ) );
 		return route_text( s.elements ) + tag;
 	}
 }
