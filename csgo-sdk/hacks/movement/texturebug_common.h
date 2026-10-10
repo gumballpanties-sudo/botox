@@ -243,6 +243,23 @@ namespace n_tb
 		return ( wish.m_x * normal.m_x + wish.m_y * normal.m_y ) > min_dot;
 	}
 
+	/* steering away AND your air accel moves you off: a wish inside the no-gain cone ( v.wishdir >= 30 ) adds nothing.
+	   log 10-10 agency: W held looking off the wall, xy frozen 225.759, tb bailed ( S ) the whole slide */
+	inline bool tb_move_leaves_wall( const c_user_cmd* cmd, const c_vector& wall_normal, float forward_move, float side_move, const c_vector& vel,
+	                                 float max_speed, float crop )
+	{
+		constexpr float k_leave_speed = 1.f;
+		if ( !tb_steering_away_from_wall( cmd, wall_normal, forward_move, side_move ) )
+			return false;
+		const float nl = std::sqrt( wall_normal.m_x * wall_normal.m_x + wall_normal.m_y * wall_normal.m_y );
+		if ( nl < 0.001f )
+			return false;
+		const float yaw   = cmd->m_view_point.m_y - rad2deg( std::atan2f( side_move, forward_move ) );
+		const float speed = std::fmin( std::sqrt( forward_move * forward_move + side_move * side_move ) * crop, std::fmax( 0.f, max_speed ) );
+		const c_vector v  = vel + air_accel_delta( vel, yaw, speed );
+		return ( v.m_x * wall_normal.m_x + v.m_y * wall_normal.m_y ) / nl > k_leave_speed;
+	}
+
 	inline bool tb_move_latches_ladder( const c_user_cmd* cmd, const bool check_cliff )
 	{
 		if ( !cmd || !g_ctx.m_local || ( cmd->m_forward_move == 0.f && cmd->m_side_move == 0.f ) )

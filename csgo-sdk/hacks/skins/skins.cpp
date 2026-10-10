@@ -292,8 +292,10 @@ void n_skins::impl_t::full_update( )
 
 	last_update_time = now;
 
-	if ( local_refresh( ) )
+	if ( local_refresh( ) ) {
+		clear_hud_weapons( );
 		m_forcing_update = false;
+	}
 }
 
 void n_skins::impl_t::on_level_init( )

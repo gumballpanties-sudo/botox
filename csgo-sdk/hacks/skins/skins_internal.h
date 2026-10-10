@@ -579,6 +579,30 @@ inline clear_custom_materials_t get_clear_custom_materials( )
 	return fn;
 }
 
+/* weapon hud caches icon/name panels per slot; drop them so it rebuilds from current skin.
+   list = CCSGO_HudWeaponSelection - 0xA0, count at +0x80, clear( i ) returns i - 1. */
+inline void clear_hud_weapons( )
+{
+	using find_hud_element_t = std::uintptr_t( __thiscall* )( void* hud, const char* name );
+	using clear_hud_weapon_t = int( __thiscall* )( void* list, int index );
+
+	static const auto hud_ref = g_modules[ CLIENT_DLL ].find_pattern( "B9 ? ? ? ? 68 ? ? ? ? E8 ? ? ? ? 89 46 24" );
+	static const auto find_hud_element =
+		reinterpret_cast< find_hud_element_t >( g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 53 8B 5D 08 56 57 8B F9 33 F6 39 77 28" ) );
+	static const auto clear_hud_weapon =
+		reinterpret_cast< clear_hud_weapon_t >( g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 51 53 56 8B 75 08 8B D9 57 6B FE 34" ) );
+	if ( !hud_ref || !find_hud_element || !clear_hud_weapon )
+		return;
+
+	const auto element = find_hud_element( *reinterpret_cast< void** >( hud_ref + 1 ), "CCSGO_HudWeaponSelection" );
+	if ( !element )
+		return;
+
+	const auto list = reinterpret_cast< void* >( element - 0xA0 );
+	for ( int i = 0; i < *reinterpret_cast< int* >( element - 0xA0 + 0x80 ); i++ )
+		i = clear_hud_weapon( list, i );
+}
+
 /* CEconItemView::SetOrAddAttributeValueByName( name ), VALUE IN XMM2.
    this = attribute list at view + 0x244, name pushed, ret 4. */
 inline std::uintptr_t get_set_attribute_value( )

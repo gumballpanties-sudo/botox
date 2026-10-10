@@ -136,7 +136,7 @@ namespace n_botox_net
 		void apply_items( );
 		void apply_gloves( );
 		void apply_spectate( );
-		void release_glove( int index );
+		void release_glove( int index, bool forget = true );
 		void release_gloves( );
 		void force_server_masks( );
 

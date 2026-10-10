@@ -126,7 +126,6 @@ namespace n_edgebug
 			bool ok[k_predicted_cmd_max];
 			int last = -1;
 			bool complete = false;
-			bool probe_cut = false;
 		};
 		base_ref_t m_base_ref[8];
 		short m_snap_at[8][k_predicted_cmd_max];

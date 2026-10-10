@@ -583,7 +583,9 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 	if ( steer && mouse_yaw != 0.f )
 		delta_angle.m_y = std::clamp( mouse_yaw, -30.f, 30.f );
 	const int want_paths = steer ? std::clamp( GET_VARIABLE( g_variables.m_edgebug_paths, int ), 1, k_plan_max ) : 1;
-	const auto drop_plan = [ this ]( ) {
+	const auto drop_plan = [ this ]( const char* why ) {
+		if ( m_found )
+			botox_dbg_log( "EB: drop why=%s at %d/%d\n", why, m_replay_hits, m_prediction_ticks );
 		m_found            = false;
 		m_replay_hits      = 0;
 		m_ducked           = false;
@@ -597,15 +599,19 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		donor_reset( );
 	if ( !GET_VARIABLE( g_variables.edge_bug, bool ) ||
 	     !g_input.check_input( &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) ) ) {
-		drop_plan( );
+		drop_plan( "key" );
 		return;
 	}
 	if ( !g_ctx.m_local || !g_ctx.m_local->is_alive( ) )
 		return;
 	const auto mt = g_ctx.m_local->get_move_type( );
-	if ( mt == move_type_ladder || mt == move_type_noclip || mt == move_type_observer || m_backup_move_type == move_type_ladder ||
-	     g_air_stuck_owns_cmd || g_wall_climb.caught( cmd ) || ps_latched( ) || eb_cmd_taken( ) ) {
-		drop_plan( );
+	if ( const char* why = ( mt == move_type_ladder || mt == move_type_noclip || mt == move_type_observer || m_backup_move_type == move_type_ladder ) ? "move"
+	                       : g_air_stuck_owns_cmd       ? "as"
+	                       : g_wall_climb.caught( cmd ) ? "wc"
+	                       : ps_latched( )              ? "ps"
+	                       : eb_cmd_taken( )            ? "taken"
+	                                                    : nullptr ) {
+		drop_plan( why );
 		return;
 	}
 	if ( m_ducked ) {
@@ -617,7 +623,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 	}
 	if ( m_backup_flags & 1 ) {
 		/* landed = plan over ( a real bug never grounds ): else mouse lock + indicator stay latched. */
-		drop_plan( );
+		drop_plan( "landed" );
 		m_last_search_tick = -1;
 		m_last_contact_tick = -1;
 		return;
@@ -653,6 +659,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 	if ( m_found ) {
 		ReStorePrediction( );
 		if ( m_replay_hits > m_prediction_ticks ) {
+			botox_dbg_log( "EB: drop why=spent at %d/%d\n", m_replay_hits, m_prediction_ticks );
 			m_replay_hits = 0;
 			m_found       = false;
 		} else if ( const float dist = g_ctx.m_local->get_origin( ).dist_to( m_predicted_cmds[m_replay_hits].origin ); dist > 1.f ) {
@@ -739,8 +746,6 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		/* last pass's first ground tick, -1 = never. */
 		int contact_tick = -1;
 		const float grav_tick = get_edgebug_half_gravity_per_tick( );
-		const int probe_every = std::clamp( n_tick::ticks( 2 ), 1, 8 );
-		int tail_cut_ticks = 0;
 		int rej_stance = 0, rej_slope = 0;
 
 		int rej_rise     = 0;
@@ -776,9 +781,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			base_ref_t* ref = ( duck_at < 0 && undo_at < 0 && turn == 1.f && yaw_off == 0.f ) ? &m_base_ref[ v ] : nullptr;
 			float land      = k_land_air;
 			if ( ref ) {
-				ref->last      = -1;
-				ref->complete  = false;
-				ref->probe_cut = false;
+				ref->last     = -1;
+				ref->complete = false;
 			}
 			bool truncated = false;
 			m_strafe_side = 1.f;
@@ -996,17 +1000,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 					pending_clip = ctx.backup_vel_z < -2.f * grav_tick && fabsf( ctx.current_vel_z + grav_tick ) < 0.01f;
 				}
 				search_vel_backup = g_ctx.m_local->get_velocity( );
-				// still pair probes its own 1u ballistic hull: the 32u one keeps a wall beside the path in reach. never before a pending
-				// release ( it drops the feet 9u under the probed hull )
-				if ( pending < 0 && i > reach_tick && i + probe_every < run_ticks && ( undo_at < 0 || i >= undo_at ) &&
-				     ( ( i - reach_tick ) % probe_every ) == 0 &&
-				     ( v < 2 ? eb_first_reach_tick( still_hull, g_ctx.m_local->get_origin( ), search_vel_backup, run_ticks - i - 1, still_segs )
-				             : eb_first_reach_tick( hull, g_ctx.m_local->get_origin( ), search_vel_backup, run_ticks - i - 1 ) ) < 0 ) {
-					tail_cut_ticks += run_ticks - i - 1;
-					if ( ref )
-						ref->probe_cut = true;
-					break;
-				}
+				// no in-run tail probe: 10-10 log it cut 295 of 46856 sims while its hull traces ran every 2nd tick
 				if ( ref && pending < 0 )
 					ref->ok[ i ] = true;
 			}
@@ -1118,7 +1112,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			if ( sweep_turn[ v ] != 1.f || !b.complete )
 				return false;
 			if ( k > b.last )
-				return !b.probe_cut;
+				return true;
 			const base_ref_t& a = m_base_ref[ v ];
 			return k >= 1 && !( user_buttons & in_duck ) && a.complete && twin_above( v, k - 1 ) && unduck_clear( b.org[ k - 1 ] );
 		};
@@ -1361,10 +1355,10 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			viz_alts( sel );
 			eb_n_hit++;
 		}
-		botox_dbg_log( "EB: mode=%d dep=%d ty=%d%d as=%d win=%d run=%d reach=%d sreach=%d edge=%d et=%d base=%d st=%d fan=%d br=%d/%d sw=%d psk=%d rel=%d rsk=%d snp=%d/%d/%d rs=%d rr=%d ru=%d cg=%d cl=%d sims=%d/%d cut=%d us=%lld/%lld rst=%lld con=%d ipt=%.5f vz=%.2f found=%d src=%d var=%d turn=%.2f at=%d tick=%d pth=%d/%d sel=%d err=%.1f rp=%d kp=%d str=%.2f\n",
+		botox_dbg_log( "EB: mode=%d dep=%d ty=%d%d as=%d win=%d run=%d reach=%d sreach=%d edge=%d et=%d base=%d st=%d fan=%d br=%d/%d sw=%d psk=%d rel=%d rsk=%d snp=%d/%d/%d rs=%d rr=%d ru=%d cg=%d cl=%d sims=%d/%d us=%lld/%lld rst=%lld con=%d ipt=%.5f vz=%.2f found=%d src=%d var=%d turn=%.2f at=%d tick=%d pth=%d/%d sel=%d err=%.1f rp=%d kp=%d str=%.2f\n",
 		               detection_mode, depth, allow_duck ? 1 : 0, allow_stand ? 1 : 0, autostrafe ? 1 : 0, max_ticks, run_ticks, reach_tick, still_reach,
 		               m_edge_target_valid ? 1 : 0, m_edge_target_valid ? m_edge_target_tick : -1, base_runs, still_skips, fan_runs, br_runs, br_pairs, sweep_runs, press_skips, release_runs, release_skips, snap_runs, snap_ticks, snap_used, rej_stance, rej_slope, rej_rise,
-		               confirm_grounded, clip_lands, total_predictions, MAX_PREDICTIONS, tail_cut_ticks, budget.used_us( ),
+		               confirm_grounded, clip_lands, total_predictions, MAX_PREDICTIONS, budget.used_us( ),
 		               static_cast< long long >( n_tick::interval( ) * 1000000.f * budget_share ), rst_us, best_contact, n_tick::interval( ),
 		               m_backup_velocity.m_z, sel >= 0 ? 1 : 0, sel >= 0 ? found_src : 0, m_last_variant, sel >= 0 ? found_turn : 0.f, sel >= 0 ? m_prediction_ticks : -1,
 		               sel >= 0 ? m_found_tick : 0, m_plan_count, want_paths, sel, sel_err, replan ? 1 : 0, keep ? 1 : 0, delta_angle.m_y );
@@ -1861,7 +1855,7 @@ void n_edgebug::impl_t::donor_frame_start( )
 
 void n_edgebug::impl_t::donor_mouse_fix( c_user_cmd* cmd )
 {
-	if ( GET_VARIABLE( g_variables.m_edgebug_style, int ) != 1 || !GET_VARIABLE( g_variables.m_edgebug_del_mouse_fix, bool ) )
+	if ( GET_VARIABLE( g_variables.m_edgebug_style, int ) == 2 || !GET_VARIABLE( g_variables.m_edgebug_del_mouse_fix, bool ) )
 		return;
 	static c_angle last{ };
 	c_angle delta = cmd->m_view_point - last;

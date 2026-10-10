@@ -862,8 +862,12 @@ void n_botox_net::impl_t::apply_gloves( )
 			continue;
 		}
 
-		if ( player->is_dormant( ) )
+		/* our glove is client-only: never goes dormant / dies with its owner, keeps drawing on the old bones = floats on the map */
+		if ( player->is_dormant( ) || !player->is_alive( ) ) {
+			if ( glove_state.m_handle )
+				release_glove( i, false );
 			continue;
+		}
 
 		const auto wearables = player->get_wearables_handle( );
 		if ( !wearables )
@@ -950,7 +954,8 @@ void n_botox_net::impl_t::apply_gloves( )
 	}
 }
 
-void n_botox_net::impl_t::release_glove( int index )
+/* forget = false keeps the packet data so the glove comes back on respawn / out of dormancy */
+void n_botox_net::impl_t::release_glove( int index, bool forget )
 {
 	auto& glove_state = m_gloves[ index ];
 	const auto player = g_interfaces.m_client_entity_list->get< c_base_entity >( index );
@@ -968,10 +973,17 @@ void n_botox_net::impl_t::release_glove( int index )
 		if ( player && player->is_alive( ) && !player->is_dormant( ) )
 			rebuild_player_arms( player, nullptr, "net off" );
 
-		botox_dbg_log( "NET: glove released for %d", index );
+		botox_dbg_log( "NET: glove released for %d%s", index, forget ? "" : " (dead/dormant)" );
 	}
 
-	glove_state = { };
+	if ( forget ) {
+		glove_state = { };
+		return;
+	}
+
+	glove_state.m_handle    = 0;
+	glove_state.m_applied   = 0;
+	glove_state.m_settle_at = 0.f;
 }
 
 void n_botox_net::impl_t::release_gloves( )

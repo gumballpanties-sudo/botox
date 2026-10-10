@@ -5746,21 +5746,26 @@ ImVec2 ImGui::GetItemRectSize( )
 	return g.LastItemData.Rect.GetSize( );
 }
 
-/* titled group outline goes on the child's own list: on the parent list the opaque child bg painted over it */
+/* titled group outline goes on the child's own list: on the parent list the opaque child bg painted over it.
+   titled group bg drawn here (Begin got transparent ChildBg) so its bottom corners round with the outline */
 static void RenderChildBorder( ImGuiWindow* parent_window, ImGuiWindow* child_window, bool show_text )
 {
 	ImGuiContext& g        = *GImGui;
 	const ImVec2 top_left  = child_window->Pos - ImVec2( 0.f, show_text ? 20.f : 0.f );
 	const ImVec2 bot_right = child_window->Pos + child_window->Size;
 	ImDrawList* draw_list  = show_text ? child_window->DrawList : parent_window->DrawList;
+	const float rounding   = g.Style.WindowRounding - 2.f;
 
 	if ( show_text ) {
 		ImRect clip( top_left, bot_right );
 		clip.ClipWithFull( parent_window->ClipRect );
 		draw_list->PushClipRect( clip.Min, clip.Max );
+
+		if ( !( child_window->Flags & ImGuiWindowFlags_NoBackground ) )
+			draw_list->AddRectFilled( child_window->Pos, bot_right, ImGui::GetColorU32( ImGuiCol_ChildBg ), rounding, ImDrawFlags_RoundCornersBottom );
 	}
 
-	draw_list->AddRect( top_left, bot_right, ImColor( 50, 50, 50, 100 ), g.Style.WindowRounding - 2.f, ImDrawCornerFlags_Top );
+	draw_list->AddRect( top_left, bot_right, ImColor( 50, 50, 50, 100 ), rounding, show_text ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersTop );
 
 	if ( show_text )
 		draw_list->PopClipRect( );
@@ -5797,7 +5802,11 @@ bool ImGui::BeginChildEx( const char* name, ImGuiID id, const ImVec2& size_arg, 
 	const float backup_border_size = g.Style.ChildBorderSize;
 	if ( !border )
 		g.Style.ChildBorderSize = 0.0f;
-	bool ret                = Begin( temp_window_name, NULL, flags );
+	if ( border && show_text )
+		PushStyleColor( ImGuiCol_ChildBg, IM_COL32_BLACK_TRANS );
+	bool ret = Begin( temp_window_name, NULL, flags );
+	if ( border && show_text )
+		PopStyleColor( );
 	g.Style.ChildBorderSize = backup_border_size;
 
 	ImGuiWindow* child_window        = g.CurrentWindow;
@@ -5893,7 +5902,11 @@ bool ImGui::BeginChildEx( const char* name, ImGuiID id, const ImVec2& size_arg, 
 	const float backup_border_size = g.Style.ChildBorderSize;
 	if ( !border )
 		g.Style.ChildBorderSize = 0.0f;
-	bool ret                = Begin( temp_window_name, NULL, flags );
+	if ( border && show_text )
+		PushStyleColor( ImGuiCol_ChildBg, IM_COL32_BLACK_TRANS );
+	bool ret = Begin( temp_window_name, NULL, flags );
+	if ( border && show_text )
+		PopStyleColor( );
 	g.Style.ChildBorderSize = backup_border_size;
 
 	ImGuiWindow* child_window        = g.CurrentWindow;

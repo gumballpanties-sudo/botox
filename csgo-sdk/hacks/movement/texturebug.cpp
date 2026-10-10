@@ -360,7 +360,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		return c;
 	};
 	char act        = 'N';
-	float gap       = -1.f, dx_hit = 0.f, v_in = 0.f;
+	float gap       = -1.f, dx_hit = 0.f, v_in = 0.f, div_n = 0.f, shift_comp = 0.f;
 	bool flipped    = false, head = false;
 	int lk = -1, look_a = -1, look_b = -1;
 	static char s_last_act = 'N';
@@ -368,10 +368,10 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	const auto log  = [ & ]( ) {
 		s_last_act = act;
 		if ( debug )
-			botox_dbg_log( "TB: act=%c gap=%.6f vz=%.2f xy=%.1f duck=%d lock=%d run=%d flip=%d head=%d dx=%.3e sims=%d us=%lld div=%.3e dvz=%.4f mg=%d vin=%.3f ud=%d lk=%d la=%d lb=%d org=%.5f,%.5f,%.4f vel=%.3f,%.3f",
+			botox_dbg_log( "TB: act=%c gap=%.6f vz=%.2f xy=%.1f duck=%d lock=%d run=%d flip=%d head=%d dx=%.3e sims=%d us=%lld div=%.3e dvz=%.4f mg=%d vin=%.3f ud=%d lk=%d la=%d lb=%d org=%.7f,%.7f,%.7f vel=%.3f,%.3f dn=%.3e vn=%.3e cp=%.2e",
 			               act, gap, vel.m_z, vel.length_2d( ), ( cmd->m_buttons & in_duck ) ? 1 : 0, s_ride_duck, s_run, ( int )flipped, ( int )head,
 			               dx_hit, sims, s_budget.used_us( ), div_org, div_vz, s_park_margin, v_in, ( in.m_buttons & in_duck ) ? 1 : 0, lk, look_a, look_b,
-			               org.m_x, org.m_y, org.m_z, vel.m_x, vel.m_y );
+			               org.m_x, org.m_y, org.m_z, vel.m_x, vel.m_y, div_n, v_in, shift_comp );
 	};
 
 	const int user_duck = ( in.m_buttons & in_duck ) ? 1 : 0;
@@ -420,7 +420,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		if ( best == FLT_MAX ) {
 			/* contact last cmd, no wall now = cleared the top ( rising ) or fell past the bottom */
 			if ( debug && s_touch_cmd == cmd->m_command_number - 1 )
-				botox_dbg_log( "TB: off wall last=%c vz=%.2f org=%.5f,%.5f,%.4f", s_last_act, vel.m_z, org.m_x, org.m_y, org.m_z );
+				botox_dbg_log( "TB: off wall last=%c vz=%.2f org=%.7f,%.7f,%.7f", s_last_act, vel.m_z, org.m_x, org.m_y, org.m_z );
 			drop( );
 			return;
 		}
@@ -430,6 +430,25 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		yaw_in = rad2deg( std::atan2f( -n.m_y, -n.m_x ) );
 	}
 	v_in = -( vel.m_x * n.m_x + vel.m_y * n.m_y );
+	/* START - our sim of the sent cmd along the normal: + = server ended farther off the wall than we simmed */
+	if ( div_ok )
+		div_n = ( org.m_x - s_sent_org.m_x ) * n.m_x + ( org.m_y - s_sent_org.m_y ) * n.m_y + ( org.m_z - s_sent_org.m_z ) * n.m_z;
+	/* shift = how far the server moves past our sim into the wall: median dn of free ticks ( 0.5u+ off, no clip ). online sim ==
+	   server -> ~0 -> no comp */
+	{
+		constexpr int k_dn = 16;
+		static float s_dn[ k_dn ];
+		static int s_dn_n = 0;
+		if ( div_ok && gap > 0.5f && std::fabsf( div_n ) < 1e-4f )
+			s_dn[ s_dn_n++ % k_dn ] = div_n;
+		if ( s_dn_n >= 6 ) {
+			float d[ k_dn ];
+			const int cnt = std::min( s_dn_n, k_dn );
+			std::copy( s_dn, s_dn + cnt, d );
+			std::nth_element( d, d + cnt / 2, d + cnt );
+			shift_comp = std::clamp( -d[ cnt / 2 ], 0.f, 4e-5f );
+		}
+	}
 	/* one ulp of the coordinate the wall normal moves: rungs / park margins finer than that move the hull the same */
 	float ulp = 1e-7f;
 	{
@@ -454,7 +473,8 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	raw.m_view_point.m_y = m_input_yaw;
 	raw.m_forward_move = m_input_forward;
 	raw.m_side_move = m_input_side;
-	if ( wallstrafe_enabled && tb_steering_away_from_wall( &raw, n, raw.m_forward_move, raw.m_side_move ) ) {
+	if ( wallstrafe_enabled && tb_move_leaves_wall( &raw, n, raw.m_forward_move, raw.m_side_move, vel, local->get_max_speed( ),
+	                                                ( ducked0 || ( raw.m_buttons & in_duck ) ) ? k_duck_crop : 1.f ) ) {
 		drop( );
 		cmd->m_forward_move = raw.m_forward_move;
 		cmd->m_side_move = raw.m_side_move;
@@ -487,7 +507,8 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	}
 
 	static int s_away = 0;
-	s_away            = tb_steering_away_from_wall( &in, n, in.m_forward_move, in.m_side_move ) ? s_away + 1 : 0;
+	s_away            = tb_move_leaves_wall( &in, n, in.m_forward_move, in.m_side_move, vel, local->get_max_speed( ),
+	                                         ( ducked0 || user_duck ) ? k_duck_crop : 1.f ) ? s_away + 1 : 0;
 	if ( s_away > ( s_run > 0 ? 1 : 0 ) ) {
 		drop( );
 		act = 'S';
@@ -536,7 +557,9 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	c_user_cmd strafe_cmd{ };
 	bool have_strafe = false;
 	bool head_assist_blocked = false;
-	if ( wallstrafe_enabled && sims_left( ) > 3 ) {
+	/* off contact only while you already close on the wall. log 10-10 22:04: sliding 2u off a ledge, vin 0, W leaned you in
+	   0 -> 14.7 -> 22.8 -> 26.9 u/s ( user: "leans onto edges i dont want to reach" ) */
+	if ( wallstrafe_enabled && sims_left( ) > 3 && ( gap <= k_touch || v_in > 1.f ) ) {
 		const float yaw = deg2rad( raw.m_view_point.m_y );
 		const c_vector wish( std::cosf( yaw ) * raw.m_forward_move + std::sinf( yaw ) * raw.m_side_move,
 		                     std::sinf( yaw ) * raw.m_forward_move - std::cosf( yaw ) * raw.m_side_move, 0.f );
@@ -613,13 +636,15 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		const auto ladder = [ & ]( const int duck, c_user_cmd& out, bool& out_head ) {
 			const float hp = ( duck || ducked0 ) ? 54.f : 72.f;
 			const float hi = std::max( ( k_eps - g ) * dz / ( hp + k_eps ), g * 1.5f );
-			/* climb past the first pin while rungs still pin, send the run's middle: the lowest pinning rung sits on the window edge
-			   and a server 1 ulp off misses it */
+			/* climb the pinning run, send its middle minus the measured shift. log 10-10 agency loopback: every pin our sim found sat
+			   1.3..2.3e-5 u past the server's window ( lab replay predicts all 45 server outcomes ), narrow windows fell 3/3.
+			   lab TB_CLIENTSHIFT 1.56e-5: middle - comp ride ticks agency y64 1296 -> 6734, y512 1842 -> 6604, maps +6..39% */
 			float run_dx[ k_ladder_cap ];
 			bool run_head[ k_ladder_cap ], run_plain[ k_ladder_cap ];
 			int run_n = 0, k = 0;
 			const float step = rising ? k_rise_ratio : k_ratio;
-			for ( float dx = g * 1.0005f + 1e-7f; dx <= hi && k < k_ladder_cap; dx = std::max( dx * step, dx + ulp ), ++k ) {
+			const float dx0  = g * 1.0005f + 1e-7f;
+			for ( float dx = dx0; dx <= hi && k < k_ladder_cap; dx = std::max( dx * step, dx + ulp ), ++k ) {
 				c_user_cmd candidate = press( dx / ipt, duck );
 				end_t e = sim( candidate );
 				bool plain_used = false;
@@ -634,14 +659,14 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 					break;
 				if ( e.ok && ( e.ride || e.bounce ) ) {
 					run_dx[ run_n ]     = dx;
-					run_plain[ run_n ] = plain_used;
+					run_plain[ run_n ]  = plain_used;
 					run_head[ run_n++ ] = e.head;
 				} else if ( run_n )
 					break;
 			}
 			if ( !run_n )
 				return false;
-			dx_hit   = run_dx[ run_n / 2 ];
+			dx_hit   = std::max( run_dx[ run_n / 2 ] - shift_comp, dx0 );
 			out      = press_from( v_old, ducked0, dx_hit / ipt, duck, vel.m_z, !run_plain[ run_n / 2 ] );
 			out_head = run_head[ run_n / 2 ];
 			return true;

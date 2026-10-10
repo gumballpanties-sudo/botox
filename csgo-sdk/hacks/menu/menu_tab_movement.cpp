@@ -339,9 +339,10 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "edge bug key", &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) );
 						ImGui::Combo( "style##ebstyle", &GET_VARIABLE( g_variables.m_edgebug_style, int ), "botox\0delusional\0dna\0" );
 						const int style = GET_VARIABLE( g_variables.m_edgebug_style, int );
+						if ( style != 2 )
+							ImGui::Checkbox( "mouse fix##ebdelmousefix", &GET_VARIABLE( g_variables.m_edgebug_del_mouse_fix, bool ) );
 						if ( style == 1 ) {
 							ImGui::SliderInt( "ticks to predict##ebdelticks", &GET_VARIABLE( g_variables.m_edgebug_del_ticks, int ), 0, 128 );
-							ImGui::Checkbox( "mouse fix##ebdelmousefix", &GET_VARIABLE( g_variables.m_edgebug_del_mouse_fix, bool ) );
 							ImGui::Checkbox( "advanced detection##ebdeladv", &GET_VARIABLE( g_variables.m_edgebug_del_advanced, bool ) );
 							if ( GET_VARIABLE( g_variables.m_edgebug_del_advanced, bool ) ) {
 								ImGui::SliderFloat( "angle limit##ebdelangle", &GET_VARIABLE( g_variables.m_edgebug_del_angle_limit, float ), 0.f, 180.f, "%.2f" );

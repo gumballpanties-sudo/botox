@@ -25,6 +25,7 @@
 #include "../../globals/interfaces/interfaces.h"
 #include "../chat_hud.h"
 #include "../prediction/prediction.h"
+#include "../lagcomp/lagcomp.h"
 #include "texturebug.h"
 #include "wall_climb.h"
 #include "edgebug.h"
@@ -1866,7 +1867,7 @@ void n_movement::impl_t::kangaroo( )
 
 void n_movement::impl_t::jump_bug_crouch( c_user_cmd* cmd )
 {
-	if ( !GET_VARIABLE( g_variables.m_jump_bug_crouch, bool ) || !( cmd->m_buttons & in_duck ) )
+	if ( !GET_VARIABLE( g_variables.m_jump_bug_crouch, bool ) || !( cmd->m_buttons & in_duck ) || !( m_user_buttons_raw & in_jump ) )
 		return;
 	const int flags = g_ctx.m_local->get_flags( );
 	if ( ( flags & fl_onground ) || !( flags & fl_ducking ) || g_ctx.m_local->get_velocity( ).m_z > 0.f )
@@ -2272,10 +2273,15 @@ void n_movement::impl_t::blockbot( c_user_cmd* cmd )
 
 	if ( entity->get_bone_position( 6 ).m_z < g_ctx.m_local->get_abs_origin( ).m_z &&
 	     g_ctx.m_local->get_abs_origin( ).dist_to( entity->get_abs_origin( ) ) < 100.f ) {
-		cmd->m_forward_move = ( ( sin( deg2rad( cmd->m_view_point.m_y ) ) * forward.m_y ) +
-		                        ( cos( deg2rad( cmd->m_view_point.m_y ) ) * forward.m_x ) ) * speed;
-		cmd->m_side_move    = ( ( cos( deg2rad( cmd->m_view_point.m_y ) ) * -forward.m_y ) +
-		                        ( sin( deg2rad( cmd->m_view_point.m_y ) ) * forward.m_x ) ) * speed;
+		/* engine never carries you with player below: match his vel, pull to his server-side center */
+		const c_vector tv = entity->get_velocity( ), lv = g_ctx.m_local->get_velocity( );
+		const float lead   = g_lagcomp.lerp_time( ) + g_lagcomp.real_latency( );
+		const float want_x = tv.m_x + ( forward.m_x + tv.m_x * lead ) * 10.f;
+		const float want_y = tv.m_y + ( forward.m_y + tv.m_y * lead ) * 10.f;
+		const float wish_x = want_x * 2.f - lv.m_x, wish_y = want_y * 2.f - lv.m_y;
+		const float yaw    = deg2rad( cmd->m_view_point.m_y );
+		cmd->m_forward_move = std::clamp( std::cos( yaw ) * wish_x + std::sin( yaw ) * wish_y, -450.f, 450.f );
+		cmd->m_side_move    = std::clamp( std::sin( yaw ) * wish_x - std::cos( yaw ) * wish_y, -450.f, 450.f );
 	} else {
 		float yaw_delta = ( atan2( forward.m_y, forward.m_x ) * 180.0f / 3.14159265359f ) - cmd->m_view_point.m_y;
 
