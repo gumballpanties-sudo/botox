@@ -75,6 +75,20 @@ namespace
 		return name;
 	}
 
+	// fix for apple music's desktop app - lyrics don't get properly fetched without this, becaue of an em dash after the artist
+	std::wstring strip_album( std::wstring artist )
+	{
+		const auto dash = artist.find( L'\u2014' );
+		if ( dash == std::wstring::npos )
+			return artist;
+
+		artist.resize( dash );
+		while ( !artist.empty( ) && std::iswspace( artist.back( ) ) )
+			artist.pop_back( );
+
+		return artist;
+	}
+
 	// a hung app must not freeze the media thread: null on timeout / error
 	template< typename op_t >
 	auto await_for( const op_t& op ) -> decltype( op.GetResults( ) )
@@ -366,7 +380,7 @@ void n_media_player::impl_t::on_update( )
 		now_t now{ };
 		now.m_source    = session.SourceAppUserModelId( );
 		now.m_title     = to_utf8( info.Title( ) );
-		now.m_artist    = to_utf8( info.Artist( ) );
+		now.m_artist    = to_utf8( strip_album( std::wstring{ info.Artist( ) } ) );
 		now.m_thumbnail = thumbnail( now.m_source + L'\n' + std::wstring{ info.Title( ) } + L'\n' + std::wstring{ info.Artist( ) },
 		                             [ & ] { return read_thumbnail( info ); } );
 
