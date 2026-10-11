@@ -46,17 +46,7 @@ static struct {
 static void as_sync( c_user_cmd* cmd, const bool armed )
 {
 	static auto cl_pred_optimize = g_interfaces.m_convar->find_var( "cl_pred_optimize" );
-	static int saved             = -1;
-	if ( cl_pred_optimize && armed != ( saved >= 0 ) ) {
-		if ( armed ) {
-			saved = cl_pred_optimize->get_int( );
-			cl_pred_optimize->set_value( std::min( saved, 1 ) );
-			botox_dbg_log( "AS: sync arm opt=%d->%d", saved, cl_pred_optimize->get_int( ) );
-		} else {
-			cl_pred_optimize->set_value( saved );
-			saved = -1;
-		}
-	}
+	g_prediction.sync_arm( n_prediction::impl_t::k_sync_as, armed );
 
 	struct rec_t {
 		int cmd = -1, tick_base = 0;

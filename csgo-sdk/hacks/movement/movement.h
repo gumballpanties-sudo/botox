@@ -111,6 +111,10 @@ namespace n_route
 		style_count,
 	};
 	inline constexpr unsigned int k_all_styles = ( 1u << style_count ) - 1u;
+	/* point list bits past the styles: style_jump's held-crouch and delay presses, each its own toggle */
+	inline constexpr unsigned int k_pt_duck_jump     = 1u << style_count;
+	inline constexpr unsigned int k_pt_delay_hop     = 1u << ( style_count + 1 );
+	inline constexpr unsigned int k_all_point_styles = k_all_styles | k_pt_duck_jump | k_pt_delay_hop;
 	extern const char* const k_style_names[ style_count ];
 
 	enum timing_t : int {
@@ -149,7 +153,7 @@ struct route_point_t {
 	int snap_type = -1;
 	bool enabled = true;
 	int type     = route_pt_ground;
-	unsigned int styles = n_route::k_all_styles;
+	unsigned int styles = n_route::k_all_point_styles;
 	float measured_z   = 0.f;
 	bool has_measured  = false;
 	bool allow_stand = true;
@@ -213,7 +217,7 @@ namespace n_route
 	struct solve_input_t {
 		std::vector< route_point_t > points{ };
 		unsigned int global_moves = k_all_moves;
-		unsigned int start_styles = k_all_styles;
+		unsigned int start_styles = k_all_point_styles;
 		float start_z             = 0.f;
 		bool start_on_ground      = true;
 		bool start_on_player      = false;

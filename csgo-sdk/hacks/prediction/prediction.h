@@ -37,6 +37,10 @@ namespace n_prediction
 		bool m_in_begin{ };
 		void update( );
 		void restore_entity_to_predicted_frame( int frame );
+		/* cl_pred_optimize <= 1 while any owner is armed: full re-predict off every snapshot, START = server END. opt 2 keeps the
+		   client's own START while the server is < 0.0625u / 0.5u/s off ( c_baseentity.cpp:656/681, prediction.cpp:1681 ) */
+		static constexpr int k_sync_as = 1, k_sync_tb = 2;
+		void sync_arm( int owner, bool on );
 		void stamp_sent_stamina( c_user_cmd* cmd );
 		int snapshot_slots( ) const;
 		bool snapshot_save( int index );

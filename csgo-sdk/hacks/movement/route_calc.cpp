@@ -1321,7 +1321,7 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 		/* non-floor points show no jump list in the menu, so their hidden mask must not filter.
 		   a pixel jump is PRESSED off like a floor, so it keeps its list. */
 		if ( live.back( ).type != route_pt_ground && live.back( ).type != route_pt_pixeljump )
-			live.back( ).styles = n_route::k_all_styles;
+			live.back( ).styles = n_route::k_all_point_styles;
 		marker_no.emplace_back( static_cast< int >( i ) + 1 );
 	}
 
@@ -1343,6 +1343,9 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 		in.start_on_ground = ( flags & fl_onground ) != 0;
 		in.start_on_player = n_route::ground_player( ) > 0;
 		in.start_styles    = static_cast< unsigned int >( GET_VARIABLE( g_variables.m_route_calc_start_styles, int ) );
+		/* the starting row has no duck / delay toggles: its "jump" keeps covering them */
+		if ( in.start_styles & ( 1u << n_route::style_jump ) )
+			in.start_styles |= n_route::k_pt_duck_jump | n_route::k_pt_delay_hop;
 		in.points          = live;
 		const float stam       = local->get_stamina( );
 		const float duck_speed = local->get_duck_speed( );
@@ -1532,7 +1535,7 @@ void n_movement::impl_t::route_calc_render( )
 		if ( head_shown )
 			label += " (head)";
 		const unsigned int styles = data.points[ i ].styles;
-		if ( styles != 0u && styles != n_route::k_all_styles )
+		if ( styles != 0u && styles != n_route::k_all_point_styles )
 			label += " *";
 		if ( !data.points[ i ].enabled )
 			label += " (off)";

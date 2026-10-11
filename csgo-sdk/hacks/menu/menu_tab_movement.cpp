@@ -24,19 +24,31 @@ static void route_calc_page( )
 
 	static const std::vector< const char* > style_names( std::begin( n_route::k_style_names ),
 	                                                     std::end( n_route::k_style_names ) );
+	static const std::vector< unsigned int > style_bits = { 1u << n_route::style_jump, 1u << n_route::style_minijump,
+	                                                        1u << n_route::style_longjump, 1u << n_route::style_jumpbug,
+	                                                        1u << n_route::style_walk_off };
+	static const std::vector< const char* > point_names = { n_route::k_style_names[ n_route::style_jump ], "jump (ducked)",
+	                                                        "delay hop", n_route::k_style_names[ n_route::style_minijump ],
+	                                                        n_route::k_style_names[ n_route::style_longjump ],
+	                                                        n_route::k_style_names[ n_route::style_jumpbug ] };
+	static const std::vector< unsigned int > point_bits = { 1u << n_route::style_jump, n_route::k_pt_duck_jump,
+	                                                        n_route::k_pt_delay_hop, 1u << n_route::style_minijump,
+	                                                        1u << n_route::style_longjump, 1u << n_route::style_jumpbug };
 
-	const auto style_combo = []( const char* label, unsigned int& mask, int count ) {
+	const auto style_combo = []( const char* label, unsigned int& mask, const std::vector< const char* >& names,
+	                             const std::vector< unsigned int >& bits ) {
+		const int count = static_cast< int >( names.size( ) );
 		std::vector< bool > flags( count, true );
 		for ( int f = 0; f < count; ++f )
-			flags[ f ] = ( mask & ( 1u << f ) ) != 0u;
-		if ( !ImGui::MultiCombo( label, flags, style_names, count ) )
+			flags[ f ] = ( mask & bits[ f ] ) != 0u;
+		if ( !ImGui::MultiCombo( label, flags, names, count ) )
 			return false;
 		/* rewrite only drawn bits: a row without "walk off" must not clear it */
 		unsigned int drawn = 0u, built = 0u;
 		for ( int f = 0; f < count; ++f ) {
-			drawn |= 1u << f;
+			drawn |= bits[ f ];
 			if ( flags[ f ] )
-				built |= 1u << f;
+				built |= bits[ f ];
 		}
 		mask = ( mask & ~drawn ) | built;
 		return true;
@@ -111,7 +123,7 @@ static void route_calc_page( )
 			ImGui::Label( "types to calculate" );
 			int& stored       = GET_VARIABLE( g_variables.m_route_calc_start_styles, int );
 			unsigned int mask = static_cast< unsigned int >( stored );
-			if ( style_combo( "##types to calculate", mask, n_route::style_count ) ) {
+			if ( style_combo( "##types to calculate", mask, style_names, style_bits ) ) {
 				stored = static_cast< int >( mask & n_route::k_all_styles );
 				route.drop_solutions( );
 			}
@@ -168,7 +180,7 @@ static void route_calc_page( )
 
 				ImGui::Label( "types to calculate" );
 				if ( point.type == route_pt_ground || point.type == route_pt_pixeljump ) {
-					if ( style_combo( "##types to calculate", point.styles, n_route::style_count - 1 ) )
+					if ( style_combo( "##types to calculate", point.styles, point_names, point_bits ) )
 						route.drop_solutions( );
 				} else {
 					if ( ImGui::Checkbox( "arrive standing", &point.allow_stand ) )
@@ -339,9 +351,8 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "edge bug key", &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) );
 						ImGui::Combo( "style##ebstyle", &GET_VARIABLE( g_variables.m_edgebug_style, int ), "botox\0delusional\0dna\0" );
 						const int style = GET_VARIABLE( g_variables.m_edgebug_style, int );
-						if ( style != 2 )
-							ImGui::Checkbox( "mouse fix##ebdelmousefix", &GET_VARIABLE( g_variables.m_edgebug_del_mouse_fix, bool ) );
 						if ( style == 1 ) {
+							ImGui::Checkbox( "mouse fix##ebdelmousefix", &GET_VARIABLE( g_variables.m_edgebug_del_mouse_fix, bool ) );
 							ImGui::SliderInt( "ticks to predict##ebdelticks", &GET_VARIABLE( g_variables.m_edgebug_del_ticks, int ), 0, 128 );
 							ImGui::Checkbox( "advanced detection##ebdeladv", &GET_VARIABLE( g_variables.m_edgebug_del_advanced, bool ) );
 							if ( GET_VARIABLE( g_variables.m_edgebug_del_advanced, bool ) ) {
@@ -375,9 +386,6 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::Checkbox( "mouse steer##ebsteer", &GET_VARIABLE( g_variables.m_edgebug_mouse_steer, bool ) );
 							if ( GET_VARIABLE( g_variables.m_edgebug_mouse_steer, bool ) )
 								ImGui::SliderInt( "paths##ebpaths", &GET_VARIABLE( g_variables.m_edgebug_paths, int ), 1, 4 );
-
-							ImGui::MultiCombo( "types allowed##ebtypes", GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > ),
-							                   { "ducking", "standing" }, GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > ).size( ) );
 						}
 
 						ImGui::Checkbox( "lock mouse on find", &GET_VARIABLE( g_variables.m_edgebug_mouse_lock, bool ) );
@@ -1291,7 +1299,11 @@ void n_menu::impl_t::tab_movement( )
 					},
 					ImVec2( 200.f, -1 ) );
 			}
-			ImGui::Checkbox( "show clipper box", &GET_VARIABLE( g_variables.m_movement_rec_clipper_box, bool ) );
+			ImGui::Checkbox( "clipper", &GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) );
+			if ( GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) ) {
+				ImGui::Checkbox( "show clipper box", &GET_VARIABLE( g_variables.m_movement_rec_clipper_box, bool ) );
+				ImGui::SliderFloat( "clipper duration##recorder", &GET_VARIABLE( g_variables.m_movement_rec_clip_seconds, float ), 1.f, 120.f, "%.0f s" );
+			}
 			ImGui::Checkbox( "original playback viewangles", &GET_VARIABLE( g_variables.m_movement_rec_lockva, bool ) );
 			ImGui::Combo( "playback yaw", &GET_VARIABLE( g_variables.m_movement_rec_yaw, int ), "original\0left\0right\0backwards\0spinning\0" );
 			if ( GET_VARIABLE( g_variables.m_movement_rec_yaw, int ) == 4 )
@@ -1303,7 +1315,6 @@ void n_menu::impl_t::tab_movement( )
 			ImGui::Checkbox( "lock while aiming to position", &GET_VARIABLE( g_variables.m_movement_rec_lockgoingtostart, bool ) );
 			ImGui::Checkbox( "stop playback on movement", &GET_VARIABLE( g_variables.m_movement_rec_stop_on_move, bool ) );
 			ImGui::Checkbox( "force same weapons", &GET_VARIABLE( g_variables.m_movement_rec_force_weapon, bool ) );
-			ImGui::SliderFloat( "clipper duration##recorder", &GET_VARIABLE( g_variables.m_movement_rec_clip_seconds, float ), 1.f, 120.f, "%.0f s" );
 
 			/* press actions: a style ( always on / toggle ) would fire them on every menu close */
 			ImGui::Label( "start recording" );
@@ -1318,8 +1329,10 @@ void n_menu::impl_t::tab_movement( )
 			ImGui::Keybind( "recorder stop play key", &GET_VARIABLE( g_variables.m_movement_rec_keystopplay, key_bind_t ), false );
 			ImGui::Label( "clear route" );
 			ImGui::Keybind( "recorder clear key", &GET_VARIABLE( g_variables.m_movement_rec_keyclearrecord, key_bind_t ), false );
-			ImGui::Label( "clip route" );
-			ImGui::Keybind( "recorder clip key", &GET_VARIABLE( g_variables.m_movement_rec_keyclip, key_bind_t ), false );
+			if ( GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) ) {
+				ImGui::Label( "clip route" );
+				ImGui::Keybind( "recorder clip key", &GET_VARIABLE( g_variables.m_movement_rec_keyclip, key_bind_t ), false );
+			}
 		}
 		menu_group_end( );
 
@@ -1334,6 +1347,8 @@ void n_menu::impl_t::tab_movement( )
 
 			ImGui::BeginDisabled( !GET_VARIABLE( g_variables.m_movement_rec, bool ) );
 			for ( const auto& [ label, action ] : k_actions ) {
+				if ( action == action_clip && !GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) )
+					continue;
 				if ( ImGui::Button( std::format( "{}##recorder action", label ).c_str( ), ImVec2( -1.f, 15.f ) ) )
 					mr.request( action );
 			}

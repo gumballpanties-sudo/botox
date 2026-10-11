@@ -250,7 +250,7 @@ void n_movement::impl_t::pixel_calc( c_user_cmd* cmd )
 		in.start_z         = origin.m_z;
 		in.start_on_ground = true;
 		in.start_on_player = on_player > 0;
-		in.start_styles = n_route::k_all_styles;
+		in.start_styles = n_route::k_all_point_styles;
 		in.global_moves = moves;
 		in.delay_ticks  = GET_VARIABLE( g_variables.m_route_calc_delay_ticks, int );
 		in.travel       = 0.f;

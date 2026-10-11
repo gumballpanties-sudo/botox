@@ -237,6 +237,24 @@ void n_prediction::impl_t::stamp_sent_stamina( c_user_cmd* cmd )
 	s_stam_end = local->get_stamina( );
 }
 
+void n_prediction::impl_t::sync_arm( const int owner, const bool on )
+{
+	static auto cl_pred_optimize = g_interfaces.m_convar->find_var( "cl_pred_optimize" );
+	static int armed = 0, saved = -1;
+	if ( !cl_pred_optimize )
+		return;
+	const int was = armed;
+	armed         = on ? ( armed | owner ) : ( armed & ~owner );
+	if ( !was && armed ) {
+		saved = cl_pred_optimize->get_int( );
+		cl_pred_optimize->set_value( std::min( saved, 1 ) );
+		botox_dbg_log( "PRED: sync arm owner=%d opt=%d->%d", owner, saved, cl_pred_optimize->get_int( ) );
+	} else if ( was && !armed && saved >= 0 ) {
+		cl_pred_optimize->set_value( saved );
+		saved = -1;
+	}
+}
+
 /* engine RestoreEntityToPredictedFrame by pattern. frame -1 = SLOT_ORIGINALDATA
    (clean pre-prediction state): never guard frame < 0, that no-ops every restore. */
 void n_prediction::impl_t::restore_entity_to_predicted_frame( int frame )

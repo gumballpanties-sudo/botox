@@ -1661,6 +1661,7 @@ namespace n_variables
 		ADD_VARIABLE( int, m_movement_rec_position, 0 );
 		ADD_VARIABLE( bool, m_movement_rec_lockva, true );
 		ADD_VARIABLE( bool, m_movement_rec_lockgoingtostart, true );
+		ADD_VARIABLE( bool, m_movement_rec_clipper, false );
 		ADD_VARIABLE( bool, m_movement_rec_clipper_box, true );
 		ADD_VARIABLE( float, m_movement_rec_clip_seconds, 15.f );
 		ADD_VARIABLE( bool, m_movement_rec_stop_on_move, false );

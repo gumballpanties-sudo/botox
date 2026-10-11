@@ -73,9 +73,9 @@ namespace n_edgebug
 		bool donor_check( c_user_cmd* cmd, bool& brk );
 		bool EdgeBugCheck( const edge_context_t& ctx );
 		bool IsNearEdge( );
-		bool FindEdgeTarget( int reach_tick, int window_ticks, float steer = 0.f );
+		bool FindEdgeTarget( int reach_tick, int window_ticks );
 		void ApplyAutoStrafe( c_user_cmd* cmd, bool duck );
-		void ApplyAutoStrafeToEdge( c_user_cmd* cmd, bool duck, int tick );
+		void ApplyAutoStrafeToEdge( c_user_cmd* cmd, bool duck );
 		void CommitStrafe( c_user_cmd* cmd, c_angle wish );
 		void ReStorePrediction( );
 		c_vector m_backup_velocity{ };
@@ -90,18 +90,17 @@ namespace n_edgebug
 		static constexpr int k_plan_max = 4;
 		struct plan_t {
 			predicted_cmd_t cmds[k_predicted_cmd_max];
-			int ticks = 0, variant = 0, src = 0;
-			float turn = 1.f;
+			int ticks = 0, variant = 0, bend = 0;
 			c_vector end_pos{ };
 		};
 		plan_t m_plans[k_plan_max];
 		int m_plan_count = 0;
+		c_vector m_follow_end{ };
 		c_vector m_viz_alt[k_plan_max][k_predicted_cmd_max + 1];
 		int m_viz_alt_count[k_plan_max]{ };
 		c_vector m_viz_alt_pos[k_plan_max]{ };
 		int m_viz_alts = 0, m_viz_sel = -1;
 		int m_viz_base = 0, m_viz_alt_base = 0;
-		c_vector m_follow_end{ };
 		// paint thread: what is on screen, eased toward the plan each frame. [k_plan_max] = the followed path.
 		// pts[0] sits on absolute tick `base`, so a tick step or a plan swap never slides a path along itself
 		struct viz_disp_t {
@@ -113,30 +112,8 @@ namespace n_edgebug
 		viz_disp_t m_disp[k_plan_max + 1];
 		float m_mouse_x = 0.f;
 		float m_steer_since_plan = 0.f;
-		c_angle m_prev_view{ };
-		int m_last_variant = 0;
 		int m_last_search_tick = -1;
 		int m_last_contact_tick = -1;
-		struct base_ref_t {
-			c_vector org[k_predicted_cmd_max];
-			c_vector vel[k_predicted_cmd_max];
-			float duck_speed[k_predicted_cmd_max];
-			float duck_amount[k_predicted_cmd_max];
-			int flags[k_predicted_cmd_max];
-			bool ok[k_predicted_cmd_max];
-			int last = -1;
-			bool complete = false;
-		};
-		base_ref_t m_base_ref[8];
-		short m_snap_at[8][k_predicted_cmd_max];
-		predicted_cmd_t m_snap_cmds[8][k_predicted_cmd_max];
-		int m_snap_cmds_n[8]{ };
-		struct snap_aux_t {
-			c_angle view{ }, current_angle{ };
-			float fwd = 0.f, side = 0.f, strafe_side = 1.f, strafe_last_yaw = 0.f;
-			int buttons = 0;
-		};
-		snap_aux_t m_snap_aux[64];
 		// strafe state, reset per run_variant: never function statics, or a variant's move depends on
 		// which ran before it (unreproducible search, duck sweep can't dedupe)
 		float m_strafe_side = 1.f;
@@ -145,7 +122,6 @@ namespace n_edgebug
 		// geometry is static during the sim, so never re-trace inside the sim loop
 		c_vector m_edge_target{ };
 		bool m_edge_target_valid = false;
-		int m_edge_target_tick = 0;
 		// live velocity yaw at search start, reference for the max strafe angle, never the view:
 		// in air only a wish across the path accelerates, so a view-relative cap doesn't cap
 		float m_course_yaw = 0.f;

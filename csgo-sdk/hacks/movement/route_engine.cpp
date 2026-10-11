@@ -596,7 +596,7 @@ namespace
 		int n_els  = 0;
 		int cost = 0;
 		float floor       = 0.f;
-		unsigned int mask = n_route::k_all_styles;
+		unsigned int mask = n_route::k_all_point_styles;
 		/* rows this node lists: the lead + every merged twin's, same text once ( alts holds only the shown few ) */
 		long long combos = 1;
 		bool jb_ok = false;
@@ -1274,7 +1274,7 @@ namespace n_route
 			seed.st.duck_amount = in.start_duck_amount;
 		}
 		seed.floor        = in.start_z;
-		seed.mask         = in.start_styles == 0u ? k_all_styles : in.start_styles;
+		seed.mask         = in.start_styles == 0u ? k_all_point_styles : in.start_styles;
 		root.emplace_back( seed );
 
 		// one marker = one move, never a hidden hop. a point one move can't reach is reported unreachable
@@ -1462,7 +1462,9 @@ namespace n_route
 				for ( int style = 0; style < style_count; ++style ) {
 					if ( !node.st.on_ground && style != style_walk_off )
 						continue;
-					if ( node.st.on_ground && !( node.mask & ( 1u << style ) ) )
+					const unsigned int style_bits =
+						style == style_jump ? ( 1u << style_jump ) | k_pt_duck_jump | k_pt_delay_hop : 1u << style;
+					if ( node.st.on_ground && !( node.mask & style_bits ) )
 						continue;
 					/* a jumpbug off a landing whose arc stepped over the 2 unit band never fires */
 					if ( style == style_jumpbug && !node.jb_ok )
@@ -1482,7 +1484,7 @@ namespace n_route
 							continue;
 						if ( timing == timing_delay && in.delay_ticks <= 0 )
 							continue;
-						if ( timing == timing_delay && ( style != style_jump || node_ducked ) )
+						if ( timing == timing_delay && ( style != style_jump || node_ducked || !( node.mask & k_pt_delay_hop ) ) )
 							continue;
 						if ( timing != timing_rest && node.n_legs == 0 && in.start_on_ground )
 							continue;
@@ -1533,6 +1535,9 @@ namespace n_route
 								continue;
 							if ( node.crouch_only && node.st.on_ground && hold_crouch != 1 )
 								continue;
+							if ( style == style_jump && node.st.on_ground && timing != timing_delay &&
+							     !( node.mask & ( hold_crouch == 1 ? k_pt_duck_jump : 1u << style_jump ) ) )
+								continue;
 							if ( duck_air && plain_arrived && point.type == route_pt_pixeljump && !last && !node.st.on_ground )
 								continue;
 							if ( duck_air && plain_arrived && point.type == route_pt_ground && last )
@@ -1542,7 +1547,7 @@ namespace n_route
 									r.refused |= 1u << move_crouch_hop;
 									continue;
 								}
-								if ( point.styles != 0u && !( point.styles & ( 1u << style_jump ) ) )
+								if ( point.styles != 0u && !( point.styles & ( ( 1u << style_jump ) | k_pt_duck_jump ) ) )
 									continue;
 							}
 							/* a jumpbug never touched down: presses from the band tick ( ducked, air, no OnLand ) */
@@ -1661,7 +1666,7 @@ namespace n_route
 								made.n_els   = node.n_els + step->n_el( );
 								made.path    = std::move( step );
 								made.floor = target_z;
-								made.mask  = point.styles == 0u ? k_all_styles : point.styles;
+								made.mask  = point.styles == 0u ? k_all_point_styles : point.styles;
 								made.bind_mask = node.bind_mask;
 								made.last_bind = node.last_bind;
 								made.switches  = node.switches;

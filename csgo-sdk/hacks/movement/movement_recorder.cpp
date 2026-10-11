@@ -762,7 +762,8 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 		save_frames( m_recording_frames, "Route" );
 	}
 
-	if ( clip )
+	const bool clipper = GET_VARIABLE( g_variables.m_movement_rec_clipper, bool );
+	if ( clip && clipper )
 		clip_route( );
 
 	if ( start_play && !m_recording && !owns_cmd( ) ) {
@@ -858,11 +859,15 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 	frame_t f( cmd, g_ctx.m_local->get_origin( ) );
 	f.jetpack = m_replay_jetpack_active;
 
-	const size_t cap = static_cast< size_t >( std::clamp( GET_VARIABLE( g_variables.m_movement_rec_clip_seconds, float ), 1.f, 120.f ) *
-	                                          static_cast< float >( server_tickrate( ) ) );
-	m_clip_buffer.push_back( f );
-	while ( m_clip_buffer.size( ) > cap )
-		m_clip_buffer.pop_front( );
+	/* clipper off: buffer only while playing, take over still needs the played ticks */
+	if ( clipper || m_playing ) {
+		const size_t cap = static_cast< size_t >( std::clamp( GET_VARIABLE( g_variables.m_movement_rec_clip_seconds, float ), 1.f, 120.f ) *
+		                                          static_cast< float >( server_tickrate( ) ) );
+		m_clip_buffer.push_back( f );
+		while ( m_clip_buffer.size( ) > cap )
+			m_clip_buffer.pop_front( );
+	} else
+		m_clip_buffer.clear( );
 
 	if ( m_recording )
 		m_recording_frames.push_back( f );
@@ -1125,7 +1130,7 @@ void n_movement_recorder::impl_t::render_indicator( )
 
 void n_movement_recorder::impl_t::render_clipper_box( )
 {
-	if ( !GET_VARIABLE( g_variables.m_movement_rec_clipper_box, bool ) )
+	if ( !GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) || !GET_VARIABLE( g_variables.m_movement_rec_clipper_box, bool ) )
 		return;
 
 	const float dt = g_interfaces.m_global_vars_base->m_interval_per_tick;
