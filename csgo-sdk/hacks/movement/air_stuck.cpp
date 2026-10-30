@@ -169,44 +169,24 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		g_ctx.m_local->get_velocity( ) = live_velocity;
 	};
 
-	const bool firing = g_aimbot.shot_leaves( );
-
+	/* silent: the sent cmd always keeps your view; the proven move ( pin yaw frame ) is rotated into it and air_stuck_shot_proof re-proves
+	   the final cmd ( 10-30 log: 125/125 live-view re-proofs pinned, <= 18 ulp tries ). zero move: wishvel 0, AirAccelerate returns on
+	   addspeed 0 ( gamemovement.cpp:2028/1985 ) = any view sims the same */
 	const auto publish = [ & ]( const float yaw, const float move, const bool stuck, const float pitch, const bool exact ) {
 		s_proof                   = { stuck, exact, origin, live_velocity };
 		s_hold.valid              = stuck;
 		s_hold.pitch              = pitch;
 		s_hold.yaw                = yaw;
 		s_hold.fwd                = move;
-		/* zero move: wishvel 0, AirAccelerate returns on addspeed 0 ( gamemovement.cpp:2028/1985 ) = any view sims the same, so no forced view */
-		const bool force          = stuck && move != 0.0f;
-		c_angle desired_view      = live_view;
-		desired_view.m_y          = yaw;
-		cmd->m_forward_move       = move;
-		cmd->m_side_move          = 0.0f;
+		cmd->m_view_point         = live_view;
+		stamp_rotate( live_view.m_y, yaw, move, 0.0f, cmd->m_forward_move, cmd->m_side_move );
 		cmd->m_buttons            = live_buttons;
-		g_air_stuck_stamp_yaw     = desired_view.m_y;
-		g_air_stuck_stamp_forward = cmd->m_forward_move;
-		g_air_stuck_stamp_side    = cmd->m_side_move;
+		g_air_stuck_stamp_yaw     = yaw;
+		g_air_stuck_stamp_forward = move;
+		g_air_stuck_stamp_side    = 0.0f;
 		g_air_stuck_stamp_buttons = cmd->m_buttons;
 		g_air_stuck_stamp_valid   = true;
-		g_air_stuck_stamp_force   = force && !firing;
 		g_air_stuck_stamp_pitch   = pitch;
-		if ( firing ) {
-			cmd->m_view_point = live_view;
-			stamp_rotate( live_view.m_y, yaw, move, 0.0f, cmd->m_forward_move, cmd->m_side_move );
-		} else if ( force ) {
-			desired_view.m_x  = pitch;
-			cmd->m_view_point = desired_view;
-		} else if ( move == 0.0f ) {
-			cmd->m_view_point = live_view;
-		} else if ( GET_VARIABLE( g_variables.m_movement_fix, bool ) ) {
-			cmd->m_view_point = desired_view;
-			start_movement_fix( cmd );
-			cmd->m_view_point = live_view;
-			end_movement_fix( cmd );
-		} else {
-			cmd->m_view_point = desired_view;
-		}
 		g_air_stuck_authored_view       = cmd->m_view_point;
 		g_air_stuck_authored_view_valid = true;
 
@@ -315,7 +295,12 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		c_vector cl_end{ };
 		float cl_park_yaw = 0.f, cl_park_fwd = 0.f, cl_park_gap = -1.f;
 
-		if ( cl_contact && cl_normal.m_z == 0.0f ) {
+		/* exact-axis brush: the cardinal ladder never pins there ( 10-30 21:19 log 0/61 ticks, lab 0% ) while lumi's tangent fan does
+		   ( 3/3 pin=3 held ) and was starved to cand=1 behind it = leave lumi the whole clock */
+		const bool cl_axis = cl_contact && cl_normal.m_z == 0.0f && ( std::fabsf( cl_normal.m_x ) == 1.0f || std::fabsf( cl_normal.m_y ) == 1.0f );
+		if ( cl_axis )
+			botox_dbg_log( "AS: clarity axis n=%.3f,%.3f vz=%.3f", cl_normal.m_x, cl_normal.m_y, live_velocity.m_z );
+		if ( cl_contact && !cl_axis && cl_normal.m_z == 0.0f ) {
 			int cl_sims = 0;
 			n_tick::c_sim_budget cl_clock;
 			cl_clock.start( GET_VARIABLE( g_variables.m_air_stuck_budget, float ) * 0.01f, n_tick::engine_interval( ), n_tick::search_as );
@@ -431,13 +416,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 						g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 						apply_predicted_state( );
 						cmd->m_view_point = live_view;
-						if ( GET_VARIABLE( g_variables.m_movement_fix, bool ) )
-							stamp_rotate( live_view.m_y, wall_yaw, mid, 0.f, cmd->m_forward_move, cmd->m_side_move );
-						else {
-							cmd->m_view_point.m_y = wall_yaw;
-							cmd->m_forward_move   = mid;
-							cmd->m_side_move      = 0.f;
-						}
+						stamp_rotate( live_view.m_y, wall_yaw, mid, 0.f, cmd->m_forward_move, cmd->m_side_move );
 						cmd->m_buttons = live_buttons;
 						g_prediction.begin( g_ctx.m_local, cmd );
 						g_prediction.end( g_ctx.m_local );
@@ -623,9 +602,10 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		const trace_t tr   = line( c_vector( end.m_x, end.m_y, hit_z ),
 		                           c_vector( end.m_x - normal.m_x * gap_len, end.m_y - normal.m_y * gap_len, hit_z ), mask_all );
 		const float gap    = tr.m_fraction * gap_len - support;
-		const int crob     = ticks > 0 ? catch_rob( crob_sims, best_crob - 1, clock ) : -1;
+		/* 10-30 21:19 log: pin=1 fell 28/28, pin=3 held 3/3; crob only breaks ties */
+		const int crob     = ticks > 0 && ticks >= best_ticks ? catch_rob( crob_sims, ticks > best_ticks ? -1 : best_crob - 1, clock ) : -1;
 
-		if ( crob > best_crob || ( crob == best_crob && ( ticks > best_ticks || ( ticks == best_ticks && gap < best_gap ) ) ) ) {
+		if ( ticks > best_ticks || ( ticks == best_ticks && ( crob > best_crob || ( crob == best_crob && gap < best_gap ) ) ) ) {
 			best_crob  = crob;
 			best_ticks = ticks;
 			best_gap   = gap;
@@ -646,7 +626,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		}
 	}
 
-	if ( best_ticks < 1 && !out_of_time( ) ) {
+	if ( best_ticks < 3 && !out_of_time( ) ) {
 		constexpr float k_moves_far[ 6 ] = { 1.0f, 5.0f, 30.0f, 60.0f, 90.0f, 120.0f };
 		for ( const float move : k_moves_far ) {
 			if ( out_of_time( ) )
@@ -661,8 +641,9 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 
 	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 	apply_predicted_state( );
-	publish( best_yaw, best_move, best_ticks > 0, live_view.m_x, false );
-	s_expect = { best_ticks > 0, best_end };
+	/* a hold is armed only by the full 3-tick chain; shorter pins go out as the approach move, unarmed */
+	publish( best_yaw, best_move, best_ticks >= 3, live_view.m_x, false );
+	s_expect = { best_ticks >= 3, best_end };
 
 	botox_dbg_log( "AS: lumi scan=%c n=%.3f,%.3f,%.3f hz=%.1f side=%.0f pin=%d crob=%d/%d gap=%.3f yaw=%.1f fwd=%.0f cand=%d vz=%.2f ent=%d scan_us=%lld us=%lld", scan,
 	               normal.m_x, normal.m_y, normal.m_z, hit_z - origin.m_z, side, best_ticks, best_crob, crob_sims, best_gap, best_yaw, best_move, cands, live_velocity.m_z,
@@ -673,11 +654,6 @@ void air_stuck_final_stamp( c_user_cmd* cmd )
 {
 	if ( !g_air_stuck_stamp_valid || !cmd )
 		return;
-
-	if ( g_air_stuck_stamp_force ) {
-		cmd->m_view_point.m_x = g_air_stuck_stamp_pitch;
-		cmd->m_view_point.m_y = g_air_stuck_stamp_yaw;
-	}
 
 	float stamped_forward = 0.0f;
 	float stamped_side    = 0.0f;
@@ -702,7 +678,8 @@ void air_stuck_final_stamp( c_user_cmd* cmd )
 	cmd->m_buttons               = ( cmd->m_buttons & ~direction_mask ) | ( g_air_stuck_stamp_buttons & direction_mask );
 }
 
-/* last writer: the pin was proven in the stamp view; any other sent view ( shot, shot guard, later writers ) gets its move re-proven */
+/* last writer: the pin was proven in the stamp ( pin yaw ) view; the sent cmd keeps your view, so its rotated move is re-proven here
+   every tick ( silent ). nothing pins in your view -> most robust pinned move, else the sent move; the view is never forced */
 void air_stuck_shot_proof( c_user_cmd* cmd )
 {
 	const bool armed = s_proof.valid;
@@ -737,7 +714,7 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 	const auto same = [ ]( const c_vector& a, const c_vector& b ) { return a.m_x == b.m_x && a.m_y == b.m_y && a.m_z == b.m_z; };
 
 	int sims = 0;
-	/* fixed point = next tick replays the proven cmd from the same state; else replay it 2 ticks */
+	/* fixed point = next tick replays the sent cmd from the same state; else replay it 2 ticks */
 	const auto pins = [ & ]( const float f, const float s ) {
 		reset( );
 		cmd->m_view_point   = sent_view;
@@ -750,10 +727,6 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 			return false;
 		if ( same( local->get_abs_origin( ), s_proof.origin ) && same( local->get_velocity( ), s_proof.velocity ) )
 			return true;
-		cmd->m_view_point.m_x = g_air_stuck_stamp_pitch;
-		cmd->m_view_point.m_y = g_air_stuck_stamp_yaw;
-		cmd->m_forward_move   = g_air_stuck_stamp_forward;
-		cmd->m_side_move      = g_air_stuck_stamp_side;
 		for ( int t = 0; t < 2; ++t ) {
 			g_prediction.begin( local, cmd );
 			g_prediction.end( local );
@@ -804,7 +777,7 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 		float pitch = 0.0f, yaw = 0.0f, f = 0.0f, s = 0.0f;
 		int buttons = 0, rob = -1;
 	} s_need;
-	/* bullet ticks too ( stamp_force is off there ): 10-07 23:18 log 283/330 shot pins took 1 sim rob 0, holds died 39-89t into a spray */
+	/* bar on every tick: 10-07 23:18 log 283/330 shot pins took 1 sim rob 0, holds died 39-89t into a spray */
 	if ( !same( s_need.origin, s_proof.origin ) || !same( s_need.velocity, s_proof.velocity ) || s_need.pitch != g_air_stuck_stamp_pitch ||
 	     s_need.yaw != g_air_stuck_stamp_yaw || s_need.f != g_air_stuck_stamp_forward || s_need.s != g_air_stuck_stamp_side ||
 	     s_need.buttons != cmd->m_buttons || s_need.rob < 0 ) {
@@ -865,22 +838,15 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 	}
 	attempt( 0.0f, 0.0f );
 
-	const bool forced = keep < 0 && g_air_stuck_stamp_force;
-	/* bullet tick, nothing as robust as the stamp: the most robust pinned move beats the unproven sent one ( keep=0 ) */
-	if ( keep < 0 && !forced && best_rob >= 0 ) {
+	/* nothing as robust as the stamp: the most robust pinned move beats the unproven sent one ( keep=0 ) */
+	if ( keep < 0 && best_rob >= 0 ) {
 		keep  = 0;
 		out_f = best_f;
 		out_s = best_s;
 	}
 
 	reset( );
-	cmd->m_view_point = sent_view;
-	if ( forced ) {
-		cmd->m_view_point.m_x = g_air_stuck_stamp_pitch;
-		cmd->m_view_point.m_y = g_air_stuck_stamp_yaw;
-		out_f                 = g_air_stuck_stamp_forward;
-		out_s                 = g_air_stuck_stamp_side;
-	}
+	cmd->m_view_point   = sent_view;
 	cmd->m_forward_move = out_f;
 	cmd->m_side_move    = out_s;
 	g_prediction.begin( local, cmd, true );
@@ -892,7 +858,7 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 		return;
 	s_last_kept = kept;
 
-	botox_dbg_log( "AS: shot keep=%d forced=%d rob=%d/%d tries=%d sims=%d exact=%d fwd=%.4f/%.4f -> %.4f/%.4f view=%.2f/%.2f stamp=%.2f/%.2f av=%.2f/%.2f us=%lld",
-	               keep, ( int )forced, best_rob, need, tries, sims, ( int )s_proof.exact, sent_f, sent_s, out_f, out_s, cmd->m_view_point.m_x, cmd->m_view_point.m_y,
+	botox_dbg_log( "AS: shot keep=%d rob=%d/%d tries=%d sims=%d exact=%d fwd=%.4f/%.4f -> %.4f/%.4f view=%.2f/%.2f stamp=%.2f/%.2f av=%.2f/%.2f us=%lld",
+	               keep, best_rob, need, tries, sims, ( int )s_proof.exact, sent_f, sent_s, out_f, out_s, cmd->m_view_point.m_x, cmd->m_view_point.m_y,
 	               g_air_stuck_stamp_pitch, g_air_stuck_stamp_yaw, g_air_stuck_authored_view.m_x, g_air_stuck_authored_view.m_y, clock.used_us( ) );
 }

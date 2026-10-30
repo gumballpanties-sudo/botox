@@ -33,7 +33,6 @@ extern float g_air_stuck_stamp_yaw;
 extern float g_air_stuck_stamp_forward;
 extern float g_air_stuck_stamp_side;
 extern int g_air_stuck_stamp_buttons;
-extern bool g_air_stuck_stamp_force;
 extern float g_air_stuck_stamp_pitch;
 
 void botox_dbg_log( const char* fmt, ... );

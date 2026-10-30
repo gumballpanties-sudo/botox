@@ -1842,6 +1842,9 @@ void n_misc::impl_t::on_end_scene( )
 		case 31:
 			draw_spectator_list_gamesense( );
 			break;
+		case 32:
+			draw_spectator_list_kamidere( );
+			break;
 		default:
 			break;
 		}

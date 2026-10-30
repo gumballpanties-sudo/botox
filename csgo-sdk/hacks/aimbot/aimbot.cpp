@@ -981,7 +981,8 @@ void n_aimbot::impl_t::on_create_move_post( )
 	if ( !g_ctx.m_local || !g_ctx.m_cmd || !g_ctx.m_local->is_alive( ) )
 		return;
 
-	const bool silent    = GET_VARIABLE( g_variables.m_aimbot_silent, bool );
+	const bool camlock   = GET_VARIABLE( g_variables.m_aimbot_camlock, bool );
+	const bool silent    = GET_VARIABLE( g_variables.m_aimbot_silent, bool ) && !camlock;
 	const bool trigger   = firing_weapon( ) != nullptr;
 	const float interval = g_interfaces.m_global_vars_base->m_interval_per_tick;
 	const auto weapon    = g_interfaces.m_client_entity_list->get< c_base_entity >( g_ctx.m_local->get_active_weapon_handle( ) );
@@ -990,7 +991,7 @@ void n_aimbot::impl_t::on_create_move_post( )
 	if ( !trigger )
 		m_visible_first = false;
 
-	const bool first_bullet = !silent && can_fire && trigger && !m_visible_first;
+	const bool first_bullet = !silent && !camlock && can_fire && trigger && !m_visible_first;
 	if ( first_bullet )
 		m_visible_first = true;
 
@@ -999,8 +1000,20 @@ void n_aimbot::impl_t::on_create_move_post( )
 
 	aim_settings_t settings{ };
 
+	const bool allowed = can_aimbot( );
+
+	/* no switch: the lock holds its player while he is a valid target ( out of fov = no aim, not another player ) */
+	const auto held = [ & ]( ) {
+		if ( !allowed || !m_lock_index || !GET_VARIABLE( g_variables.m_aimbot_no_switch, bool ) )
+			return false;
+
+		const auto entity = g_interfaces.m_client_entity_list->get< c_base_entity >( m_lock_index );
+		return entity && entity->is_valid_aim_target( ) && !entity->has_immunity( );
+	};
+	const bool hold = held( );
+
 	const auto find_target = [ & ]( ) -> target_t {
-		if ( !can_aimbot( ) ) {
+		if ( !allowed ) {
 			dbg_gate( "off" );
 			return { };
 		}
@@ -1059,7 +1072,7 @@ void n_aimbot::impl_t::on_create_move_post( )
 				found       = scan_targets( scan );
 				scan.m_only = 0;
 			}
-			return found.m_entity ? found : scan_targets( scan );
+			return found.m_entity || hold ? found : scan_targets( scan );
 		};
 
 		target_t found = scan_all( );
@@ -1090,9 +1103,10 @@ void n_aimbot::impl_t::on_create_move_post( )
 	const target_t target = find_target( );
 	const bool aiming     = target.m_entity != nullptr;
 
-	if ( !aiming )
-		m_lock_index = 0;
-	else {
+	if ( !aiming ) {
+		if ( !hold )
+			m_lock_index = 0;
+	} else {
 		if ( const int index = target.m_entity->get_index( ); index != m_lock_index ) {
 			botox_dbg_log( "AIM: lock %d -> %d hb=%d silent=%d fire=%d rec=%d", m_lock_index, index, target.m_hitbox, ( int )silent,
 			               ( int )trigger, target.m_record ? 1 : 0 );
@@ -1118,8 +1132,9 @@ void n_aimbot::impl_t::on_create_move_post( )
 	/* silent: bullet = view + punch * weapon_recoil_scale ( cs_player_shared.cpp:3010 ), comp it all, the camera never shows it */
 	c_angle aim{ };
 	if ( aiming ) {
-		aim = g_math.calculate_angle( g_ctx.m_local->get_eye_position( false ), target.m_position ) -
-		      ( silent ? g_ctx.m_local->get_punch( ) * recoil_scale( ) : want );
+		aim = g_math.calculate_angle( g_ctx.m_local->get_eye_position( false ), target.m_position );
+		if ( !camlock )
+			aim -= silent ? g_ctx.m_local->get_punch( ) * recoil_scale( ) : want;
 		aim.normalize( );
 	}
 
@@ -1164,6 +1179,50 @@ void n_aimbot::impl_t::on_create_move_post( )
 
 	if ( ( g_edgebug.m_found && GET_VARIABLE( g_variables.m_edgebug_mouse_lock, bool ) ) || g_edge_skip.lock_amount( ) > 0.f ) {
 		publish( g_ctx.old_view_point );
+		return;
+	}
+
+	/* camlock: camera rides the target, bullets keep leaving along the mouse. lock end = aim becomes where the camera stopped */
+	if ( camlock ) {
+		m_rcs_applied_x = m_rcs_applied_y = 0.f;
+
+		c_angle user = camera;
+		if ( m_cam_active ) {
+			c_angle delta = camera - c_angle( m_cam_set_x, m_cam_set_y, 0.f );
+			delta.normalize( );
+			user = c_angle( m_cam_user_x, m_cam_user_y, 0.f ) + delta;
+			user.normalize( );
+			user.clamp( );
+		}
+
+		if ( aiming ) {
+			c_angle delta = aim - camera;
+			delta.normalize( );
+
+			if ( settings.m_smooth > 1.f )
+				delta = delta * ( 1.f / settings.m_smooth );
+
+			camera += delta;
+			camera.normalize( );
+			camera.clamp( );
+
+			if ( !std::isfinite( camera.m_x ) || !std::isfinite( camera.m_y ) )
+				return;
+
+			g_interfaces.m_engine_client->set_view_angles( camera );
+
+			if ( !m_cam_active )
+				botox_dbg_log( "AIM: camlock on idx=%d user=%.1f/%.1f", m_lock_index, user.m_x, user.m_y );
+		}
+
+		m_cam_active = aiming;
+		m_cam_set_x  = camera.m_x;
+		m_cam_set_y  = camera.m_y;
+		m_cam_user_x = user.m_x;
+		m_cam_user_y = user.m_y;
+
+		publish( user - want );
+		m_shot_is_aim = false;
 		return;
 	}
 

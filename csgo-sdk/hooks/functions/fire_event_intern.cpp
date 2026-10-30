@@ -3,6 +3,7 @@
 #include "../../hacks/misc/scaleform/scaleform.h"
 #include "../../hacks/chud_hud/chud_hud.h"
 #include "../../hacks/mc_hud/mc_hud.h"
+#include "../../hacks/cod4_hud/cod4_hud.h"
 #include "../hooks.h"
 #include "../../hacks/visuals/players/dormancy/dormancy.h"
 #include "../../hacks/visuals/players/players.h"
@@ -24,6 +25,8 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 
 	if ( !g_render.m_initialised )
 		return original( ecx, edx, game_event );
+
+	g_cod4_hud.on_event( game_event );
 
 	const ImColor im_accent_color = ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent );
 	const c_unsigned_char_color accent_color =

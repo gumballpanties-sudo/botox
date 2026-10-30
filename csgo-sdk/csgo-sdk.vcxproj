@@ -63,6 +63,7 @@
     <ClCompile Include="hooks\functions\load_file_into_buffer.cpp" />
     <ClCompile Include="hacks\chud_hud\chud_hud.cpp" />
     <ClCompile Include="hacks\mc_hud\mc_hud.cpp" />
+    <ClCompile Include="hacks\cod4_hud\cod4_hud.cpp" />
     <ClCompile Include="hacks\movement\movement.cpp" />
     <ClCompile Include="globals\logger\debug_log.cpp" />
     <ClCompile Include="hacks\movement\points_ui.cpp" />
@@ -446,6 +447,12 @@
     <ClInclude Include="hacks\mc_hud\mc_logic.h" />
     <ClInclude Include="hacks\mc_hud\mc_assets.h" />
     <ClInclude Include="hacks\mc_hud\mc_font_ttf.h" />
+    <ClInclude Include="hacks\cod4_hud\cod4_hud.h" />
+    <ClInclude Include="hacks\cod4_hud\cod4_data.h" />
+    <ClInclude Include="hacks\cod4_hud\cod4_types.h" />
+    <ClInclude Include="hacks\cod4_hud\cod4_logic.h" />
+    <ClInclude Include="hacks\cod4_hud\cod4_expr.h" />
+    <ClInclude Include="hacks\cod4_hud\cod4_iwd.h" />
     <ClInclude Include="hacks\movement\movement.h" />
     <ClInclude Include="hacks\movement\movement_internal.h" />
     <ClInclude Include="hacks\movement\texturebug.h" />

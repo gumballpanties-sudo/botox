@@ -67,7 +67,6 @@ float g_air_stuck_stamp_yaw     = 0.0f;
 float g_air_stuck_stamp_forward = 0.0f;
 float g_air_stuck_stamp_side    = 0.0f;
 int g_air_stuck_stamp_buttons   = 0;
-bool g_air_stuck_stamp_force    = false;
 float g_air_stuck_stamp_pitch   = 0.0f;
 
 class WindowDetect
@@ -351,7 +350,6 @@ void n_movement::impl_t::on_create_move_pre( )
 	g_air_stuck_authored_view_valid = false;
 	/* this-tick fact: stale would re-press a dead weld cmd */
 	g_air_stuck_stamp_valid = false;
-	g_air_stuck_stamp_force = false;
 
 	if ( g_ctx.m_cmd ) {
 		m_user_forward_move = g_ctx.m_cmd->m_forward_move;

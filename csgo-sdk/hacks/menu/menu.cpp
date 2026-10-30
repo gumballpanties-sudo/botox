@@ -867,6 +867,9 @@ void n_menu::impl_t::tab_aimbot( )
 		ImGui::Checkbox( "silent aim", &GET_VARIABLE( g_variables.m_aimbot_silent, bool ) );
 		ImGui::SliderFloat( "silent aim step", &GET_VARIABLE( g_variables.m_aimbot_silent_step, float ), 0.f, 90.f, "%.0f deg" );
 
+		ImGui::Checkbox( "camlock", &GET_VARIABLE( g_variables.m_aimbot_camlock, bool ) );
+		ImGui::Checkbox( "no target switching", &GET_VARIABLE( g_variables.m_aimbot_no_switch, bool ) );
+
 		ImGui::Checkbox( "target team", &GET_VARIABLE( g_variables.m_aimbot_target_team, bool ) );
 		ImGui::Checkbox( "scale fov with scope", &GET_VARIABLE( g_variables.m_aimbot_scope_fov_scale, bool ) );
 
@@ -946,6 +949,7 @@ void n_menu::impl_t::tab_aimbot( )
 		ImGui::MultiCombo( "grenades##grenade aim", grenade_types, grenade_labels, grenade_types.size( ) );
 		ImGui::SliderFloat( "grenade fov", &GET_VARIABLE( g_variables.m_grenade_aim_fov, float ), 1.f, 180.f, "%.0f" );
 		ImGui::Combo( "arc##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_arc, int ), "auto\0low\0lob\0" );
+		ImGui::Checkbox( "wall bounce##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_bounce, bool ) );
 		ImGui::Checkbox( "silent##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_silent, bool ) );
 		ImGui::Checkbox( "auto throw##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_auto_throw, bool ) );
 		ImGui::Checkbox( "draw path##grenade aim", &GET_VARIABLE( g_variables.m_grenade_aim_draw, bool ) );

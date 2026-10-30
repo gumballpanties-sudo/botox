@@ -672,7 +672,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			eb_n_vz = eb_n_gap = eb_n_air = eb_n_run = eb_n_hit = 0;
 		}
 		/* opening fall speed: real speed, no scale. */
-		if ( m_backup_velocity.m_z >= ( detection_mode == 1 ? -4.f : -10.f ) ) {
+		if ( m_backup_velocity.m_z >= ( detection_mode >= 1 ? -4.f : -10.f ) ) {
 			eb_n_vz++;
 			break;
 		}
@@ -724,15 +724,15 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		const bool near_geometry = every_tick || ( reach_tick >= 0 && reach_tick <= eb_ticks( 12 ) );
 		/* share is WALL CLOCK: ask for the 64-tick microseconds on any tickrate, then cap against this
 		   tick ( 0.60 normal / 0.75 enhanced ). 64 unchanged. */
-		const float want_s = ( detection_mode == 1 ? 0.45f : 0.30f ) * ( 1.f / 64.f ) *
+		const float want_s = ( detection_mode >= 1 ? 0.45f : 0.30f ) * ( 1.f / 64.f ) *
 		                     static_cast< float >( gap_owned ) * ( near_geometry ? 1.f : 0.5f );
-		/* enhanced = deeper search, may own more of a tick. */
-		const float budget_share = std::min( detection_mode == 1 ? 0.75f : 0.60f, want_s / n_tick::interval( ) );
+		/* enhanced / ebanat = deeper search, may own more of a tick. */
+		const float budget_share = std::min( detection_mode >= 1 ? 0.75f : 0.60f, want_s / n_tick::interval( ) );
 		/* runaway ceiling derived from the clock at 8 us/sim ( real sims ~20-25 ), so it only fires on a
 		   broken timer; never a tick-scaled sim count. floor = one pass of this window. */
 		const int MAX_PREDICTIONS = std::clamp(
 		    std::max( static_cast< int >( n_tick::interval( ) * 1000000.f * budget_share / 8.f ),
-		              run_ticks * ( detection_mode == 1 ? 6 : 4 ) ), 16, 2048 );
+		              run_ticks * ( detection_mode >= 1 ? 6 : 4 ) ), 16, 2048 );
 		n_tick::c_sim_budget budget;
 		budget.start( budget_share, 0.f, n_tick::search_eb );
 		/* measured cost of a full pass, for "don't start what you can't finish". */

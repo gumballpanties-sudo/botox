@@ -7,6 +7,7 @@
 #include "../../hacks/misc/scaleform/scaleform.h"
 #include "../../hacks/chud_hud/chud_hud.h"
 #include "../../hacks/mc_hud/mc_hud.h"
+#include "../../hacks/cod4_hud/cod4_hud.h"
 #include "../hooks.h"
 
 static const char* k_tag_eb = R"js(
@@ -149,9 +150,12 @@ void __fastcall n_detoured_functions::push_notice( void* ecx, void* edx, const c
 	if ( !text )
 		return original( ecx, edx, text, str_len, null );
 
-	// mc hud owns chat: stock panorama chat never gets the line (css hide loses to csgo's own chat fade)
+	// mc / cod4 hud own chat: stock panorama chat never gets the line (css hide loses to csgo's own chat fade)
 	const auto forward = [ & ]( const char* line, int len, const char* raw ) {
-		if ( !n_mc_hud::enabled( ) )
+		// botox lines pass their html as raw; stock = ( szColorNotice, clientId, bAlreadyFormatted )
+		const bool botox = raw == line;
+		g_cod4_hud.on_chat( line, botox ? 0 : len, botox || ( reinterpret_cast< uintptr_t >( raw ) & 0xFF ) != 0 );
+		if ( !n_mc_hud::enabled( ) && !n_cod4_hud::enabled( ) )
 			original( ecx, edx, line, len, raw );
 	};
 
@@ -217,7 +221,7 @@ void __fastcall n_detoured_functions::push_notice( void* ecx, void* edx, const c
 		static int history_off = -1;
 
 		const std::string message = detection_html( event );
-		if ( chained && alive && hud ) {
+		if ( chained && alive && hud && !n_cod4_hud::enabled( ) ) {
 			std::string js = k_restack_eb;
 			replace_js( js, "${html}", message );
 			ui->run_script( hud, js.c_str( ), "panorama/layout/hud/hud.xml", 8, 10, false, false );

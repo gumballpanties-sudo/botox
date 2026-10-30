@@ -5,6 +5,7 @@
 #include "../../hacks/chud_hud/chud_hud.h"
 #include "../../hacks/entity_cache/entity_cache.h"
 #include "../../hacks/mc_hud/mc_hud.h"
+#include "../../hacks/cod4_hud/cod4_hud.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/misc/scaleform/image_cache.h"
 #include "../../hacks/movement/movement.h"
@@ -32,6 +33,7 @@ void n_detoured_functions::draw_overlay_frame( IDirect3DDevice9* device )
 			Web_Present( device );
 
 			g_mc_hud.on_end_scene( );
+			g_cod4_hud.on_end_scene( );
 
 			g_menu.on_end_scene( );
 			g_misc.on_end_scene( );

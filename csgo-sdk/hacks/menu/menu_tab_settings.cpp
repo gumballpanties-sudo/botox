@@ -986,6 +986,27 @@ void n_menu::impl_t::player_list_page( )
 	ImGui::EndChild( );
 }
 
+/* 0 down, 1 up, 2 delete: glyphs sit at different heights in the font, so draw them */
+static bool icon_button( const char* id, const int icon, const float height )
+{
+	const bool pressed = ImGui::Button( id, ImVec2( 16.f, height ) );
+	const ImVec2 min = ImGui::GetItemRectMin( ), max = ImGui::GetItemRectMax( );
+	const float cx = ImFloor( ( min.x + max.x ) * 0.5f ) + 0.5f, cy = ImFloor( ( min.y + max.y ) * 0.5f ) + 0.5f;
+	const ImU32 color = ImGui::GetColorU32( ImGuiCol_Text );
+	ImDrawList* draw  = ImGui::GetWindowDrawList( );
+
+	if ( icon == 2 ) {
+		draw->AddLine( ImVec2( cx - 3.f, cy - 3.f ), ImVec2( cx + 3.5f, cy + 3.5f ), color );
+		draw->AddLine( ImVec2( cx + 3.f, cy - 3.f ), ImVec2( cx - 3.5f, cy + 3.5f ), color );
+	}
+	else {
+		const float tip = icon == 0 ? 2.f : -2.f;
+		draw->AddLine( ImVec2( cx - 3.f, cy - tip ), ImVec2( cx, cy + tip ), color );
+		draw->AddLine( ImVec2( cx, cy + tip ), ImVec2( cx + 3.f, cy - tip ), color );
+	}
+	return pressed;
+}
+
 void n_menu::impl_t::cvars_page( )
 {
 	static char input[ 512 ] = { };
@@ -1029,26 +1050,6 @@ void n_menu::impl_t::cvars_page( )
 		ImGui::TableNextColumn( );
 		ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) + 2.f );
 	};
-	/* 0 down, 1 up, 2 delete: glyphs sit at different heights in the font, so draw them */
-	const auto icon_button = [ & ]( const char* id, const int icon ) {
-		const bool pressed = ImGui::Button( id, ImVec2( k_button, k_frame - 4.f ) );
-		const ImVec2 min = ImGui::GetItemRectMin( ), max = ImGui::GetItemRectMax( );
-		const float cx = ImFloor( ( min.x + max.x ) * 0.5f ) + 0.5f, cy = ImFloor( ( min.y + max.y ) * 0.5f ) + 0.5f;
-		const ImU32 color = ImGui::GetColorU32( ImGuiCol_Text );
-		ImDrawList* draw  = ImGui::GetWindowDrawList( );
-
-		if ( icon == 2 ) {
-			draw->AddLine( ImVec2( cx - 3.f, cy - 3.f ), ImVec2( cx + 3.5f, cy + 3.5f ), color );
-			draw->AddLine( ImVec2( cx + 3.f, cy - 3.f ), ImVec2( cx - 3.5f, cy + 3.5f ), color );
-		}
-		else {
-			const float tip = icon == 0 ? 2.f : -2.f;
-			draw->AddLine( ImVec2( cx - 3.f, cy - tip ), ImVec2( cx, cy + tip ), color );
-			draw->AddLine( ImVec2( cx, cy + tip ), ImVec2( cx + 3.f, cy - tip ), color );
-		}
-		return pressed;
-	};
-
 	bool changed = false, execute = false;
 
 	if ( ImGui::BeginChild( "cvars", ImVec2( 0.f, -menu_bottom_band_height ), true, 0, true ) ) {
@@ -1094,16 +1095,16 @@ void n_menu::impl_t::cvars_page( )
 
 					side_column( );
 					ImGui::BeginDisabled( i == count - 1 );
-					if ( icon_button( "##down", 0 ) )
+					if ( icon_button( "##down", 0, k_frame - 4.f ) )
 						move_from = i, move_to = i + 1;
 					ImGui::EndDisabled( );
 					ImGui::SameLine( 0.f, k_gap );
 					ImGui::BeginDisabled( i == 0 );
-					if ( icon_button( "##up", 1 ) )
+					if ( icon_button( "##up", 1, k_frame - 4.f ) )
 						move_from = i, move_to = i - 1;
 					ImGui::EndDisabled( );
 					ImGui::SameLine( 0.f, k_gap );
-					if ( icon_button( "##delete", 2 ) )
+					if ( icon_button( "##delete", 2, k_frame - 4.f ) )
 						remove = i;
 					ImGui::PopID( );
 				}
@@ -1376,7 +1377,7 @@ void n_menu::impl_t::tab_misc( )
 					const int lumi_type = color_style == 25 ? GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) : -1;
 
 					if ( color_style == 0 || color_style == 5 || color_style == 6 || color_style == 8 || color_style == 10 || color_style == 23 ||
-					     color_style == 24 || color_style == 25 || color_style == 26 || color_style == 29 || color_style == 31 )
+					     color_style == 24 || color_style == 25 || color_style == 26 || color_style == 29 || color_style == 31 || color_style == 32 )
 						ImGui::ColorEdit4( "spectating local color##spectator list text color one",
 						                   &GET_VARIABLE( g_variables.m_spectators_list_text_color_one, c_color ),
 						                   color_picker_alpha_flags );
@@ -1397,36 +1398,36 @@ void n_menu::impl_t::tab_misc( )
 					}
 
 					if ( color_style == 0 || color_style == 5 || color_style == 8 || color_style == 23 || color_style == 24 || color_style == 26 ||
-					     color_style == 29 || color_style == 30 || color_style == 31 || lumi_type == 2 || lumi_type == 3 )
+					     color_style == 29 || color_style == 30 || color_style == 31 || color_style == 32 || lumi_type == 2 )
 						ImGui::ColorEdit4( "spectating other color##spectator list text color two",
 						                   &GET_VARIABLE( g_variables.m_spectators_list_text_color_two, c_color ),
 						                   color_picker_alpha_flags );
 
 					if ( color_style != 9 && color_style != 12 && color_style != 13 && color_style != 14 && color_style != 16 && color_style != 18 &&
 					     color_style != 19 && color_style != 20 && color_style != 21 && color_style != 24 && color_style != 26 && color_style != 28 &&
-					     color_style != 29 && color_style != 30 && color_style != 31 && ( color_style != 25 || lumi_type == 1 ) )
+					     color_style != 29 && color_style != 30 && color_style != 31 && color_style != 32 && ( color_style != 25 || lumi_type == 1 ) )
 						ImGui::Combo( "listed players##spectatorlist player", &GET_VARIABLE( g_variables.m_spectators_list_type, int ),
 					                  "all spectators\0local spectators\0" );
 
-					if ( GET_VARIABLE( g_variables.m_spectators_list_style, int ) > 31 )
+					if ( GET_VARIABLE( g_variables.m_spectators_list_style, int ) > 32 )
 						GET_VARIABLE( g_variables.m_spectators_list_style, int ) = 0;
 
 					ImGui::Combo( "style##spectatorlist style", &GET_VARIABLE( g_variables.m_spectators_list_style, int ),
 				                  "default\0delusional\0interwebz\0windows xp\0clarity\0chillware\0lobotomy v2\0kamibebra\0eyes\0cumhacck\0clarity v2\0"
 				                  "airplane\0bhop cheat\0millionware\0aimware\0havoc\0onetap\0airflow\0ev0lve\0legendware\0interium\0chillware v2\0"
-				                  "skebob\0cumidere\0illusory\0lumi\0billware\0inkabanium\0dna\0cucumber\0howeweware\0gamesense\0" );
+				                  "skebob\0cumidere\0illusory\0lumi\0billware\0inkabanium\0dna\0cucumber\0howeweware\0gamesense\0kamidere\0" );
 
 					const int style = GET_VARIABLE( g_variables.m_spectators_list_style, int );
 
 					if ( style == 25 ) {
 						auto& type = GET_VARIABLE( g_variables.m_spectators_lumi_type, int );
-						if ( type < 0 || type > 3 )
+						if ( type < 0 || type > 2 )
 							type = 0;
-						ImGui::Combo( "type##spectatorlist lumi type", &type, "default\0new\0interwebz\0kami\0" );
+						ImGui::Combo( "type##spectatorlist lumi type", &type, "default\0new\0interwebz\0" );
 					}
 
 					if ( style == 1 || style == 2 || style == 3 || style == 15 || style == 22 || style == 23 || style == 24 || style == 26 || style == 28 ||
-					     style == 29 || style == 30 || style == 31 || ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 1 ) )
+					     style == 29 || style == 30 || style == 31 || style == 32 || ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 1 ) )
 						ImGui::Checkbox( "show targets##spectatorlist targets",
 						                 &GET_VARIABLE( g_variables.m_spectators_list_show_target, bool ) );
 
@@ -1437,11 +1438,20 @@ void n_menu::impl_t::tab_misc( )
 
 					if ( ( style == 0 && GET_VARIABLE( g_variables.m_spectators_list_type, int ) == 0 ) || style == 4 || style == 5 || style == 6 ||
 					     style == 11 || style == 15 || style == 17 || style == 18 || style == 21 || style == 22 || style == 23 || style == 25 ||
-					     style == 26 || style == 27 || style == 28 || style == 29 || style == 30 || style == 31 )
+					     style == 26 || style == 27 || style == 28 || style == 29 || style == 30 || style == 31 || style == 32 )
 						ImGui::Checkbox( "always show##spectatorlist always show", &GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ) );
 
 					if ( style == 31 )
 						ImGui::Checkbox( "gradient bar##spectatorlist gamesense", &GET_VARIABLE( g_variables.m_spectators_gamesense_bar, bool ) );
+
+					if ( style == 32 ) {
+						ImGui::Checkbox( "hide GOTV##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_kami_hide_gotv, bool ) );
+						ImGui::Checkbox( "blur background##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_kami_blur, bool ) );
+						ImGui::Checkbox( "circle avatars##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_kami_circle, bool ) );
+						if ( !GET_VARIABLE( g_variables.m_spectators_kami_blur, bool ) )
+							ImGui::SliderFloat( "list opacity##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_kami_opacity, float ), 0.f, 100.f,
+							                    "%.0f%%" );
+					}
 
 					if ( style == 18 )
 						ImGui::SliderFloat( "alpha override##spectatorlist evolve", &GET_VARIABLE( g_variables.m_watermark_evolve_alpha, float ), 0.f,
@@ -1461,12 +1471,6 @@ void n_menu::impl_t::tab_misc( )
 							ImGui::Checkbox( "glow##spectatorlist lumi", &GET_VARIABLE( g_variables.m_spectators_lumi_glow, bool ) );
 						if ( lumi_type != 2 )
 							ImGui::Checkbox( "blur background##spectatorlist lumi", &GET_VARIABLE( g_variables.m_spectators_lumi_blur, bool ) );
-						if ( lumi_type == 3 ) {
-							ImGui::Checkbox( "circle avatars##spectatorlist kami", &GET_VARIABLE( g_variables.m_spectators_kami_circle, bool ) );
-							if ( !GET_VARIABLE( g_variables.m_spectators_lumi_blur, bool ) )
-								ImGui::SliderFloat( "list opacity##spectatorlist kami", &GET_VARIABLE( g_variables.m_spectators_kami_opacity, float ), 0.f, 100.f,
-								                    "%.0f%%" );
-						}
 						if ( lumi_type == 1 ) {
 							ImGui::Checkbox( "mascot##spectatorlist lumi", &GET_VARIABLE( g_variables.m_spectators_lumi_mascot, bool ) );
 							if ( GET_VARIABLE( g_variables.m_spectators_lumi_mascot, bool ) ) {
@@ -1581,7 +1585,7 @@ void n_menu::impl_t::tab_misc( )
 					if ( style == 12 )
 						ImGui::Checkbox( "observer mode##spectatorlist bhopcheat mode", &GET_VARIABLE( g_variables.m_spectators_bhopcheat_mode, bool ) );
 
-					if ( ( style < 13 && style != 8 && style != 9 && style != 11 ) || style == 22 || style == 31 ||
+					if ( ( style < 13 && style != 8 && style != 9 && style != 11 ) || style == 22 || style == 31 || style == 32 ||
 					     ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 2 ) )
 						ImGui::Checkbox( "spectator avatars", &GET_VARIABLE( g_variables.m_spectators_avatar, bool ) );
 
@@ -1747,6 +1751,8 @@ void n_menu::impl_t::tab_misc( )
 						              "energy\0heavy electrical\0light electrical\0core\0" );
 
 					if ( type != 3 && type != 7 && type != 8 ) {
+						// color of the body part each particle comes from; color below = fallback when that part is off screen / behind a wall
+						ImGui::Checkbox( "model colors##deathparticles", &GET_VARIABLE( g_variables.m_death_particles_model_colors, bool ) );
 						ImGui::Checkbox( "multicolor##deathparticles", &GET_VARIABLE( g_variables.m_death_particles_multicolor, bool ) );
 						c_color& dp_color = GET_VARIABLE( g_variables.m_death_particles_color, c_color );
 						if ( !GET_VARIABLE( g_variables.m_death_particles_multicolor, bool ) )
@@ -2018,27 +2024,58 @@ void n_menu::impl_t::tab_misc( )
 	menu_group_end( );
 
 	if ( menu_group_begin( "convenience" ) ) {
-		struct command_entry_t {
-			const char* m_label;
-			const char* m_command;
-		};
+		static char title[ 64 ] = { }, command[ 256 ] = { };
+		static bool open_add    = false;
+		auto& list_var          = GET_VARIABLE( g_variables.m_convenience_buttons, std::string );
 
-		static constexpr command_entry_t commands[ ] = {
-			{ "kill all bots", "sv_cheats 1; bot_kill all"       },
-			{ "kick all bots", "bot_kick all"                    },
-			{ "give ak47",     "sv_cheats 1; give weapon_ak47"   },
-			{ "give awp",      "sv_cheats 1; give weapon_awp"    },
-			{ "give deagle",   "sv_cheats 1; give weapon_deagle" },
-			{ "give usp",      "sv_cheats 1; give weapon_usp_silencer"     },
-		};
+		const auto lines = n_misc::split_cvars( list_var, '\n' );
+		int remove       = -1;
 
-		if ( ImGui::Button( "connect y6o EU", ImVec2( -1.f, 15.f ) ) )
-			g_interfaces.m_engine_client->client_cmd_unrestricted( "connect 193.23.209.155:27015" );
+		for ( int i = 0; i < static_cast< int >( lines.size( ) ); i++ ) {
+			const size_t tab = lines[ i ].find( '\t' );
+			if ( tab == std::string::npos )
+				continue;
 
-		for ( const auto& command : commands ) {
-			if ( ImGui::Button( command.m_label, ImVec2( -1.f, 15.f ) ) )
-				g_interfaces.m_engine_client->client_cmd_unrestricted( command.m_command );
+			ImGui::PushID( i );
+			if ( ImGui::Button( lines[ i ].substr( 0, tab ).c_str( ), ImVec2( ImGui::GetContentRegionAvail( ).x - 23.f, 15.f ) ) )
+				g_interfaces.m_engine_client->client_cmd_unrestricted( lines[ i ].substr( tab + 1 ).c_str( ) );
+			ImGui::SameLine( 0.f, 7.f );
+			if ( icon_button( "##delete", 2, 15.f ) )
+				remove = i;
+			ImGui::PopID( );
 		}
+
+		if ( remove >= 0 ) {
+			std::string joined;
+			for ( int i = 0; i < static_cast< int >( lines.size( ) ); i++ ) {
+				if ( i == remove )
+					continue;
+				if ( !joined.empty( ) )
+					joined += '\n';
+				joined += lines[ i ];
+			}
+			list_var = joined;
+		}
+
+		if ( ImGui::Button( "add button", ImVec2( -1.f, 15.f ) ) )
+			open_add = true;
+
+		save_popup( "new button", open_add, ImVec2( 220.f, -1.f ), [ & ]( ) {
+			ImGui::InputText( "title", title, sizeof( title ) );
+			ImGui::InputText( "command", command, sizeof( command ) );
+
+			/* blank side = split_cvars trims the tab away, row turns invisible */
+			const auto blank = []( const char* text ) { return std::string_view( text ).find_first_not_of( ' ' ) == std::string_view::npos; };
+			ImGui::BeginDisabled( blank( title ) || blank( command ) );
+			if ( ImGui::Button( "add button", ImVec2( -1.f, 15.f ) ) ) {
+				if ( !list_var.empty( ) )
+					list_var += '\n';
+				list_var += std::string( title ) + '\t' + command;
+				title[ 0 ] = command[ 0 ] = '\0';
+				open_add                  = false;
+			}
+			ImGui::EndDisabled( );
+		} );
 	}
 	menu_group_end( );
 

@@ -74,6 +74,7 @@ enum e_font_names {
 	font_name_howeweware_minecraft_14,
 	font_name_gamesense_sf_bold_15,
 	font_name_points_montserrat_italic_18,
+	font_name_cod4_weapon_icon_48, // csgo weapon icon font big enough for the cod4 hud's killfeed / offhand icons
 	font_name_max
 };
 

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <numbers>
 
 extern void botox_dbg_log( const char* fmt, ... );
 extern void start_movement_fix( c_user_cmd* cmd );
@@ -22,6 +23,11 @@ namespace
 	constexpr float k_launch_offset               = 16.f;
 	constexpr unsigned int k_contents_grenadeclip = 0x80000;
 	constexpr int k_path_max                      = 400;
+	constexpr float k_elasticity                  = 0.45f; /* GetGrenadeElasticity, world surface 1 */
+	constexpr float k_hull                        = 2.f;
+	constexpr int k_wall_rays                     = 12;
+	constexpr float k_wall_range                  = 512.f;
+	constexpr float k_bounce_slop                 = 16.f;
 
 	using path_t = std::array< c_vector, k_path_max >;
 
@@ -132,11 +138,10 @@ namespace
 		return delta;
 	}
 
-	/* eye + dir * ( 16 + v t ) + u t - g t^2 / 2 = target, so |launch_delta| = 16 + v t. root 0 = low arc, root 1 = lob */
-	int flight_times( const throw_t& th, const motion_t& motion, float out[ 2 ] )
+	/* first 2 sign changes of miss( t ), tick scan + bisect. root 0 = low arc, root 1 = lob */
+	template< typename F >
+	int find_roots( const F& miss, const float max_time, float out[ 2 ] )
 	{
-		const auto miss = [ & ]( const float t ) { return launch_delta( th, motion.at( t ), t ).length( ) - ( k_launch_offset + th.m_speed * t ); };
-
 		const float step = g_interfaces.m_global_vars_base->m_interval_per_tick;
 		if ( step <= 0.f )
 			return 0;
@@ -145,7 +150,7 @@ namespace
 		float last_t = step;
 		float last   = miss( last_t );
 
-		for ( float t = step * 2.f; t <= th.m_max_time && count < 2; t += step ) {
+		for ( float t = step * 2.f; t <= max_time && count < 2; t += step ) {
 			const float now = miss( t );
 
 			if ( ( now > 0.f ) != ( last > 0.f ) ) {
@@ -170,6 +175,121 @@ namespace
 		return count;
 	}
 
+	/* eye + dir * ( 16 + v t ) + u t - g t^2 / 2 = target, so |launch_delta| = 16 + v t */
+	int flight_times( const throw_t& th, const motion_t& motion, float out[ 2 ] )
+	{
+		return find_roots( [ & ]( const float t ) { return launch_delta( th, motion.at( t ), t ).length( ) - ( k_launch_offset + th.m_speed * t ); },
+		                   th.m_max_time, out );
+	}
+
+	/* vertical wall, plane for the grenade center: n . x = dist ( surface + box hull offset ) */
+	struct wall_t {
+		c_vector m_normal = { };
+		float m_dist      = 0.f;
+	};
+
+	/* ponytail: 12 flat rays from the target only, walls it can't see are missed; trace from the eye too if lobs over cover matter */
+	int find_walls( const c_vector& center, wall_t out[ k_wall_rays ] )
+	{
+		c_trace_filter_world filter{ };
+		int count = 0;
+
+		for ( int i = 0; i < k_wall_rays; ++i ) {
+			const float yaw = 2.f * std::numbers::pi_v< float > * static_cast< float >( i ) / k_wall_rays;
+			const c_vector dir( std::cos( yaw ), std::sin( yaw ), 0.f );
+
+			trace_t trace = { };
+			g_interfaces.m_engine_trace->trace_ray( ray_t( center, center + dir * k_wall_range ), e_mask::mask_solid | k_contents_grenadeclip, &filter,
+			                                        &trace );
+
+			if ( trace.m_fraction >= 1.f || trace.m_start_solid || std::fabsf( trace.m_plane.m_normal.m_z ) > 0.05f )
+				continue;
+
+			const c_vector normal = c_vector( trace.m_plane.m_normal.m_x, trace.m_plane.m_normal.m_y, 0.f ).normalized( );
+			const float dist      = trace.m_end.dot_product( normal ) + k_hull * ( std::fabsf( normal.m_x ) + std::fabsf( normal.m_y ) );
+
+			const bool seen = std::any_of( out, out + count, [ & ]( const wall_t& wall ) {
+				return wall.m_normal.dot_product( normal ) > 0.99f && std::fabsf( wall.m_dist - dist ) < 4.f;
+			} );
+
+			if ( !seen )
+				out[ count++ ] = { normal, dist };
+		}
+
+		return count;
+	}
+
+	/* total launch velocity from spawn that reaches target at t after one reflect * 0.45 off the wall:
+	   normal speed s in, 0.45 s out; tangent and z scaled 0.45 at the hit ( ResolveFlyCollisionCustom, basecsgrenade_projectile.cpp:461 ) */
+	bool bounce_velocity( const throw_t& th, const wall_t& wall, const c_vector& spawn, const c_vector& target, const float t, c_vector& velocity,
+	                      float& hit_time )
+	{
+		const float e   = spawn.dot_product( wall.m_normal ) - wall.m_dist;
+		const float tau = target.dot_product( wall.m_normal ) - wall.m_dist;
+		if ( e <= 0.f || tau <= 0.f )
+			return false;
+
+		const float s    = ( e + tau / k_elasticity ) / t;
+		const float t1   = e / s;
+		const float t2   = t - t1;
+		const float span = t1 + k_elasticity * t2;
+		const float g    = th.m_gravity;
+
+		const c_vector side( -wall.m_normal.m_y, wall.m_normal.m_x, 0.f );
+		const float vt = ( target - spawn ).dot_product( side ) / span;
+		const float vz = ( target.m_z - spawn.m_z + 0.5f * g * t1 * t1 + k_elasticity * g * t1 * t2 + 0.5f * g * t2 * t2 ) / span;
+
+		velocity       = wall.m_normal * -s + side * vt;
+		velocity.m_z   = vz;
+		hit_time       = t1;
+		return true;
+	}
+
+	/* the 16 u spawn offset follows dir: re-solve from the moved spawn */
+	bool bounce_launch( const throw_t& th, const wall_t& wall, const c_vector& target, const float t, c_vector& velocity, float& hit_time )
+	{
+		c_vector spawn = th.m_eye;
+
+		for ( int i = 0; i < 3; ++i ) {
+			if ( !bounce_velocity( th, wall, spawn, target, t, velocity, hit_time ) )
+				return false;
+
+			const c_vector launch = velocity - th.m_inherit;
+			if ( launch.length( ) < 1.f )
+				return false;
+
+			spawn = th.m_eye + launch.normalized( ) * k_launch_offset;
+		}
+
+		return true;
+	}
+
+	int bounce_times( const throw_t& th, const wall_t& wall, const motion_t& motion, float out[ 2 ] )
+	{
+		return find_roots(
+			[ & ]( const float t ) {
+				c_vector velocity = { };
+				float hit_time    = 0.f;
+				return bounce_launch( th, wall, motion.at( t ), t, velocity, hit_time ) ? ( velocity - th.m_inherit ).length( ) - th.m_speed : 1e9f;
+			},
+			th.m_max_time, out );
+	}
+
+	/* PhysicsClipVelocity backoff 2 + STOP_EPSILON */
+	c_vector reflect( const c_vector& in, const c_vector& normal )
+	{
+		c_vector out = in - normal * ( in.dot_product( normal ) * 2.f );
+
+		if ( std::fabsf( out.m_x ) < 0.1f )
+			out.m_x = 0.f;
+		if ( std::fabsf( out.m_y ) < 0.1f )
+			out.m_y = 0.f;
+		if ( std::fabsf( out.m_z ) < 0.1f )
+			out.m_z = 0.f;
+
+		return out;
+	}
+
 	/* inverse of ThrowGrenade's pitch -= 10 * ( 90 - |pitch| ) / 90 */
 	bool view_pitch( const float thrown, float& view )
 	{
@@ -177,8 +297,10 @@ namespace
 		return view >= -89.f && view <= 89.f;
 	}
 
-	/* n_grenade_path::simulate steps; false = launch blocked or world / other player before the target */
-	bool trace_path( const throw_t& th, const c_vector& dir, const float time, const c_vector& end, c_base_entity* target, path_t& path, int& count )
+	/* n_grenade_path::simulate steps; false = launch blocked or world / other player before the target.
+	   wall = exactly one bounce off that plane, then the last tick must land within k_bounce_slop of end */
+	bool trace_path( const throw_t& th, const c_vector& dir, const float time, const c_vector& end, c_base_entity* target, const wall_t* wall,
+	                 path_t& path, int& count )
 	{
 		const c_vector mins( -2.f, -2.f, -2.f ), maxs( 2.f, 2.f, 2.f );
 		const unsigned int mask = e_mask::mask_solid | k_contents_grenadeclip;
@@ -197,18 +319,37 @@ namespace
 		count           = 0;
 		path[ count++ ] = position;
 
-		for ( float t = step; t <= time && count < k_path_max - 1; t += step ) {
+		bool bounced = false;
+
+		/* bounce tick writes 2, end writes 1 */
+		for ( float t = step; t <= time && count < k_path_max - 3; t += step ) {
 			const float vz = velocity.m_z - th.m_gravity * step;
 			const c_vector move( velocity.m_x * step, velocity.m_y * step, ( velocity.m_z + vz ) * 0.5f * step );
 			velocity.m_z = vz;
 
 			g_interfaces.m_engine_trace->trace_ray( ray_t( position, position + move, mins, maxs ), mask, &filter, &trace );
-			if ( trace.m_fraction < 1.f )
-				return false;
+
+			if ( trace.m_fraction < 1.f ) {
+				if ( !wall || bounced || trace.m_start_solid || trace.m_plane.m_normal.dot_product( wall->m_normal ) < 0.99f )
+					return false;
+
+				bounced         = true;
+				position        = trace.m_end;
+				path[ count++ ] = position;
+				velocity        = reflect( velocity, trace.m_plane.m_normal ) * k_elasticity;
+
+				g_interfaces.m_engine_trace->trace_ray( ray_t( position, position + velocity * ( ( 1.f - trace.m_fraction ) * step ), mins, maxs ), mask,
+				                                        &filter, &trace );
+				if ( trace.m_fraction < 1.f )
+					return false;
+			}
 
 			position        = trace.m_end;
 			path[ count++ ] = position;
 		}
+
+		if ( wall && ( !bounced || ( position - end ).length( ) > k_bounce_slop ) )
+			return false;
 
 		g_interfaces.m_engine_trace->trace_ray( ray_t( position, end, mins, maxs ), mask, &filter, &trace );
 		if ( trace.m_fraction < 1.f )
@@ -305,9 +446,11 @@ void n_grenade_aim::impl_t::aim( c_base_entity* weapon, const short item_index, 
 		float m_time            = 0.f;
 		int m_root              = 0;
 		c_angle m_final         = { };
+		bool m_bounce           = false;
 	} best{ };
 
-	path_t scratch = { };
+	path_t scratch    = { };
+	const bool bounce = GET_VARIABLE( g_variables.m_grenade_aim_bounce, bool );
 
 	g_entity_cache.enumerate( e_enumeration_type::type_players, [ & ]( c_base_entity* entity ) {
 		if ( !entity || !entity->is_valid_aim_target( ) || entity->has_immunity( ) || !player_list_aim_allowed( entity->get_index( ) ) )
@@ -320,18 +463,9 @@ void n_grenade_aim::impl_t::aim( c_base_entity* weapon, const short item_index, 
 		if ( ( fov > fov_limit && entity->get_index( ) != m_lock ) || fov >= best.m_fov )
 			return;
 
-		float times[ 2 ] = { };
-		const int roots  = flight_times( th, motion, times );
-
-		for ( int root = 0; root < roots; ++root ) {
-			if ( ( arc == 1 && root != 0 ) || ( arc == 2 && root != 1 ) )
-				continue;
-
-			const c_vector end = motion.at( times[ root ] );
-			c_vector dir       = launch_delta( th, end, times[ root ] );
-
-			if ( dir.length( ) < 1.f )
-				continue;
+		const auto take = [ & ]( c_vector dir, const float time, const int root, const wall_t* wall ) {
+			if ( ( arc == 1 && root != 0 ) || ( arc == 2 && root != 1 ) || dir.length( ) < 1.f )
+				return false;
 
 			dir = dir.normalized( );
 
@@ -339,16 +473,46 @@ void n_grenade_aim::impl_t::aim( c_base_entity* weapon, const short item_index, 
 
 			float pitch = 0.f;
 			if ( !view_pitch( thrown.m_x, pitch ) )
-				continue;
+				return false;
 
 			int count = 0;
-			if ( !trace_path( th, dir, times[ root ], end, entity, scratch, count ) )
-				continue;
+			if ( !trace_path( th, dir, time, motion.at( time ), entity, wall, scratch, count ) )
+				return false;
 
-			best         = { entity, fov, times[ root ], root, c_angle( pitch, thrown.m_y, 0.f ) };
+			best         = { entity, fov, time, root, c_angle( pitch, thrown.m_y, 0.f ), wall != nullptr };
 			m_path       = scratch;
 			m_path_count = count;
-			break;
+			return true;
+		};
+
+		float times[ 2 ] = { };
+		const int roots  = flight_times( th, motion, times );
+
+		for ( int root = 0; root < roots; ++root )
+			if ( take( launch_delta( th, motion.at( times[ root ] ), times[ root ] ), times[ root ], root, nullptr ) )
+				return;
+
+		if ( !bounce )
+			return;
+
+		wall_t walls[ k_wall_rays ] = { };
+		const int wall_count        = find_walls( motion.m_center, walls );
+		const float step            = g_interfaces.m_global_vars_base->m_interval_per_tick;
+
+		for ( int i = 0; i < wall_count; ++i ) {
+			const int wall_roots = bounce_times( th, walls[ i ], motion, times );
+
+			for ( int root = 0; root < wall_roots; ++root ) {
+				c_vector velocity = { };
+				float hit_time    = 0.f;
+
+				if ( !bounce_launch( th, walls[ i ], motion.at( times[ root ] ), times[ root ], velocity, hit_time ) || hit_time < step ||
+				     times[ root ] - hit_time < step )
+					continue;
+
+				if ( take( velocity - th.m_inherit, times[ root ], root, &walls[ i ] ) )
+					return;
+			}
 		}
 	} );
 
@@ -380,15 +544,16 @@ void n_grenade_aim::impl_t::aim( c_base_entity* weapon, const short item_index, 
 		g_ctx.m_cmd->m_buttons &= ~( in_attack | in_second_attack );
 
 		if ( !m_auto_released )
-			botox_dbg_log( "GAIM: auto release ent=%d t=%.2f arc=%d str=%.2f", best.m_entity->get_index( ), best.m_time, best.m_root, strength );
+			botox_dbg_log( "GAIM: auto release ent=%d t=%.2f arc=%d bnc=%d str=%.2f", best.m_entity->get_index( ), best.m_time, best.m_root,
+			               best.m_bounce, strength );
 
 		m_auto_released = true;
 	}
 
 	if ( throw_tick ) {
 		m_throw = true;
-		botox_dbg_log( "GAIM: throw ent=%d t=%.2f arc=%d view=%.2f/%.2f str=%.2f lead=%.0fms", best.m_entity->get_index( ), best.m_time, best.m_root,
-		               view.m_x, view.m_y, strength, lead * 1000.f );
+		botox_dbg_log( "GAIM: throw ent=%d t=%.2f arc=%d bnc=%d view=%.2f/%.2f str=%.2f lead=%.0fms", best.m_entity->get_index( ), best.m_time,
+		               best.m_root, best.m_bounce, view.m_x, view.m_y, strength, lead * 1000.f );
 	}
 }
 

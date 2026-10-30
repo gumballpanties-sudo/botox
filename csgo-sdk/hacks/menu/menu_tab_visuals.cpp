@@ -1,5 +1,6 @@
 #include "menu_internal.h"
 #include "../misc/misc.h"
+#include "../cod4_hud/cod4_hud.h"
 #include "../web/websurf_math.h"
 #include "../web/websurface.h"
 #include "../visuals/screen/depth_source.h"
@@ -1878,6 +1879,29 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderInt( "gui scale##mc hud", &gui_scale, 0, 6, gui_scale == 0 ? "auto" : "%d" );
 					},
 					ImVec2( 240.f, -1 ) );
+			}
+
+			ImGui::Checkbox( "call of duty 4 hud", &GET_VARIABLE( g_variables.m_cod4_hud, bool ) );
+
+			if ( GET_VARIABLE( g_variables.m_cod4_hud, bool ) ) {
+				ImGui::OptionPopup(
+					"call of duty 4 hud settings",
+					[ & ]( ) {
+						ImGui::Keybind( "hardpoint key##cod4", &GET_VARIABLE( g_variables.m_cod4_hud_hardpoint_key, key_bind_t ), false );
+
+						static char path_buffer[ 260 ] = { };
+						static std::string path_seen   = { "\x01" };
+						auto& path_var                 = GET_VARIABLE( g_variables.m_cod4_hud_path, std::string );
+						if ( path_var != path_seen ) {
+							strncpy_s( path_buffer, path_var.c_str( ), _TRUNCATE );
+							path_seen = path_var;
+						}
+						if ( ImGui::InputText( "cod4 folder (empty = steam)##cod4", path_buffer, IM_ARRAYSIZE( path_buffer ) ) )
+							path_var = path_seen = path_buffer;
+
+						n_cod4_hud::draw_options( );
+					},
+					ImVec2( 320.f, -1 ) );
 			}
 
 			ImGui::Checkbox( "web on surface", &GET_VARIABLE( g_variables.m_web, bool ) );

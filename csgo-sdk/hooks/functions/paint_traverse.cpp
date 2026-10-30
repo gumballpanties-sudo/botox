@@ -9,6 +9,7 @@
 #include "../../hacks/debug/debug.h"
 #include "../../hacks/indicators/indicators.h"
 #include "../../hacks/mc_hud/mc_hud.h"
+#include "../../hacks/cod4_hud/cod4_hud.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/movement/movement_recorder.h"
@@ -38,6 +39,8 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 
 	/* retail CHudScope panel name, 2019 source says "HudScope" */
 	if ( panel_hash == HASH_BT( "HudZoom" ) ) {
+		if ( n_cod4_hud::hides_scope( ) )
+			return;
 		g_ctx.m_is_scope_being_drawn = true;
 		original( ecx, edx, panel, force_repaint, force );
 		g_ctx.m_is_scope_being_drawn = false;
@@ -103,6 +106,12 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 			{
 				PERF_ZONE( zone_paint_mc_hud );
 				g_mc_hud.on_paint_traverse( );
+			}
+
+			// every frame, on or off: off puts the crosshair back
+			{
+				PERF_ZONE( zone_paint_mc_hud );
+				g_cod4_hud.on_paint_traverse( );
 			}
 
 			{

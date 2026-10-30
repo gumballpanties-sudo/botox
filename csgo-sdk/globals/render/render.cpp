@@ -776,6 +776,8 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 	constexpr ImWchar weapon_icon_ranges[] = { 0xe000, 0xf8ff, 0 };
 	fonts[ e_font_names::font_name_icon_12 ] = atlas->AddFontFromMemoryCompressedTTF(
 		weapon_icons_compressed_data, weapon_icons_compressed_size, 12.f, &icon_font_config, weapon_icon_ranges );
+	fonts[ e_font_names::font_name_cod4_weapon_icon_48 ] = atlas->AddFontFromMemoryCompressedTTF(
+		weapon_icons_compressed_data, weapon_icons_compressed_size, 48.f, &icon_font_config, weapon_icon_ranges );
 
 	auto reload_custom_font = [ & ]( const std::vector< bool >& font_flags, const font_setting_t& font_setting, const int slot,
 	                                 ImFont* const fallback_font, const e_glyph_tier tier ) {

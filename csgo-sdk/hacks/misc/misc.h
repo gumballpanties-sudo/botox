@@ -209,7 +209,7 @@ namespace n_misc
 		void draw_spectator_list_lumi( );
 		void draw_spectator_list_lumi_new( );
 		void draw_spectator_list_lumi_interwebz( );
-		void draw_spectator_list_lumi_kami( );
+		void draw_spectator_list_kamidere( );
 		void draw_spectator_list_billware( );
 		void draw_spectator_list_inkabanium( );
 		void draw_spectator_list_dna( );

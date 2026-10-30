@@ -37,6 +37,8 @@ namespace
 	constexpr float k_bad_gap       = -0.5f;
 	// engine rest = hull DIST_EPSILON off the plane = gap 0; under it the server goes allsolid ( vel 0,0,-6.25 ), sims never see it
 	constexpr float k_flush_gap     = -0.001f;
+	// gaps under DIST_EPSILON are float noise to the engine: 10-30 log 230 sub-eps parks = 0 pins, 12 of 14 allsolid freezes
+	constexpr float k_dist_eps      = 0.03125f;
 	constexpr float k_xy_tie        = 0.5f;
 	constexpr float k_duck_gap      = 0.05f;
 	constexpr float k_bail_start_xy = 10.f;
@@ -319,10 +321,9 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		n_tb::s_pred_dirty              = true;
 		++sims;
 	};
-	// exact gap, tb's formula ( texturebug.cpp wall scan ): hull trace -> plane dist -> nearest hull corner to the plane. the donor's
-	// line trace carried DIST_EPSILON: 10-30 log read -0.03 on every touching tick ( engine rest = +0.03125 ), so every slide was
-	// "flush" and never parked -> START stayed a hard hit -> no 1-tick pin can exist ( pin needs a sub-eps gap first ). inside the
-	// plane ( start solid ) = allsolid next tick: ranked under every real gap
+	// exact gap, tb's formula ( texturebug.cpp wall scan ): hull trace -> plane dist -> nearest hull corner. the donor's line trace
+	// read -0.03 at engine rest ( 10-30 log: every slide "flush" ). start solid = allsolid next tick: under every real gap.
+	// everything inside DIST_EPSILON ties at it, so no-pin rows fall to the donor's first row instead of a sub-eps freeze magnet
 	const auto gap_at = [ & ]( const c_vector& o ) {
 		trace_t tr{ };
 		ray_t ray( o, o - c_vector( wall_n.m_x, wall_n.m_y, 0.f ) * k_gap_reach, mins, maxs );
@@ -332,8 +333,10 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		if ( tr.m_fraction >= 1.f )
 			return k_gap_reach - ( std::fabsf( wall_n.m_x ) * hx + std::fabsf( wall_n.m_y ) * hy );
 		const c_vector& p = tr.m_plane.m_normal;
-		return o.m_x * p.m_x + o.m_y * p.m_y + o.m_z * p.m_z - n_tb::hull_plane_dist( tr, mins, maxs ) + std::min( p.m_x * mins.m_x, p.m_x * maxs.m_x ) +
-		       std::min( p.m_y * mins.m_y, p.m_y * maxs.m_y ) + std::min( p.m_z * mins.m_z, p.m_z * maxs.m_z );
+		const float g     = o.m_x * p.m_x + o.m_y * p.m_y + o.m_z * p.m_z - n_tb::hull_plane_dist( tr, mins, maxs ) +
+		                std::min( p.m_x * mins.m_x, p.m_x * maxs.m_x ) + std::min( p.m_y * mins.m_y, p.m_y * maxs.m_y ) +
+		                std::min( p.m_z * mins.m_z, p.m_z * maxs.m_z );
+		return g >= k_flush_gap && g < k_dist_eps ? k_dist_eps : g;
 	};
 
 	// ebanat sims on the real cmd so its bail / kill paths send the last sim; here only apply writes cmd, every other path = your keys
@@ -622,7 +625,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 
 	if ( as_steers ) {
 		if ( caught_now )
-			g_air_stuck_owns_cmd = g_air_stuck_authored_view_valid = g_air_stuck_stamp_valid = g_air_stuck_stamp_force = false;
+			g_air_stuck_owns_cmd = g_air_stuck_authored_view_valid = g_air_stuck_stamp_valid = false;
 		else
 			*cmd = as_cmd;
 	}

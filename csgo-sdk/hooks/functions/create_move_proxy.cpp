@@ -34,8 +34,6 @@ extern void end_movement_fix( c_user_cmd* cmd );
 extern void botox_dbg_log( const char* fmt, ... );
 
 extern bool g_air_stuck_owns_cmd;
-extern bool g_air_stuck_stamp_valid;
-extern bool g_air_stuck_stamp_force;
 extern bool HITGODA;
 extern bool HITGODA2;
 
@@ -255,10 +253,6 @@ namespace
 		start_movement_fix( cmd );
 		cmd->m_view_point = live;
 		end_movement_fix( cmd );
-
-		/* pin needs exact floats: air_stuck_shot_proof re-proves it, stamp view on a miss */
-		if ( g_air_stuck_stamp_valid && g_air_stuck_stamp_force )
-			return;
 
 		const int frame = g_interfaces.m_prediction->m_commands_predicted - 1;
 		g_prediction.restore_entity_to_predicted_frame( frame );

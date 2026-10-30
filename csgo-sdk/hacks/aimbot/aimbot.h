@@ -63,6 +63,12 @@ namespace n_aimbot
 		int m_lock_index     = 0;
 		bool m_visible_first = false;
 
+		/* camlock: camera rides the target, the mouse keeps steering the real aim ( cmd ). user = where the mouse points,
+		   set = camera we wrote last cmd ( mouse delta = cmd view - set ) */
+		bool m_cam_active = false;
+		float m_cam_user_x = 0.f, m_cam_user_y = 0.f;
+		float m_cam_set_x = 0.f, m_cam_set_y = 0.f;
+
 		/* rcs state. m_rcs_shots = our burst counter ( m_iShotsFired resets between taps ). applied_x/y = comp baked into the camera
 		   ( visible only ), unwound as punch decays. the aim's own turn is a target move, never comp */
 		int m_rcs_shots           = 0;

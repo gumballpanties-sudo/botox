@@ -96,6 +96,9 @@ namespace
 		float m_tick_acc = 0.f;
 		float m_tint[ 3 ]{ };
 		int m_tick = 0, m_lifetime = 0, m_icon = 0;
+		// model colors: m_sample = body point, m_capture k_kfx_want = queued, >= 0 = index in g_melt_capture, hidden until answered
+		c_vector m_sample{ };
+		int m_capture = -1;
 	};
 
 	constexpr std::size_t k_kfx_cap = 4096;
@@ -104,6 +107,7 @@ namespace
 	constexpr int k_smoke_style     = 4;
 	constexpr int k_mc_style        = 5;
 	constexpr int k_mc_xp_style     = 6;
+	constexpr int k_kfx_want        = -2;
 
 	std::vector< kfx_particle_t > g_kfx{ };
 	std::mt19937 g_kfx_rng{ 0x6b667821u };
@@ -135,14 +139,8 @@ namespace
 			g_kfx.push_back( particle );
 	}
 
-	void spawn_soul( c_base_entity* victim )
+	void body_points( c_base_entity* victim, std::vector< c_vector >& points )
 	{
-		const int style  = std::clamp( GET_VARIABLE( g_variables.m_death_particles_soul_style, int ), 0, 3 );
-		const int amount = std::clamp( GET_VARIABLE( g_variables.m_death_particles_amount, int ), 1, 40 );
-		const float size = std::clamp( GET_VARIABLE( g_variables.m_death_particles_size, float ), 0.25f, 4.f );
-		const float life = std::clamp( GET_VARIABLE( g_variables.m_death_particles_lifetime, float ), 0.5f, 10.f );
-
-		std::vector< c_vector > points{ };
 		points.reserve( k_soul_hitboxes );
 
 		if ( auto& bones = victim->get_cached_bone_data( ); bones.count( ) > 0 && bones.base( ) ) {
@@ -152,6 +150,23 @@ namespace
 					points.push_back( point );
 			}
 		}
+	}
+
+	bool model_colors( )
+	{
+		return GET_VARIABLE( g_variables.m_death_particles_model_colors, bool );
+	}
+
+	void spawn_soul( c_base_entity* victim )
+	{
+		const int style  = std::clamp( GET_VARIABLE( g_variables.m_death_particles_soul_style, int ), 0, 3 );
+		const int amount = std::clamp( GET_VARIABLE( g_variables.m_death_particles_amount, int ), 1, 40 );
+		const float size = std::clamp( GET_VARIABLE( g_variables.m_death_particles_size, float ), 0.25f, 4.f );
+		const float life = std::clamp( GET_VARIABLE( g_variables.m_death_particles_lifetime, float ), 0.5f, 10.f );
+		const bool body  = model_colors( );
+
+		std::vector< c_vector > points{ };
+		body_points( victim, points );
 
 		if ( points.empty( ) ) {
 			const c_vector origin = victim->get_abs_origin( );
@@ -194,6 +209,10 @@ namespace
 				particle.m_size  = rand_range( 1.f, 2.f ) * size;
 				particle.m_life  = rand_range( 0.7f, 1.f ) * life;
 				particle.m_color = particle_color( );
+				if ( body ) {
+					particle.m_sample  = point;
+					particle.m_capture = k_kfx_want;
+				}
 				push( particle );
 			}
 		}
@@ -420,9 +439,20 @@ namespace
 
 		const c_vector origin = victim->get_abs_origin( ) + c_vector( 0.f, 0.f, 40.f );
 
+		// model colors: each ball pops out of a random body part and takes its color
+		std::vector< c_vector > points{ };
+		if ( model_colors( ) )
+			body_points( victim, points );
+
 		for ( int i = 0; i < amount; i++ ) {
 			kfx_particle_t ball{ };
-			ball.m_pos = origin + c_vector( rand_range( -8.f, 8.f ), rand_range( -8.f, 8.f ), rand_range( -4.f, 6.f ) );
+			if ( points.empty( ) )
+				ball.m_pos = origin + c_vector( rand_range( -8.f, 8.f ), rand_range( -8.f, 8.f ), rand_range( -4.f, 6.f ) );
+			else {
+				ball.m_sample  = points[ std::uniform_int_distribution< std::size_t >( 0, points.size( ) - 1 )( g_kfx_rng ) ];
+				ball.m_capture = k_kfx_want;
+				ball.m_pos     = ball.m_sample + c_vector( rand_range( -1.5f, 1.5f ), rand_range( -1.5f, 1.5f ), rand_range( -1.5f, 1.5f ) );
+			}
 
 			const float angle = rand_range( 0.f, 6.2831853f );
 			const float speed = rand_range( 80.f, 260.f );
@@ -1647,7 +1677,8 @@ namespace
 	/* m_state 1 = render thread owns everything below it, 0 and 2 = main thread */
 	struct melt_capture_t {
 		std::atomic< int > m_state{ 0 };
-		int m_slot = 0;
+		int m_slot  = 0;
+		bool m_keep = true;
 		std::vector< float > m_uv{ };
 		std::vector< unsigned int > m_rgb{ };
 		float m_view[ 4 ][ 4 ]{ }, m_crop[ 4 ]{ }, m_screen[ 2 ]{ };
@@ -2500,38 +2531,55 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 		g_melts.push_back( std::move( melt ) );
 	}
 
-	void melt_paint( const float dt )
+	/* main thread: answered capture -> waiting melts + model color particles */
+	void capture_take( )
+	{
+		if ( g_melt_capture.m_state.load( std::memory_order_acquire ) != 2 )
+			return;
+
+		for ( melt_t& melt : g_melts ) {
+			if ( melt.m_stage != melt_wait_capture || melt.m_capture_base < 0 || !melt.m_sim )
+				continue;
+
+			const std::size_t base  = static_cast< std::size_t >( melt.m_capture_base );
+			const std::size_t count = melt.m_sim->m_skin->m_verts.size( );
+			const bool fits         = base + count <= g_melt_capture.m_rgb.size( );
+			melt_colors( melt, fits ? g_melt_capture.m_rgb.data( ) + base : nullptr );
+			std::memcpy( melt.m_sim->m_view, g_melt_capture.m_view, sizeof( melt.m_sim->m_view ) );
+			std::memcpy( melt.m_sim->m_crop, g_melt_capture.m_crop, sizeof( melt.m_sim->m_crop ) );
+			std::memcpy( melt.m_sim->m_screen, g_melt_capture.m_screen, sizeof( melt.m_sim->m_screen ) );
+			melt.m_sim->m_textured = fits && g_melt_capture.m_crop[ 2 ] > 0.f;
+			melt.m_slot            = melt.m_sim->m_textured ? g_melt_capture.m_slot : -1;
+			melt.m_capture_base    = -1;
+			melt.m_stage           = melt_run;
+		}
+
+		// no sample ( off screen / hidden ) = keeps the picked color
+		const auto& rgb = g_melt_capture.m_rgb;
+		for ( kfx_particle_t& particle : g_kfx ) {
+			if ( particle.m_capture < 0 )
+				continue;
+			const std::size_t i = static_cast< std::size_t >( particle.m_capture );
+			if ( i < rgb.size( ) && ( rgb[ i ] >> 24 ) )
+				particle.m_color = c_color( static_cast< int >( ( rgb[ i ] >> 16 ) & 0xff ), static_cast< int >( ( rgb[ i ] >> 8 ) & 0xff ),
+				                            static_cast< int >( rgb[ i ] & 0xff ), static_cast< int >( particle.m_color[ 3 ] ) );
+			particle.m_capture = -1;
+		}
+
+		g_melt_capture.m_state.store( 0, std::memory_order_release );
+	}
+
+	/* returns true when a melt waits for its capture */
+	bool melt_paint( const float dt )
 	{
 		for ( auto it = g_melt_hidden.begin( ); it != g_melt_hidden.end( ); )
 			it = from_handle( *it ) ? it + 1 : g_melt_hidden.erase( it );
 
 		if ( g_melts.empty( ) )
-			return;
+			return false;
 
 		melt_collect( );
 		melt_refresh_skip( );
-		const c_vector eye = melt_eye( );
-
-		if ( g_melt_capture.m_state.load( std::memory_order_acquire ) == 2 ) {
-			for ( melt_t& melt : g_melts ) {
-				if ( melt.m_stage != melt_wait_capture || melt.m_capture_base < 0 || !melt.m_sim )
-					continue;
-
-				const std::size_t base  = static_cast< std::size_t >( melt.m_capture_base );
-				const std::size_t count = melt.m_sim->m_skin->m_verts.size( );
-				const bool fits         = base + count <= g_melt_capture.m_rgb.size( );
-				melt_colors( melt, fits ? g_melt_capture.m_rgb.data( ) + base : nullptr );
-				std::memcpy( melt.m_sim->m_view, g_melt_capture.m_view, sizeof( melt.m_sim->m_view ) );
-				std::memcpy( melt.m_sim->m_crop, g_melt_capture.m_crop, sizeof( melt.m_sim->m_crop ) );
-				std::memcpy( melt.m_sim->m_screen, g_melt_capture.m_screen, sizeof( melt.m_sim->m_screen ) );
-				melt.m_sim->m_textured = fits && g_melt_capture.m_crop[ 2 ] > 0.f;
-				melt.m_slot            = melt.m_sim->m_textured ? g_melt_capture.m_slot : -1;
-				melt.m_capture_base    = -1;
-				melt.m_stage           = melt_run;
-			}
-
-			g_melt_capture.m_state.store( 0, std::memory_order_release );
-		}
 
 		bool want_capture = false;
 		int budget        = k_melt_probe_budget;
@@ -2612,14 +2660,36 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 			melt.m_alpha = std::clamp( ( melt.m_end - melt.m_age ) / ( 0.8f * melt.m_speed ), 0.f, 1.f );
 		}
 
-		if ( want_capture && g_melt_capture.m_state.load( std::memory_order_acquire ) == 0 ) {
-			const view_matrix_t& matrix = g_interfaces.m_engine_client->get_world_to_screen_matrix( );
-			auto& uv                    = g_melt_capture.m_uv;
-			uv.clear( );
-			for ( int row = 0; row < 4; row++ )
-				for ( int col = 0; col < 4; col++ )
-					g_melt_capture.m_view[ row ][ col ] = matrix[ row ][ col ];
+		g_melts.erase( std::remove_if( g_melts.begin( ), g_melts.end( ), [ ]( const melt_t& melt ) { return melt.m_stage == melt_dead; } ),
+		               g_melts.end( ) );
+		return want_capture;
+	}
 
+	/* one back buffer read for waiting melts + queued model color particles; only a melt capture keeps its texture slot */
+	void capture_send( const bool melt_want )
+	{
+		bool kfx_want = false;
+		for ( kfx_particle_t& particle : g_kfx ) {
+			if ( particle.m_capture != k_kfx_want )
+				continue;
+			if ( particle.m_age > 0.35f )
+				particle.m_capture = -1;
+			else
+				kfx_want = true;
+		}
+
+		if ( ( !melt_want && !kfx_want ) || g_melt_capture.m_state.load( std::memory_order_acquire ) != 0 )
+			return;
+
+		const c_vector eye          = melt_eye( );
+		const view_matrix_t& matrix = g_interfaces.m_engine_client->get_world_to_screen_matrix( );
+		auto& uv                    = g_melt_capture.m_uv;
+		uv.clear( );
+		for ( int row = 0; row < 4; row++ )
+			for ( int col = 0; col < 4; col++ )
+				g_melt_capture.m_view[ row ][ col ] = matrix[ row ][ col ];
+
+		if ( melt_want ) {
 			std::vector< matrix3x4_t > mats{ };
 			for ( melt_t& melt : g_melts ) {
 				if ( melt.m_stage != melt_wait_capture || melt.m_capture_base >= 0 || !melt.m_sim )
@@ -2642,11 +2712,42 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 
 			g_melt_capture.m_slot = g_melt_slot_next;
 			g_melt_slot_next      = ( g_melt_slot_next + 1 ) % static_cast< int >( k_melt_cap );
-			g_melt_capture.m_state.store( 1, std::memory_order_release );
 		}
 
-		g_melts.erase( std::remove_if( g_melts.begin( ), g_melts.end( ), [ ]( const melt_t& melt ) { return melt.m_stage == melt_dead; } ),
-		               g_melts.end( ) );
+		if ( kfx_want ) {
+			if ( g_melts.empty( ) )
+				melt_refresh_skip( );
+
+			// particles share ~19 hitbox points: one trace per point
+			struct sample_t {
+				c_vector m_at;
+				float m_u, m_v;
+			};
+			std::vector< sample_t > done{ };
+			for ( kfx_particle_t& particle : g_kfx ) {
+				if ( particle.m_capture != k_kfx_want )
+					continue;
+
+				auto it = std::find_if( done.begin( ), done.end( ), [ & ]( const sample_t& s ) { return s.m_at == particle.m_sample; } );
+				if ( it == done.end( ) ) {
+					sample_t s{ particle.m_sample, -1.f, -1.f };
+					trace_t trace{ };
+					if ( !eye.is_zero( ) )
+						melt_trace( eye, s.m_at, k_melt_see, trace );
+					if ( eye.is_zero( ) || ( !trace.m_start_solid && trace.m_fraction >= 0.99f ) )
+						melt_uv( matrix, s.m_at, s.m_u, s.m_v );
+					done.push_back( s );
+					it = done.end( ) - 1;
+				}
+
+				particle.m_capture = static_cast< int >( uv.size( ) / 2 );
+				uv.push_back( it->m_u );
+				uv.push_back( it->m_v );
+			}
+		}
+
+		g_melt_capture.m_keep = melt_want;
+		g_melt_capture.m_state.store( 1, std::memory_order_release );
 	}
 }
 
@@ -2668,7 +2769,8 @@ void kill_effects_paint( )
 
 	{
 		PERF_ZONE( zone_paint_melt );
-		melt_paint( dt );
+		capture_take( );
+		capture_send( melt_paint( dt ) );
 	}
 
 	g_kfx_quads.clear( );
@@ -2738,7 +2840,7 @@ void kill_effects_paint( )
 			alpha *= rand_range( 0.55f, 1.f );
 
 		const float size = smoke ? particle.m_size * ( 1.f + 0.7f * t ) : particle.m_size;
-		if ( alpha <= 0.01f )
+		if ( alpha <= 0.01f || particle.m_capture != -1 )
 			continue;
 
 		const c_color& color = particle.m_color;
@@ -2865,8 +2967,10 @@ void kill_effects_capture( IDirect3DDevice9* device )
 	rgb.assign( count, 0u );
 	std::memset( g_melt_capture.m_crop, 0, sizeof( g_melt_capture.m_crop ) );
 
+	// particle only capture: scratch texture, live melt slots untouched
 	const int slot              = std::clamp( g_melt_capture.m_slot, 0, static_cast< int >( k_melt_cap ) - 1 );
-	IDirect3DTexture9*& texture = g_melt_textures[ slot ];
+	IDirect3DTexture9* scratch  = nullptr;
+	IDirect3DTexture9*& texture = g_melt_capture.m_keep ? g_melt_textures[ slot ] : scratch;
 	if ( texture ) {
 		texture->Release( );
 		texture = nullptr;
@@ -2953,7 +3057,7 @@ void kill_effects_capture( IDirect3DDevice9* device )
 	if ( back_buffer )
 		back_buffer->Release( );
 
-	if ( !ok && texture ) {
+	if ( ( !ok || !g_melt_capture.m_keep ) && texture ) {
 		texture->Release( );
 		texture = nullptr;
 	}

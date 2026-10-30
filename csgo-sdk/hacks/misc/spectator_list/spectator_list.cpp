@@ -4816,9 +4816,6 @@ void n_misc::impl_t::draw_spectator_list_lumi( )
 	if ( type == 2 )
 		return draw_spectator_list_lumi_interwebz( );
 
-	if ( type == 3 )
-		return draw_spectator_list_lumi_kami( );
-
 	const auto font = g_render.m_fonts[ e_font_names::font_name_lumi_rubik_16 ];
 
 	struct row_t {
@@ -5175,7 +5172,7 @@ void n_misc::impl_t::draw_spectator_list_lumi_interwebz( )
 }
 
 /* Desktop\Kami-Speclist (lumia kami): fixed 160 wide, header 24, rows 20, body eases at rate 16 */
-void n_misc::impl_t::draw_spectator_list_lumi_kami( )
+void n_misc::impl_t::draw_spectator_list_kamidere( )
 {
 	const auto font = g_render.m_fonts[ e_font_names::font_name_lumi_rubik_16 ];
 
@@ -5186,7 +5183,7 @@ void n_misc::impl_t::draw_spectator_list_lumi_kami( )
 		return;
 
 	std::vector< spectator_entry_t > entries{ };
-	collect_spectators( entries, true, !GET_VARIABLE( g_variables.m_spectators_lumi_hide_gotv, bool ) );
+	collect_spectators( entries, true, !GET_VARIABLE( g_variables.m_spectators_kami_hide_gotv, bool ) );
 
 	const bool show_target = GET_VARIABLE( g_variables.m_spectators_list_show_target, bool );
 
@@ -5219,7 +5216,7 @@ void n_misc::impl_t::draw_spectator_list_lumi_kami( )
 	const float y = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_y, int ) );
 
 	const auto draw_list = ImGui::GetBackgroundDrawList( );
-	const bool blur      = GET_VARIABLE( g_variables.m_spectators_lumi_blur, bool );
+	const bool blur      = GET_VARIABLE( g_variables.m_spectators_kami_blur, bool );
 	const bool blurred   = blur && queue_airflow_blur( draw_list );
 	const auto block     = g_render.begin_stretch_block( draw_list );
 

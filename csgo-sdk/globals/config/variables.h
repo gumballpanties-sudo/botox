@@ -288,6 +288,8 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_aimbot_on_key, false );
 		ADD_VARIABLE( bool, m_aimbot_silent, false );
 		ADD_VARIABLE( float, m_aimbot_silent_step, 15.f );
+		ADD_VARIABLE( bool, m_aimbot_camlock, false );
+		ADD_VARIABLE( bool, m_aimbot_no_switch, false );
 		ADD_VARIABLE( bool, m_aimbot_target_team, false );
 		ADD_VARIABLE( bool, m_zeusbug, false );
 		ADD_VARIABLE( bool, m_zeusbug_swapback, true );
@@ -297,6 +299,7 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( bool, 6, m_grenade_aim_types, true );
 		ADD_VARIABLE( float, m_grenade_aim_fov, 30.f );
 		ADD_VARIABLE( int, m_grenade_aim_arc, 0 );
+		ADD_VARIABLE( bool, m_grenade_aim_bounce, false );
 		ADD_VARIABLE( bool, m_grenade_aim_silent, true );
 		ADD_VARIABLE( bool, m_grenade_aim_auto_throw, false );
 		ADD_VARIABLE( bool, m_grenade_aim_draw, true );
@@ -1070,6 +1073,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_death_particles_size, 1.f );
 		ADD_VARIABLE( float, m_death_particles_lifetime, 3.f );
 		ADD_VARIABLE( bool, m_death_particles_multicolor, false );
+		ADD_VARIABLE( bool, m_death_particles_model_colors, false );
 		ADD_VARIABLE( bool, m_death_particles_glow, true );
 		ADD_VARIABLE( float, m_death_particles_melt_goo, 1.f );
 		ADD_VARIABLE( float, m_death_particles_melt_speed, 1.f );
@@ -1392,6 +1396,8 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_spectators_lumi_hide_gotv, true );
 		ADD_VARIABLE( bool, m_spectators_lumi_blur, false );
 		ADD_VARIABLE( bool, m_spectators_lumi_glow, false );
+		ADD_VARIABLE( bool, m_spectators_kami_hide_gotv, true );
+		ADD_VARIABLE( bool, m_spectators_kami_blur, false );
 		ADD_VARIABLE( bool, m_spectators_kami_circle, true );
 		ADD_VARIABLE( float, m_spectators_kami_opacity, 80.f );
 		ADD_VARIABLE( bool, m_spectators_lumi_mascot, false );
@@ -1455,6 +1461,12 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_mc_hud, false );
 		ADD_VARIABLE( bool, m_mc_hud_crosshair, true );
 		ADD_VARIABLE( int, m_mc_hud_gui_scale, 0 );
+
+		ADD_VARIABLE( bool, m_cod4_hud, false );
+		ADD_VARIABLE( key_bind_t, m_cod4_hud_hardpoint_key, key_bind_t( 0x4E, 1 ) );
+		ADD_VARIABLE( int, m_cod4_hud_xp, 0 );
+		ADD_VARIABLE( std::string, m_cod4_hud_dvars, "" );
+		ADD_VARIABLE( std::string, m_cod4_hud_path, "" );
 
 		ADD_VARIABLE( bool, m_fps_warning, true );
 
@@ -1609,6 +1621,11 @@ namespace n_variables
 		ADD_VARIABLE( std::string, m_clantag_frames, "b\nbo\nbot\nboto\nbotox" );
 
 		ADD_VARIABLE( std::string, m_cvar_list, "" );
+		/* one "title\tcommand" per line */
+		ADD_VARIABLE( std::string, m_convenience_buttons,
+		              "connect y6o EU\tconnect 193.23.209.155:27015\nkill all bots\tsv_cheats 1; bot_kill all\nkick all bots\tbot_kick all\n"
+		              "give ak47\tsv_cheats 1; give weapon_ak47\ngive awp\tsv_cheats 1; give weapon_awp\ngive deagle\tsv_cheats 1; give weapon_deagle\n"
+		              "give usp\tsv_cheats 1; give weapon_usp_silencer" );
 
 		ADD_VARIABLE( bool, m_discord_rpc, false );
 		ADD_VARIABLE( std::string, m_discord_rpc_image, "" );
