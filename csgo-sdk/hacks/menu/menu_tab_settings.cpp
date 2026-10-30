@@ -986,10 +986,170 @@ void n_menu::impl_t::player_list_page( )
 	ImGui::EndChild( );
 }
 
+void n_menu::impl_t::cvars_page( )
+{
+	static char input[ 512 ] = { };
+	static std::vector< std::array< char, 256 > > rows;
+	static std::string synced = "\x01";
+	auto& list_var            = GET_VARIABLE( g_variables.m_cvar_list, std::string );
+
+	const auto push_row = []( const std::string& command ) {
+		auto& row = rows.emplace_back( );
+		strncpy_s( row.data( ), row.size( ), command.c_str( ), _TRUNCATE );
+	};
+
+	if ( list_var != synced ) {
+		rows.clear( );
+		for ( const auto& command : n_misc::split_cvars( list_var, '\n' ) )
+			push_row( command );
+		synced = list_var;
+	}
+
+	/* custom InputText spans to WorkRect.Max.x, only a table cell narrows it; it also pushes itself 10 px down, frame 17 tall.
+	   button frame = bb + 2 px each side */
+	constexpr float k_button = 16.f, k_gap = 7.f, k_side = k_button * 3.f + k_gap * 2.f + 4.f, k_frame = 17.f, k_input_lift = 10.f;
+	const float spacing = ImGui::GetStyle( ).WindowPadding.x;
+
+	const auto begin_row_table = [ & ]( const char* id ) {
+		ImGui::PushStyleVar( ImGuiStyleVar_CellPadding, ImVec2( ImGui::GetStyle( ).CellPadding.x, 0.f ) );
+		const bool open = ImGui::BeginTable( id, 2 );
+		ImGui::PopStyleVar( );
+		if ( !open )
+			return false;
+		ImGui::TableSetupColumn( "##text", ImGuiTableColumnFlags_WidthStretch );
+		ImGui::TableSetupColumn( "##side", ImGuiTableColumnFlags_WidthFixed, k_side );
+		return true;
+	};
+	const auto next_row = [ & ]( const float height ) {
+		ImGui::TableNextRow( ImGuiTableRowFlags_None, height );
+		ImGui::TableNextColumn( );
+		ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) - k_input_lift );
+	};
+	const auto side_column = [ ]( ) {
+		ImGui::TableNextColumn( );
+		ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) + 2.f );
+	};
+	/* 0 down, 1 up, 2 delete: glyphs sit at different heights in the font, so draw them */
+	const auto icon_button = [ & ]( const char* id, const int icon ) {
+		const bool pressed = ImGui::Button( id, ImVec2( k_button, k_frame - 4.f ) );
+		const ImVec2 min = ImGui::GetItemRectMin( ), max = ImGui::GetItemRectMax( );
+		const float cx = ImFloor( ( min.x + max.x ) * 0.5f ) + 0.5f, cy = ImFloor( ( min.y + max.y ) * 0.5f ) + 0.5f;
+		const ImU32 color = ImGui::GetColorU32( ImGuiCol_Text );
+		ImDrawList* draw  = ImGui::GetWindowDrawList( );
+
+		if ( icon == 2 ) {
+			draw->AddLine( ImVec2( cx - 3.f, cy - 3.f ), ImVec2( cx + 3.5f, cy + 3.5f ), color );
+			draw->AddLine( ImVec2( cx + 3.f, cy - 3.f ), ImVec2( cx - 3.5f, cy + 3.5f ), color );
+		}
+		else {
+			const float tip = icon == 0 ? 2.f : -2.f;
+			draw->AddLine( ImVec2( cx - 3.f, cy - tip ), ImVec2( cx, cy + tip ), color );
+			draw->AddLine( ImVec2( cx, cy + tip ), ImVec2( cx + 3.f, cy - tip ), color );
+		}
+		return pressed;
+	};
+
+	bool changed = false, execute = false;
+
+	if ( ImGui::BeginChild( "cvars", ImVec2( 0.f, -menu_bottom_band_height ), true, 0, true ) ) {
+		const float top = ImGui::GetCursorPosY( );
+
+		if ( begin_row_table( "##cvar add" ) ) {
+			next_row( k_frame );
+			const bool enter = ImGui::InputTextWithHint( "##cvar input", "sensitivity 1; noclip; mp_roundtime 999", input, sizeof( input ),
+			                                             ImGuiInputTextFlags_EnterReturnsTrue );
+			if ( enter )
+				ImGui::SetKeyboardFocusHere( -1 );
+
+			side_column( );
+			const bool add = ImGui::Button( "add", ImVec2( -1.f, k_frame - 4.f ) );
+			ImGui::EndTable( );
+
+			if ( enter || add ) {
+				for ( const auto& command : n_misc::split_cvars( input, ';' ) )
+					push_row( command );
+				input[ 0 ] = '\0';
+				changed    = true;
+			}
+		}
+
+		const float line_y = top + k_frame + spacing;
+		ImGui::SetCursorPosY( line_y );
+		const ImVec2 line = ImGui::GetCursorScreenPos( );
+		ImGui::GetWindowDrawList( )->AddLine( line, ImVec2( line.x + ImGui::GetContentRegionAvail( ).x, line.y ),
+		                                      ImGui::GetColorU32( ImGuiCol_Separator ) );
+		ImGui::SetCursorPosY( line_y + 1.f + spacing );
+
+		if ( ImGui::BeginChild( "##cvar rows", ImVec2( 0.f, -( k_frame + spacing ) ), false, 0, false ) ) {
+			const int count = static_cast< int >( rows.size( ) );
+			int move_from = -1, move_to = -1, remove = -1;
+
+			if ( !count )
+				ImGui::TextDisabled( "no commands, run top to bottom on map load / server join" );
+			else if ( begin_row_table( "##cvar list" ) ) {
+				for ( int i = 0; i < count; i++ ) {
+					ImGui::PushID( i );
+					next_row( k_frame + spacing );
+					changed |= ImGui::InputText( "##command", rows[ i ].data( ), rows[ i ].size( ) );
+
+					side_column( );
+					ImGui::BeginDisabled( i == count - 1 );
+					if ( icon_button( "##down", 0 ) )
+						move_from = i, move_to = i + 1;
+					ImGui::EndDisabled( );
+					ImGui::SameLine( 0.f, k_gap );
+					ImGui::BeginDisabled( i == 0 );
+					if ( icon_button( "##up", 1 ) )
+						move_from = i, move_to = i - 1;
+					ImGui::EndDisabled( );
+					ImGui::SameLine( 0.f, k_gap );
+					if ( icon_button( "##delete", 2 ) )
+						remove = i;
+					ImGui::PopID( );
+				}
+				ImGui::EndTable( );
+			}
+
+			if ( move_from >= 0 ) {
+				std::swap( rows[ move_from ], rows[ move_to ] );
+				changed = true;
+			}
+			if ( remove >= 0 ) {
+				rows.erase( rows.begin( ) + remove );
+				changed = true;
+			}
+		}
+		ImGui::EndChild( );
+
+		ImGui::SetCursorScreenPos( ImVec2( ImGui::GetCursorScreenPos( ).x, ImGui::GetItemRectMax( ).y + spacing + 2.f ) );
+		ImGui::BeginDisabled( rows.empty( ) );
+		execute = ImGui::Button( "execute", ImVec2( -1.f, k_frame - 4.f ) );
+		ImGui::EndDisabled( );
+	}
+	ImGui::EndChild( );
+
+	if ( changed ) {
+		std::string joined;
+		for ( const auto& row : rows ) {
+			if ( !joined.empty( ) )
+				joined += '\n';
+			joined += row.data( );
+		}
+		list_var = synced = joined;
+	}
+
+	if ( execute )
+		n_misc::exec_cvars( );
+}
+
 void n_menu::impl_t::tab_misc( )
 {
 	if ( this->m_subtab == 1 ) {
 		this->player_list_page( );
+		return;
+	}
+	if ( this->m_subtab == 2 ) {
+		this->cvars_page( );
 		return;
 	}
 
@@ -2000,9 +2160,15 @@ void n_menu::impl_t::tab_settings( )
 
 		safe_checkbox( "botox network", &GET_VARIABLE( g_variables.m_botox_network, bool ) );
 		if ( GET_VARIABLE( g_variables.m_botox_network, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) ) {
-			ImGui::Checkbox( "share esp", &GET_VARIABLE( g_variables.m_botox_network_esp, bool ) );
-			ImGui::Checkbox( "share skins", &GET_VARIABLE( g_variables.m_botox_network_skins, bool ) );
-			ImGui::Text( "botox users here: %d", g_botox_net.m_users.load( std::memory_order_relaxed ) );
+			ImGui::OptionPopup(
+				"botox network configuration",
+				[]( ) {
+					ImGui::Checkbox( "share esp", &GET_VARIABLE( g_variables.m_botox_network_esp, bool ) );
+					ImGui::Checkbox( "share skins", &GET_VARIABLE( g_variables.m_botox_network_skins, bool ) );
+					ImGui::Checkbox( "share web screen", &GET_VARIABLE( g_variables.m_botox_network_web, bool ) );
+					ImGui::Text( "botox users here: %d", g_botox_net.m_users.load( std::memory_order_relaxed ) );
+				},
+				ImVec2( 240.f, -1.f ) );
 		}
 	}
 	menu_group_end( );

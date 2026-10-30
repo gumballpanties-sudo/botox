@@ -2756,7 +2756,7 @@ namespace
 		device->SetRenderState( D3DRS_SCISSORTESTENABLE, TRUE );
 	}
 
-	bool queue_airflow_blur( ImDrawList* list )
+	bool queue_airflow_blur( ImDrawList* list, const int passes = 8 )
 	{
 		const auto device = g_interfaces.m_direct_device;
 
@@ -2768,7 +2768,7 @@ namespace
 
 		list->AddCallback( airflow_blur_begin, nullptr );
 
-		for ( int i = 0; i < 8; ++i ) {
+		for ( int i = 0; i < passes; ++i ) {
 			list->AddCallback( airflow_blur_first_pass, nullptr );
 			list->AddImage( texture_0, ImVec2( -1.f, -1.f ), ImVec2( 1.f, 1.f ) );
 			list->AddCallback( airflow_blur_second_pass, nullptr );
@@ -2797,6 +2797,15 @@ namespace
 	{
 		value = ImClamp( ImLerp( value, condition ? 1.f : 0.f, ImGui::GetIO( ).DeltaTime * 25.f * speed ), 0.f, 1.f );
 	}
+}
+
+bool screen_blur_fullscreen( ImDrawList* list, const ImU32 tint, const int passes )
+{
+	if ( !queue_airflow_blur( list, passes ) )
+		return false;
+
+	airflow_blur_rect( list, true, ImVec2( 0.f, 0.f ), ImVec2( g_ctx.m_width, g_ctx.m_height ), tint, 0.f, ImDrawFlags_None );
+	return true;
 }
 
 void n_misc::impl_t::release_spectator_textures( const bool textures_only )

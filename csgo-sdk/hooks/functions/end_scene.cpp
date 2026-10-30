@@ -35,6 +35,8 @@ void n_detoured_functions::draw_overlay_frame( IDirect3DDevice9* device )
 
 			g_menu.on_end_scene( );
 			g_misc.on_end_scene( );
+
+			boot_screen_draw( );
 		},
 		device );
 }
@@ -102,7 +104,8 @@ long n_detoured_functions::overlay_end_scene( IDirect3DDevice9* device, long( __
 
 	const bool overlay_pass = g_resolution_spoof.wants_overlay_pass( );
 
-	const bool graded = g_color_correction.wants_pass( );
+	const bool boot   = boot_screen_active( );
+	const bool graded = !boot && g_color_correction.wants_pass( );
 
 	if ( !overlay_pass && !graded )
 		draw_overlay_frame( device );
@@ -119,7 +122,8 @@ long n_detoured_functions::overlay_end_scene( IDirect3DDevice9* device, long( __
 		PERF_ZONE( zone_screen_pass );
 
 		bool corrected = false;
-		n_fx_compat::run( device, "cc", [ & ] { corrected = g_color_correction.on_end_scene_post( device ); } );
+		if ( !boot )
+			n_fx_compat::run( device, "cc", [ & ] { corrected = g_color_correction.on_end_scene_post( device ); } );
 
 		if ( corrected )
 			Web_RestoreOverColorCorr( device, g_color_correction.input_texture( ), g_color_correction.width( ),

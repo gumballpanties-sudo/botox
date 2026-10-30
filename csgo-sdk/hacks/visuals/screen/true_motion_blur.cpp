@@ -9,6 +9,7 @@
 #include "gpu_timer.h"
 #include "render_queue.h"
 #include "serial_render.h"
+#include "sim_clock.h"
 #include "stream_guard.h"
 
 #include <algorithm>
@@ -19,12 +20,15 @@
 
 static constexpr int max_players = 10;
 
-static constexpr int constant_registers = 83 + max_players * 5;
+static constexpr int player_rect_register = 83 + max_players * 5;
+
+static constexpr int constant_registers = player_rect_register + 1;
 
 static_assert( constant_registers <= 224, "ps_3_0 has 224 float constant registers" );
 
 static_assert( n_viewmodel_bones::max_proxies == 16, "the bone block is sixteen slots wide in both the shader and the frame" );
 static_assert( max_players == 10, "the player block is ten slots wide in the shader, in the frame and in the loop that fills it" );
+static_assert( player_rect_register == 133, "info shader reads the player rect from c133" );
 
 static const char k_shared_head[] =
 	"sampler2D s0:register(s0);"
@@ -54,7 +58,8 @@ static const char k_bone_head[] =
 	"float4 c14:register(c14);"
 	"float4 bone[64]:register(c16);"
 	"float4 view_to_world[3]:register(c80);"
-	"float4 player[50]:register(c83);";
+	"float4 player[50]:register(c83);"
+	"float4 c133:register(c133);";
 
 static const char k_info_body[] =
 	"float4 main(float2 uv:TEXCOORD0):COLOR0{"
@@ -65,7 +70,7 @@ static const char k_info_body[] =
 	"z=linear_z(raw);"
 	"float3 p=view_pos(uv,z);"
 	"float3 r0=c3.xyz,r1=c4.xyz,r2=c5.xyz,tw=float3(c3.w,c4.w,c5.w);"
-	"if(c14.y>0.5){"
+	"if(c14.y>0.5&&all(uv>=c133.xy)&&all(uv<=c133.zw)){"
 	"float3 w=float3(dot(view_to_world[0].xyz,p)+view_to_world[0].w,dot(view_to_world[1].xyz,p)+view_to_world[1].w,"
 	"dot(view_to_world[2].xyz,p)+view_to_world[2].w);"
 	"[unroll] for(int k=0;k<10;k++){"
@@ -740,7 +745,10 @@ void n_true_motion_blur::impl_t::collect_players( frame_t& frame, const float ba
 
 		const float travel[ 3 ] = { where.m_x - was[ 0 ], where.m_y - was[ 1 ], where.m_z - was[ 2 ] };
 
-		if ( travel[ 0 ] * travel[ 0 ] + travel[ 1 ] * travel[ 1 ] + travel[ 2 ] * travel[ 2 ] > player_teleport * player_teleport )
+		const float travelled = travel[ 0 ] * travel[ 0 ] + travel[ 1 ] * travel[ 1 ] + travel[ 2 ] * travel[ 2 ];
+
+		// still = rows identical to the camera's, box would change nothing
+		if ( travelled > player_teleport * player_teleport || travelled < 1e-6f )
 			return;
 
 		entry_t& entry = entries[ total++ ];
@@ -960,7 +968,7 @@ void n_true_motion_blur::impl_t::on_post_screen_space_effects( c_view_setup* set
 	frame.m_viewmodel_zfar  = setup->m_zfar_viewmodel;
 	frame.m_viewmodel_fov   = setup->m_fov_viewmodel;
 
-	const float now = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_real_time : 0.f;
+	const float now = n_sim_clock::now( g_interfaces.m_global_vars_base );
 
 	matrix3x4_t basis_matrix{ };
 	g_math.angle_matrix( setup->m_angles, basis_matrix );
@@ -1409,141 +1417,6 @@ void n_true_motion_blur::impl_t::on_post_screen_space_effects( c_view_setup* set
 	pass( );
 }
 
-namespace
-{
-	constexpr int k_leak_stages   = 16;
-	constexpr int k_leak_samplers = 14;
-	constexpr int k_leak_states   = 210;
-
-	struct device_snapshot_t {
-		DWORD m_render[ k_leak_states ];
-		DWORD m_sampler[ k_leak_stages ][ k_leak_samplers ];
-		void* m_texture[ k_leak_stages ];
-		float m_constant[ constant_registers ][ 4 ];
-		void* m_pixel_shader;
-		void* m_vertex_shader;
-		void* m_declaration;
-		void* m_target;
-		void* m_depth;
-		void* m_stream;
-		UINT m_offset, m_stride;
-		DWORD m_fvf;
-		D3DVIEWPORT9 m_viewport;
-	};
-
-	template < class T >
-	void* peek( T* object )
-	{
-		if ( object )
-			object->Release( );
-
-		return object;
-	}
-
-	void take_snapshot( IDirect3DDevice9* device, device_snapshot_t& out )
-	{
-		std::memset( &out, 0, sizeof( out ) );
-
-		for ( int state = 0; state < k_leak_states; ++state )
-			device->GetRenderState( static_cast< D3DRENDERSTATETYPE >( state ), &out.m_render[ state ] );
-
-		for ( int stage = 0; stage < k_leak_stages; ++stage ) {
-			for ( int sampler = 1; sampler < k_leak_samplers; ++sampler )
-				device->GetSamplerState( stage, static_cast< D3DSAMPLERSTATETYPE >( sampler ), &out.m_sampler[ stage ][ sampler ] );
-
-			IDirect3DBaseTexture9* texture = nullptr;
-			device->GetTexture( stage, &texture );
-			out.m_texture[ stage ] = peek( texture );
-		}
-
-		device->GetPixelShaderConstantF( 0, out.m_constant[ 0 ], constant_registers );
-
-		IDirect3DPixelShader9* pixel_shader = nullptr;
-		IDirect3DVertexShader9* vertex_shader = nullptr;
-		IDirect3DVertexDeclaration9* declaration = nullptr;
-		IDirect3DSurface9* target = nullptr;
-		IDirect3DSurface9* depth = nullptr;
-		IDirect3DVertexBuffer9* stream = nullptr;
-
-		device->GetPixelShader( &pixel_shader );
-		device->GetVertexShader( &vertex_shader );
-		device->GetVertexDeclaration( &declaration );
-		device->GetRenderTarget( 0, &target );
-		device->GetDepthStencilSurface( &depth );
-		device->GetStreamSource( 0, &stream, &out.m_offset, &out.m_stride );
-		device->GetFVF( &out.m_fvf );
-		device->GetViewport( &out.m_viewport );
-
-		out.m_pixel_shader  = peek( pixel_shader );
-		out.m_vertex_shader = peek( vertex_shader );
-		out.m_declaration   = peek( declaration );
-		out.m_target        = peek( target );
-		out.m_depth         = peek( depth );
-		out.m_stream        = peek( stream );
-	}
-
-	// one line a second naming every state the pass left different from how it found it
-	void report_leaks( const device_snapshot_t& before, const device_snapshot_t& after )
-	{
-		static float last = -10.f;
-
-		const float now = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_real_time : 0.f;
-
-		std::string line;
-		int count = 0;
-
-		const auto add = [ & ]( const std::string& what ) {
-			if ( ++count <= 24 )
-				line += " " + what;
-		};
-
-		for ( int state = 0; state < k_leak_states; ++state ) {
-			if ( before.m_render[ state ] != after.m_render[ state ] )
-				add( std::vformat( "rs{:d}={:#x}->{:#x}", std::make_format_args( state, before.m_render[ state ], after.m_render[ state ] ) ) );
-		}
-
-		for ( int stage = 0; stage < k_leak_stages; ++stage ) {
-			for ( int sampler = 1; sampler < k_leak_samplers; ++sampler ) {
-				if ( before.m_sampler[ stage ][ sampler ] != after.m_sampler[ stage ][ sampler ] )
-					add( std::vformat( "ss{:d}.{:d}={:#x}->{:#x}",
-					                   std::make_format_args( stage, sampler, before.m_sampler[ stage ][ sampler ], after.m_sampler[ stage ][ sampler ] ) ) );
-			}
-
-			if ( before.m_texture[ stage ] != after.m_texture[ stage ] )
-				add( std::vformat( "tex{:d}", std::make_format_args( stage ) ) );
-		}
-
-		for ( int reg = 0; reg < constant_registers; ++reg ) {
-			if ( std::memcmp( before.m_constant[ reg ], after.m_constant[ reg ], sizeof( before.m_constant[ reg ] ) ) )
-				add( std::vformat( "c{:d}", std::make_format_args( reg ) ) );
-		}
-
-		if ( before.m_pixel_shader != after.m_pixel_shader )
-			add( "ps" );
-		if ( before.m_vertex_shader != after.m_vertex_shader )
-			add( "vs" );
-		if ( before.m_declaration != after.m_declaration )
-			add( "decl" );
-		if ( before.m_fvf != after.m_fvf )
-			add( "fvf" );
-		if ( before.m_target != after.m_target )
-			add( "rt0" );
-		if ( before.m_depth != after.m_depth )
-			add( "ds" );
-		if ( before.m_stream != after.m_stream || before.m_offset != after.m_offset || before.m_stride != after.m_stride )
-			add( "stream0" );
-		if ( std::memcmp( &before.m_viewport, &after.m_viewport, sizeof( before.m_viewport ) ) )
-			add( "viewport" );
-
-		if ( now - last < 1.f )
-			return;
-
-		last = now;
-
-		g_console.print( std::vformat( "true motion blur: leak {:d}{:s}", std::make_format_args( count, line ) ).c_str( ) );
-	}
-}
-
 void n_true_motion_blur::impl_t::execute( const frame_t frame )
 {
 	IDirect3DDevice9* device = g_interfaces.m_direct_device;
@@ -1660,11 +1533,6 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 		target->Release( );
 		return;
 	}
-
-	static device_snapshot_t leak_before{ };
-	static device_snapshot_t leak_after{ };
-
-	take_snapshot( device, leak_before );
 
 	IDirect3DSurface9* old_depth_stencil                = nullptr;
 	IDirect3DPixelShader9* old_pixel_shader             = nullptr;
@@ -1863,6 +1731,47 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 			std::memcpy( block[ base + 2 + row ], frame.m_player[ index ][ row ], sizeof( float ) * 4 );
 	}
 
+	// uv bounds of every box's 8 projected corners, info skips the box loop outside. corner near the lens plane = whole screen
+	float* const rect = block[ player_rect_register ];
+
+	rect[ 0 ] = rect[ 1 ] = 1.f;
+	rect[ 2 ] = rect[ 3 ] = 0.f;
+
+	for ( int index = 0; index < frame.m_player_count; ++index ) {
+		for ( int corner = 0; corner < 8; ++corner ) {
+			float away[ 3 ]{ };
+
+			for ( int axis = 0; axis < 3; ++axis )
+				away[ axis ] = frame.m_player_box[ index ][ ( corner >> axis ) & 1 ][ axis ] - frame.m_view_to_world[ axis ][ 3 ];
+
+			float view[ 3 ]{ };
+
+			for ( int column = 0; column < 3; ++column )
+				view[ column ] = frame.m_view_to_world[ 0 ][ column ] * away[ 0 ] + frame.m_view_to_world[ 1 ][ column ] * away[ 1 ] +
+				                 frame.m_view_to_world[ 2 ][ column ] * away[ 2 ];
+
+			if ( view[ 2 ] < 1.f ) {
+				rect[ 0 ] = rect[ 1 ] = 0.f;
+				rect[ 2 ] = rect[ 3 ] = 1.f;
+				index = frame.m_player_count;
+				break;
+			}
+
+			const float u = ( view[ 0 ] / ( view[ 2 ] * tan_half_x ) ) * 0.5f + 0.5f;
+			const float v = 0.5f - ( view[ 1 ] / ( view[ 2 ] * tan_half_y ) ) * 0.5f;
+
+			rect[ 0 ] = std::min( rect[ 0 ], u );
+			rect[ 1 ] = std::min( rect[ 1 ], v );
+			rect[ 2 ] = std::max( rect[ 2 ], u );
+			rect[ 3 ] = std::max( rect[ 3 ], v );
+		}
+	}
+
+	rect[ 0 ] -= 2.f * block[ 6 ][ 2 ];
+	rect[ 1 ] -= 2.f * block[ 6 ][ 3 ];
+	rect[ 2 ] += 2.f * block[ 6 ][ 2 ];
+	rect[ 3 ] += 2.f * block[ 6 ][ 3 ];
+
 	static bool logged_viewmodel = false;
 
 	if ( frame.m_viewmodel_valid && !logged_viewmodel ) {
@@ -2016,9 +1925,6 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 
 	if ( old_pixel_shader )
 		old_pixel_shader->Release( );
-
-	take_snapshot( device, leak_after );
-	report_leaks( leak_before, leak_after );
 
 	target->Release( );
 }

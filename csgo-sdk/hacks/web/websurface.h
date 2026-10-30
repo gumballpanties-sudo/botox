@@ -1,6 +1,19 @@
 #pragma once
 #include <cstdint>
 #include <d3d9.h>
+#include <string>
+
+// botox: botox network web share. m_seq bumps only on the user's own place / remove / typed url
+struct web_share_t {
+    bool        m_placed = false;
+    float       m_pos[3]{}, m_normal[3]{}, m_right[3]{};
+    float       m_scale  = 1.f;
+    int         m_aspect = 0;
+    unsigned    m_seq    = 0;
+    std::string m_url;
+};
+bool Web_ShareGet(web_share_t& out);                  // main thread, false = web off
+void Web_ShareApply(const web_share_t& in);           // main thread, never bumps m_seq
 
 void Web_Present(IDirect3DDevice9* dev);             // render thread, inside the ImGui frame (end_scene overlay)
 void Web_MainTick();                                  // main thread every frame (FSN start), menu too

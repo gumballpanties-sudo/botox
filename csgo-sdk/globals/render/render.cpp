@@ -7,6 +7,7 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../hacks/avatar_cache/avatar_cache.h"
 #include "../../hacks/mc_hud/mc_font_ttf.h"
+#include "../../hacks/misc/misc.h"
 #include "../../hacks/visuals/screen/resolution_spoof.h"
 #include "../../utilities/perf/perf_watch.h"
 #include "../includes/includes.h"
@@ -826,7 +827,10 @@ static void build_fonts_worker( const font_request_t request )
 void n_render::impl_t::install_fonts( font_set_t* set )
 {
 	if ( !set->m_atlas ) {
-		g_console.print< n_console::log_level::WARNING >( "font rebuild failed (out of memory or unreadable font) - kept the old fonts" );
+		const std::string reason = g_ft_build_fail;
+		const unsigned free_mb   = largest_free_block_mb( );
+		g_console.print< n_console::log_level::WARNING >(
+			std::vformat( "font rebuild failed: {} | largest free block {} mb - kept the old fonts", std::make_format_args( reason, free_mb ) ).c_str( ) );
 		delete set;
 		return;
 	}
@@ -1825,29 +1829,27 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& function, I
 			style.Colors[ ImGuiCol_::ImGuiCol_BorderShadow ] = ImVec4( 0 / 255.f, 0 / 255.f, 0 / 255.f, 0.f );
 		}( );
 
-		/* same build path as reload, but on the render thread: NewFrame needs a built atlas */
+		/* menu verdana pair now (latin only, ms), full set on the reload worker: building it here froze the first frame (boot screen) */
 		font_set_t* const set = new font_set_t{ };
-		if ( !build_fonts( *set, current_font_request( ) ) ) {
+		set->m_atlas          = IM_NEW( ImFontAtlas )( );
+
+		ImFontConfig config     = { };
+		config.FontBuilderFlags = ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Monochrome | ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_MonoHinting;
+
+		ImFont* const regular = set->m_atlas->AddFontFromMemoryCompressedTTF( verdana_compressed_data, verdana_compressed_size, 11.f, &config );
+		ImFont* const bold    = set->m_atlas->AddFontFromMemoryCompressedTTF( verdana_bold_compressed_data, verdana_bold_compressed_size, 11.f, &config );
+
+		if ( !ImGuiFreeType::BuildFontAtlas( set->m_atlas, 0x0 ) ) {
 			const std::string reason = g_ft_build_fail;
-			const unsigned free_mb   = largest_free_block_mb( );
-
-			IM_DELETE( set->m_atlas );
-			set->m_atlas           = IM_NEW( ImFontAtlas )( );
-			ImFont* const fallback = set->m_atlas->AddFontDefault( );
-			const bool fallback_ok = ImGuiFreeType::BuildFontAtlas( set->m_atlas, 0x0 );
-
-			const std::string fallback_reason = fallback_ok ? "ok" : g_ft_build_fail;
-			g_console.print< n_console::log_level::WARNING >(
-				std::vformat( "font atlas build failed: {} | largest free block {} mb | fallback: {}",
-				              std::make_format_args( reason, free_mb, fallback_reason ) )
-					.c_str( ) );
-
-			std::ranges::fill( set->m_fonts, fallback );
-			std::ranges::fill( set->m_custom_fonts, fallback );
+			g_console.print< n_console::log_level::WARNING >( std::vformat( "boot font build failed: {}", std::make_format_args( reason ) ).c_str( ) );
 		}
+
+		std::ranges::fill( set->m_fonts, regular );
+		std::ranges::fill( set->m_custom_fonts, regular );
+		set->m_fonts[ e_font_names::font_name_verdana_bd_11 ] = bold;
 		this->install_fonts( set );
 
-		this->m_reload_fonts = false;
+		this->m_reload_fonts = true;
 		this->m_initialised  = true;
 	}
 
@@ -1943,6 +1945,7 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& function, I
 
 	dpi_scale_overlays( draw_data, screen );
 	stretch_overlays( );
+	boot_screen_fade_others( draw_data );
 
 	static ImVector< ImDrawList* > owned, before, menu, after, popup_list;
 	static ImVector< n_menu::impl_t::faded_list_t > popups;

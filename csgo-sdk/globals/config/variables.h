@@ -1118,6 +1118,11 @@ namespace n_variables
 
 		ADD_VARIABLE( bool, m_ladder_bug, false );
 		ADD_VARIABLE( key_bind_t, m_ladder_bug_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( bool, m_poop_ladder_jump, false );
+		ADD_VARIABLE( key_bind_t, m_poop_ladder_jump_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( float, m_poop_ladder_jump_boost, 400.f );
+		ADD_VARIABLE( float, m_poop_ladder_jump_angle, 50.f );
+		ADD_VARIABLE( float, m_poop_ladder_jump_strength, 100.f );
 		ADD_VARIABLE( bool, m_ladder_glide, false );
 		ADD_VARIABLE( key_bind_t, m_ladder_glide_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_ladder_freelook_climb, false );
@@ -1594,6 +1599,8 @@ namespace n_variables
 		ADD_VARIABLE( float, m_clantag_hold, 2.f );
 		ADD_VARIABLE( std::string, m_clantag_frames, "b\nbo\nbot\nboto\nbotox" );
 
+		ADD_VARIABLE( std::string, m_cvar_list, "" );
+
 		ADD_VARIABLE( bool, m_discord_rpc, false );
 		ADD_VARIABLE( std::string, m_discord_rpc_image, "" );
 
@@ -1691,6 +1698,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_botox_network, false );
 		ADD_VARIABLE( bool, m_botox_network_esp, true );
 		ADD_VARIABLE( bool, m_botox_network_skins, true );
+		ADD_VARIABLE( bool, m_botox_network_web, false );
 #ifdef _DEBUG
 		ADD_VARIABLE( bool, m_debugger_visual, false );
 		ADD_VARIABLE( bool, m_disable_interp, false );

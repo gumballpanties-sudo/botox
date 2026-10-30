@@ -23,21 +23,30 @@ namespace n_botox_net
 	constexpr float USER_TIMEOUT    = 5.f;
 	constexpr float SKIN_TIMEOUT    = 15.f;
 	constexpr float ITEM_PATIENCE   = 4.f;
+	constexpr int WEB_URL_MAX       = 255;
+	constexpr int WEB_URL_CHUNK     = 13;
+	constexpr std::uint8_t WEB_SEQ  = 0x7F;
+	constexpr std::uint8_t WEB_PLACED = 0x80;
 
+	/* new types only added: a v2 build without them just ignores them */
 	enum e_packet_type : std::uint8_t {
-		packet_hello   = 1,
-		packet_esp     = 2,
-		packet_skin    = 3,
-		packet_extra   = 4,
-		packet_sticker = 5,
-		packet_name    = 6,
-		packet_glove   = 7,
-		packet_last    = packet_glove,
+		packet_hello     = 1,
+		packet_esp       = 2,
+		packet_skin      = 3,
+		packet_extra     = 4,
+		packet_sticker   = 5,
+		packet_name      = 6,
+		packet_glove     = 7,
+		packet_web_place = 8,
+		packet_web_basis = 9,
+		packet_web_url   = 10,
+		packet_last      = packet_web_url,
 	};
 
 	enum e_hello_flags : std::uint8_t {
 		hello_esp   = 1 << 0,
 		hello_skins = 1 << 1,
+		hello_web   = 1 << 2,
 	};
 
 #pragma pack( push, 1 )
@@ -92,6 +101,29 @@ namespace n_botox_net
 		std::int16_t m_seed;
 		float m_wear;
 	};
+
+	/* m_seq: low 7 bits = sender's share event counter, WEB_PLACED = screen up */
+	struct web_place_data_t {
+		float m_pos[ 3 ];
+		std::uint16_t m_url_hash;
+		std::uint8_t m_url_length;
+		std::uint8_t m_seq;
+	};
+
+	/* unit vectors * 32767 */
+	struct web_basis_data_t {
+		std::int16_t m_normal[ 3 ];
+		std::int16_t m_right[ 3 ];
+		std::uint16_t m_scale_centi;
+		std::uint8_t m_aspect;
+		std::uint8_t m_seq;
+	};
+
+	struct web_url_data_t {
+		std::uint16_t m_url_hash;
+		std::uint8_t m_chunk;
+		char m_text[ WEB_URL_CHUNK ];
+	};
 #pragma pack( pop )
 
 	static_assert( sizeof( packet_t ) == 20 );
@@ -103,6 +135,10 @@ namespace n_botox_net
 	static_assert( sizeof( name_data_t ) <= PAYLOAD_BYTES );
 	static_assert( sizeof( glove_data_t ) <= PAYLOAD_BYTES );
 	static_assert( NAME_CHUNK * 4 >= NAME_MAX );
+	static_assert( sizeof( web_place_data_t ) == PAYLOAD_BYTES );
+	static_assert( sizeof( web_basis_data_t ) <= PAYLOAD_BYTES );
+	static_assert( sizeof( web_url_data_t ) == PAYLOAD_BYTES );
+	static_assert( ( WEB_URL_MAX + WEB_URL_CHUNK - 1 ) / WEB_URL_CHUNK <= 32 );
 
 	struct impl_t {
 		void on_create_move( );
@@ -139,6 +175,9 @@ namespace n_botox_net
 		void release_glove( int index, bool forget = true );
 		void release_gloves( );
 		void force_server_masks( );
+		bool web_on( ) const;
+		void send_web( );
+		void apply_web( int sender );
 
 		struct shared_t {
 			c_vector m_origin = { };
@@ -194,6 +233,29 @@ namespace n_botox_net
 
 		std::vector< packet_t > m_queue{ };
 		std::size_t m_queue_cursor = 0;
+
+		struct web_user_t {
+			bool m_have_place          = false;
+			bool m_have_basis          = false;
+			std::uint8_t m_place_seq   = 0;
+			std::uint8_t m_basis_seq   = 0;
+			float m_pos[ 3 ]{ };
+			float m_normal[ 3 ]{ };
+			float m_right[ 3 ]{ };
+			float m_scale              = 1.f;
+			int m_aspect               = 0;
+			std::uint16_t m_url_hash   = 0;
+			std::uint8_t m_url_length  = 0;
+			std::uint32_t m_url_chunks = 0;
+			char m_url[ WEB_URL_MAX + 1 ]{ };
+			int m_applied              = -1;
+		} m_web[ 65 ]{ };
+
+		std::vector< packet_t > m_web_queue{ };
+		std::size_t m_web_cursor = 0;
+		float m_last_web         = -1.f;
+		int m_web_follow         = 0;
+		int m_web_own_seq        = -1;
 
 		/* client resends vban every ~1s while its mask != the server's (always 0 after our rewrite), silent = no mutes */
 		std::uint32_t m_ban_mask[ 2 ] = { };

@@ -43,6 +43,10 @@ namespace n_misc
 	std::vector< clantag_frame_t > parse_clantag_frames( const std::string& value, float fallback_hold );
 	std::string join_clantag_frames( const std::vector< clantag_frame_t >& frames );
 
+	/* trimmed, empties dropped */
+	std::vector< std::string > split_cvars( const std::string& value, char separator );
+	void exec_cvars( );
+
 	inline ImVec4 g_watermark_box{ };
 	inline ImVec4 g_watermark_gif_box{ };
 
@@ -232,6 +236,20 @@ bool kill_effects_wants_ragdoll_dme( );
 void ragdoll_force_hook( );
 void ragdoll_force_unhook( );
 void RenderHitmarker( );
+
+/* inject splash: begin = attach, step = boot stage done (init thread), draw = end_scene.
+   active = splash still up, screen passes hold off till it is gone.
+   eject (main thread, blocking <=1.5s each): begin = splash fades in and covers, end = work done, fades out */
+void boot_screen_begin( );
+void boot_screen_step( );
+void boot_screen_draw( );
+bool boot_screen_active( );
+void boot_screen_eject_begin( );
+void boot_screen_eject_end( );
+/* render thread, after ImGui::Render: every other overlay vertex scaled by the reveal (0 under the splash) */
+void boot_screen_fade_others( ImDrawData* draw_data );
+/* airflow blur over the whole back buffer, tinted, passes = strength. false = no blur this frame */
+bool screen_blur_fullscreen( ImDrawList* list, ImU32 tint, int passes );
 
 enum class e_points_trick {
 	edge_bug, fireman, jump_bug, head_ceiling,

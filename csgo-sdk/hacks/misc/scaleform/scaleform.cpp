@@ -1081,7 +1081,10 @@ static const char* k_hud_color = R"js(
     /* moi hudhealtharmor.css washes #HealthBar / #ArmorBar by ID (no class) and greys both with
        saturation 0.001. own 50ms loop: the red states (on-damage 1s flash, critical <= 20%) are
        class flips a 1s heartbeat misses, and red x our wash = black. stock bars untouched, and
-       the cleanup runs when moi goes off too - id panels keep inline style across a reload */
+       the cleanup runs when moi goes off too - id panels keep inline style across a reload.
+       moi also dims what paint() tints: bars opacity 0.9, health label baseText #ccc under the
+       wash, icon containers 0.65, health ProgressBarLeft already hud-coloured (wash = col^2).
+       so bars wash white + fill = col, all forced to 1.0 -> one colour everywhere */
     BxHudCol = col; BxHudMoi = ${moi}; BxBarsKey = '';
 
     if ( typeof BxBarsDirty === 'undefined' ) BxBarsDirty = false;
@@ -1101,28 +1104,44 @@ static const char* k_hud_color = R"js(
             var hb = ha ? ha.FindChildTraverse( 'HealthBar' ) : null;
             var ab = ha ? ha.FindChildTraverse( 'ArmorBar' ) : null;
 
-            var set = function( p, w, s, keep_wash ) {
+            var set = function( p, w, s, keep_wash, fill, op ) {
                 if ( !p ) return;
                 if ( !keep_wash ) {
                     try { p.style.washColorFast = w; } catch(e) {}
                     try { p.style.washColor = w; } catch(e) {}
                 }
                 try { p.style.saturation = s; } catch(e) {}
+                try { p.style.opacity = op; } catch(e) {}
+                for ( var l of p.FindChildrenWithClassTraverse( 'ProgressBarLeft' ) )
+                    try { l.style.backgroundColor = fill; } catch(e) {}
+            };
+
+            var dims = function( c, i ) {
+                if ( !ha ) return;
+                for ( var p of ha.FindChildrenWithClassTraverse( 'hud-HA-health-label' ) )
+                    try { p.style.color = c; } catch(e) {}
+                for ( var p of ha.FindChildrenWithClassTraverse( 'hud-HA-armor-label' ) )
+                    try { p.style.color = c; } catch(e) {}
+                for ( var p of ha.FindChildrenWithClassTraverse( 'hud-HA-icon-container' ) )
+                    try { p.style.opacity = i; } catch(e) {}
             };
 
             if ( on && ha ) {
                 var red = ha.BHasClass( 'hud-HA--on-damage' ) || ha.BHasClass( 'hud-HA--critical' );
                 var key = ( red ? 'r' : 'c' ) + BxHudCol;
                 if ( key !== BxBarsKey ) {
-                    set( hb, red ? null : BxHudCol, red ? null : '1.0', false );
-                    set( ab, BxHudCol, '1.0', false );
+                    // red: fill null -> moi css red .ProgressBarLeft, sat 1.0 so critical isn't greyed
+                    set( hb, '#ffffff', '1.0', false, red ? null : BxHudCol, '1.0' );
+                    set( ab, '#ffffff', '1.0', false, BxHudCol, '1.0' );
+                    dims( '#ffffff', '1.0' );
                     BxBarsKey = key;
                     BxBarsDirty = true;
                 }
             } else if ( !on && BxBarsDirty ) {
-                set( hb, null, null, false );
+                set( hb, null, null, false, null, null );
                 // stock ArmorBar carries cl-hud-wash-color: paint() owns that wash
-                set( ab, null, null, ab && ab.BHasClass( 'cl-hud-wash-color' ) );
+                set( ab, null, null, ab && ab.BHasClass( 'cl-hud-wash-color' ), null, null );
+                dims( null, null );
                 BxBarsDirty = false;
             }
         } catch(e) {}

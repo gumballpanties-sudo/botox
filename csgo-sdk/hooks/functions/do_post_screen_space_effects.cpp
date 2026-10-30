@@ -25,23 +25,31 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 	if ( setup )
 		kill_effects_world( setup->m_origin, setup->m_angles );
 
-	g_player_stencil.after_glow( );
+	// inject splash up: no screen pass (their first shader builds stall frames)
+	const bool passes = !boot_screen_active( );
+
+	if ( passes )
+		g_player_stencil.after_glow( );
 
 	PERF_ZONE( zone_screen_pass );
 
-	g_depth_view.on_post_screen_space_effects( setup );
+	if ( passes ) {
+		g_depth_view.on_post_screen_space_effects( setup );
 
-	g_reflections.on_post_screen_space_effects( setup );
+		g_reflections.on_post_screen_space_effects( setup );
 
-	g_ambient_occlusion.on_post_screen_space_effects( setup );
+		g_ambient_occlusion.on_post_screen_space_effects( setup );
 
-	g_depth_of_field.on_post_screen_space_effects( setup );
+		g_depth_of_field.on_post_screen_space_effects( setup );
+	}
 
 	Web_OnPostScreenSpaceEffects( setup );
 
-	g_true_motion_blur.on_post_screen_space_effects( setup );
+	if ( passes ) {
+		g_true_motion_blur.on_post_screen_space_effects( setup );
 
-	g_bloom.on_post_screen_space_effects( setup );
+		g_bloom.on_post_screen_space_effects( setup );
+	}
 
 	g_resolution_spoof.on_post_screen_space_effects( setup );
 

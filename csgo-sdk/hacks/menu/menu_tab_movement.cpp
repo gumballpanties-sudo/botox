@@ -332,6 +332,20 @@ void n_menu::impl_t::tab_movement( )
 			ImGui::Checkbox( "ladder bug", &GET_VARIABLE( g_variables.m_ladder_bug, bool ) );
 			ImGui::Keybind( "ladder bug key", &GET_VARIABLE( g_variables.m_ladder_bug_key, key_bind_t ) );
 
+			ImGui::Checkbox( "poop joomp", &GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) );
+			if ( GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) ) {
+				ImGui::OptionPopup(
+					"poop joomp settings",
+					[ & ]( ) {
+						ImGui::Label( "poop joomp keybind" );
+						ImGui::Keybind( "poop joomp key", &GET_VARIABLE( g_variables.m_poop_ladder_jump_key, key_bind_t ) );
+						ImGui::SliderFloat( "strength", &GET_VARIABLE( g_variables.m_poop_ladder_jump_strength, float ), 0.f, 500.f, "%.0f%%" );
+						ImGui::SliderFloat( "jetpack boost (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_boost, float ), 0.f, 1000.f, "%.0f" );
+						ImGui::SliderFloat( "jetpack angle (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_angle, float ), 0.f, 90.f, "%.0f deg" );
+					},
+					ImVec2( 220.f, -1 ) );
+			}
+
 			ImGui::Checkbox( "ladder glide", &GET_VARIABLE( g_variables.m_ladder_glide, bool ) );
 			ImGui::Keybind( "ladder glide key", &GET_VARIABLE( g_variables.m_ladder_glide_key, key_bind_t ) );
 
@@ -416,7 +430,7 @@ void n_menu::impl_t::tab_movement( )
 
 						if ( style == 0 ) {
 							ImGui::Combo( "detection mode##ebdetectmode", &GET_VARIABLE( g_variables.m_edgebug_detection_mode, int ),
-							              "normal\0enhanced\0" );
+							              "normal\0enhanced\0ebanat\0" );
 							if ( GET_VARIABLE( g_variables.m_edgebug_detection_mode, int ) == 1 )
 								ImGui::SliderInt( "search amount##ebsearch", &GET_VARIABLE( g_variables.m_edgebug_search_amount, int ), 1, 4 );
 						}

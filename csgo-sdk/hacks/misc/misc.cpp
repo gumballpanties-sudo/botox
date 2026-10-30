@@ -1340,6 +1340,41 @@ void n_misc::impl_t::draw_media_player( )
 	g_render.end_stretch_block( block );
 }
 
+std::vector< std::string > n_misc::split_cvars( const std::string& value, const char separator )
+{
+	std::vector< std::string > out;
+	std::string part;
+	for ( const char c : value + separator ) {
+		if ( c != separator && c != '\r' && c != '\n' ) {
+			part += c;
+			continue;
+		}
+		const size_t first = part.find_first_not_of( " \t" );
+		if ( first != std::string::npos )
+			out.push_back( part.substr( first, part.find_last_not_of( " \t" ) - first + 1 ) );
+		part.clear( );
+	}
+	return out;
+}
+
+/* render thread only = same thread the menu edits m_cvar_list on */
+void n_misc::exec_cvars( )
+{
+	for ( const auto& command : split_cvars( GET_VARIABLE( g_variables.m_cvar_list, std::string ), '\n' ) )
+		g_interfaces.m_engine_client->client_cmd_unrestricted( command.c_str( ) );
+}
+
+static void exec_cvar_list( )
+{
+	static bool was_in_game = false;
+	const bool in_game      = g_interfaces.m_engine_client->is_in_game( );
+	if ( in_game == was_in_game )
+		return;
+	was_in_game = in_game;
+	if ( in_game )
+		n_misc::exec_cvars( );
+}
+
 std::vector< n_misc::clantag_frame_t > n_misc::parse_clantag_frames( const std::string& value, float fallback_hold )
 {
 	std::vector< clantag_frame_t > frames;
@@ -1622,6 +1657,8 @@ void n_misc::impl_t::update_clantag( )
 
 void n_misc::impl_t::on_end_scene( )
 {
+	exec_cvar_list( );
+
 	this->draw_watermark( );
 	this->draw_watermark_gif( );
 

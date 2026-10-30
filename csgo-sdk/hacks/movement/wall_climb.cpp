@@ -54,8 +54,13 @@ namespace
 	constexpr float k_slope_reach   = 500.f;
 	constexpr float k_div_vel       = 1.f;
 	constexpr int k_div_lines       = 64;
+	// GLIDE ( not donor ): under k_glide_xy along the wall every donor wish ( <= 5 ) adds < 1 u/s a tick = all candidates dead
+	// ( 10-30 log: 318 ticks, xy 0.0, 0 pins ). full wishes 15..60 deg off the wall, both sides, build the speed the grid needs
+	constexpr float k_glide_fwd[ ]  = { 30.f, 120.f, 450.f };
+	constexpr float k_glide_off[ ]  = { 15.f, 30.f, 60.f };
+	constexpr float k_glide_xy      = 5.f;
 
-	enum e_wc_count { wc_ticks, wc_sims, wc_refine, wc_full, wc_pin, wc_park, wc_arm, wc_hold, wc_bail, wc_kill, wc_keys, wc_flush, wc_flip, wc_duck, wc_cut, wc_yield, wc_div, wc_max };
+	enum e_wc_count { wc_ticks, wc_sims, wc_refine, wc_full, wc_pin, wc_park, wc_arm, wc_hold, wc_bail, wc_kill, wc_keys, wc_flush, wc_flip, wc_duck, wc_cut, wc_yield, wc_div, wc_glide, wc_max };
 	int s_count[ wc_max ]{ };
 	long long s_us = 0ll, s_us_worst = 0ll;
 	unsigned long long s_log_next = 0ull;
@@ -185,10 +190,10 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	if ( const unsigned long long now = GetTickCount64( ); now >= s_log_next ) {
 		s_log_next = now + 1000ull;
 		if ( s_count[ wc_ticks ] || s_count[ wc_yield ] )
-			botox_dbg_log( "WC: ticks=%d sims=%d refine=%d full=%d pin=%d park=%d arm=%d hold=%d bail=%d kill=%d keys=%d flush=%d flip=%d duck=%d cut=%d yield=%d div=%d us=%lld worst=%lld",
+			botox_dbg_log( "WC: ticks=%d sims=%d refine=%d full=%d pin=%d park=%d arm=%d hold=%d bail=%d kill=%d keys=%d flush=%d flip=%d duck=%d cut=%d yield=%d div=%d glide=%d us=%lld worst=%lld",
 			               s_count[ wc_ticks ], s_count[ wc_sims ], s_count[ wc_refine ], s_count[ wc_full ], s_count[ wc_pin ], s_count[ wc_park ],
 			               s_count[ wc_arm ], s_count[ wc_hold ], s_count[ wc_bail ], s_count[ wc_kill ], s_count[ wc_keys ], s_count[ wc_flush ], s_count[ wc_flip ],
-			               s_count[ wc_duck ], s_count[ wc_cut ], s_count[ wc_yield ], s_count[ wc_div ], s_us, s_us_worst );
+			               s_count[ wc_duck ], s_count[ wc_cut ], s_count[ wc_yield ], s_count[ wc_div ], s_count[ wc_glide ], s_us, s_us_worst );
 		for ( int& c : s_count )
 			c = 0;
 		s_us = s_us_worst = 0ll;
@@ -278,7 +283,6 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	const c_vector wall_n   = wall_tr.m_plane.m_normal;
 	const float wall_yaw    = norm( rad2deg( std::atan2f( -wall_n.m_y, -wall_n.m_x ) ) );
 	const float side        = norm( rad2deg( std::atan2f( start_vel.m_y, start_vel.m_x ) ) - wall_yaw ) < 0.f ? 1.f : -1.f;
-	const float wall_z      = wall_tr.m_end.m_z;
 	const float start_xy    = start_vel.length_2d( );
 	const int tick          = g_interfaces.m_global_vars_base->m_tick_count;
 	const c_user_cmd keys   = *cmd;
@@ -315,12 +319,21 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		n_tb::s_pred_dirty              = true;
 		++sims;
 	};
+	// exact gap, tb's formula ( texturebug.cpp wall scan ): hull trace -> plane dist -> nearest hull corner to the plane. the donor's
+	// line trace carried DIST_EPSILON: 10-30 log read -0.03 on every touching tick ( engine rest = +0.03125 ), so every slide was
+	// "flush" and never parked -> START stayed a hard hit -> no 1-tick pin can exist ( pin needs a sub-eps gap first ). inside the
+	// plane ( start solid ) = allsolid next tick: ranked under every real gap
 	const auto gap_at = [ & ]( const c_vector& o ) {
-		const c_vector from( o.m_x, o.m_y, wall_z );
 		trace_t tr{ };
-		ray_t ray( from, from - c_vector( wall_n.m_x, wall_n.m_y, 0.f ) * k_gap_reach );
-		g_interfaces.m_engine_trace->trace_ray( ray, mask_all, &filter, &tr );
-		return tr.m_fraction * k_gap_reach - ( std::fabsf( wall_n.m_x ) * hx + std::fabsf( wall_n.m_y ) * hy );
+		ray_t ray( o, o - c_vector( wall_n.m_x, wall_n.m_y, 0.f ) * k_gap_reach, mins, maxs );
+		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
+		if ( tr.m_start_solid )
+			return k_bad_gap - 1.f;
+		if ( tr.m_fraction >= 1.f )
+			return k_gap_reach - ( std::fabsf( wall_n.m_x ) * hx + std::fabsf( wall_n.m_y ) * hy );
+		const c_vector& p = tr.m_plane.m_normal;
+		return o.m_x * p.m_x + o.m_y * p.m_y + o.m_z * p.m_z - n_tb::hull_plane_dist( tr, mins, maxs ) + std::min( p.m_x * mins.m_x, p.m_x * maxs.m_x ) +
+		       std::min( p.m_y * mins.m_y, p.m_y * maxs.m_y ) + std::min( p.m_z * mins.m_z, p.m_z * maxs.m_z );
 	};
 
 	// ebanat sims on the real cmd so its bail / kill paths send the last sim; here only apply writes cmd, every other path = your keys
@@ -412,6 +425,14 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				best = row;
 		}
 	}
+	// glide rows: no along speed = the donor grid is dead ( see k_glide_* ). side is noise at xy 0, so both
+	const bool glide = start_xy < k_glide_xy;
+	if ( glide )
+		for ( const float s : { 1.f, -1.f } )
+			for ( const float off : k_glide_off )
+				for ( const float f : k_glide_fwd )
+					if ( const cand_t c = eval_both( f, off * s + wall_yaw, false ); better( c, best ) )
+						best = c;
 	if ( good( best ) ) {
 		m_last_off      = refine_off( norm( best.yaw - wall_yaw ) * side );
 		m_last_fwd      = best.fwd;
@@ -486,6 +507,12 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		++s_count[ wc_kill ];
 	};
 
+	// your raw wish points into this wall ( pre-AA keys, movement.cpp on_create_move_pre )
+	const float ky  = deg2rad( cmd->m_view_point.m_y );
+	const float wx  = g_movement.m_user_forward_move_raw * std::cosf( ky ) + g_movement.m_user_side_move_raw * std::sinf( ky );
+	const float wy  = g_movement.m_user_forward_move_raw * std::sinf( ky ) - g_movement.m_user_side_move_raw * std::cosf( ky );
+	const bool into = -( wx * wall_n.m_x + wy * wall_n.m_y ) > 0.f;
+
 	bool caught_now    = false;
 	const char* branch = "none";
 	if ( !fin.valid ) {
@@ -495,12 +522,24 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		reset_latch( );
 		++s_count[ wc_bail ];
 		branch = "bail";
+	} else if ( fin.pins <= 0 && glide && into && !bad( fin ) && !m_latch_arm && !m_latch_hold ) {
+		// pinless glide: you press into the wall with no along speed -> the flush slide that builds it ( next ticks can pin )
+		branch = "glide";
+		apply( fin.buttons, fin.yaw, fin.fwd );
+		reset_latch( );
+		++s_count[ wc_glide ];
 	} else if ( fin.pins <= 0 && !m_latch_arm && !m_latch_hold ) {
-		// nothing catches: donor parks you on the smallest gap ( your keys dropped ). log 17:42: 25/27 allsolid freezes after a park,
-		// 0 in 462 key ticks by the same walls, 0 pins all session -> your keys. flush = park would have gone past engine rest
+		// nothing catches: the donor parks you on the smallest gap = the sub-eps START the next tick's pin needs ( tb K -> P ).
+		// 10-10 freezes were parks past the plane ( now exact gap, ranked out ) or near-still hovers ( xy < 40: your keys )
 		const bool flush = fin.gap < k_flush_gap;
-		++s_count[ flush ? wc_flush : wc_keys ];
-		branch = flush ? "flush" : "keys";
+		if ( flush || fin.xy < k_kill_start_xy ) {
+			++s_count[ flush ? wc_flush : wc_keys ];
+			branch = flush ? "flush" : "keys";
+		} else {
+			branch = "park";
+			apply( fin.buttons, fin.yaw, fin.fwd );
+			++s_count[ wc_park ];
+		}
 	} else {
 		const bool falling_free = !pinned( start_vel.m_z ) && start_vel.m_z < k_fall_vz;
 		if ( user_duck ) {

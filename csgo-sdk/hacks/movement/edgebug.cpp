@@ -192,6 +192,22 @@ namespace {
 			return 90.f;
 		return fabsf( std::remainderf( rad2deg( atan2f( dy, dx ) ) - aim_yaw, 360.f ) );
 	}
+
+	/* ebanat FUN_1011ac10 ring: 16 vertical rays 32u out, +200 -> -100; a face under 0.6 nz = a ramp clipped the fall, not a lip */
+	bool eb_steep_ring( )
+	{
+		const c_vector o = g_ctx.m_local->get_origin( );
+		c_trace_filter filter( g_ctx.m_local );
+		for ( float a = 0.f; a < 6.2831855f; a += 0.3926991f ) {
+			const float x = o.m_x + cosf( a ) * 32.f, y = o.m_y + sinf( a ) * 32.f;
+			ray_t ray( c_vector( x, y, o.m_z + 200.f ), c_vector( x, y, o.m_z - 100.f ) );
+			trace_t tr;
+			g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
+			if ( tr.m_fraction < 1.f && tr.m_plane.m_normal.m_z < 0.6f )
+				return true;
+		}
+		return false;
+	}
 }
 
 void n_edgebug::impl_t::log_lock( const bool on )
@@ -324,6 +340,13 @@ bool n_edgebug::impl_t::EdgeBugCheck( const edge_context_t& raw_ctx )
 	const float g   = raw_ctx.gravity_tick;
 	const float vz0 = raw_ctx.backup_vel_z;
 	const float vz  = raw_ctx.current_vel_z;
+	/* EBANAT mode ( 2 ) = FUN_1011ac10: snapped to -g, or fell a step, slowed, still falls a step ( ramp ring excluded ).
+	   the confirm tick then has to fall one free step ( search loop ). */
+	if ( raw_ctx.mode == 2 ) {
+		if ( vz0 < -g && roundf( vz ) == -roundf( g ) )
+			return true;
+		return vz0 < -g + 0.25f && vz0 < vz && vz < -g + 0.25f && ( !raw_ctx.trace_edge || !eb_steep_ring( ) );
+	}
 	if ( raw_ctx.mode == 0 ) {
 		if ( eb_any( k_normal_grav, vz0, vz, g, s ) || eb_any( k_normal_abs, vz0, vz, s ) )
 			return true;
@@ -726,6 +749,13 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		const int probe_every = std::clamp( eb_ticks( 2 ), 1, 8 );
 		/* sim ticks the probe saved ( `cut=` in the log ). */
 		int tail_cut_ticks = 0;
+		/* EBANAT SHAPES ( FUN_1011b8c0 ), variants 8..15: fixed turn step a tick, hard side wish at the cone, sinus wish,
+		   duck toggled every tick. wish offsets off its max angle ( 15..360 there ). */
+		constexpr float k_eb_turn = 4.f;
+		const float eb_cap        = std::clamp( GET_VARIABLE( g_variables.m_edgebug_autostrafe_max_angle, float ), 15.f, 180.f );
+		/* user-move pair ( 2/3 strafe off, 4/5 on ): with no move + no view delta it equals 0/1 exactly, skip. */
+		const bool user_move_dead = fabsf( user_fwd ) < 0.1f && fabsf( user_side ) < 0.1f &&
+		                           fabsf( delta_angle.m_y ) < 0.01f && fabsf( delta_angle.m_x ) < 0.01f;
 
 		/* one pass. duck_at = press held from this tick ( -1 = variant's own rule ); undo_at = released
 		   and left released ( -1 = never ). bend = first |bend| ticks pushed across the velocity ( + right ).
@@ -765,10 +795,32 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				}
 				ApplyAutoStrafe( cmd, duck );
 			};
+			/* ebanat 2/3 with the mouse still: your move, view turned `step` a tick, folded silent */
+			auto turn_move = [ & ]( const float step, const bool duck ) {
+				current_angle.m_y   = std::remainderf( current_angle.m_y + step, 360.f );
+				cmd->m_buttons      = duck ? cmd->m_buttons | in_duck : cmd->m_buttons & ~in_duck;
+				cmd->m_forward_move = user_move_dead ? 450.f : user_fwd;
+				cmd->m_side_move    = user_side;
+				cmd->m_view_point   = current_angle;
+				start_movement_fix( cmd );
+				cmd->m_view_point = orig_viewangle;
+				end_movement_fix( cmd );
+			};
+			/* ebanat 4..7: side press in a wish frame `off` deg off the view ( + = left, side -450 ), through the cone */
+			auto side_wish = [ & ]( const float off, const bool duck ) {
+				cmd->m_buttons      = duck ? cmd->m_buttons | in_duck : cmd->m_buttons & ~in_duck;
+				c_angle wish        = orig_viewangle;
+				wish.m_x            = 0.f;
+				wish.m_y            = std::remainderf( orig_viewangle.m_y + off, 360.f );
+				cmd->m_forward_move = 0.f;
+				cmd->m_side_move    = off > 0.f ? -450.f : 450.f;
+				CommitStrafe( cmd, wish );
+			};
 			/* an edgebug KEEPS FALLING: ramp clips / stucks / bounces also pass the bands. hold a candidate
 			   one tick and sim the NEXT one: still airborne + falling = real, grounded / rising = not. */
 			int pending = -1;
 			c_vector pending_pos{ };
+			float pending_vz = 0.f;
 			/* end_pos taken at candidate time: a held candidate may latch ticks later. */
 			/* same variant landing within 4u of a kept plan = same path, not an alternative */
 			bool run_found = false;
@@ -834,6 +886,31 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 					else
 						strafe( true );
 					break;
+				/* 8..15 = ebanat shapes ( PASS 3 only ) */
+				case 8:
+					turn_move( k_eb_turn, false );
+					break;
+				case 9:
+					turn_move( -k_eb_turn, true );
+					break;
+				case 10:
+					turn_move( -k_eb_turn, false );
+					break;
+				case 11:
+					turn_move( k_eb_turn, true );
+					break;
+				case 12:
+					side_wish( eb_cap, false );
+					break;
+				case 13:
+					side_wish( -eb_cap, true );
+					break;
+				case 14:
+					side_wish( sinf( static_cast< float >( i + 1 ) * 0.85f ) * eb_cap * 0.65f, true );
+					break;
+				case 15:
+					strafe( ( i & 1 ) != 0 );
+					break;
 				}
 				/* square to velocity: +30 u/s lateral a tick, speed kept, cone capped in CommitStrafe */
 				if ( i < abs( bend ) ) {
@@ -887,8 +964,9 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 					const bool grounded = ( g_ctx.m_local->get_flags( ) & 1 ) != 0;
 					if ( grounded )
 						contact_tick = i + 1; /* same index the loop-top check would give */
-					else if ( g_ctx.m_local->get_velocity( ).m_z <= 0.f )
-						latch( pending, pending_pos );
+					else if ( const float vz_now = g_ctx.m_local->get_velocity( ).m_z;
+					          vz_now <= 0.f && ( detection_mode != 2 || roundf( vz_now ) == roundf( pending_vz - 2.f * grav_tick ) ) )
+						latch( pending, pending_pos ); /* mode 2: ebanat's exact free step after the slowdown */
 					pending = -1;
 					break;
 				}
@@ -908,6 +986,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 					}
 					pending     = i;
 					pending_pos = g_ctx.m_local->get_origin( );
+					pending_vz  = g_ctx.m_local->get_velocity( ).m_z;
 				}
 				search_vel_backup = g_ctx.m_local->get_velocity( );
 				/* tail probe: past reach tick, no pending candidate, ticks left worth saving. */
@@ -931,9 +1010,6 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 
 		/* closest floor any pass saw: feeds the duck sweep + next tick's cadence. */
 		int best_contact = -1;
-		/* user-move pair ( 2/3 strafe off, 4/5 on ): with no move + no view delta it equals 0/1 exactly, skip. */
-		const bool user_move_dead = fabsf( user_fwd ) < 0.1f && fabsf( user_side ) < 0.1f &&
-		                           fabsf( delta_angle.m_y ) < 0.01f && fabsf( delta_angle.m_x ) < 0.01f;
 		const int replay_variant = autostrafe ? 4 : 2;
 		/* BREADTH FIRST: every variant once, THEN the duck sweeps. never sweep inside the variant loop
 		   ( variant 0's sweep eats the budget and 1..7 never run ). */
@@ -1026,7 +1102,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		   moves height. bend turns heading ~7 deg a tick @250 = lateral + along-path phase. smallest first, near
 		   geometry + nothing found so any base find stays as before. */
 		int bend_runs = 0;
-		if ( near_geometry && m_plan_count == 0 ) {
+		/* bend + ebanat shapes steer the path: only with the autostrafe switch ( to edge ) on. off = your move / duck only */
+		if ( autostrafe && near_geometry && m_plan_count == 0 ) {
 			constexpr int k_bend[] = { 1, 2, 3, 4, 6, 8, 12 };
 			for ( int b = 0; b < 2 * static_cast< int >( std::size( k_bend ) ) && !enough( ) && !out_of_budget( ); b++ ) {
 				const int bend = ( b & 1 ) ? -k_bend[ b / 2 ] : k_bend[ b / 2 ];
@@ -1039,6 +1116,15 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 					run_variant( v, -1, -1, bend );
 					bend_runs++;
 				}
+			}
+		}
+		/* PASS 3: EBANAT SHAPES. 10-11 log: no-find searches ran out of variants, not budget ( 290/327 under 90% ) -> the
+		   rest goes to FUN_1011b8c0's shapes. zero plans only, so every base / sweep / bend find stays as before. */
+		int eb_runs = 0;
+		if ( autostrafe && near_geometry && m_plan_count == 0 ) {
+			for ( int v = 8; v < 16 && !enough( ) && !out_of_budget( ); v++ ) {
+				run_variant( v, -1 );
+				eb_runs++;
 			}
 		}
 		/* no sim contact != nothing near: fall back to reach_tick so the cadence stays every-tick near lips. */
@@ -1104,12 +1190,12 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		/* every search logs. win = slider window, run = trimmed window, reach = first hull contact, edge = lip
 		   found, base = distinct variants run, sw / rel = press / release runs, sims = spent / ceiling,
 		   us = spent / share, tick = tick the bug is due. */
-		botox_dbg_log( "EB: mode=%d win=%d run=%d reach=%d edge=%d vars=%d base=%d sw=%d rel=%d sims=%d/%d cut=%d us=%lld/%lld con=%d ipt=%.5f vz=%.2f found=%d var=%d at=%d tick=%d pth=%d/%d bd=%d bnd=%d\n",
+		botox_dbg_log( "EB: mode=%d win=%d run=%d reach=%d edge=%d vars=%d base=%d sw=%d rel=%d sims=%d/%d cut=%d us=%lld/%lld con=%d ipt=%.5f vz=%.2f found=%d var=%d at=%d tick=%d pth=%d/%d bd=%d bnd=%d ebv=%d\n",
 		               detection_mode, max_ticks, run_ticks, reach_tick, m_edge_target_valid ? 1 : 0,
 		               search_count, base_runs, sweep_runs, release_runs, total_predictions, MAX_PREDICTIONS, tail_cut_ticks,
 		               budget.used_us( ), static_cast< long long >( n_tick::interval( ) * 1000000.f * budget_share ),
 		               best_contact, n_tick::interval( ), m_backup_velocity.m_z, m_found ? 1 : 0, last_variant,
-		               m_found ? m_prediction_ticks : -1, m_found ? m_found_tick : 0, m_plan_count, want_paths, bend_runs, last_bend );
+		               m_found ? m_prediction_ticks : -1, m_found ? m_found_tick : 0, m_plan_count, want_paths, bend_runs, last_bend, eb_runs );
 	} while ( false );
 	if ( m_found ) {
 		ReStorePrediction( );

@@ -551,7 +551,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		g_botox_net.on_create_move( );
 	}
 
-	if ( GET_VARIABLE( g_variables.m_tung_surf, bool ) && !g_hooks.m_process_movement_sv.is_hooked( ) ) {
+	if ( ( GET_VARIABLE( g_variables.m_tung_surf, bool ) || GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) ) &&
+	     !g_hooks.m_process_movement_sv.is_hooked( ) ) {
 		static unsigned long long next_try = 0ull;
 		if ( const unsigned long long now = GetTickCount64( ); now >= next_try ) {
 			next_try = now + 5000ull;

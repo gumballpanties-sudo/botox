@@ -2,6 +2,7 @@
 #include "../../../game/sdk/includes/includes.h"
 #include "../../../globals/includes/includes.h"
 #include "resolution_spoof.h"
+#include "sim_clock.h"
 
 struct motion_blur_history_t {
 	motion_blur_history_t( )
@@ -94,6 +95,8 @@ bool n_screen::impl_t::on_draw_view_models( c_view_setup& setup )
 
 	static motion_blur_history_t history = { };
 
+	const float now = n_sim_clock::now( g_interfaces.m_global_vars_base );
+
 	matrix3x4_t current_basis_vectors{ };
 	g_math.angle_matrix( setup.m_angles, current_basis_vectors );
 
@@ -102,7 +105,7 @@ bool n_screen::impl_t::on_draw_view_models( c_view_setup& setup )
 	c_angle normalized_angles = setup.m_angles.normalize( );
 	c_vector position_change  = history.m_previous_position - setup.m_origin;
 
-	float time_elapsed  = g_interfaces.m_global_vars_base->m_real_time - history.m_last_time_update;
+	float time_elapsed  = now - history.m_last_time_update;
 	float travelled     = position_change.length( );
 
 	if ( ( travelled > 30.0f && time_elapsed >= 0.5f ) || time_elapsed > ( 1.0f / 15.0f ) ) {
@@ -111,7 +114,7 @@ bool n_screen::impl_t::on_draw_view_models( c_view_setup& setup )
 		motion_blur_data.m_values[ 2 ] = 0.0f;
 		motion_blur_data.m_values[ 3 ] = 0.0f;
 	} else if ( travelled > 50.0f ) {
-		history.m_no_rotational_motion_blur_until = g_interfaces.m_global_vars_base->m_real_time + 1.0f;
+		history.m_no_rotational_motion_blur_until = now + 1.0f;
 	} else {
 		float horizontal_fov = setup.m_fov;
 		float vertical_fov   = ( setup.m_aspect_ratio <= 0.0f ) ? ( setup.m_fov ) : ( setup.m_fov / setup.m_aspect_ratio );
@@ -158,8 +161,8 @@ bool n_screen::impl_t::on_draw_view_models( c_view_setup& setup )
 		motion_blur_data.m_values[ 3 ] *= ( std::fabs( normalized_angles.m_x ) / 90.0f ) * ( std::fabs( normalized_angles.m_x ) / 90.0f ) *
 		                                  ( std::fabs( normalized_angles.m_x ) / 90.0f );
 
-		if ( ( g_interfaces.m_global_vars_base->m_real_time - history.m_last_time_update ) > 0.0f )
-			motion_blur_data.m_values[ 2 ] /= (g_interfaces.m_global_vars_base->m_real_time - history.m_last_time_update ) * 30.0f;
+		if ( ( now - history.m_last_time_update ) > 0.0f )
+			motion_blur_data.m_values[ 2 ] /= (now - history.m_last_time_update ) * 30.0f;
 		else
 			motion_blur_data.m_values[ 2 ] = 0.0f;
 
@@ -174,7 +177,7 @@ bool n_screen::impl_t::on_draw_view_models( c_view_setup& setup )
 		motion_blur_data.m_values[ 3 ] *= roll_intensity * blur_strength;
 	}
 
-	if ( g_interfaces.m_global_vars_base->m_real_time < history.m_no_rotational_motion_blur_until ) {
+	if ( now < history.m_no_rotational_motion_blur_until ) {
 		motion_blur_data.m_values[ 0 ] = 0.0f;
 		motion_blur_data.m_values[ 1 ] = 0.0f;
 		motion_blur_data.m_values[ 3 ] = 0.0f;
@@ -185,7 +188,7 @@ bool n_screen::impl_t::on_draw_view_models( c_view_setup& setup )
 	history.m_previous_frame_basis_vectors = current_basis_vectors;
 	history.m_previous_pitch               = normalized_angles.m_x;
 	history.m_previous_yaw                 = normalized_angles.m_y;
-	history.m_last_time_update             = g_interfaces.m_global_vars_base->m_real_time;
+	history.m_last_time_update             = now;
 
 	if ( true ) {
 		c_texture* full_frame = g_interfaces.m_material_system->find_texture( "_rt_FullFrameFB", TEXTURE_GROUP_RENDER_TARGET );

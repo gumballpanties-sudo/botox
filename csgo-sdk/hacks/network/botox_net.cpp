@@ -3,6 +3,7 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../skins/skins_internal.h"
+#include "../web/websurface.h"
 
 #include <algorithm>
 #include <cmath>
@@ -122,6 +123,38 @@ namespace
 		player_info_t info{ };
 		return g_interfaces.m_engine_client->get_player_info( index, &info ) ? static_cast< int >( info.m_xuid_low ) : 0;
 	}
+
+	std::uint16_t hash16( const char* text, std::size_t size )
+	{
+		hash_t hash{ };
+		hash.add( text, size );
+		return static_cast< std::uint16_t >( hash.m_value ^ ( hash.m_value >> 16 ) );
+	}
+
+	std::int16_t pack_unit( float value )
+	{
+		return static_cast< std::int16_t >( std::clamp( value, -1.f, 1.f ) * 32767.f );
+	}
+
+	bool unpack_dir( const std::int16_t packed[ 3 ], float out[ 3 ] )
+	{
+		for ( int i = 0; i < 3; i++ )
+			out[ i ] = packed[ i ] / 32767.f;
+		const float length = std::sqrt( out[ 0 ] * out[ 0 ] + out[ 1 ] * out[ 1 ] + out[ 2 ] * out[ 2 ] );
+		return length > 0.9f && length < 1.1f;
+	}
+
+	/* a remote url drives our browser: plain http(s), printable, nothing else */
+	bool safe_url( const char* url )
+	{
+		if ( std::strncmp( url, "http://", 7 ) && std::strncmp( url, "https://", 8 ) )
+			return false;
+		for ( const char* c = url; *c; c++ ) {
+			if ( *c < 0x21 || *c > 0x7E )
+				return false;
+		}
+		return true;
+	}
 }
 
 bool n_botox_net::impl_t::active( ) const
@@ -132,6 +165,11 @@ bool n_botox_net::impl_t::active( ) const
 bool n_botox_net::impl_t::skins_on( ) const
 {
 	return active( ) && GET_VARIABLE( g_variables.m_botox_network_skins, bool );
+}
+
+bool n_botox_net::impl_t::web_on( ) const
+{
+	return active( ) && GET_VARIABLE( g_variables.m_botox_network_web, bool );
 }
 
 bool n_botox_net::impl_t::send( const packet_t& packet )
@@ -196,9 +234,10 @@ void n_botox_net::impl_t::on_create_move( )
 
 	const bool share_esp   = GET_VARIABLE( g_variables.m_botox_network_esp, bool );
 	const bool share_skins = GET_VARIABLE( g_variables.m_botox_network_skins, bool );
+	const bool share_web   = GET_VARIABLE( g_variables.m_botox_network_web, bool );
 
 	if ( !fresh( m_last_hello, 1.f ) ) {
-		const std::uint8_t flags = ( share_esp ? hello_esp : 0 ) | ( share_skins ? hello_skins : 0 );
+		const std::uint8_t flags = ( share_esp ? hello_esp : 0 ) | ( share_skins ? hello_skins : 0 ) | ( share_web ? hello_web : 0 );
 		if ( !send( make_packet( packet_hello, &flags, sizeof( flags ) ) ) )
 			botox_dbg_log( "NET: hello send failed" );
 		m_last_hello = now( );
@@ -212,6 +251,137 @@ void n_botox_net::impl_t::on_create_move( )
 
 	if ( share_skins )
 		send_skins( );
+
+	if ( share_web )
+		send_web( );
+}
+
+/* place + basis + url chunks on a loop; our own share event restarts it at once */
+void n_botox_net::impl_t::send_web( )
+{
+	web_share_t web{ };
+	if ( !Web_ShareGet( web ) ) {
+		m_web_queue.clear( );
+		m_web_cursor = 0;
+		return;
+	}
+
+	const int seq    = static_cast< int >( web.m_seq & WEB_SEQ );
+	const bool event = seq != m_web_own_seq;
+	if ( event ) {
+		if ( m_web_own_seq >= 0 && m_web_follow ) {
+			botox_dbg_log( "NET: web own change, stop following %d", m_web_follow );
+			m_web_follow = 0;
+		}
+		m_web_own_seq = seq;
+	}
+
+	if ( !event && fresh( m_last_web, 0.05f ) )
+		return;
+
+	m_last_web = now( );
+
+	if ( event || m_web_cursor >= m_web_queue.size( ) ) {
+		m_web_queue.clear( );
+		m_web_cursor = 0;
+
+		const auto length  = static_cast< std::uint8_t >( web.m_url.size( ) <= static_cast< std::size_t >( WEB_URL_MAX ) ? web.m_url.size( ) : 0 );
+		const auto seq_bit = static_cast< std::uint8_t >( seq | ( web.m_placed ? WEB_PLACED : 0 ) );
+
+		web_place_data_t place{ };
+		std::memcpy( place.m_pos, web.m_pos, sizeof( place.m_pos ) );
+		place.m_url_hash   = hash16( web.m_url.c_str( ), length );
+		place.m_url_length = length;
+		place.m_seq        = seq_bit;
+		m_web_queue.push_back( make_packet( packet_web_place, &place, sizeof( place ) ) );
+
+		web_basis_data_t basis{ };
+		for ( int i = 0; i < 3; i++ ) {
+			basis.m_normal[ i ] = pack_unit( web.m_normal[ i ] );
+			basis.m_right[ i ]  = pack_unit( web.m_right[ i ] );
+		}
+		basis.m_scale_centi = static_cast< std::uint16_t >( std::clamp( web.m_scale * 100.f, 1.f, 65535.f ) );
+		basis.m_aspect      = static_cast< std::uint8_t >( std::clamp( web.m_aspect, 0, 255 ) );
+		basis.m_seq         = seq_bit;
+		m_web_queue.push_back( make_packet( packet_web_basis, &basis, sizeof( basis ) ) );
+
+		for ( int chunk = 0; web.m_placed && chunk * WEB_URL_CHUNK < length; chunk++ ) {
+			web_url_data_t part{ };
+			part.m_url_hash = place.m_url_hash;
+			part.m_chunk    = static_cast< std::uint8_t >( chunk );
+			std::memcpy( part.m_text, web.m_url.c_str( ) + chunk * WEB_URL_CHUNK, ( std::min )( WEB_URL_CHUNK, length - chunk * WEB_URL_CHUNK ) );
+			m_web_queue.push_back( make_packet( packet_web_url, &part, sizeof( part ) ) );
+		}
+	}
+
+	if ( m_web_cursor < m_web_queue.size( ) )
+		send( m_web_queue[ m_web_cursor++ ] );
+}
+
+/* newest share event of any sender wins; first sight of a sender never replaces a screen we already have */
+void n_botox_net::impl_t::apply_web( int sender )
+{
+	auto& web = m_web[ sender ];
+	if ( !web.m_have_place || !web.m_have_basis || web.m_place_seq != web.m_basis_seq )
+		return;
+
+	const bool placed = ( web.m_place_seq & WEB_PLACED ) != 0;
+	const int seq     = web.m_place_seq & WEB_SEQ;
+	if ( seq == web.m_applied )
+		return;
+
+	if ( placed && web.m_url_length ) {
+		const int chunks         = ( web.m_url_length + WEB_URL_CHUNK - 1 ) / WEB_URL_CHUNK;
+		const std::uint32_t need = ( 1u << chunks ) - 1u;
+		if ( ( web.m_url_chunks & need ) != need )
+			return;
+
+		if ( hash16( web.m_url, web.m_url_length ) != web.m_url_hash ) {
+			web.m_url_chunks = 0;
+			return;
+		}
+	}
+
+	web_share_t local{ };
+	if ( !Web_ShareGet( local ) )
+		return;
+
+	const bool first = web.m_applied < 0;
+	web.m_applied    = seq;
+
+	if ( !placed ) {
+		if ( m_web_follow == sender ) {
+			local.m_placed = false;
+			Web_ShareApply( local );
+			m_web_follow = 0;
+			botox_dbg_log( "NET: web screen removed by %d", sender );
+		}
+		return;
+	}
+
+	if ( first && local.m_placed ) {
+		botox_dbg_log( "NET: web screen from %d skipped, ours is up", sender );
+		return;
+	}
+
+	if ( web.m_url_length && !safe_url( web.m_url ) ) {
+		botox_dbg_log( "NET: web url from %d refused", sender );
+		return;
+	}
+
+	web_share_t share{ };
+	share.m_placed = true;
+	std::memcpy( share.m_pos, web.m_pos, sizeof( share.m_pos ) );
+	std::memcpy( share.m_normal, web.m_normal, sizeof( share.m_normal ) );
+	std::memcpy( share.m_right, web.m_right, sizeof( share.m_right ) );
+	share.m_scale  = web.m_scale;
+	share.m_aspect = web.m_aspect;
+	if ( web.m_url_length )
+		share.m_url = web.m_url;
+
+	Web_ShareApply( share );
+	m_web_follow = sender;
+	botox_dbg_log( "NET: web screen from %d seq %d url %.120s", sender, seq, web.m_url_length ? web.m_url : "(theirs empty, kept ours)" );
 }
 
 void n_botox_net::impl_t::send_esp( )
@@ -438,6 +608,63 @@ void n_botox_net::impl_t::receive( int sender, const packet_t& packet )
 		shared.m_origin = origin;
 		shared.m_health = esp.m_health;
 		shared.m_time   = now( );
+		return;
+	}
+
+	if ( packet.m_type >= packet_web_place && packet.m_type <= packet_web_url ) {
+		if ( !web_on( ) )
+			return;
+
+		auto& web = m_web[ sender ];
+		if ( packet.m_type == packet_web_place ) {
+			web_place_data_t data{ };
+			std::memcpy( &data, packet.m_data, sizeof( data ) );
+
+			for ( const float axis : data.m_pos ) {
+				if ( !std::isfinite( axis ) || std::fabs( axis ) > 65536.f )
+					return;
+			}
+			if ( data.m_url_length > WEB_URL_MAX )
+				return;
+
+			if ( data.m_url_hash != web.m_url_hash || data.m_url_length != web.m_url_length ) {
+				web.m_url_hash   = data.m_url_hash;
+				web.m_url_length = data.m_url_length;
+				web.m_url_chunks = 0;
+				std::memset( web.m_url, 0, sizeof( web.m_url ) );
+			}
+
+			std::memcpy( web.m_pos, data.m_pos, sizeof( web.m_pos ) );
+			web.m_place_seq  = data.m_seq;
+			web.m_have_place = true;
+		} else if ( packet.m_type == packet_web_basis ) {
+			web_basis_data_t data{ };
+			std::memcpy( &data, packet.m_data, sizeof( data ) );
+
+			float normal[ 3 ], right[ 3 ];
+			if ( !unpack_dir( data.m_normal, normal ) || !unpack_dir( data.m_right, right ) ||
+			     std::fabs( normal[ 0 ] * right[ 0 ] + normal[ 1 ] * right[ 1 ] + normal[ 2 ] * right[ 2 ] ) > 0.1f )
+				return;
+
+			std::memcpy( web.m_normal, normal, sizeof( normal ) );
+			std::memcpy( web.m_right, right, sizeof( right ) );
+			web.m_scale      = std::clamp( data.m_scale_centi / 100.f, 0.1f, 8.f );
+			web.m_aspect     = data.m_aspect;
+			web.m_basis_seq  = data.m_seq;
+			web.m_have_basis = true;
+		} else {
+			web_url_data_t data{ };
+			std::memcpy( &data, packet.m_data, sizeof( data ) );
+
+			const int offset = data.m_chunk * WEB_URL_CHUNK;
+			if ( !web.m_have_place || data.m_url_hash != web.m_url_hash || offset >= web.m_url_length )
+				return;
+
+			std::memcpy( web.m_url + offset, data.m_text, ( std::min )( WEB_URL_CHUNK, web.m_url_length - offset ) );
+			web.m_url_chunks |= 1u << data.m_chunk;
+		}
+
+		apply_web( sender );
 		return;
 	}
 
@@ -1012,6 +1239,15 @@ void n_botox_net::impl_t::on_level_init( )
 	m_items.clear( );
 	m_queue.clear( );
 	m_queue_cursor  = 0;
+
+	/* own share seq kept: it lives in the web code across maps */
+	for ( auto& web : m_web )
+		web = { };
+	m_web_queue.clear( );
+	m_web_cursor    = 0;
+	m_last_web      = -1.f;
+	m_web_follow    = 0;
+
 	m_spec_target   = 0;
 	m_spec_weapon   = 0;
 	m_spec_rebuild_at[ 0 ] = m_spec_rebuild_at[ 1 ] = 0.f;

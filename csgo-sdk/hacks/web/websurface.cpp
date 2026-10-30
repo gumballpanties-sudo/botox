@@ -25,8 +25,14 @@ void botox_dbg_log(const char* fmt, ...);
 #define g_webClickKey         (GET_VARIABLE(g_variables.m_web_click_key, key_bind_t).m_key)
 #define g_webRClickKey        (GET_VARIABLE(g_variables.m_web_right_click_key, key_bind_t).m_key)
 #define g_webRemoveKey        (GET_VARIABLE(g_variables.m_web_remove_key, key_bind_t).m_key)
-#define g_webScale            GET_VARIABLE(g_variables.m_web_scale, float)
-#define g_webAspect           GET_VARIABLE(g_variables.m_web_aspect, int)
+// botox: a screen adopted from the botox network keeps its sender's size + aspect
+static bool        s_shareDims   = false;
+static float       s_shareScale  = 1.f;
+static int         s_shareAspect = 0;
+static unsigned    s_shareSeq    = 0;
+static std::string s_shareUrl;
+#define g_webScale            (s_shareDims ? s_shareScale : GET_VARIABLE(g_variables.m_web_scale, float))
+#define g_webAspect           (s_shareDims ? s_shareAspect : GET_VARIABLE(g_variables.m_web_aspect, int))
 #define g_webWorldOpacity     GET_VARIABLE(g_variables.m_web_world_opacity, float)
 #define g_webDepthMode        GET_VARIABLE(g_variables.m_web_depth_mode, int)
 #define g_webBackMode         GET_VARIABLE(g_variables.m_web_back_mode, int)
@@ -1139,6 +1145,9 @@ static void WebDoPlace()
     WsBasisFromNormal(s_normal, s_viewFwd, s_right, s_up);
     s_placed = true;
     s_rebake = true;
+    s_shareDims = false;   // botox: own place = own size, new share event
+    ++s_shareSeq;
+    if (!s_curUrl.empty()) s_shareUrl = s_curUrl;
     if (g_webAutoPlay && WebAlive()) {
         if (g_webPlayFromStart) WebExecJs_SEH("window.__fpsPlayFrom0=1");
         WebExecJs_SEH(k_wsPlayJs);
@@ -1491,7 +1500,10 @@ static void WebDrainCommands()
 
     for (const WsCmd& c : cmds) {
         switch (c.op) {
-        case WS_NAV:     WebNavigate(c.s); break;
+        case WS_NAV:
+            WebNavigate(c.s);
+            if (!c.a) { s_shareUrl = WsNormalizeUrl(c.s); ++s_shareSeq; }   // botox: a = 1 = adopted, not ours
+            break;
         case WS_BACK:    WebSimple_SEH(0); break;
         case WS_FWD:     WebSimple_SEH(1); break;
         case WS_RELOAD:  WebSimple_SEH(2); break;
@@ -1539,11 +1551,55 @@ void Web_Navigate(const char* url) { if (url && *url) WebPost(WS_NAV, 0, 0, url)
 
 void Web_ClearCache() { WebPost(WS_CLEARCACHE); }
 
-void Web_Unplace()
+static void WebUnplace()
 {
     if (s_placed) WebPost(WS_PAUSE);
     s_placed = false;
     s_rebake = true;
+    s_shareDims = false;
+}
+
+void Web_Unplace()
+{
+    if (s_placed) ++s_shareSeq;   // botox: share event
+    WebUnplace();
+}
+
+bool Web_ShareGet(web_share_t& out)
+{
+    if (!g_webEnable) return false;
+    out.m_placed = s_placed;
+    out.m_pos[0] = s_pos.x;       out.m_pos[1] = s_pos.y;       out.m_pos[2] = s_pos.z;
+    out.m_normal[0] = s_normal.x; out.m_normal[1] = s_normal.y; out.m_normal[2] = s_normal.z;
+    out.m_right[0] = s_right.x;   out.m_right[1] = s_right.y;   out.m_right[2] = s_right.z;
+    out.m_scale  = g_webScale;
+    out.m_aspect = g_webAspect;
+    out.m_seq    = s_shareSeq;
+    out.m_url    = !s_shareUrl.empty() ? s_shareUrl : !s_curUrl.empty() ? s_curUrl : g_webUrl;
+    return true;
+}
+
+void Web_ShareApply(const web_share_t& in)
+{
+    if (!g_webEnable) return;
+    if (!in.m_placed) { WebUnplace(); return; }
+
+    const std::string url = WsNormalizeUrl(in.m_url);
+    if (!url.empty() && url != s_shareUrl && url != s_curUrl) WebPost(WS_NAV, 1, 0, url.c_str());
+    if (!url.empty()) s_shareUrl = url;
+
+    s_normal = WsNorm(WsVec3(in.m_normal[0], in.m_normal[1], in.m_normal[2]));
+    s_right  = WsNorm(WsVec3(in.m_right[0], in.m_right[1], in.m_right[2]));
+    s_up     = WsNorm(WsCross(s_normal, s_right));
+    s_pos    = WsVec3(in.m_pos[0], in.m_pos[1], in.m_pos[2]);
+    s_shareScale  = in.m_scale;
+    s_shareAspect = (in.m_aspect >= 0 && in.m_aspect < k_wsAspectCount) ? in.m_aspect : 0;
+    s_shareDims   = true;
+    s_placed = true;
+    s_rebake = true;
+    if (g_webAutoPlay && WebAlive()) WebExecJs_SEH(k_wsPlayJs);
+    DebugLog("web: shared screen at %.1f %.1f %.1f n=%.2f %.2f %.2f url=%.160s",
+             s_pos.x, s_pos.y, s_pos.z, s_normal.x, s_normal.y, s_normal.z, url.c_str());
 }
 
 // Main thread (CreateMove). s_crossInside is only ever true with the menu closed.
@@ -2187,6 +2243,7 @@ void Web_LevelShutdown()
 {
     if (s_placed) WebPost(WS_PAUSE);
     s_placed = false;
+    s_shareDims = false;
     s_verts.clear(); s_vertsBack.clear(); s_idx.clear();
 }
 

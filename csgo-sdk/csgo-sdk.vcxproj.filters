@@ -51,6 +51,7 @@
     <ClCompile Include="hacks\movement\air_stuck.cpp" />
     <ClCompile Include="hacks\movement\fireman.cpp" />
     <ClCompile Include="hacks\misc\hitmarker.cpp" />
+    <ClCompile Include="hacks\misc\boot_screen.cpp" />
     <ClCompile Include="hacks\misc\points.cpp" />
     <ClCompile Include="hacks\misc\fake_pov.cpp" />
     <ClCompile Include="hacks\misc\bot_names.cpp" />

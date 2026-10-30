@@ -319,6 +319,8 @@ static unsigned long __stdcall on_attach( void* instance )
 {
 	boot_crumb( "on_attach entered" );
 
+	boot_screen_begin( );
+
 	g_console.on_attach( "fart" );
 
 	boot_crumb( "console ready" );
@@ -335,7 +337,10 @@ static unsigned long __stdcall on_attach( void* instance )
 	const auto stage = []( const char* name, bool ( *fn )( ), const bool fatal ) -> bool {
 		g_console.print( std::vformat( "initialising {:s}", std::make_format_args( name ) ).c_str( ) );
 
-		if ( fn( ) ) {
+		const bool ok = fn( );
+		boot_screen_step( );
+
+		if ( ok ) {
 			g_console.print( std::vformat( "initialised {:s}", std::make_format_args( name ) ).c_str( ) );
 			return true;
 		}
@@ -385,6 +390,8 @@ static unsigned long __stdcall on_attach( void* instance )
 	else
 		g_console.print( "initialised hooks" );
 
+	boot_screen_step( );
+
 	boot_crumb( "hooks done, init complete" );
 
 	g_console.print( "initialising media player" );
@@ -399,10 +406,14 @@ static unsigned long __stdcall on_attach( void* instance )
 
 	boot_crumb( "eject requested, teardown start" );
 
+	boot_screen_eject_begin( );
+
 	g_ctx.m_world_restore_requested = true;
 
 	for ( int i = 0; i < 20 && !g_ctx.m_world_restore_done.load( std::memory_order_acquire ); i++ )
 		std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
+
+	boot_screen_eject_end( );
 
 	/* flag first, then a breath: every detour now passes straight to the original, nothing draws into freed buffers */
 	g_ctx.m_unloading         = true;

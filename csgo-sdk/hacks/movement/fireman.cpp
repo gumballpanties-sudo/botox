@@ -1912,9 +1912,11 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 	if ( g_wall_climb.caught( cmd ) || g_wall_climb.active( cmd ) )
 		return;
 
-	if ( m_fireman_data.was_ladder && m_fireman_data.engaged && g_prediction.backup_data.m_move_type != move_type_ladder ) {
+	// alien ladders too: player jumped off a ladder we never grabbed = their airtime, hunt must not lock keys + drag them back
+	if ( m_fireman_data.was_ladder && g_prediction.backup_data.m_move_type != move_type_ladder ) {
 		const c_vector& fling = g_prediction.backup_data.m_velocity;
 		const float fling_h   = fling.length_2d( );
+		const bool ours_exit  = m_fireman_data.engaged;
 
 		if ( fling_h > 64.f ) {
 			m_fireman_data.left_valid        = true;
@@ -1927,12 +1929,12 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			constexpr float left_probe_max = 1024.f;
 
 			float left_drop   = 0.f;
-			const c_vector lp = m_fireman_data.ride_point;
+			const c_vector lp = ours_exit ? m_fireman_data.ride_point : g_prediction.backup_data.m_origin;
 
 			m_fireman_data.left_point = lp;
 			m_fireman_data.left_point.m_z = lp.m_z - 8192.f;
 
-			if ( auto left_col = g_ctx.m_local->get_collideable( ); left_col && m_fireman_data.yaw_valid ) {
+			if ( auto left_col = g_ctx.m_local->get_collideable( ); left_col && ours_exit && m_fireman_data.yaw_valid ) {
 				const c_vector lmins = left_col->get_obb_mins( );
 				const c_vector lmaxs = left_col->get_obb_maxs( );
 
@@ -1954,7 +1956,8 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 					m_fireman_data.left_point.m_z = lp.m_z - left_drop + ( capped ? band_lo : band_hi );
 			}
 
-			botox_dbg_log( "[fr] left armed h=%.0f nyaw=%.0f below=%.0f", fling_h, m_fireman_data.left_normal.to_angle( ).m_y, left_drop );
+			botox_dbg_log( "[fr] left armed h=%.0f nyaw=%.0f below=%.0f ours=%d", fling_h, m_fireman_data.left_normal.to_angle( ).m_y, left_drop,
+			               ( int )ours_exit );
 		}
 	}
 
