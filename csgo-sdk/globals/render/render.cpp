@@ -747,6 +747,11 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 		merge_extended_glyphs( atlas, 14.f, dna_config.FontBuilderFlags, e_glyph_tier::glyph_tier_basic );
 	}
 
+	/* chifirium gamesense: 15 px atlas, drawn at 13 */
+	fonts[ e_font_names::font_name_gamesense_sf_bold_15 ] =
+		add_donor_font( sf_pro_display_bold, sizeof( sf_pro_display_bold ), 15.f, ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap, false );
+	merge_extended_glyphs( atlas, 15.f, ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap, e_glyph_tier::glyph_tier_basic );
+
 	fonts[ e_font_names::font_name_points_montserrat_italic_18 ] = add_donor_font(
 		montserrat_medium_italic, sizeof( montserrat_medium_italic ), 18.f, ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap, false );
 

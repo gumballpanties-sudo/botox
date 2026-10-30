@@ -47,6 +47,10 @@ namespace
 			case 18: font = g_render.m_fonts[ e_font_names::font_name_dna_pt_root_bold_15 ]; break;
 			case 19: font = g_render.m_fonts[ e_font_names::font_name_cucumber_tahoma_14 ]; break;
 			case 20: font = g_render.m_fonts[ e_font_names::font_name_howeweware_minecraft_14 ]; break;
+			case 21:
+				font = g_render.m_fonts[ e_font_names::font_name_gamesense_sf_bold_15 ];
+				size = 13.f;
+				break;
 			default: break;
 			}
 		}

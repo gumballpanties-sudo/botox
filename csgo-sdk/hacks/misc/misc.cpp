@@ -290,6 +290,8 @@ void n_misc::impl_t::draw_watermark( )
 		return this->draw_watermark_dna_clarity( );
 	case 20:
 		return this->draw_watermark_howeweware( );
+	case 21:
+		return this->draw_watermark_gamesense( );
 	default:
 		break;
 	}
@@ -818,6 +820,10 @@ static std::tuple< ImFont*, ImFont*, float > media_player_fonts( )
 		case 18: pick( e_font_names::font_name_dna_pt_root_bold_15, e_font_names::font_name_dna_pt_root_bold_15 ); break;
 		case 19: pick( e_font_names::font_name_cucumber_tahoma_14, e_font_names::font_name_cucumber_tahoma_14 ); break;
 		case 20: pick( e_font_names::font_name_howeweware_minecraft_14, e_font_names::font_name_howeweware_minecraft_14 ); break;
+		case 21:
+			pick( e_font_names::font_name_gamesense_sf_bold_15, e_font_names::font_name_gamesense_sf_bold_15 );
+			size = 13.f;
+			break;
 		default: break;
 		}
 	}
@@ -1832,6 +1838,9 @@ void n_misc::impl_t::on_end_scene( )
 			break;
 		case 30:
 			draw_spectator_list_howeweware( );
+			break;
+		case 31:
+			draw_spectator_list_gamesense( );
 			break;
 		default:
 			break;

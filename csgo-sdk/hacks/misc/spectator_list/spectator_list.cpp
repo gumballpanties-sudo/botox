@@ -4816,6 +4816,9 @@ void n_misc::impl_t::draw_spectator_list_lumi( )
 	if ( type == 2 )
 		return draw_spectator_list_lumi_interwebz( );
 
+	if ( type == 3 )
+		return draw_spectator_list_lumi_kami( );
+
 	const auto font = g_render.m_fonts[ e_font_names::font_name_lumi_rubik_16 ];
 
 	struct row_t {
@@ -5167,6 +5170,111 @@ void n_misc::impl_t::draw_spectator_list_lumi_interwebz( )
 	const float title_w = width_of( title_font, "spectators" );
 	draw_list->AddText( title_font, title_font->FontSize, ImVec2( x + width * 0.5f - title_w * 0.5f, y + ( 23.f - title_font->FontSize ) * 0.5f ), local_color,
 	                    "spectators" );
+
+	g_render.end_stretch_block( block );
+}
+
+/* Desktop\Kami-Speclist (lumia kami): fixed 160 wide, header 24, rows 20, body eases at rate 16 */
+void n_misc::impl_t::draw_spectator_list_lumi_kami( )
+{
+	const auto font = g_render.m_fonts[ e_font_names::font_name_lumi_rubik_16 ];
+
+	static float body     = 8.f;
+	static int last_frame = -2;
+
+	if ( !font || !g_interfaces.m_engine_client->is_in_game( ) )
+		return;
+
+	std::vector< spectator_entry_t > entries{ };
+	collect_spectators( entries, true, !GET_VARIABLE( g_variables.m_spectators_lumi_hide_gotv, bool ) );
+
+	const bool show_target = GET_VARIABLE( g_variables.m_spectators_list_show_target, bool );
+
+	if ( !show_target )
+		std::erase_if( entries, []( const spectator_entry_t& entry ) { return !entry.m_watching_local; } );
+
+	if ( entries.empty( ) && !GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ) )
+		return;
+
+	std::sort( entries.begin( ), entries.end( ), []( const spectator_entry_t& a, const spectator_entry_t& b ) { return a.m_index < b.m_index; } );
+
+	constexpr float width = 160.f, header = 24.f, row_h = 20.f, avatar = 16.f, inset = 8.f, rounding = 3.f;
+
+	const float target = entries.empty( ) ? 8.f : static_cast< float >( entries.size( ) ) * row_h + 4.f;
+	const int frame    = ImGui::GetFrameCount( );
+
+	if ( last_frame + 1 != frame )
+		body = target;
+	else {
+		body += ( target - body ) * ( 1.f - std::exp( -16.f * ImClamp( ImGui::GetIO( ).DeltaTime, 0.f, 0.1f ) ) );
+		if ( std::fabs( body - target ) < 0.05f )
+			body = target;
+	}
+
+	last_frame = frame;
+
+	drag_placed_panel( width, header + body );
+
+	const float x = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_x, int ) );
+	const float y = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_y, int ) );
+
+	const auto draw_list = ImGui::GetBackgroundDrawList( );
+	const bool blur      = GET_VARIABLE( g_variables.m_spectators_lumi_blur, bool );
+	const bool blurred   = blur && queue_airflow_blur( draw_list );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	const ImVec2 min( x, y ), max( x + width, y + header + body ), body_min( x, y + header );
+	const float opacity = blur ? 0.8f : ImClamp( GET_VARIABLE( g_variables.m_spectators_kami_opacity, float ), 0.f, 100.f ) * 0.01f;
+
+	/* one rounded silhouette clipped into header / body, no seam */
+	draw_list->PushClipRect( body_min, max, true );
+	airflow_blur_rect( draw_list, blurred, min, max, IM_COL32_WHITE, rounding, ImDrawFlags_RoundCornersAll );
+	draw_list->AddRectFilled( min, max, IM_COL32( 20, 20, 20, static_cast< int >( 255.f * opacity ) ), rounding );
+	draw_list->PopClipRect( );
+
+	const float size = font->FontSize;
+
+	draw_list->PushClipRect( min, ImVec2( max.x, body_min.y ), true );
+	draw_list->AddRectFilled( min, max, IM_COL32( 13, 13, 13, 255 ), rounding );
+	const float title_y = std::round( y + ( header - size ) * 0.5f );
+	draw_list->AddText( font, size, ImVec2( x + inset + 1.f, title_y + 1.f ), IM_COL32( 0, 0, 0, 220 ), "Spectators" );
+	draw_list->AddText( font, size, ImVec2( x + inset, title_y ), IM_COL32( 219, 219, 219, 255 ), "Spectators" );
+	draw_list->PopClipRect( );
+
+	const bool avatars = GET_VARIABLE( g_variables.m_spectators_avatar, bool );
+	const float corner = GET_VARIABLE( g_variables.m_spectators_kami_circle, bool ) ? avatar * 0.5f : 5.f;
+	const ImU32 local  = GET_VARIABLE( g_variables.m_spectators_list_text_color_one, c_color ).get_u32( );
+	const ImU32 other  = GET_VARIABLE( g_variables.m_spectators_list_text_color_two, c_color ).get_u32( );
+	const float text_x = avatars ? x + inset + avatar + 8.f : x + inset;
+
+	draw_list->PushClipRect( body_min, max, true );
+
+	for ( std::size_t i = 0; i < entries.size( ); ++i ) {
+		const float row_y = body_min.y + 2.f + static_cast< float >( i ) * row_h;
+		if ( row_y >= max.y )
+			break;
+
+		const auto& entry = entries[ i ];
+
+		if ( avatars ) {
+			const ImVec2 a_min( x + inset, row_y + ( row_h - avatar ) * 0.5f ), a_max( a_min.x + avatar, a_min.y + avatar );
+
+			if ( const auto texture = spectator_avatar_texture( entry.m_index, entry.m_team, entry.m_fake_player ) )
+				draw_list->AddImageRounded( texture, a_min, a_max, ImVec2( 0.f, 0.f ), ImVec2( 1.f, 1.f ), IM_COL32_WHITE, corner );
+			else
+				draw_list->AddRectFilled( a_min, a_max, IM_COL32( 48, 52, 60, 255 ), corner );
+		}
+
+		const ImU32 color      = entry.m_watching_local ? local : other;
+		const std::string name = ellipsize_text( font, size, show_target ? entry.m_name + " -> " + entry.m_target_name : entry.m_name, max.x - inset - text_x );
+		const float text_y     = std::round( row_y + ( row_h - size ) * 0.5f ) - 2.f;
+		const int shadow       = static_cast< int >( ( color >> IM_COL32_A_SHIFT ) & 0xff ) * 220 / 255;
+
+		draw_list->AddText( font, size, ImVec2( text_x + 1.f, text_y + 1.f ), IM_COL32( 0, 0, 0, shadow ), name.c_str( ) );
+		draw_list->AddText( font, size, ImVec2( text_x, text_y ), color, name.c_str( ) );
+	}
+
+	draw_list->PopClipRect( );
 
 	g_render.end_stretch_block( block );
 }
@@ -5938,6 +6046,229 @@ void n_misc::impl_t::draw_spectator_list_howeweware( )
 	g_render.end_stretch_block( block );
 }
 
+namespace {
+	/* chifirium.dll FUN_1008e770: sf pro display bold 15 px atlas, every measure + draw at 13 */
+	constexpr float gamesense_size = 13.f;
+
+	float gamesense_width( ImFont* font, const std::string& text ) { return font->CalcTextSizeA( gamesense_size, FLT_MAX, 0.f, text.c_str( ) ).x; }
+
+	/* 4 layers around the content box: black edge, 36 grey, 18 grey, 12 bg, 62 grey inner line */
+	void gamesense_frame( ImDrawList* list, const ImVec2 min, const ImVec2 max )
+	{
+		list->AddRectFilled( ImVec2( min.x - 3.f, min.y - 3.f ), ImVec2( max.x + 3.f, max.y + 3.f ), IM_COL32( 36, 36, 36, 255 ) );
+		list->AddRect( ImVec2( min.x - 3.f, min.y - 3.f ), ImVec2( max.x + 3.f, max.y + 3.f ), IM_COL32( 0, 0, 0, 255 ), 0.f, 0, 1.f );
+		list->AddRectFilled( ImVec2( min.x - 1.f, min.y - 1.f ), ImVec2( max.x + 1.f, max.y + 1.f ), IM_COL32( 18, 18, 18, 255 ) );
+		list->AddRectFilled( min, max, IM_COL32( 12, 12, 12, 245 ) );
+		list->AddRect( ImVec2( min.x + 1.f, min.y + 1.f ), ImVec2( max.x - 1.f, max.y - 1.f ), IM_COL32( 62, 62, 62, 255 ), 0.f, 0, 1.f );
+	}
+
+	/* skeet blue -> pink -> yellow, 2 px under the inner line */
+	void gamesense_bar( ImDrawList* list, const ImVec2 min, const ImVec2 max )
+	{
+		constexpr ImU32 blue = IM_COL32( 59, 175, 222, 255 ), pink = IM_COL32( 202, 70, 205, 255 ), yellow = IM_COL32( 201, 227, 58, 255 );
+		const float mid = min.x + ( max.x - min.x ) * 0.5f;
+
+		list->AddRectFilledMultiColor( ImVec2( min.x + 2.f, min.y + 2.f ), ImVec2( mid, min.y + 4.f ), blue, pink, pink, blue );
+		list->AddRectFilledMultiColor( ImVec2( mid, min.y + 2.f ), ImVec2( max.x - 2.f, min.y + 4.f ), pink, yellow, yellow, pink );
+	}
+
+	/* "game" + "sense" two tone brand: split at half the codepoints ( "gamesense" -> game | sense ) */
+	std::size_t gamesense_split( const std::string& text )
+	{
+		std::vector< std::size_t > starts{ };
+		for ( std::size_t i = 0; i < text.size( ); ++i )
+			if ( ( static_cast< unsigned char >( text[ i ] ) & 0xc0 ) != 0x80 )
+				starts.push_back( i );
+
+		return starts.size( ) < 2 ? text.size( ) : starts[ starts.size( ) / 2 ];
+	}
+}
+
+void n_misc::impl_t::draw_watermark_gamesense( )
+{
+	const auto font = g_render.m_fonts[ e_font_names::font_name_gamesense_sf_bold_15 ];
+
+	if ( !font )
+		return;
+
+	const auto engine  = g_interfaces.m_engine_client;
+	const auto globals = g_interfaces.m_global_vars_base;
+	const bool in_game = engine->is_in_game( );
+
+	/* donor fps: 0.1 * ( 1 / frametime ) + 0.9 * last */
+	static float fps = 0.f;
+	if ( globals )
+		fps = 1.f / ImMax( 0.0001f, globals->m_frame_time ) * 0.1f + fps * 0.9f;
+
+	std::vector< std::string > parts{ };
+
+	if ( GET_VARIABLE( g_variables.m_watermark_user, bool ) )
+		parts.push_back( GET_VARIABLE( g_variables.m_watermark_clarity_user, std::string ) );
+
+	if ( GET_VARIABLE( g_variables.m_watermark_fps, bool ) )
+		parts.push_back( std::format( "{} fps", static_cast< int >( fps + 0.5f ) ) );
+
+	if ( GET_VARIABLE( g_variables.m_watermark_ping, bool ) ) {
+		const auto net_channel = engine->get_net_channel_info( );
+		parts.push_back( std::format( "{}ms", net_channel ? static_cast< int >( net_channel->get_latency( FLOW_OUTGOING ) * 1000.f ) : 0 ) );
+	}
+
+	if ( GET_VARIABLE( g_variables.m_watermark_tickrate, bool ) && in_game && globals && globals->m_interval_per_tick > 0.f )
+		parts.push_back( std::format( "{}tick", static_cast< int >( 1.f / globals->m_interval_per_tick + 0.5f ) ) );
+
+	if ( GET_VARIABLE( g_variables.m_watermark_velocity, bool ) ) {
+		const int speed = in_game && g_ctx.m_local ? static_cast< int >( g_ctx.m_local->get_velocity( ).length_2d( ) + 0.5f ) : 0;
+		parts.push_back( std::format( "{} vel", speed ) );
+	}
+
+	if ( GET_VARIABLE( g_variables.m_watermark_time, bool ) ) {
+		const std::time_t raw = std::time( nullptr );
+		std::tm local{ };
+		localtime_s( &local, &raw );
+		parts.push_back( std::format( "{:02}:{:02}:{:02}", local.tm_hour, local.tm_min, local.tm_sec ) );
+	}
+
+	const std::string brand = watermark_brand( );
+	const std::size_t cut   = gamesense_split( brand );
+	const std::string game = brand.substr( 0, cut ), sense = brand.substr( cut );
+
+	constexpr auto separator = " | ";
+
+	float width = gamesense_width( font, game ) + gamesense_width( font, sense );
+	for ( const auto& part : parts )
+		width += gamesense_width( font, separator ) + gamesense_width( font, part );
+	width += 14.f;
+
+	const bool bar       = GET_VARIABLE( g_variables.m_watermark_gamesense_bar, bool );
+	const float text_h   = font->CalcTextSizeA( gamesense_size, FLT_MAX, 0.f, "A" ).y;
+	const float height   = text_h + 10.f + ( bar ? 3.f : 0.f );
+	const float x        = static_cast< float >( g_ctx.m_width ) - width - 15.f + GET_VARIABLE( g_variables.m_watermark_gamesense_x, float );
+	const float y        = 15.f + GET_VARIABLE( g_variables.m_watermark_gamesense_y, float );
+	const ImVec2 min( x, y ), max( x + width, y + height );
+
+	g_watermark_box = ImVec4( x - 3.f, y - 3.f, max.x + 3.f, max.y + 3.f );
+
+	const auto draw_list = ImGui::GetForegroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	gamesense_frame( draw_list, min, max );
+	if ( bar )
+		gamesense_bar( draw_list, min, max );
+
+	const float text_y = y + 3.f + ( bar ? 2.f : 0.f );
+	float text_x       = x + 7.f;
+
+	const auto put = [ & ]( const std::string& text, const ImU32 color ) {
+		draw_list->AddText( font, gamesense_size, ImVec2( text_x, text_y ), color, text.c_str( ) );
+		text_x += gamesense_width( font, text );
+	};
+
+	put( game, GET_VARIABLE( g_variables.m_watermark_gamesense_game_color, c_color ).get_u32( ) );
+	put( sense, GET_VARIABLE( g_variables.m_watermark_gamesense_sense_color, c_color ).get_u32( ) );
+
+	for ( const auto& part : parts ) {
+		put( separator, IM_COL32( 210, 210, 210, 255 ) );
+		put( part, IM_COL32( 255, 255, 255, 230 ) );
+	}
+
+	g_render.end_stretch_block( block );
+}
+
+/* no list in the donor: same frame / bar / font as its gamesense watermark, title row = watermark row */
+void n_misc::impl_t::draw_spectator_list_gamesense( )
+{
+	const auto font = g_render.m_fonts[ e_font_names::font_name_gamesense_sf_bold_15 ];
+
+	if ( !font )
+		return;
+
+	std::vector< spectator_entry_t > entries{ };
+	collect_spectators( entries, true );
+
+	const bool show_target = GET_VARIABLE( g_variables.m_spectators_list_show_target, bool );
+
+	if ( !show_target )
+		std::erase_if( entries, []( const spectator_entry_t& entry ) { return !entry.m_watching_local; } );
+
+	if ( entries.empty( ) && !GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ) )
+		return;
+
+	std::sort( entries.begin( ), entries.end( ), []( const spectator_entry_t& a, const spectator_entry_t& b ) { return a.m_index < b.m_index; } );
+
+	constexpr auto title = "spectators", arrow = " -> ";
+
+	const bool bar       = GET_VARIABLE( g_variables.m_spectators_gamesense_bar, bool );
+	const bool avatars   = GET_VARIABLE( g_variables.m_spectators_avatar, bool );
+	const float text_h   = font->CalcTextSizeA( gamesense_size, FLT_MAX, 0.f, "A" ).y;
+	const float header   = text_h + 10.f + ( bar ? 3.f : 0.f );
+	const float row_h    = text_h + 4.f;
+	const float avatar_w = avatars ? text_h + 4.f : 0.f;
+
+	float widest = gamesense_width( font, title );
+	for ( const auto& entry : entries )
+		widest = ImMax( widest, avatar_w + gamesense_width( font, show_target ? entry.m_name + arrow + entry.m_target_name : entry.m_name ) );
+
+	const float width  = ImMax( 150.f, widest + 14.f );
+	const float height = header + ( entries.empty( ) ? 0.f : static_cast< float >( entries.size( ) ) * row_h + 4.f );
+
+	/* frame hangs 3 px outside the box */
+	drag_placed_panel( width + 6.f, height + 6.f );
+
+	const float x = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_x, int ) ) + 3.f;
+	const float y = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_y, int ) ) + 3.f;
+	const ImVec2 min( x, y ), max( x + width, y + height );
+
+	const auto draw_list = ImGui::GetBackgroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	gamesense_frame( draw_list, min, max );
+	if ( bar )
+		gamesense_bar( draw_list, min, max );
+
+	constexpr ImU32 white = IM_COL32( 255, 255, 255, 230 ), grey = IM_COL32( 210, 210, 210, 255 );
+
+	draw_list->AddText( font, gamesense_size, ImVec2( x + ( width - gamesense_width( font, title ) ) * 0.5f, y + 3.f + ( bar ? 2.f : 0.f ) ), white, title );
+
+	if ( !entries.empty( ) )
+		draw_list->AddRectFilled( ImVec2( x + 2.f, y + header - 1.f ), ImVec2( max.x - 2.f, y + header ), IM_COL32( 62, 62, 62, 255 ) );
+
+	const ImU32 local = GET_VARIABLE( g_variables.m_spectators_list_text_color_one, c_color ).get_u32( );
+	const ImU32 other = GET_VARIABLE( g_variables.m_spectators_list_text_color_two, c_color ).get_u32( );
+
+	draw_list->PushClipRect( ImVec2( x + 2.f, y ), ImVec2( max.x - 2.f, max.y ), true );
+
+	for ( std::size_t i = 0; i < entries.size( ); ++i ) {
+		const auto& entry = entries[ i ];
+		const float row_y = y + header + 2.f + static_cast< float >( i ) * row_h;
+		float text_x      = x + 7.f;
+
+		if ( avatars ) {
+			if ( const auto texture = spectator_avatar_texture( entry.m_index, entry.m_team, entry.m_fake_player ) )
+				draw_list->AddImage( texture, ImVec2( text_x, row_y + 2.f ), ImVec2( text_x + text_h, row_y + 2.f + text_h ) );
+			else
+				draw_list->AddRectFilled( ImVec2( text_x, row_y + 2.f ), ImVec2( text_x + text_h, row_y + 2.f + text_h ), IM_COL32( 36, 36, 36, 255 ) );
+
+			text_x += avatar_w;
+		}
+
+		const auto put = [ & ]( const std::string& text, const ImU32 color ) {
+			draw_list->AddText( font, gamesense_size, ImVec2( text_x, row_y + 2.f ), color, text.c_str( ) );
+			text_x += gamesense_width( font, text );
+		};
+
+		put( entry.m_name, entry.m_watching_local ? local : other );
+
+		if ( show_target ) {
+			put( arrow, grey );
+			put( entry.m_target_name, white );
+		}
+	}
+
+	draw_list->PopClipRect( );
+
+	g_render.end_stretch_block( block );
+}
+
 bool n_misc::media_player_donor_look( const int style, media_look_t& look )
 {
 	const ImVec4 accent = ImGui::GetStyleColorVec4( ImGuiCol_::ImGuiCol_Accent );
@@ -5957,6 +6288,9 @@ bool n_misc::media_player_donor_look( const int style, media_look_t& look )
 	case 18: look = { true, ImColor( accent.x, accent.y, accent.z, 1.f ), dna_grey( 0.5f ), 0 }; return true;
 	case 19: look = { true, cucumber_accent( ), IM_COL32( 255, 255, 255, 255 ), 0 }; return true;
 	case 20: look = { false, dna_accent( 1.f ), howeweware_grey, 0 }; return true;
+	case 21:
+		look = { true, GET_VARIABLE( g_variables.m_watermark_gamesense_sense_color, c_color ).get_u32( ), IM_COL32( 255, 255, 255, 230 ), 0 };
+		return true;
 	default: return false;
 	}
 }
@@ -6054,6 +6388,11 @@ void n_misc::media_player_donor_frame( ImDrawList* list, const ImVec2 min, const
 	case 19:
 		list->AddRectFilled( min, max, cucumber_bg, 15.f );
 		list->AddRectFilled( ImVec2( min.x + 15.f, max.y - 2.f ), ImVec2( max.x - 15.f, max.y ), cucumber_accent( ) );
+		break;
+	case 21:
+		gamesense_frame( list, ImVec2( min.x + 3.f, min.y + 3.f ), ImVec2( max.x - 3.f, max.y - 3.f ) );
+		if ( GET_VARIABLE( g_variables.m_watermark_gamesense_bar, bool ) )
+			gamesense_bar( list, ImVec2( min.x + 3.f, min.y + 3.f ), ImVec2( max.x - 3.f, max.y - 3.f ) );
 		break;
 	default: break;
 	}

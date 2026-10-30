@@ -1162,12 +1162,12 @@ void n_menu::impl_t::tab_misc( )
 				"watermark configuration",
 				[]( ) {
 					auto& style = GET_VARIABLE( g_variables.m_watermark_style, int );
-					if ( style < 0 || style > 20 )
+					if ( style < 0 || style > 21 )
 						style = 0;
 
 					ImGui::Combo( "style##watermark style", &style,
 					              "default\0kamibebra\0clarity\0clarity v2\0delusional\0interwebz\0havoc\0onetap\0airflow\0ev0lve\0legendware\0"
-					              "interium\0skebob\0cumidere\0illusory\0lumi\0billware\0dna\0dna clarity\0cucumber\0howeweware\0" );
+					              "interium\0skebob\0cumidere\0illusory\0lumi\0billware\0dna\0dna clarity\0cucumber\0howeweware\0gamesense\0" );
 
 					{
 						static char name_buffer[ 25 ] = { };
@@ -1196,6 +1196,24 @@ void n_menu::impl_t::tab_misc( )
 						ImGui::Checkbox( "velocity##watermark howeweware", &GET_VARIABLE( g_variables.m_watermark_velocity, bool ) );
 					}
 
+					if ( style == 21 ) {
+						ImGui::Checkbox( "user##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_user, bool ) );
+						ImGui::Checkbox( "fps##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_fps, bool ) );
+						ImGui::Checkbox( "ping##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_ping, bool ) );
+						ImGui::Checkbox( "tickrate##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_tickrate, bool ) );
+						ImGui::Checkbox( "velocity##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_velocity, bool ) );
+						ImGui::Checkbox( "time##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_time, bool ) );
+						ImGui::Checkbox( "gradient bar##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_gamesense_bar, bool ) );
+						ImGui::ColorEdit4( "game color##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_gamesense_game_color, c_color ),
+						                   color_picker_alpha_flags );
+						ImGui::ColorEdit4( "sense color##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_gamesense_sense_color, c_color ),
+						                   color_picker_alpha_flags );
+						ImGui::SliderFloat( "offset x##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_gamesense_x, float ), -1000.f, 1000.f,
+						                    "%.0f px" );
+						ImGui::SliderFloat( "offset y##watermark gamesense", &GET_VARIABLE( g_variables.m_watermark_gamesense_y, float ), -500.f, 500.f,
+						                    "%.0f px" );
+					}
+
 					if ( style == 12 )
 						ImGui::Checkbox( "typing effect##watermark skebob", &GET_VARIABLE( g_variables.m_watermark_skebob_typing, bool ) );
 
@@ -1210,7 +1228,7 @@ void n_menu::impl_t::tab_misc( )
 					if ( label_style )
 						ImGui::Combo( "label##watermark label", &label, "time\0fps\0user\0none\0" );
 
-					const bool shows_user = ( ( style == 0 || style == 2 || style == 15 ) && GET_VARIABLE( g_variables.m_watermark_user, bool ) ) ||
+					const bool shows_user = ( ( style == 0 || style == 2 || style == 15 || style == 21 ) && GET_VARIABLE( g_variables.m_watermark_user, bool ) ) ||
 					                        style == 12 ||
 					                        ( style == 1 && ( GET_VARIABLE( g_variables.m_watermark_kami_show_flags, int ) & 1 ) ) || style == 3 ||
 					                        style == 8 || style == 10 || style == 17 || style == 18 || style == 19 || style == 20 || ( label_style && label == 2 );
@@ -1358,7 +1376,7 @@ void n_menu::impl_t::tab_misc( )
 					const int lumi_type = color_style == 25 ? GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) : -1;
 
 					if ( color_style == 0 || color_style == 5 || color_style == 6 || color_style == 8 || color_style == 10 || color_style == 23 ||
-					     color_style == 24 || color_style == 25 || color_style == 26 || color_style == 29 )
+					     color_style == 24 || color_style == 25 || color_style == 26 || color_style == 29 || color_style == 31 )
 						ImGui::ColorEdit4( "spectating local color##spectator list text color one",
 						                   &GET_VARIABLE( g_variables.m_spectators_list_text_color_one, c_color ),
 						                   color_picker_alpha_flags );
@@ -1379,36 +1397,36 @@ void n_menu::impl_t::tab_misc( )
 					}
 
 					if ( color_style == 0 || color_style == 5 || color_style == 8 || color_style == 23 || color_style == 24 || color_style == 26 ||
-					     color_style == 29 || color_style == 30 || lumi_type == 2 )
+					     color_style == 29 || color_style == 30 || color_style == 31 || lumi_type == 2 || lumi_type == 3 )
 						ImGui::ColorEdit4( "spectating other color##spectator list text color two",
 						                   &GET_VARIABLE( g_variables.m_spectators_list_text_color_two, c_color ),
 						                   color_picker_alpha_flags );
 
 					if ( color_style != 9 && color_style != 12 && color_style != 13 && color_style != 14 && color_style != 16 && color_style != 18 &&
 					     color_style != 19 && color_style != 20 && color_style != 21 && color_style != 24 && color_style != 26 && color_style != 28 &&
-					     color_style != 29 && color_style != 30 && ( color_style != 25 || lumi_type == 1 ) )
+					     color_style != 29 && color_style != 30 && color_style != 31 && ( color_style != 25 || lumi_type == 1 ) )
 						ImGui::Combo( "listed players##spectatorlist player", &GET_VARIABLE( g_variables.m_spectators_list_type, int ),
 					                  "all spectators\0local spectators\0" );
 
-					if ( GET_VARIABLE( g_variables.m_spectators_list_style, int ) > 30 )
+					if ( GET_VARIABLE( g_variables.m_spectators_list_style, int ) > 31 )
 						GET_VARIABLE( g_variables.m_spectators_list_style, int ) = 0;
 
 					ImGui::Combo( "style##spectatorlist style", &GET_VARIABLE( g_variables.m_spectators_list_style, int ),
 				                  "default\0delusional\0interwebz\0windows xp\0clarity\0chillware\0lobotomy v2\0kamibebra\0eyes\0cumhacck\0clarity v2\0"
 				                  "airplane\0bhop cheat\0millionware\0aimware\0havoc\0onetap\0airflow\0ev0lve\0legendware\0interium\0chillware v2\0"
-				                  "skebob\0cumidere\0illusory\0lumi\0billware\0inkabanium\0dna\0cucumber\0howeweware\0" );
+				                  "skebob\0cumidere\0illusory\0lumi\0billware\0inkabanium\0dna\0cucumber\0howeweware\0gamesense\0" );
 
 					const int style = GET_VARIABLE( g_variables.m_spectators_list_style, int );
 
 					if ( style == 25 ) {
 						auto& type = GET_VARIABLE( g_variables.m_spectators_lumi_type, int );
-						if ( type < 0 || type > 2 )
+						if ( type < 0 || type > 3 )
 							type = 0;
-						ImGui::Combo( "type##spectatorlist lumi type", &type, "default\0new\0interwebz\0" );
+						ImGui::Combo( "type##spectatorlist lumi type", &type, "default\0new\0interwebz\0kami\0" );
 					}
 
 					if ( style == 1 || style == 2 || style == 3 || style == 15 || style == 22 || style == 23 || style == 24 || style == 26 || style == 28 ||
-					     style == 29 || style == 30 || ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 1 ) )
+					     style == 29 || style == 30 || style == 31 || ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 1 ) )
 						ImGui::Checkbox( "show targets##spectatorlist targets",
 						                 &GET_VARIABLE( g_variables.m_spectators_list_show_target, bool ) );
 
@@ -1419,8 +1437,11 @@ void n_menu::impl_t::tab_misc( )
 
 					if ( ( style == 0 && GET_VARIABLE( g_variables.m_spectators_list_type, int ) == 0 ) || style == 4 || style == 5 || style == 6 ||
 					     style == 11 || style == 15 || style == 17 || style == 18 || style == 21 || style == 22 || style == 23 || style == 25 ||
-					     style == 26 || style == 27 || style == 28 || style == 29 || style == 30 )
+					     style == 26 || style == 27 || style == 28 || style == 29 || style == 30 || style == 31 )
 						ImGui::Checkbox( "always show##spectatorlist always show", &GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ) );
+
+					if ( style == 31 )
+						ImGui::Checkbox( "gradient bar##spectatorlist gamesense", &GET_VARIABLE( g_variables.m_spectators_gamesense_bar, bool ) );
 
 					if ( style == 18 )
 						ImGui::SliderFloat( "alpha override##spectatorlist evolve", &GET_VARIABLE( g_variables.m_watermark_evolve_alpha, float ), 0.f,
@@ -1440,6 +1461,12 @@ void n_menu::impl_t::tab_misc( )
 							ImGui::Checkbox( "glow##spectatorlist lumi", &GET_VARIABLE( g_variables.m_spectators_lumi_glow, bool ) );
 						if ( lumi_type != 2 )
 							ImGui::Checkbox( "blur background##spectatorlist lumi", &GET_VARIABLE( g_variables.m_spectators_lumi_blur, bool ) );
+						if ( lumi_type == 3 ) {
+							ImGui::Checkbox( "circle avatars##spectatorlist kami", &GET_VARIABLE( g_variables.m_spectators_kami_circle, bool ) );
+							if ( !GET_VARIABLE( g_variables.m_spectators_lumi_blur, bool ) )
+								ImGui::SliderFloat( "list opacity##spectatorlist kami", &GET_VARIABLE( g_variables.m_spectators_kami_opacity, float ), 0.f, 100.f,
+								                    "%.0f%%" );
+						}
 						if ( lumi_type == 1 ) {
 							ImGui::Checkbox( "mascot##spectatorlist lumi", &GET_VARIABLE( g_variables.m_spectators_lumi_mascot, bool ) );
 							if ( GET_VARIABLE( g_variables.m_spectators_lumi_mascot, bool ) ) {
@@ -1554,7 +1581,7 @@ void n_menu::impl_t::tab_misc( )
 					if ( style == 12 )
 						ImGui::Checkbox( "observer mode##spectatorlist bhopcheat mode", &GET_VARIABLE( g_variables.m_spectators_bhopcheat_mode, bool ) );
 
-					if ( ( style < 13 && style != 8 && style != 9 && style != 11 ) || style == 22 ||
+					if ( ( style < 13 && style != 8 && style != 9 && style != 11 ) || style == 22 || style == 31 ||
 					     ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 2 ) )
 						ImGui::Checkbox( "spectator avatars", &GET_VARIABLE( g_variables.m_spectators_avatar, bool ) );
 

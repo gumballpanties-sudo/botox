@@ -151,6 +151,7 @@ namespace n_misc
 		void draw_watermark_dna_clarity( );
 		void draw_watermark_cucumber( );
 		void draw_watermark_howeweware( );
+		void draw_watermark_gamesense( );
 		void draw_watermark_gif( );
 		void draw_media_player( );
 		void update_clantag( );
@@ -208,11 +209,13 @@ namespace n_misc
 		void draw_spectator_list_lumi( );
 		void draw_spectator_list_lumi_new( );
 		void draw_spectator_list_lumi_interwebz( );
+		void draw_spectator_list_lumi_kami( );
 		void draw_spectator_list_billware( );
 		void draw_spectator_list_inkabanium( );
 		void draw_spectator_list_dna( );
 		void draw_spectator_list_cucumber( );
 		void draw_spectator_list_howeweware( );
+		void draw_spectator_list_gamesense( );
 
 	public:
 		/* gifs + gdi+ + eyes art, render thread only. textures_only = Reset hook (decoded gifs stay), full = unload */

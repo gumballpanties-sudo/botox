@@ -72,6 +72,7 @@ enum e_font_names {
 	font_name_cucumber_tahoma_14,
 	font_name_cucumber_verdana_14,
 	font_name_howeweware_minecraft_14,
+	font_name_gamesense_sf_bold_15,
 	font_name_points_montserrat_italic_18,
 	font_name_max
 };

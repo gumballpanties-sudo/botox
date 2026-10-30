@@ -196,8 +196,9 @@ static const char k_neighbour_body[] =
 	"}";
 
 static const char k_gather_body[] =
-	"float3 in_color(float3 c){c=saturate(c);c*=c;return c*1.0/(1.5-max(c.r,max(c.g,c.b)));}"
-	"float3 out_color(float3 c){return sqrt(saturate((1.5*c)*1.0/(1.0+max(c.r,max(c.g,c.b)))));}"
+	// f0e/blur average_bright: x^gamma, average, x^(1/gamma). c8.w = gamma, c15.x = 1/gamma
+	"float3 in_color(float3 c){c=pow(saturate(c),c8.w);return c*1.0/(1.5-max(c.r,max(c.g,c.b)));}"
+	"float3 out_color(float3 c){return pow(saturate((1.5*c)*1.0/(1.0+max(c.r,max(c.g,c.b)))),c15.x);}"
 	"float ign(float2 p){return frac(52.9829189*frac(dot(p+5.588238*c2.w,float2(0.06711056,0.00583715))));}"
 	// tile read jittered up to 1/8 tile to hide seams, never diagonally ( halo )
 	"float2 tile_offs(float2 p){"
@@ -1667,6 +1668,7 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 	block[ 8 ][ 0 ] = blur_object ? frame.m_blend : 0.f;
 	block[ 8 ][ 1 ] = 12.f;
 	block[ 8 ][ 2 ] = blur_gun ? frame.m_viewmodel_blend : 0.f;
+	block[ 8 ][ 3 ] = std::clamp( GET_VARIABLE( g_variables.m_true_motion_blur_gamma, float ), 1.f, 10.f );
 
 	const float vm_tan_half_x = std::tan( std::clamp( frame.m_viewmodel_fov, 1.f, 170.f ) * 0.5f * 3.14159265f / 180.f );
 	const float vm_prev_tan_x = std::tan( std::clamp( frame.m_viewmodel_prev_fov, 1.f, 170.f ) * 0.5f * 3.14159265f / 180.f );
@@ -1684,6 +1686,7 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 	block[ 13 ][ 2 ] = frame.m_viewmodel_valid ? 1.f : 0.f;
 	block[ 13 ][ 3 ] = std::clamp( GET_VARIABLE( g_variables.m_true_motion_blur_viewmodel_strength, float ), 0.f, 64.f );
 
+	block[ 15 ][ 0 ] = 1.f / block[ 8 ][ 3 ];
 	block[ 15 ][ 1 ] = std::max( frame.m_znear, 0.01f ) * 0.5f;
 	block[ 15 ][ 2 ] = vm_tan_half_x;
 	block[ 15 ][ 3 ] = vm_tan_half_x / aspect;

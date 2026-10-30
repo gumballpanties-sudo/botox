@@ -927,6 +927,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_true_motion_blur_object, 0.f );
 		ADD_VARIABLE( int, m_true_motion_blur_samples, 32 );
 		ADD_VARIABLE( float, m_true_motion_blur_max, 0.06f );
+		ADD_VARIABLE( float, m_true_motion_blur_gamma, 2.f );
 		ADD_VARIABLE( bool, m_true_motion_blur_viewmodel, true );
 		ADD_VARIABLE( float, m_true_motion_blur_viewmodel_strength, 1.f );
 		ADD_VARIABLE( float, m_true_motion_blur_viewmodel_sway, 0.f );
@@ -1391,6 +1392,8 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_spectators_lumi_hide_gotv, true );
 		ADD_VARIABLE( bool, m_spectators_lumi_blur, false );
 		ADD_VARIABLE( bool, m_spectators_lumi_glow, false );
+		ADD_VARIABLE( bool, m_spectators_kami_circle, true );
+		ADD_VARIABLE( float, m_spectators_kami_opacity, 80.f );
 		ADD_VARIABLE( bool, m_spectators_lumi_mascot, false );
 		ADD_VARIABLE( std::string, m_spectators_lumi_mascot_path, "" );
 		ADD_VARIABLE( float, m_spectators_lumi_mascot_size, 60.f );
@@ -1491,6 +1494,12 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_spectators_havoc_color, c_color( 115, 155, 255, 255 ) );
 		ADD_VARIABLE( c_color, m_watermark_interium_bg, c_color( 0, 0, 0, 255 ) );
 		ADD_VARIABLE( c_color, m_spectators_interium_bg, c_color( 0, 0, 0, 255 ) );
+		ADD_VARIABLE( c_color, m_watermark_gamesense_game_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( c_color, m_watermark_gamesense_sense_color, c_color( 149, 184, 6, 255 ) );
+		ADD_VARIABLE( bool, m_watermark_gamesense_bar, true );
+		ADD_VARIABLE( float, m_watermark_gamesense_x, 0.f );
+		ADD_VARIABLE( float, m_watermark_gamesense_y, 0.f );
+		ADD_VARIABLE( bool, m_spectators_gamesense_bar, true );
 		ADD_VARIABLE( int, m_watermark_lumi_design, 0 );
 		ADD_VARIABLE( bool, m_watermark_lumi_animated_title, false );
 		ADD_VARIABLE( bool, m_watermark_lumi_no_border, false );
