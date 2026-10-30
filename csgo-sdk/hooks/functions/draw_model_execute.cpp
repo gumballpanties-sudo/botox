@@ -93,7 +93,8 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 	// eject frees chams materials; drawing mid release crashes
 	HOOK_SCOPE_OR_BAIL( original( ecx, edx, context, state, info, custom_bone_to_world ) );
 
-	if ( ( GET_VARIABLE( g_variables.m_remove_ragdolls, bool ) && should_skip_ragdoll( info ) ) || kill_effects_hides_ragdoll( info.entity_index ) )
+	if ( ( GET_VARIABLE( g_variables.m_remove_ragdolls, bool ) && should_skip_ragdoll( info ) && !kill_effects_shows_ragdoll( info.entity_index ) ) ||
+	     kill_effects_hides_ragdoll( info.entity_index ) )
 		return;
 
 	/* viewmodel bone velocity for true motion blur. destructor: bones must be read after whichever

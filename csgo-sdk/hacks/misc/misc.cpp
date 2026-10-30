@@ -1744,6 +1744,29 @@ void n_misc::impl_t::on_end_scene( )
 		if ( !can_draw_spectator_list )
 			return;
 
+		/* menu open = every style acts as always show; flags restored on exit so cfg never saves the force */
+		struct always_show_scope_t {
+			bool* m_flags[ 3 ] = { &GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ),
+				                   &GET_VARIABLE( g_variables.m_spectators_always_show, bool ),
+				                   &GET_VARIABLE( g_variables.m_spectators_kamibebra_always_show, bool ) };
+			bool m_saved[ 3 ]  = { *m_flags[ 0 ], *m_flags[ 1 ], *m_flags[ 2 ] };
+			bool m_active      = g_menu.m_opened;
+
+			always_show_scope_t( )
+			{
+				if ( m_active )
+					for ( bool* flag : m_flags )
+						*flag = true;
+			}
+
+			~always_show_scope_t( )
+			{
+				if ( m_active )
+					for ( int i = 0; i < 3; i++ )
+						*m_flags[ i ] = m_saved[ i ];
+			}
+		} always_show_scope{ };
+
 		switch ( style ) {
 		case 0:
 			if ( type == 0 )

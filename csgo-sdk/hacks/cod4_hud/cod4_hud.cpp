@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cwctype>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -21,6 +22,8 @@
 
 using namespace n_cod4;
 using n_cod4_expr::value_t;
+
+extern bool point_menu_is_opened( );
 
 bool n_cod4_hud::enabled( ) { return GET_VARIABLE( g_variables.m_cod4_hud, bool ); }
 
@@ -89,6 +92,7 @@ namespace
 	dvars_t s_dv{ };
 	std::string s_dv_text{ "\x01" };
 	msg_window_t s_windows[ 2 ]{ };
+	std::string s_chat_line{ }; // typed line + prompt, empty = closed (copied from the chat mutex each frame)
 	health_overlay_t s_health{ };
 
 	struct damage_slot_t {
@@ -574,7 +578,8 @@ namespace
 	/* ---- menu expression context ---- */
 	struct ctx_t : n_cod4_expr::context_t {
 		const n_cod4_hud::snapshot_t* m_s = nullptr;
-		int m_now = 0;
+		int m_now     = 0;
+		bool m_vitals = false; // scorebars menu: team score = health, other team = armor
 
 		std::string team_name( ) const
 		{
@@ -595,11 +600,12 @@ namespace
 				if ( s0 == "wideScreen" )
 					return num( s_scr.m_w / s_scr.m_h > 4.f / 3.f + 0.01f ? 1 : 0 );
 				if ( s0 == "ui_scorelimit" )
-					return num( m_s->m_score_limit );
+					return num( m_vitals ? std::max( { 100, m_s->m_health, m_s->m_armor } ) : m_s->m_score_limit );
 				if ( s0 == "ui_timelimit" )
 					return num( m_s->m_timeleft >= 0.f ? 1 : 0 );
+				// csgo's c4 is not sab / sd's: no suitcase, no tenths clock
 				if ( s0 == "ui_bomb_timer" )
-					return num( m_s->m_bomb ? 1 : 0 );
+					return num( 0 );
 				if ( s0 == "ui_uav_allies" || s0 == "ui_uav_axis" || s0 == "ui_uav_client" )
 					return num( m_now < s_rv.m_radar_until ? 1 : 0 );
 				return num( n == "dvarint" ? s_dv.i( s0 ) : s_dv.f( s0 ) );
@@ -616,10 +622,10 @@ namespace
 			if ( n == "team" ) {
 				if ( s0 == "name" )
 					return value_t::str( team_name( ) );
-				return num( m_s->m_team_score );
+				return num( m_vitals ? m_s->m_health : m_s->m_team_score );
 			}
 			if ( n == "otherteam" )
-				return num( m_s->m_enemy_score );
+				return num( m_vitals ? m_s->m_armor : m_s->m_enemy_score );
 			if ( n == "marinesfield" )
 				return num( m_s->m_ct_score );
 			if ( n == "opforfield" )
@@ -631,7 +637,8 @@ namespace
 			if ( n == "localvarstring" )
 				return value_t::str( m_s->m_team == 2 ? "opfor" : "marines" );
 			if ( n == "timeleft" )
-				return num( m_s->m_timeleft < 0.f ? -1.0 : std::ceil( m_s->m_timeleft ) );
+				// run out = round over in cod4, the clock goes; community servers sit at 0 forever
+				return num( m_s->m_timeleft <= 0.f ? -1.0 : std::ceil( m_s->m_timeleft ) );
 			if ( n == "secondsascountdown" ) {
 				const int t = std::max( 0, static_cast< int >( arg( 0 ).number( ) ) );
 				char b[ 16 ];
@@ -711,6 +718,23 @@ namespace
 	}
 
 	bool visible( const char* src, ctx_t& ctx ) { return !src || std::strcmp( src, "1" ) == 0 || evaluate( src, ctx, value_t::num( 1 ) ).truth( ); }
+
+	// vitals scorebars: health stays the top bar, the losing-score swap is cut out of the rect expressions
+	const char* vitals_expr( const char* src )
+	{
+		constexpr std::string_view k_swap = "(team(\"score\") < otherteam(\"score\"))";
+		static std::unordered_map< const char*, std::string > s_fixed{ }; // node map: c_str stays put for s_compiled's pointer key
+		if ( !src || !std::strstr( src, "< otherteam(" ) )
+			return src;
+		auto it = s_fixed.find( src );
+		if ( it == s_fixed.end( ) ) {
+			std::string e = src;
+			for ( size_t p; ( p = e.find( k_swap ) ) != std::string::npos; )
+				e.replace( p, k_swap.size( ), "0" );
+			it = s_fixed.emplace( src, std::move( e ) ).first;
+		}
+		return it->second.c_str( );
+	}
 
 	/* ---- ownerdraws ---- */
 	struct od_t {
@@ -1174,6 +1198,7 @@ namespace
 			// warmup = cod4's pre-match: no "Tied" score bar
 			if ( ( s.m_warmup && !std::strcmp( m.m_name, "scorebar" ) ) || !visible( m.m_visible, ctx ) )
 				continue;
+			ctx.m_vitals   = !std::strcmp( m.m_name, "scorebars" );
 			const float my = m.m_exp_y ? static_cast< float >( evaluate( m.m_exp_y, ctx, value_t::num( m.m_rect[ 1 ] ) ).number( ) ) : m.m_rect[ 1 ];
 
 			for ( int ii = m.m_first; ii < m.m_first + m.m_count; ++ii ) {
@@ -1185,7 +1210,7 @@ namespace
 				const char* exps[ 4 ] = { it.m_exp_x, it.m_exp_y, it.m_exp_w, it.m_exp_h };
 				for ( int k = 0; k < 4; ++k )
 					if ( exps[ k ] )
-						rect[ k ] = static_cast< float >( evaluate( exps[ k ], ctx, value_t::num( rect[ k ] ) ).number( ) );
+						rect[ k ] = static_cast< float >( evaluate( ctx.m_vitals ? vitals_expr( exps[ k ] ) : exps[ k ], ctx, value_t::num( rect[ k ] ) ).number( ) );
 
 				od_t o{ };
 				o.m_x = m.m_rect[ 0 ] + rect[ 0 ], o.m_y = my + rect[ 1 ], o.m_w = rect[ 2 ], o.m_h = rect[ 3 ];
@@ -1211,7 +1236,13 @@ namespace
 					w.expire( now );
 					const int font = pick_font( it.m_text_font, it.m_text_scale, s_scr.m_sy, s_dv );
 					const float k  = static_cast< float >( lh ) / static_cast< float >( k_fonts[ font ].m_pixel_height );
-					for ( const auto& row : w.rows_up( now, static_cast< int >( o.m_y ), lh, static_cast< int >( s_dv.f( ( p + "ScrollTime" ).c_str( ) ) * 1000.f ),
+					// typed line one row under the chat window's newest message
+					if ( it.m_window_index == 0 && !s_chat_line.empty( ) ) {
+						const float white[ 4 ]{ 1.f, 1.f, 1.f, 1.f };
+						text( font, s_chat_line, std::floor( s_scr.x( o.m_x, o.m_ha ) + 0.5f ), std::floor( s_scr.y( o.m_y + static_cast< float >( lh ), o.m_va ) + 0.5f ),
+						      s_scr.w( k, o.m_ha ), s_scr.h( k, o.m_va ), white, it.m_text_style );
+					}
+					for ( const auto& row : w.rows_up( now, static_cast< int >( o.m_y ), lh,static_cast< int >( s_dv.f( ( p + "ScrollTime" ).c_str( ) ) * 1000.f ),
 					                                   static_cast< int >( s_dv.f( ( p + "FadeInTime" ).c_str( ) ) * 1000.f ),
 					                                   static_cast< int >( s_dv.f( ( p + "FadeOutTime" ).c_str( ) ) * 1000.f ) ) ) {
 						const float white[ 4 ]{ 1.f, 1.f, 1.f, row.m_alpha };
@@ -1251,13 +1282,25 @@ namespace
 
 	/* ---- code drawn parts ---- */
 	// CG_DrawCrosshair (0x42f6e0): reticleCenter + 4 reticleSide pieces pushed out by the spread
-	void draw_crosshair( const n_cod4_hud::snapshot_t& s )
+	void draw_crosshair( const n_cod4_hud::snapshot_t& s, int now )
 	{
-		if ( !s_dv.b( "cg_drawCrosshair" ) || !s.m_alive || s.m_scoped || s.m_weapon < 0 )
+		// eased every frame, the snapshot only moves when csgo's predicted cone does
+		static float s_shown = 0.f;
+		static int s_last    = 0, s_weapon = -1;
+		if ( !s_dv.b( "cg_drawCrosshair" ) || !s.m_alive || s.m_scoped || s.m_weapon < 0 ) {
+			s_weapon = -1;
 			return;
+		}
 		const weapon_t& w = k_weapons[ s.m_weapon ];
+		if ( s.m_weapon != s_weapon )
+			s_shown = s.m_spread_scale, s_weapon = s.m_weapon;
+		s_shown = aim_spread_step( s_shown, s.m_spread_scale, static_cast< float >( now - s_last ) * 0.001f, w.m_hip_decay, w.m_hip_move_add, w.m_hip_ducked_decay,
+		                           s.m_ducked );
+		s_last  = now;
+		const float spread_deg = s.m_spread_min + ( s.m_spread_max - s.m_spread_min ) * s_shown / 255.f;
+
 		float c[ 4 ]{ 1.f, 1.f, 1.f, 1.f };
-		c[ 3 ] = reticle_alpha( s_dv.f( "cg_crosshairAlpha" ), 1.f, s.m_spread_scale, s_dv.f( "cg_crosshairAlphaMin" ) );
+		c[ 3 ] = reticle_alpha( s_dv.f( "cg_crosshairAlpha" ), 1.f, s_shown, s_dv.f( "cg_crosshairAlphaMin" ) );
 		if ( c[ 3 ] < 0.01f )
 			return;
 
@@ -1269,7 +1312,7 @@ namespace
 		if ( !w.m_reticle_side )
 			return;
 		// 0x42f4a0: size = reticleSideSize, offset from 0x42f370, top / right / bottom / left at 0 90 180 270 with an s/8 nudge
-		const float ofs = reticle_offset( s.m_spread_deg, s.m_tan_half_fov_y, w.m_reticle_min_ofs );
+		const float ofs = reticle_offset( spread_deg, s.m_tan_half_fov_y, w.m_reticle_min_ofs );
 		const float sz = static_cast< float >( w.m_reticle_side_size ), n = 0.125f * sz;
 		const int m    = mat( w.m_reticle_side );
 		const auto at  = [ & ]( float vx, float vy, float angle ) { rotated_pic( m, s_scr.x( vx, 2 ), s_scr.y( vy, 2 ), s_scr.w( sz, 2 ), s_scr.h( sz, 2 ), angle, c ); };
@@ -1470,6 +1513,8 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 	if ( on && !s_listening && g_interfaces.m_game_event_manager )
 		s_listening = g_interfaces.m_game_event_manager->add_listener( &s_listener, "weapon_fire", false );
 
+	drain_chat( on && in_game );
+
 	snapshot_t s{ };
 	s.m_in_game = on && in_game && g_convars.int_or( HASH_BT( "cl_drawhud" ), 1 ) != 0;
 
@@ -1479,6 +1524,7 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 		s.m_team       = local->get_team( );
 		s.m_health     = std::max( local->get_health( ), 0 );
 		s.m_max_health = 100;
+		s.m_armor      = std::clamp( local->get_armor( ), 0, 999 );
 		s.m_flashed    = local->get_flash_duration( ) > 0.f;
 		s.m_console    = engine->is_console_visible( );
 		s.m_ducked     = local->get_duck_amount( ) > 0.5f;
@@ -1565,9 +1611,8 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 				const float rest = s.m_ducked ? data->m_inaccuracy_crouch[ 0 ] : data->m_inaccuracy_stand[ 0 ];
 				const float t    = spread_fraction( weapon->get_inaccuracy( ) + weapon->get_spread( ), rest + data->m_spread[ 0 ], data->m_inaccuracy_move[ 0 ] );
 				s.m_spread_scale = t * 255.f;
-				const float mn  = s.m_ducked ? cod->m_hip_ducked_min : cod->m_hip_stand_min;
-				const float mx  = s.m_ducked && cod->m_hip_ducked_max > 0.f ? cod->m_hip_ducked_max : cod->m_hip_max;
-				s.m_spread_deg  = mn + ( mx - mn ) * t;
+				s.m_spread_min   = s.m_ducked ? cod->m_hip_ducked_min : cod->m_hip_stand_min;
+				s.m_spread_max   = s.m_ducked && cod->m_hip_ducked_max > 0.f ? cod->m_hip_ducked_max : cod->m_hip_max;
 			}
 		}
 
@@ -1614,15 +1659,17 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 
 		// CCSGameRules: m_fRoundStartTime = freeze end, so freeze time holds the full round time
 		static const unsigned int warmup_ofs = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_bWarmupPeriod" ) ].m_offset;
-		static const unsigned int bomb_ofs   = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_bBombPlanted" ) ].m_offset;
+		static const unsigned int warmup_end = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_fWarmupPeriodEnd" ) ].m_offset;
 		static const unsigned int time_ofs   = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_iRoundTime" ) ].m_offset;
 		static const unsigned int start_ofs  = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_fRoundStartTime" ) ].m_offset;
-		if ( const std::uintptr_t rules = game_rules( ); rules && warmup_ofs && bomb_ofs && time_ofs && start_ofs ) {
+		if ( const std::uintptr_t rules = game_rules( ); rules && warmup_ofs && time_ofs && start_ofs ) {
 			s.m_warmup        = *reinterpret_cast< bool* >( rules + warmup_ofs );
-			s.m_bomb          = *reinterpret_cast< bool* >( rules + bomb_ofs );
 			const float round = static_cast< float >( *reinterpret_cast< int* >( rules + time_ofs ) );
 			const float start = *reinterpret_cast< float* >( rules + start_ofs );
-			if ( round > 0.f )
+			// warmup: csgo's round clock stands still, count the warmup down instead
+			if ( s.m_warmup && warmup_end )
+				s.m_timeleft = std::max( *reinterpret_cast< float* >( rules + warmup_end ) - g_interfaces.m_global_vars_base->m_current_time, 0.f );
+			else if ( round > 0.f )
 				s.m_timeleft = std::clamp( round - ( g_interfaces.m_global_vars_base->m_current_time - start ), 0.f, round );
 		}
 
@@ -1825,6 +1872,113 @@ void n_cod4_hud::impl_t::on_chat( const char* text, int client, bool html )
 		s_ev.m_lines.push_back( { 0, std::move( line ), now_ms( ) } );
 }
 
+// game thread (paint_traverse): send / drop the typed line, mc_hud's drain
+void n_cod4_hud::impl_t::drain_chat( bool active )
+{
+	const bool ui_input = g_menu.m_opened || point_menu_is_opened( );
+
+	bool send = false, team = false;
+	std::string message{ };
+	{
+		std::scoped_lock lock( m_chat_mutex );
+		m_chat_drain_ms = GetTickCount64( );
+
+		if ( m_chat_open && !m_chat_result && ( !active || ui_input || !g_ctx.m_is_window_focused ) )
+			m_chat_result = 2;
+
+		if ( m_chat_open && m_chat_result ) {
+			send    = m_chat_result == 1;
+			team    = m_chat_team;
+			message = g_utilities.to_utf8( m_chat_input );
+
+			m_chat_open      = false;
+			m_chat_result    = 0;
+			m_chat_open_char = 0;
+			m_chat_input.clear( );
+		}
+	}
+
+	std::erase( message, '"' );
+	std::erase( message, ';' );
+
+	if ( send && !message.empty( ) ) {
+		const std::string command = std::string( team ? "say_team \"" : "say \"" ) + message + "\"";
+		g_interfaces.m_engine_client->client_cmd_unrestricted( command.c_str( ) );
+	}
+}
+
+// window thread: the messagemode bind opens our line instead of csgo's chat panel (mc_hud's chat_on_key)
+bool n_cod4_hud::impl_t::chat_on_key( unsigned int msg, unsigned int wide_param, long long_param, bool ui_input )
+{
+	// no WM_SYSKEY*: alt+f4 / alt+tab keep working
+	if ( msg != WM_KEYDOWN && msg != WM_KEYUP && msg != WM_CHAR )
+		return false;
+	if ( ui_input || wide_param == VK_INSERT )
+		return false;
+
+	std::scoped_lock lock( m_chat_mutex );
+
+	// nothing drains the line (paint_traverse stopped): drop it, never trap the keyboard
+	const bool stale = GetTickCount64( ) - m_chat_drain_ms > 1000ull;
+	if ( m_chat_open && stale ) {
+		m_chat_open      = false;
+		m_chat_result    = 0;
+		m_chat_open_char = 0;
+		m_chat_input.clear( );
+	}
+
+	// releases always reach the game, a key held while opening would stick otherwise
+	if ( msg == WM_KEYUP )
+		return false;
+
+	if ( !m_chat_open ) {
+		if ( msg != WM_KEYDOWN || stale || !n_cod4_hud::enabled( ) )
+			return false;
+		if ( !g_interfaces.m_engine_client || !g_interfaces.m_input_system || !g_interfaces.m_engine_client->is_in_game( ) ||
+		     g_interfaces.m_engine_client->is_console_visible( ) )
+			return false;
+
+		const char* bind = g_interfaces.m_engine_client->key_binding_for_key( g_interfaces.m_input_system->scan_code_to_button_code( long_param ) );
+		if ( !bind || !std::strstr( bind, "messagemode" ) )
+			return false;
+
+		m_chat_open      = true;
+		m_chat_team      = std::strstr( bind, "messagemode2" ) != nullptr;
+		m_chat_result    = 0;
+		m_chat_open_char = static_cast< wchar_t >( std::towlower( MapVirtualKeyW( wide_param, MAPVK_VK_TO_CHAR ) & 0x7FFF ) );
+		m_chat_input.clear( );
+		return true;
+	}
+
+	if ( msg == WM_CHAR ) {
+		const wchar_t character = static_cast< wchar_t >( wide_param );
+
+		// the opening key's own WM_CHAR
+		if ( m_chat_open_char ) {
+			const wchar_t opener = m_chat_open_char;
+			m_chat_open_char     = 0;
+			if ( character == opener || character == static_cast< wchar_t >( opener - 32 ) )
+				return true;
+		}
+
+		// ponytail: quake 3's MAX_SAY_TEXT 150, cod4's own field length unchecked
+		if ( character >= L' ' && character != 0x7F && m_chat_input.size( ) < 150U )
+			m_chat_input.push_back( character );
+		return true;
+	}
+
+	switch ( wide_param ) {
+	case VK_RETURN: m_chat_result = 1; break;
+	case VK_ESCAPE: m_chat_result = 2; break;
+	case VK_BACK:
+		if ( !m_chat_input.empty( ) )
+			m_chat_input.pop_back( );
+		break;
+	default: break;
+	}
+	return true;
+}
+
 bool n_cod4_hud::hides_scope( )
 {
 	const snapshot_t& s = g_cod4_hud.m_snapshot;
@@ -1892,6 +2046,13 @@ void n_cod4_hud::impl_t::on_end_scene( )
 		s_rv = s_ev;
 	}
 
+	{
+		// EXE_SAY / EXE_SAYTEAM ("say" / "say_team"), Field_Draw's cursor blinks on realtime >> 8
+		std::scoped_lock lock( m_chat_mutex );
+		s_chat_line = m_chat_open ? std::string( m_chat_team ? "say_team: " : "say: " ) + g_utilities.to_utf8( m_chat_input ) + ( ( now >> 8 ) & 1 ? "_" : "" )
+		                          : std::string( );
+	}
+
 	if ( s_load_state != 2 )
 		return;
 
@@ -1924,9 +2085,12 @@ void n_cod4_hud::impl_t::on_end_scene( )
 	const int w = static_cast< int >( g_ctx.m_width ), h = static_cast< int >( g_ctx.m_height );
 	if ( w <= 0 || h <= 0 || !s_dv.b( "cg_draw2D" ) || !s_dv.b( "hud_enable" ) )
 		return;
-	s_scr  = scr_t::make( static_cast< float >( w ), static_cast< float >( h ) );
+	// stretched aspect: lay out in the screen's pre-stretch width, the background pass then scales x about the center
+	// to exactly 0..w (a stretch block scaled the whole-screen hud past the edges)
+	const float left = g_render.to_overlay_x( 0.f ), right = g_render.to_overlay_x( static_cast< float >( w ) );
+	s_scr  = scr_t::make( right - left, static_cast< float >( h ) );
 	s_list = ImGui::GetBackgroundDrawList( );
-	const auto block = g_render.begin_stretch_block( s_list, false );
+	const int first_vertex = s_list->VtxBuffer.Size;
 
 	ctx_t ctx{ };
 	ctx.m_s   = &s;
@@ -1939,15 +2103,16 @@ void n_cod4_hud::impl_t::on_end_scene( )
 	paint_menus( ctx, s, now, 0, 1 );
 	if ( s.m_alive ) {
 		draw_damage( s, now );
-		draw_crosshair( s );
+		draw_crosshair( s, now );
 	}
 	paint_menus( ctx, s, now, 1, static_cast< int >( std::size( k_menus ) ) );
 	draw_hit_marker( now );
 	draw_xp( now );
 	draw_notify( now );
 
+	for ( int v = first_vertex; left != 0.f && v < s_list->VtxBuffer.Size; ++v )
+		s_list->VtxBuffer[ v ].pos.x += left;
 	s_list->AddCallback( ImDrawCallback_ResetRenderState, nullptr );
-	g_render.end_stretch_block( block );
 }
 
 void n_cod4_hud::impl_t::release_textures( )

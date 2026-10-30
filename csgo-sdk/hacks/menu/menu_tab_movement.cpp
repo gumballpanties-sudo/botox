@@ -282,6 +282,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "jump bug key", &GET_VARIABLE( g_variables.m_jump_bug_key, key_bind_t ) );
 						ImGui::Checkbox( "while crouching", &GET_VARIABLE( g_variables.m_jump_bug_crouch, bool ) );
 						ImGui::Checkbox( "kangaroo", &GET_VARIABLE( g_variables.m_jump_bug_kangaroo, bool ) );
+						ImGui::Checkbox( "jb only", &GET_VARIABLE( g_variables.m_jump_bug_only, bool ) );
 					},
 					ImVec2( 200.f, -1 ) );
 			}
@@ -629,6 +630,18 @@ void n_menu::impl_t::tab_movement( )
 						}
 						if ( GET_VARIABLE( g_variables.m_texture_bug_sound, int ) > 0 )
 							ImGui::SliderFloat( "sound volume##tbsndvol", &GET_VARIABLE( g_variables.m_texture_bug_sound_volume, float ), 0.f, 2.f, "%.2f" );
+					},
+					ImVec2( 220.f, -1 ) );
+			}
+
+			ImGui::Checkbox( "edge surf", &GET_VARIABLE( g_variables.m_edge_surf, bool ) );
+			if ( GET_VARIABLE( g_variables.m_edge_surf, bool ) ) {
+				ImGui::OptionPopup(
+					"edge surf settings",
+					[ & ]( ) {
+						ImGui::Label( "edge surf keybind" );
+						ImGui::Keybind( "edge surf key", &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
+						ImGui::SliderFloat( "lead range##esurfrange", &GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f, "%.0f u" );
 					},
 					ImVec2( 220.f, -1 ) );
 			}

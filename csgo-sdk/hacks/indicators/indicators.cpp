@@ -1183,7 +1183,8 @@ static int part_fired( const int id )
 	case label_ast:
 	case label_tung: return trick( e_points_trick::pixel_surf );
 	case label_jb:   return trick( e_points_trick::jump_bug );
-	case label_tb:   return trick( e_points_trick::texture_bug );
+	case label_tb:
+	case label_esurf: return trick( e_points_trick::texture_bug );
 	case label_air:  return trick( e_points_trick::air_stuck );
 	case label_wc:   return trick( e_points_trick::wall_climb );
 	case label_fr:   return trick( e_points_trick::fireman );
@@ -1741,6 +1742,10 @@ void n_indicators::impl_t::keybind_indicators( )
 	if ( GET_VARIABLE( g_variables.m_tung_surf, bool ) && key_indicators.size( ) > e_keybind_indicators::key_tung &&
 	     key_indicators[ e_keybind_indicators::key_tung ] )
 		add_hit( label_tung, trick_states.m_pixel_surf_now, g_input.check_input( &GET_VARIABLE( g_variables.m_tung_surf_key, key_bind_t ) ) );
+
+	if ( GET_VARIABLE( g_variables.m_edge_surf, bool ) && key_indicators.size( ) > e_keybind_indicators::key_esurf &&
+	     key_indicators[ e_keybind_indicators::key_esurf ] )
+		add_hit( label_esurf, trick_states.m_texture_bug_now, g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) );
 
 	if ( GET_VARIABLE( g_variables.m_edgebug_edge_skip, bool ) && key_indicators.size( ) > e_keybind_indicators::key_es &&
 	     key_indicators[ e_keybind_indicators::key_es ] )

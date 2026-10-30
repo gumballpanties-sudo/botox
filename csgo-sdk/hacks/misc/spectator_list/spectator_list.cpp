@@ -5183,17 +5183,18 @@ void n_misc::impl_t::draw_spectator_list_kamidere( )
 		return;
 
 	std::vector< spectator_entry_t > entries{ };
-	collect_spectators( entries, true, !GET_VARIABLE( g_variables.m_spectators_kami_hide_gotv, bool ) );
+	collect_spectators( entries, false, !GET_VARIABLE( g_variables.m_spectators_kami_hide_gotv, bool ) );
 
 	const bool show_target = GET_VARIABLE( g_variables.m_spectators_list_show_target, bool );
-
-	if ( !show_target )
-		std::erase_if( entries, []( const spectator_entry_t& entry ) { return !entry.m_watching_local; } );
+	const bool show_mode   = GET_VARIABLE( g_variables.m_spectators_bhopcheat_mode, bool );
 
 	if ( entries.empty( ) && !GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ) )
 		return;
 
 	std::sort( entries.begin( ), entries.end( ), []( const spectator_entry_t& a, const spectator_entry_t& b ) { return a.m_index < b.m_index; } );
+
+	const std::string& custom_title = GET_VARIABLE( g_variables.m_spectators_kamibebra_title_text, std::string );
+	const char* const title = GET_VARIABLE( g_variables.m_spectators_kamibebra_custom_title, bool ) && !custom_title.empty( ) ? custom_title.c_str( ) : "Spectators";
 
 	constexpr float width = 160.f, header = 24.f, row_h = 20.f, avatar = 16.f, inset = 8.f, rounding = 3.f;
 
@@ -5234,8 +5235,8 @@ void n_misc::impl_t::draw_spectator_list_kamidere( )
 	draw_list->PushClipRect( min, ImVec2( max.x, body_min.y ), true );
 	draw_list->AddRectFilled( min, max, IM_COL32( 13, 13, 13, 255 ), rounding );
 	const float title_y = std::round( y + ( header - size ) * 0.5f );
-	draw_list->AddText( font, size, ImVec2( x + inset + 1.f, title_y + 1.f ), IM_COL32( 0, 0, 0, 220 ), "Spectators" );
-	draw_list->AddText( font, size, ImVec2( x + inset, title_y ), IM_COL32( 219, 219, 219, 255 ), "Spectators" );
+	draw_list->AddText( font, size, ImVec2( x + inset + 1.f, title_y + 1.f ), IM_COL32( 0, 0, 0, 220 ), title );
+	draw_list->AddText( font, size, ImVec2( x + inset, title_y ), IM_COL32( 219, 219, 219, 255 ), title );
 	draw_list->PopClipRect( );
 
 	const bool avatars = GET_VARIABLE( g_variables.m_spectators_avatar, bool );
@@ -5263,12 +5264,20 @@ void n_misc::impl_t::draw_spectator_list_kamidere( )
 		}
 
 		const ImU32 color      = entry.m_watching_local ? local : other;
-		const std::string name = ellipsize_text( font, size, show_target ? entry.m_name + " -> " + entry.m_target_name : entry.m_name, max.x - inset - text_x );
+		const float mode_w     = show_mode ? std::ceil( text_width( font, size, entry.m_mode ) ) : 0.f;
+		const float name_max   = max.x - inset - text_x - ( show_mode ? mode_w + 6.f : 0.f );
+		const std::string name = ellipsize_text( font, size, show_target ? entry.m_name + " -> " + entry.m_target_name : entry.m_name, name_max );
 		const float text_y     = std::round( row_y + ( row_h - size ) * 0.5f ) - 2.f;
 		const int shadow       = static_cast< int >( ( color >> IM_COL32_A_SHIFT ) & 0xff ) * 220 / 255;
 
 		draw_list->AddText( font, size, ImVec2( text_x + 1.f, text_y + 1.f ), IM_COL32( 0, 0, 0, shadow ), name.c_str( ) );
 		draw_list->AddText( font, size, ImVec2( text_x, text_y ), color, name.c_str( ) );
+
+		if ( show_mode ) {
+			const float mode_x = max.x - inset - mode_w;
+			draw_list->AddText( font, size, ImVec2( mode_x + 1.f, text_y + 1.f ), IM_COL32( 0, 0, 0, 220 ), entry.m_mode.c_str( ) );
+			draw_list->AddText( font, size, ImVec2( mode_x, text_y ), IM_COL32( 150, 150, 150, 255 ), entry.m_mode.c_str( ) );
+		}
 	}
 
 	draw_list->PopClipRect( );

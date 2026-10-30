@@ -98,8 +98,17 @@ namespace
 		int m_tick = 0, m_lifetime = 0, m_icon = 0;
 		// model colors: m_sample = body point, m_capture k_kfx_want = queued, >= 0 = index in g_melt_capture, hidden until answered
 		c_vector m_sample{ };
-		int m_capture = -1;
+		int m_capture = -1, m_victim = 0;
 	};
+
+	/* model colors victim: capture waits for its ragdoll, which draws through remove ragdolls until the capture is answered */
+	struct kfx_wait_t {
+		int m_victim = 0;
+		unsigned int m_ragdoll = 0;
+		float m_wait = 0.f;
+		bool m_shown = false, m_sent = false;
+	};
+	std::vector< kfx_wait_t > g_kfx_wait{ };
 
 	constexpr std::size_t k_kfx_cap = 4096;
 	constexpr int k_soul_hitboxes   = 19;
@@ -157,7 +166,16 @@ namespace
 		return GET_VARIABLE( g_variables.m_death_particles_model_colors, bool );
 	}
 
-	void spawn_soul( c_base_entity* victim )
+	void want_body_color( kfx_particle_t& particle, const c_vector& at, const int victim )
+	{
+		particle.m_sample  = at;
+		particle.m_capture = k_kfx_want;
+		particle.m_victim  = victim;
+		if ( std::none_of( g_kfx_wait.begin( ), g_kfx_wait.end( ), [ & ]( const kfx_wait_t& w ) { return w.m_victim == victim && !w.m_sent; } ) )
+			g_kfx_wait.push_back( { victim } );
+	}
+
+	void spawn_soul( c_base_entity* victim, const int victim_index )
 	{
 		const int style  = std::clamp( GET_VARIABLE( g_variables.m_death_particles_soul_style, int ), 0, 3 );
 		const int amount = std::clamp( GET_VARIABLE( g_variables.m_death_particles_amount, int ), 1, 40 );
@@ -209,10 +227,8 @@ namespace
 				particle.m_size  = rand_range( 1.f, 2.f ) * size;
 				particle.m_life  = rand_range( 0.7f, 1.f ) * life;
 				particle.m_color = particle_color( );
-				if ( body ) {
-					particle.m_sample  = point;
-					particle.m_capture = k_kfx_want;
-				}
+				if ( body )
+					want_body_color( particle, point, victim_index );
 				push( particle );
 			}
 		}
@@ -431,7 +447,7 @@ namespace
 			}
 	}
 
-	void spawn_balls( c_base_entity* victim )
+	void spawn_balls( c_base_entity* victim, const int victim_index )
 	{
 		const int amount = std::clamp( GET_VARIABLE( g_variables.m_death_particles_amount, int ), 5, 100 );
 		const float size = std::clamp( GET_VARIABLE( g_variables.m_death_particles_size, float ), 0.5f, 4.f );
@@ -449,9 +465,8 @@ namespace
 			if ( points.empty( ) )
 				ball.m_pos = origin + c_vector( rand_range( -8.f, 8.f ), rand_range( -8.f, 8.f ), rand_range( -4.f, 6.f ) );
 			else {
-				ball.m_sample  = points[ std::uniform_int_distribution< std::size_t >( 0, points.size( ) - 1 )( g_kfx_rng ) ];
-				ball.m_capture = k_kfx_want;
-				ball.m_pos     = ball.m_sample + c_vector( rand_range( -1.5f, 1.5f ), rand_range( -1.5f, 1.5f ), rand_range( -1.5f, 1.5f ) );
+				want_body_color( ball, points[ std::uniform_int_distribution< std::size_t >( 0, points.size( ) - 1 )( g_kfx_rng ) ], victim_index );
+				ball.m_pos = ball.m_sample + c_vector( rand_range( -1.5f, 1.5f ), rand_range( -1.5f, 1.5f ), rand_range( -1.5f, 1.5f ) );
 			}
 
 			const float angle = rand_range( 0.f, 6.2831853f );
@@ -2566,6 +2581,7 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 			particle.m_capture = -1;
 		}
 
+		g_kfx_wait.erase( std::remove_if( g_kfx_wait.begin( ), g_kfx_wait.end( ), [ ]( const kfx_wait_t& w ) { return w.m_sent; } ), g_kfx_wait.end( ) );
 		g_melt_capture.m_state.store( 0, std::memory_order_release );
 	}
 
@@ -2666,16 +2682,36 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 	}
 
 	/* one back buffer read for waiting melts + queued model color particles; only a melt capture keeps its texture slot */
-	void capture_send( const bool melt_want )
+	void capture_send( const bool melt_want, const float dt )
 	{
+		/* ready = ragdoll drew last frame ( paint runs after the world, so shown now = in the next frame's back buffer ), or no ragdoll after 0.3 s */
+		const auto ready = [ ]( const int victim ) {
+			const auto it = std::find_if( g_kfx_wait.begin( ), g_kfx_wait.end( ), [ & ]( const kfx_wait_t& w ) { return w.m_victim == victim && !w.m_sent; } );
+			return it == g_kfx_wait.end( ) || ( it->m_shown && it->m_wait > 0.f ) || ( !it->m_ragdoll && it->m_wait >= 0.3f );
+		};
+
+		for ( kfx_wait_t& w : g_kfx_wait ) {
+			if ( w.m_sent )
+				continue;
+			w.m_wait += dt;
+			if ( !w.m_ragdoll )
+				if ( const auto victim = g_interfaces.m_client_entity_list->get< c_base_entity >( w.m_victim ); victim && melt_ragdoll( victim ) )
+					w.m_ragdoll = victim->get_ragdoll_handle( );
+			if ( w.m_ragdoll && !w.m_shown ) {
+				w.m_shown = true;
+				w.m_wait  = 0.f;
+			}
+		}
+		g_kfx_wait.erase( std::remove_if( g_kfx_wait.begin( ), g_kfx_wait.end( ), [ ]( const kfx_wait_t& w ) { return w.m_wait > 0.6f; } ), g_kfx_wait.end( ) );
+
 		bool kfx_want = false;
 		for ( kfx_particle_t& particle : g_kfx ) {
 			if ( particle.m_capture != k_kfx_want )
 				continue;
-			if ( particle.m_age > 0.35f )
+			if ( particle.m_age > 0.7f )
 				particle.m_capture = -1;
 			else
-				kfx_want = true;
+				kfx_want |= ready( particle.m_victim );
 		}
 
 		if ( ( !melt_want && !kfx_want ) || g_melt_capture.m_state.load( std::memory_order_acquire ) != 0 )
@@ -2725,8 +2761,10 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 			};
 			std::vector< sample_t > done{ };
 			for ( kfx_particle_t& particle : g_kfx ) {
-				if ( particle.m_capture != k_kfx_want )
+				if ( particle.m_capture != k_kfx_want || !ready( particle.m_victim ) )
 					continue;
+				for ( kfx_wait_t& w : g_kfx_wait )
+					w.m_sent |= w.m_victim == particle.m_victim;
 
 				auto it = std::find_if( done.begin( ), done.end( ), [ & ]( const sample_t& s ) { return s.m_at == particle.m_sample; } );
 				if ( it == done.end( ) ) {
@@ -2759,6 +2797,7 @@ void kill_effects_paint( )
 
 	if ( !in_game || !GET_VARIABLE( g_variables.m_death_particles, bool ) || cur + 1.f < g_kfx_last_cur ) {
 		g_kfx.clear( );
+		g_kfx_wait.clear( );
 		g_melts.clear( );
 		g_melt_hidden.clear( );
 	}
@@ -2770,7 +2809,7 @@ void kill_effects_paint( )
 	{
 		PERF_ZONE( zone_paint_melt );
 		capture_take( );
-		capture_send( melt_paint( dt ) );
+		capture_send( melt_paint( dt ), dt );
 	}
 
 	g_kfx_quads.clear( );
@@ -2909,6 +2948,17 @@ bool kill_effects_hides_ragdoll( const int entity_index )
 			return true;
 
 	return false;
+}
+
+bool kill_effects_shows_ragdoll( const int entity_index )
+{
+	if ( entity_index <= 0 || g_kfx_wait.empty( ) )
+		return false;
+
+	const auto entity = g_interfaces.m_client_entity_list->get< c_base_entity >( entity_index );
+	return entity && std::any_of( g_kfx_wait.begin( ), g_kfx_wait.end( ), [ & ]( const kfx_wait_t& w ) {
+		return w.m_shown && !w.m_sent && from_handle( w.m_ragdoll ) == entity;
+	} );
 }
 
 void kill_effects_release_textures( )
@@ -3142,12 +3192,12 @@ void on_death_particles( const int victim_index, const int attacker_index )
 
 	switch ( GET_VARIABLE( g_variables.m_death_particles_type, int ) ) {
 	case 3: spawn_smoke( victim ); return;
-	case 5: spawn_soul( victim ); return;
+	case 5: spawn_soul( victim, victim_index ); return;
 	case 7: spawn_melt( victim, victim_index ); return;
 	case 8: spawn_mc( victim ); return;
 	case 6:
 		if ( attacker_index == g_interfaces.m_engine_client->get_local_player( ) )
-			spawn_balls( victim );
+			spawn_balls( victim, victim_index );
 		return;
 	default: break;
 	}

@@ -235,6 +235,7 @@ void kill_effects_capture( IDirect3DDevice9* device );
 void kill_effects_release_textures( );
 void kill_effects_shutdown( );
 bool kill_effects_hides_ragdoll( int entity_index );
+bool kill_effects_shows_ragdoll( int entity_index );
 bool kill_effects_wants_ragdoll_dme( );
 void ragdoll_force_hook( );
 void ragdoll_force_unhook( );

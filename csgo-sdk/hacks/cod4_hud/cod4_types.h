@@ -54,6 +54,7 @@ namespace n_cod4_data
 		const char* m_reticle_side;
 		int m_reticle_center_size, m_reticle_side_size, m_reticle_min_ofs;
 		float m_hip_stand_min, m_hip_ducked_min, m_hip_max, m_hip_ducked_max;
+		float m_hip_decay, m_hip_move_add, m_hip_ducked_decay; // aimSpreadScale rates, 255 units per second each
 		const char* m_dpad_icon;
 		int m_dpad_icon_ratio;
 		const char* m_ads_overlay; // adsOverlayShader, virtual w x h centered

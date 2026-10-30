@@ -123,6 +123,7 @@ enum e_keybind_indicators {
 	key_hsw,
 	key_zb,
 	key_az,
+	key_esurf,
 	key_max
 };
 
@@ -153,6 +154,7 @@ enum e_keybind_labels {
 	label_hsw,
 	label_zb,
 	label_az,
+	label_esurf,
 	label_max
 };
 
@@ -164,7 +166,7 @@ inline constexpr const char* k_keybind_labels[ label_max ][ 2 ] = {
 	{ "ps assist", "ast" },    { "bounce assist", "bast" },   { "ladder bug", "lb" },     { "ladder glide", "lg" },
 	{ "freelook climb", "lfc" }, { "fast ladder", "fl" },     { "one hop", "oh" },        { "auto crouch", "ac" },
 	{ "auto bounce", "ab" },   { "tung surf", "tung" },       { "edge skip", "es" },      { "half sideways", "hsw" },
-	{ "zeus bug", "zb" },      { "air freeze", "az" },
+	{ "zeus bug", "zb" },      { "air freeze", "az" },        { "edge surf", "esurf" },
 };
 
 enum e_indicator_style {
@@ -994,6 +996,7 @@ namespace n_variables
 		ADD_VARIABLE( key_bind_t, m_jump_bug_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_jump_bug_crouch, false );
 		ADD_VARIABLE( bool, m_jump_bug_kangaroo, false );
+		ADD_VARIABLE( bool, m_jump_bug_only, false );
 		ADD_VARIABLE( bool, m_pixel_surf, false );
 		ADD_VARIABLE( key_bind_t, m_pixel_surf_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_pixel_surf_fix, false );
@@ -1119,6 +1122,9 @@ namespace n_variables
 		ADD_VARIABLE( int, m_texture_bug_sound, 0 );
 		ADD_VARIABLE( std::string, m_texture_bug_sound_custom, "" );
 		ADD_VARIABLE( float, m_texture_bug_sound_volume, 1.f );
+		ADD_VARIABLE( bool, m_edge_surf, false );
+		ADD_VARIABLE( key_bind_t, m_edge_surf_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( float, m_edge_surf_range, 96.f );
 		ADD_VARIABLE( bool, m_fix_air_stucks, false );
 
 		ADD_VARIABLE( bool, m_ladder_bug, false );

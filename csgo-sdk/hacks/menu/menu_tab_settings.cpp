@@ -1405,7 +1405,7 @@ void n_menu::impl_t::tab_misc( )
 
 					if ( color_style != 9 && color_style != 12 && color_style != 13 && color_style != 14 && color_style != 16 && color_style != 18 &&
 					     color_style != 19 && color_style != 20 && color_style != 21 && color_style != 24 && color_style != 26 && color_style != 28 &&
-					     color_style != 29 && color_style != 30 && color_style != 31 && color_style != 32 && ( color_style != 25 || lumi_type == 1 ) )
+					     color_style != 29 && color_style != 30 && color_style != 31 && ( color_style != 25 || lumi_type == 1 ) )
 						ImGui::Combo( "listed players##spectatorlist player", &GET_VARIABLE( g_variables.m_spectators_list_type, int ),
 					                  "all spectators\0local spectators\0" );
 
@@ -1446,6 +1446,19 @@ void n_menu::impl_t::tab_misc( )
 
 					if ( style == 32 ) {
 						ImGui::Checkbox( "hide GOTV##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_kami_hide_gotv, bool ) );
+						ImGui::Checkbox( "observer mode##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_bhopcheat_mode, bool ) );
+						ImGui::Checkbox( "custom title##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_kamibebra_custom_title, bool ) );
+						if ( GET_VARIABLE( g_variables.m_spectators_kamibebra_custom_title, bool ) ) {
+							static char title_buffer[ 64 ] = { };
+							auto& title_var                = GET_VARIABLE( g_variables.m_spectators_kamibebra_title_text, std::string );
+
+							if ( ImGui::InputTextWithHint( "title text##spectatorlist kamidere", "Spectators", title_buffer, sizeof( title_buffer ) ) )
+								title_var = title_buffer;
+							else if ( !ImGui::IsItemActive( ) && title_var != title_buffer ) {
+								strncpy_s( title_buffer, title_var.c_str( ), sizeof( title_buffer ) - 1 );
+								title_buffer[ sizeof( title_buffer ) - 1 ] = '\0';
+							}
+						}
 						ImGui::Checkbox( "blur background##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_kami_blur, bool ) );
 						ImGui::Checkbox( "circle avatars##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_kami_circle, bool ) );
 						if ( !GET_VARIABLE( g_variables.m_spectators_kami_blur, bool ) )
@@ -2036,12 +2049,17 @@ void n_menu::impl_t::tab_misc( )
 			if ( tab == std::string::npos )
 				continue;
 
+			const ImVec2 x_size = ImGui::CalcTextSize( "x" );
+
 			ImGui::PushID( i );
-			if ( ImGui::Button( lines[ i ].substr( 0, tab ).c_str( ), ImVec2( ImGui::GetContentRegionAvail( ).x - 23.f, 15.f ) ) )
+			if ( ImGui::Button( lines[ i ].substr( 0, tab ).c_str( ), ImVec2( ImGui::GetContentRegionAvail( ).x - 7.f - x_size.x, 15.f ) ) )
 				g_interfaces.m_engine_client->client_cmd_unrestricted( lines[ i ].substr( tab + 1 ).c_str( ) );
 			ImGui::SameLine( 0.f, 7.f );
-			if ( icon_button( "##delete", 2, 15.f ) )
+			if ( ImGui::InvisibleButton( "##delete", ImVec2( x_size.x, 15.f ) ) )
 				remove = i;
+			const ImVec2 x_min = ImGui::GetItemRectMin( );
+			ImGui::GetWindowDrawList( )->AddText( ImVec2( x_min.x, ImFloor( x_min.y + ( 15.f - x_size.y ) * 0.5f ) ),
+			                                      ImGui::GetColorU32( ImGui::IsItemHovered( ) ? ImGuiCol_Text : ImGuiCol_TextDisabled ), "x" );
 			ImGui::PopID( );
 		}
 

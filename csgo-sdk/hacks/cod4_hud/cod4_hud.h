@@ -30,7 +30,7 @@ namespace n_cod4_hud
 		bool m_flashed = false;
 		bool m_console = false;
 		int m_team     = 0; // 2 T = axis, 3 CT = allies
-		int m_health = 0, m_max_health = 100;
+		int m_health = 0, m_max_health = 100, m_armor = 0;
 		float m_origin[ 3 ]{ };
 		float m_yaw = 0.f, m_tan_half_fov_y = 1.f;
 
@@ -39,7 +39,8 @@ namespace n_cod4_hud
 		unsigned int m_weapon_handle = 0;
 		bool m_knife      = false;
 		int m_clip = 0, m_clip_max = 0, m_reserve = 0, m_reserve_max = 0;
-		float m_spread_deg = 0.f, m_spread_scale = 0.f; // cod4 hip spread from csgo's live inaccuracy, 0..255
+		float m_spread_scale = 0.f; // aimSpreadScale target from csgo's live inaccuracy, 0..255 (render thread eases to it)
+		float m_spread_min = 0.f, m_spread_max = 0.f; // hipSpread min / max, degrees
 		bool m_ducked     = false;
 		std::string m_weapon_name{ };
 
@@ -55,7 +56,6 @@ namespace n_cod4_hud
 		int m_score_limit = 0;
 
 		bool m_warmup    = false;
-		bool m_bomb      = false;
 		float m_timeleft = -1.f; // round seconds left (frozen at the round time in freeze time), -1 = no game rules
 
 		std::vector< actor_t > m_actors{ };
@@ -78,6 +78,20 @@ namespace n_cod4_hud
 
 		bool m_crosshair_hidden = false;
 		int m_saved_crosshair   = 1;
+
+		// window thread, true = chat line took the key (csgo's chat never opens)
+		bool chat_on_key( unsigned int msg, unsigned int wide_param, long long_param, bool ui_input );
+
+		// chat line, mc_hud's contract: wndproc writes, paint_traverse drains + sends, end_scene draws
+		std::mutex m_chat_mutex{ };
+		bool m_chat_open                   = false;
+		bool m_chat_team                   = false;
+		int m_chat_result                  = 0; // 1 send, 2 cancel
+		wchar_t m_chat_open_char           = 0;
+		unsigned long long m_chat_drain_ms = 0ull;
+		std::wstring m_chat_input{ };
+
+		void drain_chat( bool active );
 	};
 
 	bool enabled( );

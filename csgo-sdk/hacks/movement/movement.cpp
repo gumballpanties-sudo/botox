@@ -1781,6 +1781,27 @@ void n_movement::impl_t::fast_stop( c_user_cmd* cmd )
 	cmd->m_side_move     = -sinf( rotation ) * wish;
 }
 
+/* jb only: POST landing tick, sim from START duck tick ( air duck lifts feet ) then jump tick. fail = no duck, plain jump */
+static bool jb_will_work( )
+{
+	if ( !GET_VARIABLE( g_variables.m_jump_bug_only, bool ) || !g_prediction.snapshot_save( 0 ) )
+		return true;
+	c_user_cmd probe = *g_ctx.m_cmd;
+	restore_prediction_frame( );
+	probe.m_buttons = ( probe.m_buttons | in_duck ) & ~in_jump;
+	predict_cmd( &probe );
+	bool ok = !( g_ctx.m_local->get_flags( ) & fl_onground );
+	if ( ok ) {
+		probe.m_buttons = ( probe.m_buttons & ~in_duck ) | in_jump;
+		predict_cmd( &probe );
+		ok = !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_velocity( ).m_z > 0.f;
+	}
+	restore_prediction_frame( );
+	g_prediction.snapshot_load( 0 );
+	botox_dbg_log( "JBO: %s z=%.3f", ok ? "jb" : "jump", g_ctx.m_local->get_abs_origin( ).m_z );
+	return ok;
+}
+
 void n_movement::impl_t::jump_bug( )
 {
 	if ( g_prediction.backup_data.m_flags & 1 )
@@ -1796,7 +1817,8 @@ void n_movement::impl_t::jump_bug( )
 	}
 	[[unlikely]] if ( !( g_ctx.m_cmd->m_buttons & e_command_buttons::in_jump ) ) {
 		static bool ducked = false;
-		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) && !ducked ) {
+		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) && !ducked &&
+		     jb_will_work( ) ) {
 			g_ctx.m_cmd->m_buttons |= e_command_buttons::in_duck;
 			ducked = true;
 		} else
@@ -1805,7 +1827,7 @@ void n_movement::impl_t::jump_bug( )
 			ducked = false;
 	} else {
 		/* jump + jb key held = every landing edge, ungated ( can_jb only arms on rising vz, a ledge drop never rises ) */
-		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) )
+		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) && jb_will_work( ) )
 			g_ctx.m_cmd->m_buttons |= e_command_buttons::in_duck;
 		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground )
 			g_ctx.m_cmd->m_buttons &= ~e_command_buttons::in_jump;
@@ -1837,7 +1859,8 @@ void n_movement::impl_t::kangaroo( )
 	[[unlikely]] if ( !( g_ctx.m_cmd->m_buttons & e_command_buttons::in_jump ) ) {
 		static bool ducked_kangaroo = false;
 
-		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) && !ducked_kangaroo ) {
+		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) && !ducked_kangaroo &&
+		     jb_will_work( ) ) {
 			g_ctx.m_cmd->m_buttons |= e_command_buttons::in_duck;
 			ducked_kangaroo              = true;
 			m_kangaroo_data.m_successful = true;
@@ -1850,7 +1873,7 @@ void n_movement::impl_t::kangaroo( )
 		if ( g_prediction.backup_data.m_flags & e_flags::fl_onground && ducked_kangaroo )
 			ducked_kangaroo = false;
 	} else {
-		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) ) {
+		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) && jb_will_work( ) ) {
 			g_ctx.m_cmd->m_buttons |= e_command_buttons::in_duck;
 			m_kangaroo_data.m_successful = true;
 		}

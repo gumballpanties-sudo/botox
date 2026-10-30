@@ -496,6 +496,21 @@ namespace n_cod4
 		return v < static_cast< float >( min_ofs ) ? static_cast< float >( min_ofs ) : v;
 	}
 
+	// aimSpreadScale never jumps: rises at hipSpreadMoveAdd, falls at hipSpreadDecayRate (x hipSpreadDuckedDecay ducked), 255 units / s
+	// ponytail: one rise rate for move and fire (cod4 adds hipSpreadFireAdd per shot instantly), split if shots look slow
+	inline float aim_spread_step( float shown, float target, float dt, float decay, float move_add, float ducked_decay, bool ducked )
+	{
+		if ( !( shown == shown ) )
+			shown = 0.f;
+		dt = dt > 0.f ? ( dt < 0.25f ? dt : 0.25f ) : 0.f;
+		if ( decay <= 0.f )
+			return target;
+		if ( target > shown )
+			return std::min( target, shown + 255.f * std::max( move_add, decay ) * dt );
+		const float down = 255.f * decay * ( ducked && ducked_decay > 0.f ? ducked_decay : 1.f ) * dt;
+		return std::max( target, shown - down );
+	}
+
 	inline float reticle_alpha( float alpha, float fade, float spread_scale_255, float alpha_min )
 	{
 		const float a = alpha * fade * ( 1.f - spread_scale_255 / 255.f );
