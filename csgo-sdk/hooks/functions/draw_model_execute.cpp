@@ -10,6 +10,7 @@
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/visuals/players/sound_esp/sound_esp.h"
 #include "../../hacks/visuals/viewmodel_bones.h"
+#include "../../hacks/visuals/viewmodel_fps.h"
 #include "../../hacks/visuals/weapon_sheen.h"
 #include "../../utilities/console/console.h"
 #include <algorithm>
@@ -92,6 +93,9 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 
 	// eject frees chams materials; drawing mid release crashes
 	HOOK_SCOPE_OR_BAIL( original( ecx, edx, context, state, info, custom_bone_to_world ) );
+
+	// first: chams, sheen + motion blur bones all see the held pose
+	custom_bone_to_world = g_viewmodel_fps.apply( state, custom_bone_to_world, info.model );
 
 	if ( ( GET_VARIABLE( g_variables.m_remove_ragdolls, bool ) && should_skip_ragdoll( info ) && !kill_effects_shows_ragdoll( info.entity_index ) ) ||
 	     kill_effects_hides_ragdoll( info.entity_index ) )

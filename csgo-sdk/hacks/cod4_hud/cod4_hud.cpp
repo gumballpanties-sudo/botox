@@ -1907,7 +1907,7 @@ void n_cod4_hud::impl_t::drain_chat( bool active )
 	}
 }
 
-// window thread: the messagemode bind opens our line instead of csgo's chat panel (mc_hud's chat_on_key)
+// window thread: the messagemode bind opens our line instead of the csgo chat panel, copy of mc_hud chat_on_key
 bool n_cod4_hud::impl_t::chat_on_key( unsigned int msg, unsigned int wide_param, long long_param, bool ui_input )
 {
 	// no WM_SYSKEY*: alt+f4 / alt+tab keep working

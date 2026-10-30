@@ -970,6 +970,8 @@ namespace n_variables
 		ADD_VARIABLE( float, m_viewmodel_bob_lower, 21.f );
 		ADD_VARIABLE( float, m_viewmodel_shift_left, 1.5f );
 		ADD_VARIABLE( float, m_viewmodel_shift_right, 0.75f );
+		ADD_VARIABLE( bool, m_viewmodel_low_fps, false );
+		ADD_VARIABLE( float, m_viewmodel_low_fps_rate, 24.f );
 
 		ADD_VARIABLE( bool, m_bunny_hop, false );
 		ADD_VARIABLE( int, m_bunny_hop_chance, 100 );

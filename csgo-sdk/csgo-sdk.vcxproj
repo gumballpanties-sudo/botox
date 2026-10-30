@@ -487,6 +487,7 @@
     <ClInclude Include="hacks\visuals\screen\depth_source.h" />
     <ClInclude Include="hacks\visuals\screen\true_motion_blur.h" />
     <ClInclude Include="hacks\visuals\viewmodel_bones.h" />
+    <ClInclude Include="hacks\visuals\viewmodel_fps.h" />
     <ClInclude Include="hacks\visuals\weapon_sheen.h" />
     <ClInclude Include="hacks\visuals\screen\render_queue.h" />
     <ClInclude Include="hacks\web\websurface.h" />

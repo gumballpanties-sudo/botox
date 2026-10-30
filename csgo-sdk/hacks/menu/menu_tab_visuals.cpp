@@ -1684,6 +1684,18 @@ void n_menu::impl_t::tab_visuals( )
 					},
 					ImVec2( 240.f, -1 ) );
 			}
+
+			ImGui::Checkbox( "low fps viewmodel", &GET_VARIABLE( g_variables.m_viewmodel_low_fps, bool ) );
+
+			if ( GET_VARIABLE( g_variables.m_viewmodel_low_fps, bool ) ) {
+				ImGui::OptionPopup(
+					"low fps viewmodel settings",
+					[ & ]( ) {
+						ImGui::SliderFloat( "fps##low fps viewmodel", &GET_VARIABLE( g_variables.m_viewmodel_low_fps_rate, float ), 15.f, 60.f,
+						                    "%.0f fps", ImGuiSliderFlags_AlwaysClamp );
+					},
+					ImVec2( 210.f, -1 ) );
+			}
 		}
 		menu_group_end( );
 
