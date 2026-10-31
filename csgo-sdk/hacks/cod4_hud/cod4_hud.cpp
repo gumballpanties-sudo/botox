@@ -1282,25 +1282,15 @@ namespace
 
 	/* ---- code drawn parts ---- */
 	// CG_DrawCrosshair (0x42f6e0): reticleCenter + 4 reticleSide pieces pushed out by the spread
-	void draw_crosshair( const n_cod4_hud::snapshot_t& s, int now )
+	void draw_crosshair( const n_cod4_hud::snapshot_t& s )
 	{
-		// eased every frame, the snapshot only moves when csgo's predicted cone does
-		static float s_shown = 0.f;
-		static int s_last    = 0, s_weapon = -1;
-		if ( !s_dv.b( "cg_drawCrosshair" ) || !s.m_alive || s.m_scoped || s.m_weapon < 0 ) {
-			s_weapon = -1;
+		if ( !s_dv.b( "cg_drawCrosshair" ) || !s.m_alive || s.m_scoped || s.m_weapon < 0 )
 			return;
-		}
-		const weapon_t& w = k_weapons[ s.m_weapon ];
-		if ( s.m_weapon != s_weapon )
-			s_shown = s.m_spread_scale, s_weapon = s.m_weapon;
-		s_shown = aim_spread_step( s_shown, s.m_spread_scale, static_cast< float >( now - s_last ) * 0.001f, w.m_hip_decay, w.m_hip_move_add, w.m_hip_ducked_decay,
-		                           s.m_ducked );
-		s_last  = now;
-		const float spread_deg = s.m_spread_min + ( s.m_spread_max - s.m_spread_min ) * s_shown / 255.f;
+		const weapon_t& w      = k_weapons[ s.m_weapon ];
+		const float spread_deg = s.m_spread_min + ( s.m_spread_max - s.m_spread_min ) * s.m_spread_scale / 255.f;
 
 		float c[ 4 ]{ 1.f, 1.f, 1.f, 1.f };
-		c[ 3 ] = reticle_alpha( s_dv.f( "cg_crosshairAlpha" ), 1.f, s_shown, s_dv.f( "cg_crosshairAlphaMin" ) );
+		c[ 3 ] = reticle_alpha( s_dv.f( "cg_crosshairAlpha" ), 1.f, s.m_spread_scale, s_dv.f( "cg_crosshairAlphaMin" ) );
 		if ( c[ 3 ] < 0.01f )
 			return;
 
@@ -1542,6 +1532,7 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 		const unsigned int active             = local->get_active_weapon_handle( );
 		s.m_weapon_handle                     = active;
 		int frag_rank = 99, smoke_rank = 99;
+		float active_max_speed = 250.f;
 
 		for ( int i = 0; i < 64; ++i ) {
 			const unsigned int handle = local->get_weapons_handle( )[ i ];
@@ -1605,15 +1596,44 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 			const wchar_t* w = hud && g_interfaces.m_localize ? g_interfaces.m_localize->find_safe( hud ) : nullptr;
 			s.m_weapon_name  = w && *w && *w != L'#' ? g_utilities.to_utf8( w ) : std::string( name.substr( name.find( '_' ) + 1 ) );
 
-			// cod4 hip spread from csgo's live cone: the cone's place between rest and moving maps onto
-			// hipSpreadMin..Max (BG_GetSpreadForWeapon: min + (max - min) * aimSpreadScale / 255)
+			// BG_GetSpreadForWeapon: min + (max - min) * aimSpreadScale / 255
 			if ( cod && !s.m_knife ) {
-				const float rest = s.m_ducked ? data->m_inaccuracy_crouch[ 0 ] : data->m_inaccuracy_stand[ 0 ];
-				const float t    = spread_fraction( weapon->get_inaccuracy( ) + weapon->get_spread( ), rest + data->m_spread[ 0 ], data->m_inaccuracy_move[ 0 ] );
-				s.m_spread_scale = t * 255.f;
-				s.m_spread_min   = s.m_ducked ? cod->m_hip_ducked_min : cod->m_hip_stand_min;
-				s.m_spread_max   = s.m_ducked && cod->m_hip_ducked_max > 0.f ? cod->m_hip_ducked_max : cod->m_hip_max;
+				s.m_spread_min = s.m_ducked ? cod->m_hip_ducked_min : cod->m_hip_stand_min;
+				s.m_spread_max = s.m_ducked && cod->m_hip_ducked_max > 0.f ? cod->m_hip_ducked_max : cod->m_hip_max;
 			}
+			active_max_speed = data->m_max_speed[ 0 ];
+		}
+
+		// aimSpreadScale run like cod4's pmove: every frame, shots = predicted clip drop on the same gun
+		{
+			static float s_scale = 0.f, s_real = 0.f;
+			static c_angle s_view{ };
+			static unsigned int s_handle = 0;
+			static int s_clip            = 0;
+			const float real             = g_interfaces.m_global_vars_base->m_real_time;
+			const float dt               = std::clamp( real - s_real, 0.f, 0.25f );
+			if ( s.m_alive && s.m_weapon >= 0 && dt > 0.f ) {
+				const weapon_t& w   = k_weapons[ s.m_weapon ];
+				const bool hip      = !s.m_scoped;
+				const c_vector& vel = local->get_velocity( );
+				aim_spread_in_t in{ };
+				in.m_dt         = dt;
+				in.m_turn[ 0 ]  = hip ? angle_delta( view.m_x, s_view.m_x ) : 0.f;
+				in.m_turn[ 1 ]  = hip ? angle_delta( view.m_y, s_view.m_y ) : 0.f;
+				in.m_speed      = std::sqrt( vel.m_x * vel.m_x + vel.m_y * vel.m_y );
+				in.m_speed_full = active_max_speed;
+				in.m_move_keys  = hip && ( g_ctx.m_input_buttons & ( in_forward | in_back | in_moveleft | in_moveright ) ) != 0;
+				in.m_in_air     = hip && !( local->get_flags( ) & fl_onground );
+				in.m_ducked     = s.m_ducked;
+				s_scale         = aim_spread_update( s_scale, w, in );
+				if ( hip && active == s_handle && s.m_clip < s_clip )
+					s_scale = aim_spread_fire( s_scale, w, std::min( s_clip - s.m_clip, 5 ) );
+			}
+			if ( dt > 0.f || real < s_real ) {
+				s_real = real, s_view = view;
+				s_handle = active, s_clip = s.m_clip;
+			}
+			s.m_spread_scale = s_scale;
 		}
 
 		// team scores (CCSTeam), player scores (CCSPlayerResource)
@@ -2103,7 +2123,7 @@ void n_cod4_hud::impl_t::on_end_scene( )
 	paint_menus( ctx, s, now, 0, 1 );
 	if ( s.m_alive ) {
 		draw_damage( s, now );
-		draw_crosshair( s, now );
+		draw_crosshair( s );
 	}
 	paint_menus( ctx, s, now, 1, static_cast< int >( std::size( k_menus ) ) );
 	draw_hit_marker( now );

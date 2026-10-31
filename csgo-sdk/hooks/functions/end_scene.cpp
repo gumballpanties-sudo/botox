@@ -25,6 +25,7 @@ void n_detoured_functions::draw_overlay_frame( IDirect3DDevice9* device )
 	PERF_ZONE( zone_overlay );
 
 	g_render.on_end_scene(
+		[ ]( ) { g_cod4_hud.on_end_scene( ); },
 		[ & ]( ) {
 			g_movement.on_end_scene( );
 
@@ -33,7 +34,6 @@ void n_detoured_functions::draw_overlay_frame( IDirect3DDevice9* device )
 			Web_Present( device );
 
 			g_mc_hud.on_end_scene( );
-			g_cod4_hud.on_end_scene( );
 
 			g_menu.on_end_scene( );
 			g_misc.on_end_scene( );

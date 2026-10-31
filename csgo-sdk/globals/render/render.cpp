@@ -1779,7 +1779,7 @@ static void render_lists( const ImDrawData* source, ImVector< ImDrawList* >& lis
 		ImGui_ImplDX9_RenderDrawData( &part );
 }
 
-void n_render::impl_t::on_end_scene( const std::function< void( ) >& function, IDirect3DDevice9* device )
+void n_render::impl_t::on_end_scene( const std::function< void( ) >& under, const std::function< void( ) >& function, IDirect3DDevice9* device )
 {
 	if ( !this->m_initialised ) {
 		ImGui::CreateContext( );
@@ -1940,6 +1940,8 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& function, I
 		PERF_ZONE( zone_avatars );
 		g_avatar_cache.think( );
 	}
+
+	under( );
 
 	this->draw_cached_data( );
 

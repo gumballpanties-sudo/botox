@@ -496,32 +496,47 @@ namespace n_cod4
 		return v < static_cast< float >( min_ofs ) ? static_cast< float >( min_ofs ) : v;
 	}
 
-	// aimSpreadScale never jumps: rises at hipSpreadMoveAdd, falls at hipSpreadDecayRate (x hipSpreadDuckedDecay ducked), 255 units / s
-	// ponytail: one rise rate for move and fire (cod4 adds hipSpreadFireAdd per shot instantly), split if shots look slow
-	inline float aim_spread_step( float shown, float target, float dt, float decay, float move_add, float ducked_decay, bool ducked )
+	struct aim_spread_in_t {
+		float m_dt;            // frame seconds
+		float m_turn[ 2 ];     // view pitch / yaw change this frame, degrees
+		float m_speed;         // horizontal velocity
+		float m_speed_full;    // g_speed stand-in (weapon max speed)
+		bool m_move_keys;      // forwardmove || rightmove
+		bool m_in_air, m_ducked;
+	};
+
+	// PM_UpdateAimSpread (0x417580), hip only (prone / spreadOverride / ads frac dropped). any increase = no decay that frame
+	inline float aim_spread_update( float scale, const n_cod4_data::weapon_t& w, const aim_spread_in_t& in )
 	{
-		if ( !( shown == shown ) )
-			shown = 0.f;
-		dt = dt > 0.f ? ( dt < 0.25f ? dt : 0.25f ) : 0.f;
-		if ( decay <= 0.f )
-			return target;
-		if ( target > shown )
-			return std::min( target, shown + 255.f * std::max( move_add, decay ) * dt );
-		const float down = 255.f * decay * ( ducked && ducked_decay > 0.f ? ducked_decay : 1.f ) * dt;
-		return std::max( target, shown - down );
+		if ( !( scale == scale ) )
+			scale = 0.f;
+		if ( w.m_hip_decay == 0.f || !( in.m_dt > 0.f ) )
+			return scale;
+		const float decay = w.m_hip_decay * ( in.m_in_air ? 0.5f : in.m_ducked ? w.m_hip_ducked_decay : 1.f );
+		float increase    = 0.f;
+		if ( w.m_hip_turn_add != 0.f )
+			for ( const float turn : in.m_turn )
+				increase += std::fabs( turn ) * 0.01f * w.m_hip_turn_add / in.m_dt;
+		// bg_aimSpreadMoveSpeedThreshold 11
+		if ( w.m_hip_move_add != 0.f && in.m_move_keys && in.m_speed > 11.f )
+			increase += in.m_speed * w.m_hip_move_add / std::max( in.m_speed_full, 1.f );
+		if ( in.m_in_air )
+			increase += 1.28f + 1.28f; // 0x4177ad adds the constant twice
+		scale += increase * in.m_dt > 0.f ? increase * in.m_dt * 255.f : -decay * in.m_dt * 255.f;
+		return scale > 255.f ? 255.f : scale < 0.f ? 0.f : scale;
+	}
+
+	// 0x418210, per shot from the hip
+	inline float aim_spread_fire( float scale, const n_cod4_data::weapon_t& w, int shots )
+	{
+		scale += w.m_hip_fire_add * 255.f * static_cast< float >( shots > 0 ? shots : 0 );
+		return scale > 255.f ? 255.f : scale;
 	}
 
 	inline float reticle_alpha( float alpha, float fade, float spread_scale_255, float alpha_min )
 	{
 		const float a = alpha * fade * ( 1.f - spread_scale_255 / 255.f );
 		return a < alpha_min ? alpha_min : a;
-	}
-
-	// csgo cone vs the weapon's rest / moving inaccuracy (c_weapon_data is already radians) -> aimSpreadScale 0..1, NaN = 0
-	inline float spread_fraction( float cone, float rest, float move )
-	{
-		const float t = ( cone - rest ) / std::max( move, 0.001f );
-		return t > 0.f ? ( t < 1.f ? t : 1.f ) : 0.f;
 	}
 
 	// csgo chat -> game message window line. stock notice bytes 1..16 = colour (3 + text before the first = sender's team),

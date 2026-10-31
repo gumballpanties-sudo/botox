@@ -261,7 +261,8 @@ namespace n_render
 			this->m_draw_data.clear( );
 		}
 
-		void on_end_scene( const std::function< void( ) >& function, IDirect3DDevice9* device );
+		// under = drawn before the cached game-thread draw data (indicators, esp), so everything else sits on top
+		void on_end_scene( const std::function< void( ) >& under, const std::function< void( ) >& function, IDirect3DDevice9* device );
 
 		void swap_draw_data( )
 		{

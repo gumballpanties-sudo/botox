@@ -39,7 +39,7 @@ namespace n_cod4_hud
 		unsigned int m_weapon_handle = 0;
 		bool m_knife      = false;
 		int m_clip = 0, m_clip_max = 0, m_reserve = 0, m_reserve_max = 0;
-		float m_spread_scale = 0.f; // aimSpreadScale target from csgo's live inaccuracy, 0..255 (render thread eases to it)
+		float m_spread_scale = 0.f; // aimSpreadScale 0..255, PM_UpdateAimSpread run per frame on the game thread
 		float m_spread_min = 0.f, m_spread_max = 0.f; // hipSpread min / max, degrees
 		bool m_ducked     = false;
 		std::string m_weapon_name{ };
