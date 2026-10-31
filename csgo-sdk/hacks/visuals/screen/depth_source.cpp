@@ -9,6 +9,8 @@
 #include <d3dx9.h>
 #include <string>
 
+void botox_dbg_log( const char* fmt, ... );
+
 static const D3DFORMAT k_format_intz = static_cast< D3DFORMAT >( MAKEFOURCC( 'I', 'N', 'T', 'Z' ) );
 static const D3DFORMAT k_format_resz = static_cast< D3DFORMAT >( MAKEFOURCC( 'R', 'E', 'S', 'Z' ) );
 
@@ -307,6 +309,9 @@ bool n_depth_source::impl_t::ensure( IDirect3DDevice9* device, const D3DSURFACE_
 
 		this->m_resz_supported = resz && intz;
 
+		D3DADAPTER_IDENTIFIER9 adapter{ };
+		this->m_amd = SUCCEEDED( d3d->GetAdapterIdentifier( parameters.AdapterOrdinal, 0, &adapter ) ) && adapter.VendorId == 0x1002;
+
 		g_console.print( std::vformat( "depth source: resz {:d} intz {:d}", std::make_format_args( resz, intz ) ).c_str( ) );
 	}
 
@@ -349,8 +354,18 @@ bool n_depth_source::impl_t::ensure( IDirect3DDevice9* device, const D3DSURFACE_
 		else if ( usable( route_nvapi ) && this->nvapi_ready( ) )
 			this->m_route = route_nvapi;
 
-		if ( ( forced || this->m_route == route_none ) && usable( route_live ) && this->pick_live_route( device, description ) )
+		/* amd: our INTZ as the live z buffer = viewmodel sinks into walls ( arm gone by view ) + fps loss ( INTZ depth test + sample,
+		   aras-p D3D9GPUHacks ). msaa on = RESZ off the engine's own z. "universal depth" still forces it */
+		const bool live_ok = forced || ( this->m_route == route_none && !this->m_amd );
+
+		if ( this->m_route == route_none && this->m_amd && !forced )
+			g_console.print< n_console::log_level::WARNING >( "depth source: amd + msaa off = no depth route ( z swap breaks the viewmodel ), turn msaa on" );
+
+		if ( live_ok && usable( route_live ) && this->pick_live_route( device, description ) )
 			this->m_route = route_live;
+
+		botox_dbg_log( "depth source: route %s amd=%d msaa=%d forced=%d failed=%d", k_route_names[ this->m_route ], this->m_amd ? 1 : 0,
+		               resz_source ? 1 : 0, forced ? 1 : 0, this->m_failed );
 	}
 
 	this->m_width  = description.Width;
@@ -737,7 +752,10 @@ const char* n_depth_source::impl_t::verify_name( ) const
 		if ( !this->m_own_depth || this->m_route != route_none )
 			return "";
 
-		return this->m_failed ? "every route failed" : "msaa on + no driver route";
+		if ( this->m_failed )
+			return "every route failed";
+
+		return this->m_amd ? "amd: turn msaa on" : "msaa on + no driver route";
 	}
 }
 

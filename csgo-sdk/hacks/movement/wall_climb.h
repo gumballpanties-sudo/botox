@@ -18,6 +18,9 @@ namespace n_wall_climb
 		/* debug log: first stage after wc that rewrote what wc sent on a wall tick */
 		void trace_stomp( const c_user_cmd* cmd, const char* stage );
 
+		/* visualize, paint traverse: wall face, sent path + catch, ground spot scan */
+		void render( );
+
 		bool m_hit     = false;
 		int m_act_tick = -1000;
 
@@ -49,6 +52,16 @@ namespace n_wall_climb
 			int count = 0, idx = 0, ticks = 0, sims = 0, slices = 0;
 			int score[ 33 ]{ };
 		} m_spot{ };
+
+		/* last wall tick, written in create move, read in paint ( same thread ) */
+		struct viz_t {
+			bool valid = false, ground = false, lands = false;
+			const char* branch = "-";
+			c_vector wall{ }, n{ }, land{ };
+			c_vector path[ 17 ]{ };
+			int path_n = 0, sims = 0;
+			float half = 16.f, height = 72.f;
+		} m_viz{ };
 	};
 }
 

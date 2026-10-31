@@ -68,6 +68,8 @@ namespace n_depth_source
 
 		bool m_resz_supported = false;
 
+		bool m_amd = false;
+
 		bool m_nvapi_checked             = false;
 		bool m_nvapi_available           = false;
 		void* m_nvapi_registered_texture = nullptr;

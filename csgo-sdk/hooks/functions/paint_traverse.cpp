@@ -126,6 +126,8 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 			g_debugger.on_paint_traverse( );
 #endif
 
+			g_indicators.net_graph( );
+
 			if ( g_ctx.m_local ) {
 				{
 					PERF_ZONE( zone_paint_indicators );

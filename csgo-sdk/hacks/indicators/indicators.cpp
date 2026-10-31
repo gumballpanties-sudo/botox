@@ -15,6 +15,7 @@
 #include "../movement/movement.h"
 #include "../misc/misc.h"
 #include "../aimbot/aimbot.h"
+#include "../lagcomp/lagcomp.h"
 #include "../visuals/screen/resolution_spoof.h"
 
 extern bool HITGODA;
@@ -2592,5 +2593,304 @@ void n_indicators::impl_t::velocity_graph( const bool on_ground )
 		c.w *= pts[ i ].m_a;
 		push_label( font, fs, c_vector_2d( std::round( pts[ i ].m_at.x - size.x * 0.5f ), std::round( pts[ i ].m_at.y - size.y - 2.f ) ), label,
 		            ImGui::ColorConvertFloat4ToU32( c ), ImGui::ColorConvertFloat4ToU32( ImVec4( 0.f, 0.f, 0.f, c.w ) ), shadow );
+	}
+}
+
+namespace
+{
+	enum e_net_graph_item {
+		net_graph_fps = 0,
+		net_graph_frame_var,
+		net_graph_ping,
+		net_graph_up,
+		net_graph_loss,
+		net_graph_choke,
+		net_graph_cmd,
+		net_graph_tick,
+		net_graph_sv,
+		net_graph_sv_var,
+		net_graph_server
+	};
+
+	/* CCSGameRules*, null while loading (same site as cod4_hud game_rules) */
+	std::uintptr_t net_graph_game_rules( )
+	{
+		static const auto site =
+			g_modules[ CLIENT_DLL ].find_pattern( "8B 4D 04 E8 ? ? ? ? 8B 0D ? ? ? ? 8B 01 FF 90 98 04 00 00 C6 45 FC 00" );
+		return site ? reinterpret_cast< std::uintptr_t >( **reinterpret_cast< void*** >( site + 10 ) ) : 0;
+	}
+
+	/* CNetGraphPanel::DrawServerType */
+	const char* net_graph_server_type( c_net_channel_info* nci )
+	{
+		const auto engine = g_interfaces.m_engine_client;
+
+		if ( engine->is_playing_demo( ) )
+			return "demo";
+		if ( nci && nci->is_loopback( ) )
+			return "local";
+		if ( engine->is_in_game( ) ) {
+			const char* const address = nci ? nci->get_address( ) : nullptr;
+			const char* const port    = address ? std::strrchr( address, ':' ) : nullptr;
+			const bool p2p            = port && std::strcmp( port, ":1" ) == 0;
+
+			static const unsigned int valve_ds_ofs = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_bIsValveDS" ) ].m_offset;
+			const std::uintptr_t rules             = valve_ds_ofs ? net_graph_game_rules( ) : 0;
+			const bool valve_ds                    = rules && *reinterpret_cast< bool* >( rules + valve_ds_ofs );
+
+			if ( engine->is_hltv( ) )
+				return valve_ds ? "Official GOTV" : p2p ? "P2P GOTV" : "GOTV";
+			return valve_ds ? "Official DS" : p2p ? "P2P" : "online";
+		}
+		if ( engine->is_connected( ) )
+			return "loading";
+		return "offline";
+	}
+}
+
+void n_indicators::impl_t::net_graph( const bool restore )
+{
+	static c_cconvar *net_graph_cvar = nullptr, *net_graphtext = nullptr, *net_graphpos = nullptr, *net_graphheight = nullptr;
+	static c_cconvar *cl_updaterate = nullptr, *cl_cmdrate = nullptr;
+	static int stored_text = -1;
+
+	if ( !net_graphtext && !( net_graphtext = g_convars[ HASH_BT( "net_graphtext" ) ] ) )
+		return;
+
+	const bool on = !restore && GET_VARIABLE( g_variables.m_net_graph, bool );
+	if ( !on ) {
+		if ( stored_text != -1 ) {
+			net_graphtext->set_value( stored_text );
+			stored_text = -1;
+		}
+		return;
+	}
+
+	/* engine text off, ours drawn in its place; graph lines (net_graph 3) stay the engine's */
+	if ( stored_text == -1 )
+		stored_text = net_graphtext->get_int( );
+	if ( net_graphtext->get_int( ) != 0 )
+		net_graphtext->set_value( 0 );
+
+	if ( !net_graph_cvar ) {
+		net_graph_cvar  = g_convars[ HASH_BT( "net_graph" ) ];
+		net_graphpos    = g_convars[ HASH_BT( "net_graphpos" ) ];
+		net_graphheight = g_convars[ HASH_BT( "net_graphheight" ) ];
+		cl_updaterate   = g_convars[ HASH_BT( "cl_updaterate" ) ];
+		cl_cmdrate      = g_convars[ HASH_BT( "cl_cmdrate" ) ];
+	}
+	if ( !net_graph_cvar || !cl_updaterate || !cl_cmdrate )
+		return;
+
+	const auto globals = g_interfaces.m_global_vars_base;
+
+	static float framerate = 0.f;
+	framerate             = 0.9f * framerate + 0.1f * globals->m_abs_frame_time;
+	if ( framerate <= 0.f )
+		framerate = 1.f;
+
+	if ( net_graph_cvar->get_int( ) < 1 )
+		return;
+
+	ImFont* font = g_render.m_custom_fonts[ e_custom_font_names::custom_font_name_net_graph ];
+	if ( !font )
+		font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
+	if ( !font )
+		return;
+	const float fs = font->FontSize;
+
+	const auto engine = g_interfaces.m_engine_client;
+	const auto nci    = engine->is_connected( ) ? engine->get_net_channel_info( ) : nullptr;
+
+	float latency = 0.f, loss = 0.f, choke = 0.f, in_data = 0.f, out_data = 0.f, in_packets = 0.f, out_packets = 0.f;
+	float sv_time = 0.f, sv_dev = 0.f, sv_start_dev = 0.f;
+	int in_bytes = 0;
+	static int out_bytes = 0;
+
+	const float update_rate = cl_updaterate->get_float( );
+	const float cmd_rate    = cl_cmdrate->get_float( );
+
+	/* CNetGraphPanel::GetFrameData */
+	if ( nci ) {
+		loss        = nci->get_avg_loss( FLOW_INCOMING );
+		choke       = nci->get_avg_choke( FLOW_INCOMING );
+		latency     = nci->get_avg_latency( FLOW_OUTGOING );
+		in_data     = nci->get_avg_data( FLOW_INCOMING ) / 1024.f;
+		out_data    = nci->get_avg_data( FLOW_OUTGOING ) / 1024.f;
+		in_packets  = nci->get_avg_packets( FLOW_INCOMING );
+		out_packets = nci->get_avg_packets( FLOW_OUTGOING );
+		in_bytes    = nci->get_packet_bytes( FLOW_INCOMING, nci->get_sequence_nr( FLOW_INCOMING ), c_net_channel_info::total );
+		if ( const int out = nci->get_packet_bytes( FLOW_OUTGOING, nci->get_sequence_nr( FLOW_OUTGOING ) - 1, c_net_channel_info::total ) )
+			out_bytes = out;
+		nci->get_remote_framerate( &sv_time, &sv_dev, &sv_start_dev );
+
+		if ( update_rate > 0.001f )
+			latency -= 0.5f / update_rate;
+		latency = std::max( latency, 0.f );
+	}
+	if ( engine->is_playing_demo( ) )
+		latency = 0.f;
+
+	const float tick_interval = globals->m_interval_per_tick;
+	const float tick_rate     = tick_interval > 0.f ? std::max( 1.f / tick_interval, 0.000001f ) : 0.000001f;
+	const float interp        = g_lagcomp.lerp_time( );
+
+	const bool warn      = GET_VARIABLE( g_variables.m_net_graph_warn_colors, bool );
+	const c_color normal = GET_VARIABLE( g_variables.m_net_graph_color, c_color );
+	const c_color warn1  = GET_VARIABLE( g_variables.m_net_graph_warn1, c_color );
+	const c_color warn2  = GET_VARIABLE( g_variables.m_net_graph_warn2, c_color );
+	const c_color warn3  = GET_VARIABLE( g_variables.m_net_graph_warn3, c_color );
+
+	/* CNetGraphPanel::GetColorFromVariance */
+	const auto variance = [ & ]( const float value, const float base, const float v1, const float v2, const float v3 ) -> c_color {
+		if ( !warn || base == 0.f )
+			return normal;
+		const float delta = std::fabs( base - value ) / base;
+		return delta > v3 ? warn3 : delta > v2 ? warn2 : delta > v1 ? warn1 : normal;
+	};
+	const auto rate_color = [ & ]( const float rate ) -> c_color {
+		if ( rate < tick_rate )
+			return variance( rate, tick_rate, 0.f, 0.2f, 0.5f );
+		return rate > tick_rate && warn ? warn3 : normal;
+	};
+
+	c_color interp_color = normal;
+	if ( warn && interp > 0.001f ) {
+		if ( update_rate > 0.f && interp < 2.f / update_rate )
+			interp_color = variance( interp, 2.f / update_rate, 0.f, 0.2f, 0.5f );
+		if ( interp < tick_interval )
+			interp_color = warn3;
+	}
+	const c_color server_color = sv_time > 1.f / tick_rate + 0.0001f ? variance( sv_time, 1.f / tick_rate, 0.25f, 0.5f, 0.75f ) : normal;
+
+	const std::vector< bool >& items = GET_VARIABLE( g_variables.m_net_graph_items, std::vector< bool > );
+	const auto shown                 = [ & ]( const int item ) { return item < static_cast< int >( items.size( ) ) && items[ item ]; };
+	const bool in_out                = GET_VARIABLE( g_variables.m_net_graph_in_out, bool );
+	const bool lerp                  = GET_VARIABLE( g_variables.m_net_graph_lerp, bool );
+
+	struct piece_t {
+		const char* m_gap;
+		std::string m_text;
+		c_color m_color;
+	};
+	struct row_t {
+		std::vector< piece_t > m_left;
+		piece_t m_right{ "", "", { } };
+	};
+	std::vector< row_t > rows;
+
+	char sz[ 128 ];
+	const auto fmt = [ & ]( const char* format, auto... args ) {
+		std::snprintf( sz, sizeof( sz ), format, args... );
+		return std::string( sz );
+	};
+
+	/* CNetGraphPanel::DrawTextFields, row by row */
+	{
+		row_t& r = rows.emplace_back( );
+		if ( shown( net_graph_fps ) )
+			r.m_left.push_back( { "", fmt( "fps: %5i", static_cast< int >( 1.f / framerate ) ), normal } );
+		if ( shown( net_graph_frame_var ) )
+			r.m_left.push_back( { "  ", fmt( "var: %4.1f ms", globals->m_abs_frame_start_time * 1000.f ), normal } );
+		if ( shown( net_graph_ping ) )
+			r.m_left.push_back( { "  ", fmt( "ping: %i ms", static_cast< int >( latency * 1000.f ) ), normal } );
+		if ( lerp && !in_out )
+			r.m_left.push_back( { "  ", fmt( "lerp: %4.1fms", interp * 1000.f ), interp_color } );
+		if ( shown( net_graph_up ) )
+			r.m_right = { "", fmt( "up:%5.1f/s", update_rate ), rate_color( update_rate ) };
+	}
+	if ( in_out ) {
+		row_t& in = rows.emplace_back( );
+		in.m_left.push_back( { "", fmt( "in:  %5i  %5.2fk/s", in_bytes, in_data ), normal } );
+		if ( lerp )
+			in.m_left.push_back( { "  ", fmt( "lerp: %4.1fms", interp * 1000.f ), interp_color } );
+		in.m_right = { "", fmt( "%3.1f/s", in_packets ), normal };
+
+		row_t& out = rows.emplace_back( );
+		out.m_left.push_back( { "", fmt( "out: %5i  %5.2fk/s", out_bytes, out_data ), normal } );
+		out.m_right = { "", fmt( "%3.1f/s", out_packets ), normal };
+	}
+	{
+		row_t& r = rows.emplace_back( );
+		if ( shown( net_graph_loss ) )
+			r.m_left.push_back( { "", fmt( "loss: %3i%%", static_cast< int >( loss * 100.f ) ), normal } );
+		if ( shown( net_graph_choke ) )
+			r.m_left.push_back( { "  ", fmt( "choke: %2i%%", static_cast< int >( choke * 100.f ) ), normal } );
+		if ( shown( net_graph_cmd ) )
+			r.m_right = { "", fmt( "cmd:%5.1f/s", cmd_rate ), rate_color( cmd_rate ) };
+	}
+	{
+		row_t& r = rows.emplace_back( );
+		if ( shown( net_graph_tick ) )
+			r.m_left.push_back( { "", fmt( "tick:%5.1f", tick_rate ), normal } );
+		if ( shown( net_graph_sv ) )
+			r.m_left.push_back( { "  ", fmt( "sv:%5.1f +-%4.1f ms", sv_time * 1000.f, sv_dev * 1000.f ), server_color } );
+		if ( shown( net_graph_sv_var ) )
+			r.m_left.push_back( { "   ", fmt( "var: %6.3f ms", sv_start_dev * 1000.f ), server_color } );
+		if ( shown( net_graph_server ) )
+			r.m_right = { "", net_graph_server_type( nci ), normal };
+	}
+
+	std::erase_if( rows, []( const row_t& r ) { return r.m_left.empty( ) && r.m_right.m_text.empty( ); } );
+	if ( rows.empty( ) )
+		return;
+
+	const auto text_w = [ & ]( const std::string& text ) { return font->CalcTextSizeA( fs, FLT_MAX, 0.f, text.c_str( ) ).x; };
+
+	/* CNetGraphPanel::OnFontChanged width sample */
+	float w = text_w( "fps:  435  var: 4.091 ms  ping: 533 ms lerp 112.3 ms   0/0 offline" );
+	for ( const row_t& r : rows ) {
+		std::string line;
+		for ( const piece_t& p : r.m_left )
+			line += ( line.empty( ) ? "" : p.m_gap ) + p.m_text;
+		w = std::max( w, text_w( line ) + ( r.m_right.m_text.empty( ) ? 0.f : text_w( "  " + r.m_right.m_text ) ) );
+	}
+	const int sw = static_cast< int >( g_ctx.m_width ), sh = static_cast< int >( g_ctx.m_height );
+	w            = std::min( w, static_cast< float >( sw - 10 ) );
+
+	/* CNetGraphPanel::GraphGetXY + ComputeNetgraphHeight, used when x / y = -1 */
+	int x = GET_VARIABLE( g_variables.m_net_graph_x, int );
+	int y = GET_VARIABLE( g_variables.m_net_graph_y, int );
+	if ( x < 0 ) {
+		const int pos = net_graphpos ? net_graphpos->get_int( ) : 1;
+		const int wi  = static_cast< int >( w );
+		x             = pos == 0   ? 5
+		                : pos == 1 ? sw - 5 - wi
+		                : pos == 2 ? ( sw - 10 - wi ) / 2
+		                           : std::clamp( pos * sw / 640, 5, std::max( 5, sw - wi - 5 ) );
+	}
+	if ( y < 0 ) {
+		const int lines  = in_out ? 6 : 4;
+		const int height = std::max( lines * static_cast< int >( fs ), net_graphheight ? net_graphheight->get_int( ) : 64 );
+		y                = sh - 24 - 5 - height;
+	}
+
+	if ( GET_VARIABLE( g_variables.m_net_graph_background, bool ) )
+		g_render.m_draw_data.emplace_back(
+			e_draw_type::draw_type_rect,
+			std::make_any< rect_draw_object_t >( c_vector_2d( x - 4.f, y - 2.f ), c_vector_2d( x + w + 4.f, y + fs * rows.size( ) + 2.f ),
+		                                         GET_VARIABLE( g_variables.m_net_graph_background_color, c_color ).get_u32( ), ImColor( 0.f, 0.f, 0.f, 0.f ),
+		                                         true, 0.f, ImDrawFlags_::ImDrawFlags_None, 1.f, e_rect_flags::rect_flag_none ) );
+
+	const int style            = GET_VARIABLE( g_variables.m_net_graph_text_style, int );
+	const e_text_flags flags   = style == 1 ? e_text_flags::text_flag_dropshadow : style == 2 ? e_text_flags::text_flag_outline : e_text_flags::text_flag_none;
+	const unsigned int outline = GET_VARIABLE( g_variables.m_net_graph_outline_color, c_color ).get_u32( );
+	const auto put             = [ & ]( const float px, const float py, const piece_t& p ) {
+		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_text, std::make_any< text_draw_object_t >( font, c_vector_2d( std::round( px ), std::round( py ) ),
+		                                                                                                    p.m_text, p.m_color.get_u32( ), outline, flags, fs ) );
+	};
+
+	float row_y = static_cast< float >( y );
+	for ( const row_t& r : rows ) {
+		float px = static_cast< float >( x );
+		for ( std::size_t i = 0; i < r.m_left.size( ); ++i ) {
+			if ( i )
+				px += text_w( r.m_left[ i ].m_gap );
+			put( px, row_y, r.m_left[ i ] );
+			px += text_w( r.m_left[ i ].m_text );
+		}
+		if ( !r.m_right.m_text.empty( ) )
+			put( x + w - text_w( r.m_right.m_text ) - 1.f, row_y, r.m_right );
+		row_y += fs;
 	}
 }

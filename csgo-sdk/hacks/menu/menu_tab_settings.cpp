@@ -876,6 +876,12 @@ void n_menu::impl_t::tab_fonts( )
 		menu_columns_end( );
 		break;
 	}
+	case 4: {
+		static ImGuiTextFilter net_graph_font_search_filter{ };
+		render_font_page( "net graph font", g_variables.m_net_graph_font_settings, g_variables.m_net_graph_font_flags,
+		                  e_custom_font_names::custom_font_name_net_graph, e_font_names::font_name_legendware_lucida_10, net_graph_font_search_filter );
+		break;
+	}
 	}
 }
 

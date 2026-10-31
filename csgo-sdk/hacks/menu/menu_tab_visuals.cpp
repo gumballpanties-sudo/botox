@@ -1657,6 +1657,10 @@ void n_menu::impl_t::tab_visuals( )
 						/* 2 = old look. higher = bright streaks stay bright (f0e blur gamma) */
 						ImGui::SliderFloat( "blur gamma##true motion blur", &GET_VARIABLE( g_variables.m_true_motion_blur_gamma, float ), 1.f,
 						                    10.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+
+						/* amd + msaa off = none ( z swap hides the arm ), msaa on = resz */
+						ImGui::Checkbox( "universal depth##true motion blur", &GET_VARIABLE( g_variables.m_depth_force_live, bool ) );
+						ImGui::TextDisabled( "depth: %s %s", g_depth_source.route_name( ), g_depth_source.verify_name( ) );
 					},
 					ImVec2( 240.f, -1 ) );
 			}
@@ -1779,6 +1783,51 @@ void n_menu::impl_t::tab_visuals( )
 
 						ImGui::Checkbox( "only while aim key held##aimbot fov circle",
 						                 &GET_VARIABLE( g_variables.m_aimbot_fov_circle_key_only, bool ) );
+					},
+					ImVec2( 230.f, -1 ) );
+			}
+
+			ImGui::Checkbox( "custom net graph", &GET_VARIABLE( g_variables.m_net_graph, bool ) );
+
+			if ( GET_VARIABLE( g_variables.m_net_graph, bool ) ) {
+				ImGui::OptionPopup(
+					"net graph settings",
+					[ & ]( ) {
+						ImGui::TextDisabled( "shows with net_graph 1, font: fonts > net graph" );
+
+						ImGui::MultiCombo( "shown##net graph", GET_VARIABLE( g_variables.m_net_graph_items, std::vector< bool > ),
+						                   { "fps", "frame var", "ping", "up rate", "loss", "choke", "cmd rate", "tick", "sv time", "sv var", "server type" },
+						                   GET_VARIABLE( g_variables.m_net_graph_items, std::vector< bool > ).size( ) );
+						ImGui::Checkbox( "lerp##net graph", &GET_VARIABLE( g_variables.m_net_graph_lerp, bool ) );
+						ImGui::Checkbox( "in / out rows##net graph", &GET_VARIABLE( g_variables.m_net_graph_in_out, bool ) );
+
+						ImGui::ColorEdit4( "text color##net graph", &GET_VARIABLE( g_variables.m_net_graph_color, c_color ), color_picker_alpha_flags );
+						ImGui::Checkbox( "warning colors##net graph", &GET_VARIABLE( g_variables.m_net_graph_warn_colors, bool ) );
+						if ( GET_VARIABLE( g_variables.m_net_graph_warn_colors, bool ) ) {
+							ImGui::ColorEdit4( "low / mid / high##net graph warn3", &GET_VARIABLE( g_variables.m_net_graph_warn3, c_color ),
+							                   color_picker_alpha_flags );
+							ImGui::SameLine( );
+							ImGui::ColorEdit4( "##net graph warn2", &GET_VARIABLE( g_variables.m_net_graph_warn2, c_color ), color_picker_alpha_flags, 1 );
+							ImGui::SameLine( );
+							ImGui::ColorEdit4( "##net graph warn1", &GET_VARIABLE( g_variables.m_net_graph_warn1, c_color ), color_picker_alpha_flags, 2 );
+						}
+
+						ImGui::Combo( "text style##net graph", &GET_VARIABLE( g_variables.m_net_graph_text_style, int ), "none\0shadow\0outline\0" );
+						if ( GET_VARIABLE( g_variables.m_net_graph_text_style, int ) != 0 )
+							ImGui::ColorEdit4( "outline color##net graph", &GET_VARIABLE( g_variables.m_net_graph_outline_color, c_color ),
+							                   color_picker_alpha_flags );
+
+						ImGui::Checkbox( "background##net graph", &GET_VARIABLE( g_variables.m_net_graph_background, bool ) );
+						if ( GET_VARIABLE( g_variables.m_net_graph_background, bool ) ) {
+							ImGui::SameLine( );
+							ImGui::ColorEdit4( "##net graph background color", &GET_VARIABLE( g_variables.m_net_graph_background_color, c_color ),
+							                   color_picker_alpha_flags );
+						}
+
+						ImGui::SliderInt( "x##net graph", &GET_VARIABLE( g_variables.m_net_graph_x, int ), -1, g_ctx.m_width,
+						                  GET_VARIABLE( g_variables.m_net_graph_x, int ) < 0 ? "stock" : "%d px" );
+						ImGui::SliderInt( "y##net graph", &GET_VARIABLE( g_variables.m_net_graph_y, int ), -1, g_ctx.m_height,
+						                  GET_VARIABLE( g_variables.m_net_graph_y, int ) < 0 ? "stock" : "%d px" );
 					},
 					ImVec2( 230.f, -1 ) );
 			}

@@ -1027,6 +1027,8 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_wall_climb_prevent_slow, true );
 		ADD_VARIABLE( bool, m_wall_climb_duck, true );
 		ADD_VARIABLE( int, m_wall_climb_spot_reach, 16 );
+		ADD_VARIABLE( bool, m_wall_climb_visualize, false );
+		ADD_VARIABLE( c_color, m_wall_climb_visualize_color, c_color( 255, 190, 90, 255 ) );
 		ADD_VARIABLE( bool, m_show_wall_slope, false );
 		ADD_VARIABLE( key_bind_t, m_show_wall_slope_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_auto_strafe, false );
@@ -1375,6 +1377,22 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_velocity_graph_text_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( float, m_velocity_graph_text_scale, 0.75f );
 		ADD_VARIABLE( bool, m_velocity_graph_text_shadow, true );
+
+		ADD_VARIABLE( bool, m_net_graph, false );
+		ADD_VARIABLE_VECTOR( bool, 11, m_net_graph_items, true );
+		ADD_VARIABLE( bool, m_net_graph_in_out, false );
+		ADD_VARIABLE( bool, m_net_graph_lerp, false );
+		ADD_VARIABLE( int, m_net_graph_x, -1 );
+		ADD_VARIABLE( int, m_net_graph_y, -1 );
+		ADD_VARIABLE( c_color, m_net_graph_color, c_color( 229, 229, 178, 255 ) );
+		ADD_VARIABLE( bool, m_net_graph_warn_colors, true );
+		ADD_VARIABLE( c_color, m_net_graph_warn1, c_color( 255, 255, 31, 255 ) );
+		ADD_VARIABLE( c_color, m_net_graph_warn2, c_color( 255, 125, 31, 255 ) );
+		ADD_VARIABLE( c_color, m_net_graph_warn3, c_color( 255, 31, 31, 255 ) );
+		ADD_VARIABLE( int, m_net_graph_text_style, 2 );
+		ADD_VARIABLE( c_color, m_net_graph_outline_color, c_color( 0, 0, 0, 255 ) );
+		ADD_VARIABLE( bool, m_net_graph_background, false );
+		ADD_VARIABLE( c_color, m_net_graph_background_color, c_color( 0, 0, 0, 120 ) );
 
 		ADD_VARIABLE( bool, m_key_press_indicator, false );
 		ADD_VARIABLE( int, m_key_press_layout, 0 );
@@ -1736,6 +1754,9 @@ namespace n_variables
 
 		ADD_VARIABLE_VECTOR( bool, e_free_type_font_flags::font_flag_max, m_esp_font_flags, false );
 		ADD_VARIABLE( font_setting_t, m_esp_font_settings, font_setting_t( "Verdanab", 11 ) );
+
+		ADD_VARIABLE_VECTOR( bool, e_free_type_font_flags::font_flag_max, m_net_graph_font_flags, false );
+		ADD_VARIABLE( font_setting_t, m_net_graph_font_settings, font_setting_t( "lucon", 14 ) );
 
 		ADD_VARIABLE( bool, m_debug_log, false );
 		ADD_VARIABLE( bool, m_safe_mode, false );

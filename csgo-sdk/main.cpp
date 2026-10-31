@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <intrin.h>
+#include <dbghelp.h>
 
 void botox_dbg_log( const char* fmt, ... );
 void botox_dbg_log_close( );
@@ -54,6 +55,11 @@ static int g_crash_len = 0;
 static unsigned char g_self_header[ 0x1000 ];
 static unsigned long g_self_header_size = 0;
 
+using minidump_write_t = BOOL( WINAPI* )( HANDLE, DWORD, HANDLE, MINIDUMP_TYPE, PMINIDUMP_EXCEPTION_INFORMATION, PMINIDUMP_USER_STREAM_INFORMATION,
+                                          PMINIDUMP_CALLBACK_INFORMATION );
+static minidump_write_t g_minidump_write = nullptr;
+static volatile long g_crash_dumps       = 0;
+
 static void crash_append( const char* fmt, ... )
 {
 	va_list args;
@@ -90,6 +96,30 @@ static bool crash_is_return( const std::uintptr_t address )
 
 	const auto code = reinterpret_cast< const unsigned char* >( address );
 	return code[ -5 ] == 0xE8 || code[ -6 ] == 0xFF || code[ -3 ] == 0xFF || code[ -2 ] == 0xFF;
+}
+
+static bool crash_readable( const std::uintptr_t address, const std::size_t bytes )
+{
+	MEMORY_BASIC_INFORMATION region{ };
+	return address >= 0x10000 && VirtualQuery( reinterpret_cast< void* >( address ), &region, sizeof( region ) ) && region.State == MEM_COMMIT &&
+	       !( region.Protect & ( PAGE_NOACCESS | PAGE_GUARD ) ) &&
+	       address + bytes <= reinterpret_cast< std::uintptr_t >( region.BaseAddress ) + region.RegionSize;
+}
+
+/* 6 dwords at a register: a freed object shows a heap "vtable", a live one an image address */
+static void crash_append_mem( const char* name, const std::uintptr_t address )
+{
+	if ( !crash_readable( address, 24 ) )
+		return;
+
+	const auto words = reinterpret_cast< const unsigned* >( address );
+	crash_append( " %s=[%08x %08x %08x %08x %08x %08x]", name, words[ 0 ], words[ 1 ], words[ 2 ], words[ 3 ], words[ 4 ], words[ 5 ] );
+}
+
+static bool crash_in_image( const std::uintptr_t address )
+{
+	MEMORY_BASIC_INFORMATION region{ };
+	return VirtualQuery( reinterpret_cast< void* >( address ), &region, sizeof( region ) ) && region.State == MEM_COMMIT && region.Type == MEM_IMAGE;
 }
 
 static bool header_heal( )
@@ -182,7 +212,26 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 	const auto ctx = info->ContextRecord;
 	crash_append( "\r\n  regs: eax=%08lx ebx=%08lx ecx=%08lx edx=%08lx esi=%08lx edi=%08lx ebp=%08lx esp=%08lx", ctx->Eax, ctx->Ebx, ctx->Ecx,
 	              ctx->Edx, ctx->Esi, ctx->Edi, ctx->Ebp, ctx->Esp );
+
+	if ( fault < g_self_base || fault >= g_self_end ) {
+		crash_append( "\r\n  mem:" );
+		crash_append_mem( "eax", ctx->Eax );
+		crash_append_mem( "ebx", ctx->Ebx );
+		crash_append_mem( "ecx", ctx->Ecx );
+		crash_append_mem( "esi", ctx->Esi );
+		crash_append_mem( "edi", ctx->Edi );
+		crash_append_mem( "esp", ctx->Esp );
+	}
 #endif
+
+	/* jumped into unmapped code (null vfunc, freed object): nothing handles that, so it's the real crash. 1 per session */
+	char dump_path[ MAX_PATH ] = { };
+	const bool dump = g_minidump_write && code == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 &&
+	                  record->ExceptionInformation[ 1 ] == fault && !crash_in_image( fault ) && InterlockedIncrement( &g_crash_dumps ) == 1;
+	if ( dump ) {
+		sprintf_s( dump_path, "C:\\botox\\crash_%02d%02d%02d.dmp", now.wHour, now.wMinute, now.wSecond );
+		crash_append( "\r\n  dump: %s", dump_path );
+	}
 	crash_append( "\r\n" );
 
 	CreateDirectoryA( "C:\\botox", nullptr );
@@ -192,6 +241,18 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 		WriteFile( file, g_crash_text, static_cast< unsigned long >( g_crash_len ), &written, nullptr );
 		FlushFileBuffers( file );
 		CloseHandle( file );
+	}
+
+	/* after the log line: a dump that hangs or dies still leaves the line on disk */
+	if ( dump ) {
+		const HANDLE dump_file = CreateFileA( dump_path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr );
+		if ( dump_file != INVALID_HANDLE_VALUE ) {
+			MINIDUMP_EXCEPTION_INFORMATION exception{ GetCurrentThreadId( ), info, FALSE };
+			g_minidump_write( GetCurrentProcess( ), GetCurrentProcessId( ), dump_file,
+			                  static_cast< MINIDUMP_TYPE >( MiniDumpWithIndirectlyReferencedMemory | MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules ),
+			                  &exception, nullptr, nullptr );
+			CloseHandle( dump_file );
+		}
 	}
 
 	InterlockedExchange( &g_crash_busy, 0 );
@@ -223,6 +284,10 @@ static void crash_witness_install( void* instance )
 			}
 		}
 	}
+
+	// here, not in the handler: LoadLibrary under a fault can deadlock on the loader lock
+	if ( const HMODULE dbghelp = LoadLibraryA( "dbghelp.dll" ) )
+		g_minidump_write = reinterpret_cast< minidump_write_t >( GetProcAddress( dbghelp, "MiniDumpWriteDump" ) );
 
 	g_crash_witness = AddVectoredExceptionHandler( 1, crash_witness );
 }

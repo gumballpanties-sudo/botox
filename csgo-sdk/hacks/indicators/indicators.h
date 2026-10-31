@@ -5,6 +5,9 @@ namespace n_indicators
 	struct impl_t {
 		void on_paint_traverse( );
 
+		/* game thread, every frame (local or not): restore = net_graphtext back, unload */
+		void net_graph( bool restore = false );
+
 		/* render thread, before Reset and on unload: frees the per-frame texture pool (DEFAULT
 		   pool on d3d9ex). remade on next use */
 		void release_textures( );

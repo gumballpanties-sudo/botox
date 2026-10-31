@@ -272,16 +272,18 @@ namespace
 	}
 
 	struct font_request_t {
-		std::vector< bool > m_indicator_flags, m_esp_flags;
-		font_setting_t m_indicator, m_esp;
+		std::vector< bool > m_indicator_flags, m_esp_flags, m_net_graph_flags;
+		font_setting_t m_indicator, m_esp, m_net_graph;
 	};
 
 	font_request_t current_font_request( )
 	{
 		return { GET_VARIABLE( g_variables.m_indicator_font_flags, std::vector< bool > ),
 		         GET_VARIABLE( g_variables.m_esp_font_flags, std::vector< bool > ),
+		         GET_VARIABLE( g_variables.m_net_graph_font_flags, std::vector< bool > ),
 		         GET_VARIABLE( g_variables.m_indicator_font_settings, font_setting_t ),
-		         GET_VARIABLE( g_variables.m_esp_font_settings, font_setting_t ) };
+		         GET_VARIABLE( g_variables.m_esp_font_settings, font_setting_t ),
+		         GET_VARIABLE( g_variables.m_net_graph_font_settings, font_setting_t ) };
 	}
 
 	/* a set that never got installed (unload, or a newer build replaced it) */
@@ -803,6 +805,11 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 
 	reload_custom_font( request.m_esp_flags, request.m_esp, e_custom_font_names::custom_font_name_esp,
 	                    fonts[ e_font_names::font_name_verdana_bd_11 ], e_glyph_tier::glyph_tier_full );
+
+	reload_custom_font( request.m_net_graph_flags, request.m_net_graph, e_custom_font_names::custom_font_name_net_graph,
+	                    fonts[ e_font_names::font_name_legendware_lucida_10 ] ? fonts[ e_font_names::font_name_legendware_lucida_10 ]
+	                                                                          : fonts[ e_font_names::font_name_verdana_11 ],
+	                    e_glyph_tier::glyph_tier_basic );
 
 	return ImGuiFreeType::BuildFontAtlas( atlas, 0x0 );
 }

@@ -757,6 +757,12 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		/* duck press window: 9u duck vs 12.5u fall step @64, 6.25 @128 -> finer timing, twice the ticks. */
 		const int duck_retry    = std::clamp( eb_ticks( 3 ), 2, 8 );
 		const bool duck_sweep   = GET_VARIABLE( g_variables.m_edgebug_duck_timing, bool );
+		/* stance dropdown: bug tick ducked / standing. none picked = both */
+		const auto& eb_types = GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > );
+		bool allow_duck      = eb_types.size( ) > 0 && eb_types[ 0 ];
+		bool allow_stand     = eb_types.size( ) > 1 && eb_types[ 1 ];
+		if ( !allow_duck && !allow_stand )
+			allow_duck = allow_stand = true;
 		/* last pass's first ground tick, -1 = never; contact_z = origin z there ( refine tells lip vs lower floor ). */
 		int contact_tick = -1;
 		float contact_z  = 0.f;
@@ -1048,7 +1054,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				ctx.was_falling = search_vel_backup.m_z < -6.f * vz_scale;
 				ctx.on_ground = ( g_ctx.m_local->get_flags( ) & 1 ) != 0;
 				ctx.mode = detection_mode;
-				if ( EdgeBugCheck( ctx ) ) {
+				if ( EdgeBugCheck( ctx ) && ( ( g_ctx.m_local->get_flags( ) & fl_ducking ) ? allow_duck : allow_stand ) ) {
 					/* no buffer left to confirm: take it. */
 					if ( i + 1 >= max_ticks ) {
 						latch( i, g_ctx.m_local->get_origin( ) );
@@ -1118,6 +1124,9 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			/* 6 / 7 only as to-edge; without a lip they'd repeat 2 / 3. */
 			if ( ( !to_edge || !m_edge_target_valid ) && ( v == 6 || v == 7 ) )
 				continue;
+			/* odd = duck held all run, always a ducked bug */
+			if ( !allow_duck && ( v & 1 ) )
+				continue;
 			if ( out_of_budget( ) )
 				break;
 			snap_limit = std::min( snap_cap, snap_used + snap_quota );
@@ -1149,7 +1158,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			constexpr float k_grid[] = { 2.f, -2.f, 6.f, -6.f, 12.f, -12.f };
 			fam_now = 5;
 			for ( int v = 0; v < 2 && m_plan_count == 0 && !out_of_budget( ); v++ ) {
-				if ( !base_ran[ v ] )
+				if ( !base_ran[ v ] || ( v == 0 && !allow_stand ) )
 					continue;
 				float val[ 7 ], cz[ 7 ];
 				int con[ 7 ], n = 0;
@@ -1236,13 +1245,15 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 						off = max_off; /* budget gone for every variant */
 						break;
 					}
-					fam_now = 1;
-					run_at( v, k, -1, k, v );
-					sweep_runs++;
+					if ( allow_duck ) {
+						fam_now = 1;
+						run_at( v, k, -1, k, v );
+						sweep_runs++;
+					}
 					/* release at k ( -9u family ): ducked from 0, released at k, never re-pressed ( 0.4 s
 					   sv_timebetweenducks ). INTERLEAVED with presses or it never gets budget. release at 0
 					   = even base run, skipped. */
-					if ( !enough( ) && k >= 1 && !out_of_budget( ) ) {
+					if ( allow_stand && !enough( ) && k >= 1 && !out_of_budget( ) ) {
 						fam_now = 2;
 						run_at( v, 0, k, k, v + 1 );
 						release_runs++;
@@ -1259,10 +1270,12 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 					const int v = variant_at( idx );
 					if ( ( v & 1 ) || !base_ran[ v ] || ( sweep_last[ v ] >= 0 && k >= sweep_first[ v ] && k <= sweep_last[ v ] ) )
 						continue;
-					fam_now = 6;
-					run_at( v, k, -1, k, v );
-					wide_runs++;
-					if ( !enough( ) && base_ran[ v + 1 ] && !out_of_budget( ) ) {
+					if ( allow_duck ) {
+						fam_now = 6;
+						run_at( v, k, -1, k, v );
+						wide_runs++;
+					}
+					if ( allow_stand && !enough( ) && ( base_ran[ v + 1 ] || !allow_duck ) && !out_of_budget( ) ) {
 						fam_now = 7;
 						run_at( v, 0, k, k, v + 1 );
 						wide_runs++;
@@ -1365,12 +1378,13 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		   found, base = distinct variants run, sw / rel = press / release runs, sims = spent / ceiling,
 		   us = spent / share, tick = tick the bug is due. rf / wd = refine / full-window runs, snp = runs resumed off a
 		   snapshot, fam = picked plan's family ( 0 base 1 press 2 release 3 bend 4 ebanat 5 refine 6 / 7 wide press / release ). */
-		botox_dbg_log( "EB: mode=%d win=%d run=%d reach=%d edge=%d vars=%d base=%d sw=%d rel=%d sims=%d/%d cut=%d us=%lld/%lld con=%d ipt=%.5f vz=%.2f found=%d var=%d at=%d tick=%d pth=%d/%d bd=%d bnd=%.2f ebv=%d rf=%d wd=%d snp=%d fam=%d\n",
+		botox_dbg_log( "EB: mode=%d win=%d run=%d reach=%d edge=%d vars=%d base=%d sw=%d rel=%d sims=%d/%d cut=%d us=%lld/%lld con=%d ipt=%.5f vz=%.2f found=%d var=%d at=%d tick=%d pth=%d/%d bd=%d bnd=%.2f ebv=%d rf=%d wd=%d snp=%d fam=%d st=%d\n",
 		               detection_mode, max_ticks, run_ticks, reach_tick, m_edge_target_valid ? 1 : 0,
 		               search_count, base_runs, sweep_runs, release_runs, total_predictions, MAX_PREDICTIONS, tail_cut_ticks,
 		               budget.used_us( ), static_cast< long long >( n_tick::interval( ) * 1000000.f * budget_share ),
 		               best_contact, n_tick::interval( ), m_backup_velocity.m_z, m_found ? 1 : 0, last_variant,
-		               m_found ? m_prediction_ticks : -1, m_found ? m_found_tick : 0, m_plan_count, want_paths, bend_runs, last_bend, eb_runs, refine_runs, wide_runs, snap_runs, last_fam );
+		               m_found ? m_prediction_ticks : -1, m_found ? m_found_tick : 0, m_plan_count, want_paths, bend_runs, last_bend, eb_runs, refine_runs, wide_runs, snap_runs, last_fam,
+		               ( allow_duck ? 1 : 0 ) | ( allow_stand ? 2 : 0 ) );
 	} while ( false );
 	if ( m_found ) {
 		ReStorePrediction( );

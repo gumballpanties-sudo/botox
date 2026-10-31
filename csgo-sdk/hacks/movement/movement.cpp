@@ -716,6 +716,7 @@ void n_movement::impl_t::on_paint_traverse( )
 	g_edgebug.render( );
 	g_edge_skip.render( );
 	this->auto_bounce_render( );
+	g_wall_climb.render( );
 
 	if ( GET_VARIABLE( g_variables.m_pixel_surf_line_render, bool ) && !m_pixelsurf_data.m_trajectory_segments.empty( ) ) {
 		const bool is_pixelsurf_active = m_pixelsurf_data.m_predicted_succesful || m_pixelsurf_data.m_pin_detected;

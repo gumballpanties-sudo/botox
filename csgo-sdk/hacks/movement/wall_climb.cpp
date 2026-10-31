@@ -56,6 +56,7 @@ namespace
 	constexpr float k_spot_look    = 4.f; /* ticks of along speed counted when walking to the spot */
 	constexpr float k_spot_along[ ] = { 0.f, 10.f, -10.f, 25.f, -25.f, 60.f, -60.f, 150.f, -150.f, 250.f, -250.f };
 	constexpr int k_spot_slot_base = 62, k_spot_slot_roll = 63;
+	constexpr int k_viz_ticks = 16;
 
 	enum e_wc_count {
 		wc_land, wc_flip, wc_pin_catch, wc_hold, wc_park, wc_keys, wc_along, wc_own, wc_leave, wc_aa_leave, wc_exit, wc_exit_none, wc_far, wc_rise,
@@ -180,6 +181,7 @@ void n_wall_climb::impl_t::show_wall_slope( )
 void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 {
 	show_wall_slope( );
+	m_viz.valid = false;
 
 	if ( const unsigned long long now = GetTickCount64( ); now >= s_log_next ) {
 		s_log_next = now + 1000ull;
@@ -845,9 +847,43 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		}
 	}
 
+	// visualize: tick 1 = what goes out ( air stuck's cmd when it keeps the steering ), then wc's hold on a catch ( what every catch is
+	// proven with ), else that cmd again. extra sims only with the option on, off the clock
+	const long long us = budget.used_us( );
+	if ( GET_VARIABLE( g_variables.m_wall_climb_visualize, bool ) ) {
+		m_viz        = { };
+		m_viz.valid  = true;
+		m_viz.ground = on_ground;
+		m_viz.branch = branch;
+		m_viz.n      = wall_n;
+		m_viz.sims   = sims;
+		m_viz.half   = maxs.m_x;
+		m_viz.height = maxs.m_z - mins.m_z;
+		const c_vector mid = wall_tr.m_end + c_vector( 0.f, 0.f, ( mins.m_z + maxs.m_z ) * 0.5f );
+		const float off    = face_d( mid, wall_n ) - wall_tr.m_plane.m_distance;
+		m_viz.wall = std::fabsf( off ) <= 32.f ? mid - wall_n * off : mid - wall_n * ( maxs.m_x * ( std::fabsf( wall_n.m_x ) + std::fabsf( wall_n.m_y ) ) );
+		if ( !on_ground ) {
+			const bool catching  = landed || held;
+			const c_user_cmd out = as_steers && !catching && !jump_fix ? as_cmd : *cmd;
+			const c_user_cmd next = catching ? with( wall_yaw, 0.f, ( out.m_buttons & in_duck ) != 0 ) : out;
+			restore( );
+			m_viz.path[ m_viz.path_n++ ] = origin;
+			for ( int k = 0; k < k_viz_ticks; ++k ) {
+				step( k ? next : out );
+				sim_out_t o{ };
+				read_out( o );
+				m_viz.path[ m_viz.path_n++ ] = o.m_origin;
+				if ( o.m_flags & fl_onground ) {
+					m_viz.lands = o.m_origin.m_z > m_ground_z + k_land_above;
+					m_viz.land  = o.m_origin;
+					break;
+				}
+			}
+		}
+	}
+
 	// wc t: every wall tick. u = end of your cmd, s = end of what wall climb sent ( s.xy < u.xy = it cost speed ). org / vel / yaw
 	// = START + your keys, enough to replay the tick in fl_lab. extra sims, debug log only, not in us=
-	const long long us = budget.used_us( );
 	if ( GET_VARIABLE( g_variables.m_debug_log, bool ) ) {
 		const auto raw = [ & ]( c_user_cmd c, sim_out_t& out ) {
 			restore( );
@@ -898,4 +934,97 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		m_catch_cmd = cmd->m_command_number;
 	if ( landed || jump_fix )
 		m_act_tick = g_interfaces.m_global_vars_base->m_tick_count;
+}
+
+// face wc reads, where the sent cmd takes you ( green end = a land over your jump floor ), on ground the spot scan along the wall
+void n_wall_climb::impl_t::render( )
+{
+	if ( !m_viz.valid || !GET_VARIABLE( g_variables.m_wall_climb_visualize, bool ) || !GET_VARIABLE( g_variables.m_wall_climb, bool ) ||
+	     !g_input.check_input( &GET_VARIABLE( g_variables.m_wall_climb_key, key_bind_t ) ) || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) ||
+	     !g_interfaces.m_engine_client->is_in_game( ) )
+		return;
+
+	const c_color& col       = GET_VARIABLE( g_variables.m_wall_climb_visualize_color, c_color );
+	const unsigned int color = col.get_u32( );
+	const unsigned int green = c_color( 90, 255, 120, 255 ).get_u32( );
+	const unsigned int red   = c_color( 255, 80, 80, 255 ).get_u32( );
+	const unsigned int grey  = c_color( 160, 160, 160, 170 ).get_u32( );
+
+	const auto line = [ & ]( const c_vector& a, const c_vector& b, const unsigned int c, const float w ) {
+		c_vector_2d sa, sb;
+		if ( g_render.world_to_screen( a, sa ) && g_render.world_to_screen( b, sb ) )
+			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( line_draw_object_t{ sa, sb, c, w } ) );
+	};
+	const auto dot = [ & ]( const c_vector& p, const float r, const unsigned int c ) {
+		c_vector_2d s;
+		if ( g_render.world_to_screen( p, s ) )
+			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_filled_circle,
+			                                   std::make_any< filled_circle_draw_object_t >( filled_circle_draw_object_t( s, r, c, 12 ) ) );
+	};
+	const auto label = [ & ]( const c_vector& p, const std::string& str, const unsigned int c ) {
+		auto* font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
+		c_vector_2d s;
+		if ( !font || !g_render.world_to_screen( p, s ) )
+			return;
+		text_draw_object_t text;
+		text.m_font       = font;
+		text.m_position   = c_vector_2d( s.m_x - font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, str.c_str( ) ).x * 0.5f, s.m_y - font->FontSize );
+		text.m_text       = str;
+		text.m_color      = c;
+		text.m_draw_flags = text_flag_dropshadow;
+		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_text, std::make_any< text_draw_object_t >( text ) );
+	};
+
+	const c_vector& n = m_viz.n;
+	const float nl    = std::sqrtf( n.m_x * n.m_x + n.m_y * n.m_y );
+	const c_vector t  = nl > 1e-3f ? c_vector( n.m_y / nl, -n.m_x / nl, 0.f ) : c_vector( 1.f, 0.f, 0.f );
+	const c_vector up( 0.f, 0.f, m_viz.height * 0.5f );
+	const c_vector side = t * m_viz.half;
+	const c_vector face[ 4 ] = { m_viz.wall - side - up, m_viz.wall + side - up, m_viz.wall + side + up, m_viz.wall - side + up };
+
+	poly_draw_object_t poly{ };
+	poly.m_color   = col.get_u32( 0.18f );
+	bool on_screen = true;
+	for ( int i = 0; i < 4 && on_screen; i++ )
+		on_screen = g_render.world_to_screen( face[ i ], poly.m_points[ i ] );
+	if ( on_screen ) {
+		poly.m_count = 4;
+		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_poly, std::make_any< poly_draw_object_t >( poly ) );
+	}
+	for ( int i = 0; i < 4; i++ )
+		line( face[ i ], face[ ( i + 1 ) % 4 ], color, 1.f );
+	line( m_viz.wall, m_viz.wall + n * 8.f, color, 1.f );
+	label( m_viz.wall + up + c_vector( 0.f, 0.f, 4.f ), std::format( "wc {} {}", m_viz.branch, m_viz.sims ), color );
+
+	if ( !m_viz.ground ) {
+		for ( int i = 0; i + 1 < m_viz.path_n; i++ )
+			line( m_viz.path[ i ], m_viz.path[ i + 1 ], color, 1.5f );
+		if ( m_viz.path_n > 1 )
+			dot( m_viz.path[ m_viz.path_n - 1 ], m_viz.lands ? 5.f : 3.f, m_viz.lands ? green : color );
+		if ( m_viz.lands )
+			label( m_viz.land + c_vector( 0.f, 0.f, 8.f ), std::format( "+{:.0f}", m_viz.land.m_z - m_ground_z ), green );
+		return;
+	}
+
+	// spot scan: green = climbed off that spot, red = nothing / sticky, grey = blocked or not run yet, big = where you get walked
+	const auto& j = m_spot;
+	if ( !j.valid )
+		return;
+	const c_vector st( j.n.m_y, -j.n.m_x, 0.f );
+	const auto at_idx = [ ]( const int i ) { return ( i & 1 ? 1.f : -1.f ) * k_spot_step * static_cast< float >( ( i + 1 ) / 2 ); };
+	int best = -1;
+	for ( int i = 0; i < j.idx; ++i )
+		if ( j.score[ i ] > 0 && ( best < 0 || j.score[ i ] > j.score[ best ] ) )
+			best = i;
+	for ( int i = 0; i < j.count; ++i ) {
+		const c_vector p    = j.base + st * at_idx( i ) + c_vector( 0.f, 0.f, 1.f );
+		const int s         = i < j.idx ? j.score[ i ] : -2;
+		const unsigned int c = s > 0 ? green : s == 0 ? red : grey;
+		dot( p, i == best ? 5.f : 2.5f, c );
+	}
+	if ( best >= 0 ) {
+		const c_vector p = j.base + st * at_idx( best ) + c_vector( 0.f, 0.f, 1.f );
+		line( g_ctx.m_local->get_abs_origin( ) + c_vector( 0.f, 0.f, 1.f ), p, green, 1.5f );
+		label( p + c_vector( 0.f, 0.f, 10.f ), std::format( "+{:.0f}", static_cast< float >( j.score[ best ] - 1000 ) ), green );
+	}
 }

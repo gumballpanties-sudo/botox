@@ -81,6 +81,7 @@ enum e_font_names {
 enum e_custom_font_names {
 	custom_font_name_indicator = 0,
 	custom_font_name_esp,
+	custom_font_name_net_graph,
 	custom_font_name_max
 };
 

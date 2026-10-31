@@ -360,6 +360,7 @@ void n_hooks::impl_t::on_release( )
 	g_serial_render.on_release( );
 
 	g_misc.performance( true );
+	g_indicators.net_graph( true );
 
 	g_moi_hud.on_release( );
 	g_scaleform.on_release( );

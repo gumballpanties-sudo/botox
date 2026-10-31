@@ -390,6 +390,9 @@ void n_menu::impl_t::tab_movement( )
 						if ( style == 0 ) {
 							ImGui::SliderFloat( "edge bug predict time", &GET_VARIABLE( g_variables.m_edgebug_predict_time, float ),
 							                    0.02f, 2.f, "%.2f s" );
+							/* none picked = both */
+							ImGui::MultiCombo( "stance##ebtypes", GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > ),
+							                   { "ducked", "standing" }, GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > ).size( ) );
 
 							ImGui::Checkbox( "autostrafe to edge", &GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool ) );
 							if ( GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool ) ) {
@@ -660,6 +663,9 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "prevent slow", &GET_VARIABLE( g_variables.m_wall_climb_prevent_slow, bool ) );
 						ImGui::Checkbox( "crouch catches", &GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) );
 						ImGui::SliderInt( "spot reach", &GET_VARIABLE( g_variables.m_wall_climb_spot_reach, int ), 0, 32, "%d u" );
+						ImGui::Checkbox( "visualize##wcviz", &GET_VARIABLE( g_variables.m_wall_climb_visualize, bool ) );
+						ImGui::ColorEdit4( "visualize color##wcvizcolor", &GET_VARIABLE( g_variables.m_wall_climb_visualize_color, c_color ),
+						                   color_picker_alpha_flags );
 						ImGui::Checkbox( "show wall slope", &GET_VARIABLE( g_variables.m_show_wall_slope, bool ) );
 						if ( GET_VARIABLE( g_variables.m_show_wall_slope, bool ) ) {
 							ImGui::Label( "show wall slope key" );
