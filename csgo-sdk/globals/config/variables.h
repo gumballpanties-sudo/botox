@@ -1003,6 +1003,8 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_jump_bug_crouch, false );
 		ADD_VARIABLE( bool, m_jump_bug_kangaroo, false );
 		ADD_VARIABLE( bool, m_jump_bug_only, false );
+		ADD_VARIABLE( bool, m_jump_bug_assist, false );
+		ADD_VARIABLE( int, m_jump_bug_assist_ticks, 4 );
 		ADD_VARIABLE( bool, m_pixel_surf, false );
 		ADD_VARIABLE( key_bind_t, m_pixel_surf_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_pixel_surf_fix, false );
@@ -1149,6 +1151,8 @@ namespace n_variables
 		ADD_VARIABLE( float, m_poop_ladder_jump_boost, 400.f );
 		ADD_VARIABLE( float, m_poop_ladder_jump_angle, 50.f );
 		ADD_VARIABLE( float, m_poop_ladder_jump_strength, 100.f );
+		ADD_VARIABLE( float, m_poop_ladder_jump_height, 256.f );
+		ADD_VARIABLE( float, m_poop_ladder_jump_gravity, 400.f );
 		ADD_VARIABLE( bool, m_ladder_glide, false );
 		ADD_VARIABLE( key_bind_t, m_ladder_glide_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_ladder_freelook_climb, false );

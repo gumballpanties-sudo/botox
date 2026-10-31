@@ -872,6 +872,7 @@ namespace n_movement
 		void jump_bug( );
 		void kangaroo( );
 		void jump_bug_crouch( c_user_cmd* cmd );
+		void jump_bug_assist( c_user_cmd* cmd );
 		void pixel_surf_fix( );
 		void pixel_surf( float target_ps_velocity );
 		void detect_edgebug( c_user_cmd* cmd );

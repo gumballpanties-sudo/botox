@@ -288,6 +288,9 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "while crouching", &GET_VARIABLE( g_variables.m_jump_bug_crouch, bool ) );
 						ImGui::Checkbox( "kangaroo", &GET_VARIABLE( g_variables.m_jump_bug_kangaroo, bool ) );
 						ImGui::Checkbox( "jb only", &GET_VARIABLE( g_variables.m_jump_bug_only, bool ) );
+						ImGui::Checkbox( "height assist", &GET_VARIABLE( g_variables.m_jump_bug_assist, bool ) );
+						if ( GET_VARIABLE( g_variables.m_jump_bug_assist, bool ) )
+							ImGui::SliderInt( "assist ticks##jba", &GET_VARIABLE( g_variables.m_jump_bug_assist_ticks, int ), 1, 8 );
 					},
 					ImVec2( 200.f, -1 ) );
 			}
@@ -348,6 +351,8 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderFloat( "strength", &GET_VARIABLE( g_variables.m_poop_ladder_jump_strength, float ), 0.f, 500.f, "%.0f%%" );
 						ImGui::SliderFloat( "jetpack boost (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_boost, float ), 0.f, 1000.f, "%.0f" );
 						ImGui::SliderFloat( "jetpack angle (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_angle, float ), 0.f, 90.f, "%.0f deg" );
+						ImGui::SliderFloat( "jetpack height", &GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ), 10.f, 2000.f, "%.0fu" );
+						ImGui::SliderFloat( "sv_gravity (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_gravity, float ), 50.f, 800.f, "%.0f" );
 					},
 					ImVec2( 220.f, -1 ) );
 			}
