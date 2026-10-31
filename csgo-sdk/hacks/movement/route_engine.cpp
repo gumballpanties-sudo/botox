@@ -368,7 +368,9 @@ namespace
 		if ( !s.on_ground )
 			s.fall = -s.vz;
 
+		const float z_pre_duck = s.z;
 		sim_duck( s, duck_held, floor_z, solid, skin );
+		const float stance_dz = s.z - z_pre_duck;
 
 		s.vz -= half_g;
 		if ( jump ) {
@@ -424,6 +426,11 @@ namespace
 				s.land_cost        = s.stamina - before;
 				s.fall             = 0.f;
 			}
+		}
+		if ( s.rec ) {
+			if ( s.rec.use_count( ) > 1 )
+				s.rec = std::make_shared< std::vector< n_route::arc_tick_t > >( *s.rec );
+			s.rec->push_back( { s.z, stance_dz, !s.on_ground } );
 		}
 	}
 
@@ -592,6 +599,8 @@ namespace
 		std::shared_ptr< const step_t > path{ };
 		/* only the serial admit writes it, and only while it is the sole owner */
 		std::shared_ptr< alt_list_t > alts{ };
+		/* trace_arc only: every leg so far, per tick */
+		std::shared_ptr< const std::vector< std::vector< n_route::arc_tick_t > > > arc{ };
 		int n_legs = 0;
 		int n_els  = 0;
 		int cost = 0;
@@ -1202,7 +1211,7 @@ namespace n_route
 
 		refresh_engine_numbers( );
 
-		{
+		if ( !in.trace ) {
 			std::string moves;
 			for ( int m = 0; m < move_count; ++m ) {
 				if ( !( in.global_moves & ( 1u << m ) ) )
@@ -1244,7 +1253,7 @@ namespace n_route
 		/* helpers = PHYSICAL cores - 2, this thread the other one: 10-10 log, logical - 2 ( 10 of 12 ) took every SMT
 		   sibling and the game's own threads shared cores ( frames 16 -> 20..45 ms while solving ) */
 		const unsigned int cores   = physical_cores( );
-		const unsigned int helpers = ( std::min )( cores > 2u ? cores - 2u : 0u, 64u );
+		const unsigned int helpers = in.trace ? 0u : ( std::min )( cores > 2u ? cores - 2u : 0u, 64u );
 		const unsigned long long start_free = free_virtual( );
 		const unsigned long long mem_floor  = memory_floor( start_free );
 		/* logged only on a trip: free MB differs run to run, byte-exact gates replay this log */
@@ -1275,6 +1284,8 @@ namespace n_route
 		}
 		seed.floor        = in.start_z;
 		seed.mask         = in.start_styles == 0u ? k_all_point_styles : in.start_styles;
+		if ( in.trace )
+			seed.st.rec = std::make_shared< std::vector< arc_tick_t > >( );
 		root.emplace_back( seed );
 
 		// one marker = one move, never a hidden hop. a point one move can't reach is reported unreachable
@@ -1445,6 +1456,23 @@ namespace n_route
 				const auto admit = [ & ]( node_t& made ) {
 					if ( roof_pass && !made.st.roof_hit )
 						return;
+					if ( in.trace ) {
+						const std::size_t n = static_cast< std::size_t >( made.n_els );
+						if ( n >= in.trace->size( ) || made.path->hash != ( *in.trace )[ n ] || ( last && n + 1 != in.trace->size( ) ) )
+							return;
+						std::vector< arc_tick_t > leg;
+						if ( made.st.rec ) {
+							const std::size_t from = ( std::min )( node.st.rec ? node.st.rec->size( ) : std::size_t{ 0 }, made.st.rec->size( ) );
+							leg.assign( made.st.rec->begin( ) + static_cast< std::ptrdiff_t >( from ), made.st.rec->end( ) );
+						}
+						if ( !leg.empty( ) )
+							leg.back( ).z = made.st.z;
+						auto arc = std::make_shared< std::vector< std::vector< arc_tick_t > > >( node.arc ? *node.arc : std::vector< std::vector< arc_tick_t > >{ } );
+						arc->push_back( std::move( leg ) );
+						made.arc = std::move( arc );
+						if ( last && out.arc.empty( ) )
+							out.arc = *made.arc;
+					}
 					++r.opts;
 					made.combos = node.combos;
 					made.alts  = node.alts;
@@ -2145,6 +2173,19 @@ namespace n_route
 					if ( leads[ g ].others.empty( ) )
 						leads[ g ].p = 1.f;
 				}
+				/* odds never grow down a route: under 80% is dropped here, never listed or searched past */
+				constexpr float k_min_odds = 0.8f - 1e-5f;
+				std::size_t keep = 0;
+				for ( std::size_t g = 0; g < leads.size( ); ++g )
+					if ( leads[ g ].odds >= k_min_odds ) {
+						if ( keep != g ) {
+							leads[ keep ]    = std::move( leads[ g ] );
+							lead_sig[ keep ] = lead_sig[ g ];
+						}
+						++keep;
+					}
+				leads.resize( keep );
+				lead_sig.resize( keep );
 				r.made = std::move( leads );
 				r.sigs = std::move( lead_sig );
 				if ( !last )
@@ -2465,13 +2506,10 @@ namespace n_route
 					text += '>';
 				}
 				const leg_t& l = n.path->leg;
-				char chancy[ 24 ]{ };
-				if ( n.odds < 1.f )
-					sprintf_s( chancy, "[chancy %d%%] ", static_cast< int >( std::lround( n.odds * 100.f ) ) );
 				char line[ 160 ]{ };
-				sprintf_s( line, "gap %6.4f  band %s  catch %9.4f  %s  keys %d  switches %d  presses %d  cost %d  %s%s",
+				sprintf_s( line, "gap %6.4f  band %s  catch %9.4f  %s  keys %d  switches %d  presses %d  cost %d  %s",
 				           l.gap, l.tier == 0 ? "GOOD" : ( l.tier == 1 ? "iffy" : "poor" ), l.arrive_z, n.st.ducked ? "ducked" : "stand ",
-				           bind_count( n ), n.switches, n.presses, n.cost, alt ? "[alt] " : "", chancy );
+				           bind_count( n ), n.switches, n.presses, n.cost, alt ? "[alt] " : "" );
 				row.line = line + text;
 			}
 			row.sol.elements = els;
@@ -2639,6 +2677,13 @@ namespace n_route
 			return;
 		}
 
+		if ( in.trace ) {
+			for ( auto& row : rows )
+				out.routes.emplace_back( std::move( row.sol ) );
+			out.total     = total;
+			out.failed_at = -1;
+			return;
+		}
 		if ( !rows.empty( ) ) {
 			std::vector< const step_t* > steps( static_cast< std::size_t >( rows.front( ).lead_legs ) );
 			std::size_t at = steps.size( );
@@ -2682,6 +2727,46 @@ namespace n_route
 			botox_dbg_log( "[rc] out of memory at point %d: more arcs than the game's address space holds ( %llu MB free now )\n",
 			               out.failed_at + 1, free_virtual( ) >> 20 );
 		}
+	}
+
+	std::vector< std::vector< arc_tick_t > > trace_arc( const solve_input_t& in, const solution_t& sol )
+	{
+		/* stamp_text's hash, continued per element: trace[ n ] = the path text after n elements */
+		std::vector< unsigned long long > trace{ text_hash( "" ) };
+		bool empty = true;
+		for ( const std::string& e : sol.elements ) {
+			unsigned long long h = trace.back( );
+			if ( const std::string t = route_text( { e } ); !t.empty( ) ) {
+				if ( !empty )
+					h = text_hash( " -> ", h );
+				h     = text_hash( t, h );
+				empty = false;
+			}
+			trace.push_back( h );
+		}
+		solve_input_t retry = in;
+		retry.trace         = &trace;
+		retry.max_results   = 1;
+		retry.time_limit_ms = 0;
+		retry.progress      = nullptr;
+		solve_output_t out;
+		solve( retry, out );
+		if ( out.arc.size( ) != in.points.size( ) )
+			out.arc.clear( );
+		botox_dbg_log( "[rc arc] %s: %d legs traced for the drawn path\n", out.arc.empty( ) ? "MISS" : "ok", static_cast< int >( out.arc.size( ) ) );
+		for ( std::size_t i = 0; i < out.arc.size( ); ++i ) {
+			int air = 0;
+			float lo = FLT_MAX, hi = -FLT_MAX, dz = 0.f;
+			for ( const arc_tick_t& t : out.arc[ i ] ) {
+				air += t.air ? 1 : 0;
+				lo = ( std::min )( lo, t.z );
+				hi = ( std::max )( hi, t.z );
+				dz += t.stance_dz;
+			}
+			botox_dbg_log( "[rc arc]   leg %d: %d ticks, %d air, z %.3f..%.3f, stance net %+.1f\n", static_cast< int >( i ) + 1,
+			               static_cast< int >( out.arc[ i ].size( ) ), air, lo, hi, dz );
+		}
+		return out.arc;
 	}
 
 	std::string route_text( const std::vector< std::string >& elements )

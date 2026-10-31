@@ -2255,6 +2255,19 @@ void n_menu::impl_t::tab_settings( )
 			ImGui::Checkbox( "dpi scale panels", &GET_VARIABLE( g_variables.m_dpi_scale_panels, bool ) );
 		}
 
+		ImGui::Checkbox( "background blur", &GET_VARIABLE( g_variables.m_menu_blur, bool ) );
+		if ( GET_VARIABLE( g_variables.m_menu_blur, bool ) ) {
+			ImGui::OptionPopup(
+				"blur settings##menu blur settings",
+				[ & ]( ) {
+					ImGui::SliderInt( "max blur##menu blur", &GET_VARIABLE( g_variables.m_menu_blur_passes, int ), 1, 12, "%d",
+				                      ImGuiSliderFlags_AlwaysClamp );
+					ImGui::SliderFloat( "darken##menu blur", &GET_VARIABLE( g_variables.m_menu_blur_darken, float ), 0.f, 100.f, "%.0f%%",
+				                        ImGuiSliderFlags_AlwaysClamp );
+				},
+				ImVec2( 200.f, -1 ) );
+		}
+
 		ImGui::Label( "menu key" );
 		ImGui::Keybind( "menu key##menu key", &GET_VARIABLE( g_variables.m_menu_key, key_bind_t ), false );
 	}

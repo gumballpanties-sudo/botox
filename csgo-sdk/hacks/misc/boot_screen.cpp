@@ -1,14 +1,15 @@
 #include "misc.h"
-#include "../visuals/screen/fx_compat.h"
-#include "../visuals/screen/stream_guard.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
+
+extern void botox_dbg_log( const char* fmt, ... );
 
 namespace
 {
@@ -73,156 +74,31 @@ namespace
 		fraction = filled / total;
 	}
 
-	/* shadertoy port, warped fbm blob. iChannel0 ( 256 white noise, repeat ) = hashed value noise, smoothstep lerp.
-	   uv = shadertoy ( I*2-R )/R.y, y up, square spans -2..2. luma in LEVELS steps, tinted c1 = accent.
-	   c0 = time, fade ( 50% ). output on black = additive */
-	constexpr char k_glow_ps[] = R"(
-#define LEVELS 4.0
+	/* dna menu particles ( random size + alpha, sine twinkle ), flying out of the center. dna alpha 0..40 was invisible here */
+	struct particle_t {
+		ImVec2 m_dir;
+		float m_dist, m_speed, m_size, m_alpha, m_phase, m_rate;
+	};
 
-float4 c0 : register( c0 );
-float4 c1 : register( c1 );
+	particle_t g_particles[ 75 ];
+	bool g_particles_init = false;
 
-float hash( float2 p )
-{
-	float3 p3 = frac( p.xyx * 0.1031 );
-	p3 += dot( p3, p3.yzx + 33.33 );
-	return frac( ( p3.x + p3.y ) * p3.z );
-}
-
-float noise2( float2 p )
-{
-	p = p * 256.0 - 0.5;
-	float2 i = floor( p ), f = frac( p );
-	f = f * f * ( 3.0 - 2.0 * f );
-	i -= 256.0 * floor( i / 256.0 );
-	float2 j = i + 1.0;
-	j -= 256.0 * floor( j / 256.0 );
-	float a = hash( i ), b = hash( float2( j.x, i.y ) ), c = hash( float2( i.x, j.y ) ), d = hash( j );
-	return lerp( lerp( a, b, f.x ), lerp( c, d, f.x ), f.y );
-}
-
-float fbm( float2 p )
-{
-	float amp = 1.0, n = 0.0, f = 1.0;
-	for ( int i = 0; i < 6; i++ ) {
-		n += noise2( p * f * 0.01 ) * amp;
-		amp *= 0.5;
-		f *= 2.0;
-	}
-	return n;
-}
-
-float warp( float2 p )
-{
-	float2 q = float2( fbm( p ), fbm( p + float2( 5.2, 2.3 ) ) );
-	float2 r = float2( fbm( p + 0.1 * q + float2( 8.7, 2.2 ) ), fbm( p + 0.1 * q + float2( 3.3, 1.8 ) ) );
-	return fbm( p + 4.2 * r );
-}
-
-float3 palette( float v )
-{
-	return sin( float3( 1.0, 2.0, 3.0 ) + v ) * 0.5 + 0.5;
-}
-
-float3 tanh3( float3 x )
-{
-	return 1.0 - 2.0 / ( exp( 2.0 * x ) + 1.0 );
-}
-
-float4 main( float2 uv : TEXCOORD0 ) : COLOR
-{
-	float t    = c0.x;
-	float dist = length( uv );
-	float2 dir = uv / max( dist, 1e-5 );
-	float n    = warp( float2( dir.x * 0.1 - t * 0.1, dir.y * 0.1 - t * 0.1 ) + dist * 0.1 );
-	float d    = max( n - dist * 1.1, 0.0 );
-	float3 col = tanh3( palette( d * 5.0 + t * 2.0 ) * d * 2.0 );
-	float l    = dot( col, float3( 0.299, 0.587, 0.114 ) );
-	l          = min( floor( l * LEVELS ), LEVELS - 1.0 ) / ( LEVELS - 1.0 );
-	l         *= 1.0 - smoothstep( 0.9, 1.7, dist );
-	return float4( l * c1.rgb * c0.y, 0.0 );
-}
-)";
-
-	struct glow_t {
-		IDirect3DPixelShader9* m_shader = nullptr;
-		bool m_failed                   = false;
-		/* set by boot_screen_draw, read by the callback, both render thread */
-		float m_x = 0.f, m_y = 0.f, m_size = 0.f, m_time = 0.f, m_fade = 0.f;
-		ImVec4 m_color{ };
-	} g_glow;
-
-	void glow_draw( const ImDrawList*, const ImDrawCmd* )
+	float frand( )
 	{
-		IDirect3DDevice9* const device = g_interfaces.m_direct_device;
-		if ( !device || g_glow.m_failed )
-			return;
-
-		if ( !g_glow.m_shader ) {
-			ID3DXBuffer *code = nullptr, *errors = nullptr;
-			const bool ok = SUCCEEDED( D3DXCompileShader( k_glow_ps, sizeof( k_glow_ps ) - 1, nullptr, nullptr, "main", "ps_3_0", 0, &code, &errors, nullptr ) ) &&
-			                code && SUCCEEDED( device->CreatePixelShader( static_cast< const DWORD* >( code->GetBufferPointer( ) ), &g_glow.m_shader ) );
-
-			if ( !ok ) {
-				g_glow.m_shader = nullptr;
-				g_glow.m_failed = true;
-				botox_dbg_log( "BOOT: glow shader failed: %s", errors ? static_cast< const char* >( errors->GetBufferPointer( ) ) : "CreatePixelShader" );
-			}
-
-			if ( code )
-				code->Release( );
-			if ( errors )
-				errors->Release( );
-			if ( !ok )
-				return;
-		}
-
-		struct vertex_t {
-			float m_x, m_y, m_z, m_rhw, m_u, m_v;
-		};
-
-		const float x = g_glow.m_x - 0.5f, y = g_glow.m_y - 0.5f, s = g_glow.m_size;
-		/* uv +-2: blob ends by dist ~1.8 ( fbm < 1.97 / 1.1 ), so the square edge never cuts it */
-		const vertex_t quad[ 4 ] = { { x, y, 0.f, 1.f, -2.f, 2.f }, { x + s, y, 0.f, 1.f, 2.f, 2.f }, { x, y + s, 0.f, 1.f, -2.f, -2.f }, { x + s, y + s, 0.f, 1.f, 2.f, -2.f } };
-		const float constants[ 2 ][ 4 ] = { { g_glow.m_time, g_glow.m_fade, 0.f, 0.f }, { g_glow.m_color.x, g_glow.m_color.y, g_glow.m_color.z, 1.f } };
-
-		auto pass = [ & ] {
-			float old_constant[ 2 ][ 4 ]{ };
-			DWORD old_srgb = 0;
-			device->GetPixelShaderConstantF( 0, old_constant[ 0 ], 2 );
-			device->GetRenderState( D3DRS_SRGBWRITEENABLE, &old_srgb );
-
-			n_stream_guard::state_t streams{ };
-			streams.capture( device );
-
-			device->SetRenderState( D3DRS_SRGBWRITEENABLE, FALSE );
-			device->SetRenderState( D3DRS_SCISSORTESTENABLE, FALSE );
-			device->SetRenderState( D3DRS_SRCBLEND, D3DBLEND_ONE );
-			device->SetRenderState( D3DRS_DESTBLEND, D3DBLEND_ONE );
-			device->SetPixelShader( g_glow.m_shader );
-			device->SetPixelShaderConstantF( 0, constants[ 0 ], 2 );
-
-			n_fx_compat::draw_up( device, D3DPT_TRIANGLESTRIP, 2, quad, sizeof( vertex_t ) );
-
-			/* DrawPrimitiveUP nulled stream 0 and the vs path swapped the declaration: imgui's next cmd needs both back.
-			   blend / scissor / shaders come back with ImDrawCallback_ResetRenderState */
-			device->SetPixelShaderConstantF( 0, old_constant[ 0 ], 2 );
-			device->SetRenderState( D3DRS_SRGBWRITEENABLE, old_srgb );
-			device->SetFVF( D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1 );
-			streams.restore( device );
-		};
-
-		n_fx_compat::run( device, "boot_glow", pass );
+		return static_cast< float >( rand( ) ) / static_cast< float >( RAND_MAX );
 	}
-}
 
-void boot_screen_release( )
-{
-	if ( g_glow.m_shader )
-		g_glow.m_shader->Release( );
-
-	g_glow.m_shader = nullptr;
-	g_glow.m_failed = false;
+	void spawn( particle_t& p, const float dist )
+	{
+		const float angle = frand( ) * 2.f * IM_PI;
+		p.m_dir           = ImVec2( std::cos( angle ), std::sin( angle ) );
+		p.m_dist          = dist;
+		p.m_speed         = 60.f + frand( ) * 160.f;
+		p.m_size          = 2.5f + frand( ) * 2.5f;
+		p.m_alpha         = 0.4f + frand( ) * 0.5f;
+		p.m_phase         = static_cast< float >( rand( ) % 1000 ) * 0.01f;
+		p.m_rate          = 0.6f + static_cast< float >( rand( ) % 40 ) / 100.f;
+	}
 }
 
 void boot_screen_begin( )
@@ -390,16 +266,26 @@ void boot_screen_draw( )
 	const float grow = 0.94f + 0.06f * fade;
 	const ImVec2 center( w * 0.5f, h * 0.5f + 10.f * u * ( 1.f - fade ) );
 
-	/* glow behind bar + label: own quad + shader, fade rides in c0 ( fade_others skips it, no verts ) */
-	g_glow.m_size = std::round( 640.f * u * grow );
-	g_glow.m_x    = std::floor( center.x - g_glow.m_size * 0.5f );
-	g_glow.m_y    = std::floor( center.y - g_glow.m_size * 0.5f );
-	g_glow.m_time  = clock;
-	g_glow.m_fade  = fade * 0.5f;
-	g_glow.m_color = GET_VARIABLE( g_variables.m_accent, c_color ).get_vec4( );
+	/* first frame spreads them along their rays so the stream is already full; off screen = back to the center */
+	const float reach = std::hypot( w, h ) * 0.5f + 4.f * u;
+	const ImVec4 accent = GET_VARIABLE( g_variables.m_accent, c_color ).get_vec4( );
+	if ( !std::exchange( g_particles_init, true ) ) {
+		for ( auto& p : g_particles )
+			spawn( p, frand( ) * reach );
+		botox_dbg_log( "BOOT: particles %d reach=%.0f u=%.2f accent=%.2f %.2f %.2f", static_cast< int >( std::size( g_particles ) ), reach, u, accent.x, accent.y, accent.z );
+	}
 
-	list->AddCallback( glow_draw, nullptr );
-	list->AddCallback( ImDrawCallback_ResetRenderState, nullptr );
+	for ( auto& p : g_particles ) {
+		p.m_dist += p.m_speed * u * dt;
+		if ( p.m_dist > reach )
+			spawn( p, 0.f );
+
+		p.m_phase += dt * p.m_rate;
+		/* 40 px fade in off the center so they never pop */
+		const float alpha = p.m_alpha * ( 0.6f + 0.4f * std::sin( p.m_phase ) ) * std::min( p.m_dist / ( 40.f * u ), 1.f ) * fade;
+		list->AddCircleFilled( ImVec2( center.x + p.m_dir.x * p.m_dist, center.y + p.m_dir.y * p.m_dist ), p.m_size * u,
+		                       ImGui::GetColorU32( ImVec4( accent.x, accent.y, accent.z, alpha ) ) );
+	}
 
 	char text[ 96 ];
 	if ( ejecting )

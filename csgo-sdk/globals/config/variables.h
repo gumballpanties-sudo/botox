@@ -274,6 +274,9 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_accent, c_color( 129, 99, 251, 255 ) );
 		ADD_VARIABLE( float, m_dpi_scale, 100.f );
 		ADD_VARIABLE( bool, m_dpi_scale_panels, false );
+		ADD_VARIABLE( bool, m_menu_blur, false );
+		ADD_VARIABLE( int, m_menu_blur_passes, 5 );
+		ADD_VARIABLE( float, m_menu_blur_darken, 0.f );
 		ADD_VARIABLE( key_bind_t, m_menu_key, key_bind_t( 0x2D /* VK_INSERT */, 1 ) );
 		ADD_VARIABLE( bool, m_console_color_enable, false );
 		ADD_VARIABLE( c_color, m_console_color, c_color( 102, 111, 102, 255 ) );
@@ -1235,6 +1238,8 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_route_calc_snap_edge, false );
 		ADD_VARIABLE( bool, m_route_calc_show_keys, true );
 		ADD_VARIABLE( bool, m_route_calc_show_path, true );
+		ADD_VARIABLE( int, m_route_calc_path_alpha, 255 );
+		ADD_VARIABLE( float, m_route_calc_path_thickness, 2.f );
 		ADD_VARIABLE( bool, m_route_calc_show_bar, true );
 		ADD_VARIABLE( bool, m_route_calc_advanced_readout, false );
 		ADD_VARIABLE( bool, m_route_calc_pinned, false );

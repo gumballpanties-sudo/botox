@@ -250,7 +250,6 @@ void boot_screen_draw( );
 bool boot_screen_active( );
 void boot_screen_eject_begin( );
 void boot_screen_eject_end( );
-void boot_screen_release( );
 /* render thread, after ImGui::Render: every other overlay vertex scaled by the reveal (0 under the splash) */
 void boot_screen_fade_others( ImDrawData* draw_data );
 /* airflow blur over the whole back buffer, tinted, passes = strength. false = no blur this frame */

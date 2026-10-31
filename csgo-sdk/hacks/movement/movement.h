@@ -2,6 +2,7 @@
 #define WINDOWS_IGNORE_PACKING_MISMATCH
 #include <algorithm>
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <vector>
 #include <Windows.h>
@@ -182,6 +183,13 @@ namespace n_route
 	constexpr float k_skin_lo   = 2.f - 0.03125f + 0.98f * k_creep_gap;
 	constexpr float k_skin_hi   = 2.f - 0.03125f + 0.0312460f;
 
+	/* one sim tick of a drawn leg: feet z, the +-9 the duck teleported inside it, hull off the ground */
+	struct arc_tick_t {
+		float z         = 0.f;
+		float stance_dz = 0.f;
+		bool air        = false;
+	};
+
 	struct sim_t {
 		float z           = 0.f;
 		float vz          = 0.f;
@@ -202,6 +210,8 @@ namespace n_route
 		float ceiling        = 3.4e38f;
 		float roof           = 3.4e38f;
 		bool roof_hit        = false;
+		/* trace_arc only: every tick this state flew, copy on write so a probe never writes its parent's chain */
+		std::shared_ptr< std::vector< arc_tick_t > > rec{ };
 	};
 
 	struct solution_t {
@@ -236,6 +246,8 @@ namespace n_route
 		/* route calc worker: progress 0..999 out, stop flag in ( null = sync caller ) */
 		std::atomic< int >* progress      = nullptr;
 		const std::atomic< bool >* cancel = nullptr;
+		/* trace_arc only: cumulative text hash per element count, every other arc is dropped */
+		const std::vector< unsigned long long >* trace = nullptr;
 	};
 	struct solve_output_t {
 		std::vector< solution_t > routes{ };
@@ -264,8 +276,11 @@ namespace n_route
 		unsigned int refused_moves = 0u;
 		std::vector< std::string > miss_lines{ };
 		std::vector< int > arcs_after{ };
+		std::vector< std::vector< arc_tick_t > > arc{ };
 	};
 	void solve( const solve_input_t& in, solve_output_t& out );
+	/* flies sol again ( in = the solve that listed it ): per leg, per tick. empty = no arc matched its text */
+	std::vector< std::vector< arc_tick_t > > trace_arc( const solve_input_t& in, const solution_t& sol );
 	/* route calc solve running on its worker: anything else touching the engine numbers waits */
 	bool solve_busy( );
 	void route_calc_shutdown( );
@@ -743,6 +758,7 @@ namespace n_movement
 		struct route_calc_t {
 			std::vector< route_point_t > points{ };
 			std::vector< n_route::solution_t > solutions{ };
+			std::vector< c_vector > path{ };
 			long long total_solutions = 0;
 			bool total_approx         = false;
 			bool total_floor          = false; /* solve_output_t::trimmed */
@@ -766,6 +782,7 @@ namespace n_movement
 			{
 				++gen;
 				solutions.clear( );
+				path.clear( );
 				total_solutions = 0;
 				total_approx    = false;
 				total_floor     = false;

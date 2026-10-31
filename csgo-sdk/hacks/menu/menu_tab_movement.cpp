@@ -68,6 +68,10 @@ static void route_calc_page( )
 		ImGui::Checkbox( "snap points to nearest edge", &GET_VARIABLE( g_variables.m_route_calc_snap_edge, bool ) );
 		ImGui::Checkbox( "show key list", &GET_VARIABLE( g_variables.m_route_calc_show_keys, bool ) );
 		ImGui::Checkbox( "show path", &GET_VARIABLE( g_variables.m_route_calc_show_path, bool ) );
+		if ( GET_VARIABLE( g_variables.m_route_calc_show_path, bool ) ) {
+			ImGui::SliderInt( "path alpha", &GET_VARIABLE( g_variables.m_route_calc_path_alpha, int ), 0, 255, "%d" );
+			ImGui::SliderFloat( "path thickness", &GET_VARIABLE( g_variables.m_route_calc_path_thickness, float ), 1.f, 8.f, "%.1f px" );
+		}
 		ImGui::Checkbox( "show combos on screen", &GET_VARIABLE( g_variables.m_route_calc_show_bar, bool ) );
 		ImGui::Checkbox( "advanced readout##route calc", &GET_VARIABLE( g_variables.m_route_calc_advanced_readout, bool ) );
 

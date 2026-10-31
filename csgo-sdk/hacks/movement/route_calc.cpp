@@ -63,12 +63,7 @@ namespace n_route
 
 	std::string route_line( const solution_t& s )
 	{
-		if ( s.odds >= 1.f )
-			return route_text( s.elements );
-		/* odds = share of box-edge crossings that land on a tick this route still works from */
-		char tag[ 32 ]{ };
-		sprintf_s( tag, "  (works %d%% of tries)", static_cast< int >( std::lround( s.odds * 100.f ) ) );
-		return route_text( s.elements ) + tag;
+		return route_text( s.elements );
 	}
 }
 
@@ -875,6 +870,7 @@ namespace
 		n_route::solve_input_t in{ };
 		n_route::solve_output_t out{ };
 		std::vector< int > marker_no{ };
+		std::vector< c_vector > anchors{ };
 		bool advanced  = false;
 		int gen        = 0;
 		double seconds = 0.0;
@@ -893,8 +889,12 @@ namespace
 		n_route::solve( job.in, job.out );
 		job.seconds = std::chrono::duration< double >( std::chrono::steady_clock::now( ) - clock_start ).count( );
 		const n_route::solve_output_t& result = job.out;
-		if ( !result.routes.empty( ) || ( job.in.cancel && job.in.cancel->load( ) ) )
+		if ( job.in.cancel && job.in.cancel->load( ) )
 			return;
+		if ( !result.routes.empty( ) ) {
+			job.out.arc = n_route::trace_arc( job.in, result.routes.front( ) );
+			return;
+		}
 
 		const int idx      = result.failed_at >= 0 && result.failed_at < static_cast< int >( job.marker_no.size( ) ) ? result.failed_at : 0;
 		const int point_no = job.marker_no.empty( ) ? idx + 1 : job.marker_no[ idx ];
@@ -918,6 +918,40 @@ namespace
 			job.hint = n_route::solve_hint( job.in, result.refused_moves, job.example );
 	}
 
+	/* the solved arc hung between the markers: feet z per tick is the sim's, the horizontal is spread over the airborne
+	   ticks of each leg ( grounded ticks move nobody ). the duck's +-9 teleport is taken out per tick and the leg's net
+	   shift put back linearly, so a minijump reads as one curve that still ends on its marker */
+	std::vector< c_vector > arc_path( const std::vector< c_vector >& anchors, const std::vector< std::vector< n_route::arc_tick_t > >& arc )
+	{
+		std::vector< c_vector > path;
+		if ( arc.empty( ) || arc.size( ) + 1 != anchors.size( ) )
+			return path;
+		path.push_back( anchors.front( ) );
+		for ( std::size_t i = 0; i < arc.size( ); ++i ) {
+			const c_vector& a = anchors[ i ];
+			const c_vector& b = anchors[ i + 1 ];
+			std::size_t n_air = 0;
+			float net_dz      = 0.f;
+			for ( const n_route::arc_tick_t& t : arc[ i ] ) {
+				n_air += t.air ? 1 : 0;
+				net_dz += t.stance_dz;
+			}
+			const bool all_move = n_air == 0;
+			if ( all_move )
+				n_air = arc[ i ].size( );
+			float dz          = 0.f;
+			std::size_t moved = 0;
+			for ( const n_route::arc_tick_t& t : arc[ i ] ) {
+				moved += all_move || t.air ? 1 : 0;
+				dz += t.stance_dz;
+				const float f = n_air ? static_cast< float >( moved ) / static_cast< float >( n_air ) : 1.f;
+				path.emplace_back( a.m_x + ( b.m_x - a.m_x ) * f, a.m_y + ( b.m_y - a.m_y ) * f, t.z - dz + net_dz * f );
+			}
+			path.push_back( b );
+		}
+		return path;
+	}
+
 	void rc_finish( n_movement::impl_t::route_calc_t& data, rc_job_t& job )
 	{
 		const auto say = []( int type, const std::string& text ) {
@@ -928,6 +962,7 @@ namespace
 		/* popup clock restarts on the answer, not the press */
 		data.popup_started   = GetTickCount64( ) / 1000.f;
 		data.solutions       = result.routes;
+		data.path            = arc_path( job.anchors, result.arc );
 		data.total_solutions = result.total;
 		data.total_approx    = result.total_approx;
 		data.total_floor     = result.trimmed;
@@ -1460,6 +1495,12 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 		botox_dbg_log( "[rc] not on the ground - default jump impulse, start is %s\n",
 		               start_here ? "your live arc ( vz / stamina / duck above )" : "marker 1" );
 
+	c_vector start = start_here ? g_ctx.m_local->get_origin( ) : live.front( ).pos;
+	start.m_z      = in.start_z;
+	job->anchors.push_back( start );
+	for ( const route_point_t& pt : in.points )
+		job->anchors.push_back( route_point_mark( pt ) );
+
 	job->advanced = GET_VARIABLE( g_variables.m_route_calc_advanced_readout, bool );
 	job->gen      = data.gen;
 	rc_start( job );
@@ -1507,20 +1548,28 @@ void n_movement::impl_t::route_calc_render( )
 	if ( !font )
 		return;
 
-	/* point order line, drawn under the markers */
+	/* the solved arc when there is one, else the point order, drawn under the markers */
 	if ( GET_VARIABLE( g_variables.m_route_calc_show_path, bool ) ) {
-		const unsigned int line_color = c_color( 110, 110, 110, 160 ).get_u32( );
+		const bool arc                = !data.path.empty( );
+		const int alpha               = std::clamp( GET_VARIABLE( g_variables.m_route_calc_path_alpha, int ), 0, 255 );
+		const float thick             = std::clamp( GET_VARIABLE( g_variables.m_route_calc_path_thickness, float ), 1.f, 8.f );
+		const unsigned int line_color = arc ? c_color( static_cast< int >( accent_var.get< 0 >( ) ), static_cast< int >( accent_var.get< 1 >( ) ),
+		                                               static_cast< int >( accent_var.get< 2 >( ) ), alpha )
+		                                          .get_u32( )
+		                                    : c_color( 110, 110, 110, alpha * 160 / 255 ).get_u32( );
+		const auto world_at           = [ & ]( std::size_t i ) { return arc ? data.path[ i ] : route_point_mark( data.points[ i ] ); };
+		const std::size_t count       = arc ? data.path.size( ) : data.points.size( );
 		c_vector_2d prev{ };
 		bool have_prev = false;
-		for ( const route_point_t& pt : data.points ) {
+		for ( std::size_t i = 0; i < count; ++i ) {
 			c_vector_2d screen;
-			if ( !g_render.world_to_screen( route_point_mark( pt ), screen ) ) {
+			if ( !g_render.world_to_screen( world_at( i ), screen ) ) {
 				have_prev = false;
 				continue;
 			}
 			if ( have_prev )
 				g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line,
-				                                   std::make_any< line_draw_object_t >( line_draw_object_t{ prev, screen, line_color, 1.f } ) );
+				                                   std::make_any< line_draw_object_t >( line_draw_object_t{ prev, screen, line_color, thick } ) );
 			prev      = screen;
 			have_prev = true;
 		}

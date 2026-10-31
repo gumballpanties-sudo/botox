@@ -24,6 +24,7 @@ using namespace n_cod4;
 using n_cod4_expr::value_t;
 
 extern bool point_menu_is_opened( );
+extern void botox_dbg_log( const char* fmt, ... );
 
 bool n_cod4_hud::enabled( ) { return GET_VARIABLE( g_variables.m_cod4_hud, bool ); }
 
@@ -637,8 +638,8 @@ namespace
 			if ( n == "localvarstring" )
 				return value_t::str( m_s->m_team == 2 ? "opfor" : "marines" );
 			if ( n == "timeleft" )
-				// run out = round over in cod4, the clock goes; community servers sit at 0 forever
-				return num( m_s->m_timeleft <= 0.f ? -1.0 : std::ceil( m_s->m_timeleft ) );
+				// csgo keeps the clock at 0:00 (community servers sit there forever), -1 = no round clock
+				return num( m_s->m_timeleft < 0.f ? -1.0 : std::ceil( m_s->m_timeleft ) );
 			if ( n == "secondsascountdown" ) {
 				const int t = std::max( 0, static_cast< int >( arg( 0 ).number( ) ) );
 				char b[ 16 ];
@@ -666,8 +667,11 @@ namespace
 				return num( std::min( arg( 0 ).number( ), arg( 1 ).number( ) ) );
 			if ( n == "int" )
 				return num( std::trunc( arg( 0 ).number( ) ) );
-			if ( n == "milliseconds" )
-				return num( m_now );
+			// only the timer's tenths read it (9 - int(ms / 100) % 10): fed from the real clock so a frozen clock shows .0
+			if ( n == "milliseconds" ) {
+				const float left = std::max( m_s->m_timeleft, 0.f );
+				return num( ( 9 - static_cast< int >( ( left - std::floor( left ) ) * 10.f ) ) * 100 );
+			}
 			if ( n == "flashbanged" )
 				return num( m_s->m_flashed ? 1 : 0 );
 			if ( n == "ui_active" )
@@ -1670,7 +1674,8 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 		static const unsigned int warmup_end = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_fWarmupPeriodEnd" ) ].m_offset;
 		static const unsigned int time_ofs   = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_iRoundTime" ) ].m_offset;
 		static const unsigned int start_ofs  = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_fRoundStartTime" ) ].m_offset;
-		if ( const std::uintptr_t rules = game_rules( ); rules && warmup_ofs && time_ofs && start_ofs ) {
+		const std::uintptr_t rules = game_rules( );
+		if ( rules && warmup_ofs && time_ofs && start_ofs ) {
 			s.m_warmup        = *reinterpret_cast< bool* >( rules + warmup_ofs );
 			const float round = static_cast< float >( *reinterpret_cast< int* >( rules + time_ofs ) );
 			const float start = *reinterpret_cast< float* >( rules + start_ofs );
@@ -1679,6 +1684,16 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 				s.m_timeleft = std::max( *reinterpret_cast< float* >( rules + warmup_end ) - g_interfaces.m_global_vars_base->m_current_time, 0.f );
 			else if ( round > 0.f )
 				s.m_timeleft = std::clamp( round - ( g_interfaces.m_global_vars_base->m_current_time - start ), 0.f, round );
+		}
+		// bottom left clock hidden = rules 0 (pattern miss) / round 0 (no mp_roundtime) / left 0 (round over)
+		{
+			static int s_logged = -2;
+			const int state = !rules ? -1 : s.m_timeleft > 0.f ? 1 : 0;
+			if ( state != s_logged ) {
+				s_logged = state;
+				botox_dbg_log( "COD4T: rules=%p ofs=%u/%u/%u/%u warmup=%d round=%d left=%.1f", reinterpret_cast< void* >( rules ), warmup_ofs, warmup_end, time_ofs,
+				               start_ofs, s.m_warmup ? 1 : 0, rules && time_ofs ? *reinterpret_cast< int* >( rules + time_ofs ) : -1, s.m_timeleft );
+			}
 		}
 
 		// compass actors: everyone alive and networked
