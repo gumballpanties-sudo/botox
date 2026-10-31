@@ -588,21 +588,20 @@ void n_menu::impl_t::on_end_scene( )
 		this->m_anim_progress = ImClamp( this->m_anim_progress + ( this->m_opened ? step : -step ), 0.f, 1.f );
 	}
 
-	/* boot screen blur on the background list: game + esp blur, menu + panels stay sharp */
+	/* boot screen blur on the background list: game + esp blur, menu + panels stay sharp. fades at the menu's speed */
 	{
-		static float blur_ramp = 0.f;
+		static float fade = 0.f;
 
-		const float dt   = ImMin( ImGui::GetIO( ).DeltaTime, 1.f / 30.f );
-		const bool want  = this->m_opened && !g_ctx.m_eject_requested && GET_VARIABLE( g_variables.m_menu_blur, bool );
-		blur_ramp        = g_ctx.m_eject_requested ? 0.f : want ? ImMin( blur_ramp + dt / 0.35f, 1.f ) : ImMax( blur_ramp - dt / 0.45f, 0.f );
-		const float fade = blur_ramp * blur_ramp * ( 3.f - 2.f * blur_ramp );
+		const float step = ImMin( ImGui::GetIO( ).DeltaTime, 1.f / 30.f ) / menu_anim_duration;
+		const bool want  = this->m_opened && GET_VARIABLE( g_variables.m_menu_blur, bool );
+		fade             = g_ctx.m_eject_requested ? 0.f : ImClamp( fade + ( want ? step : -step ), 0.f, 1.f );
 
 		if ( fade > 0.f ) {
 			ImDrawList* const list = ImGui::GetBackgroundDrawList( );
-			const int passes       = ImClamp( GET_VARIABLE( g_variables.m_menu_blur_passes, int ), 1, 12 );
+			const float amount     = ImClamp( GET_VARIABLE( g_variables.m_menu_blur_amount, float ), 0.f, 100.f ) / 100.f;
 			const float darken     = ImClamp( GET_VARIABLE( g_variables.m_menu_blur_darken, float ), 0.f, 100.f ) / 100.f;
 
-			screen_blur_fullscreen( list, IM_COL32( 255, 255, 255, static_cast< int >( fade * 255.f + 0.5f ) ), passes );
+			screen_blur_fullscreen_smooth( list, IM_COL32( 255, 255, 255, static_cast< int >( fade * 255.f + 0.5f ) ), amount );
 			if ( darken > 0.f )
 				list->AddRectFilled( ImVec2( 0.f, 0.f ), ImVec2( g_ctx.m_width, g_ctx.m_height ),
 				                     IM_COL32( 0, 0, 0, static_cast< int >( darken * fade * 255.f + 0.5f ) ) );

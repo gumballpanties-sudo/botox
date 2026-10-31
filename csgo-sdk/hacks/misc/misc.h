@@ -254,6 +254,7 @@ void boot_screen_eject_end( );
 void boot_screen_fade_others( ImDrawData* draw_data );
 /* airflow blur over the whole back buffer, tinted, passes = strength. false = no blur this frame */
 bool screen_blur_fullscreen( ImDrawList* list, ImU32 tint, int passes );
+bool screen_blur_fullscreen_smooth( ImDrawList* list, ImU32 tint, float amount );
 
 enum class e_points_trick {
 	edge_bug, fireman, jump_bug, head_ceiling,

@@ -2661,54 +2661,71 @@ namespace
 		D3DMULTISAMPLE_TYPE m_multi_sample = D3DMULTISAMPLE_NONE;
 		/* shaders refused: never retried */
 		bool m_failed = false;
-	} airflow_blur{ };
+		/* chain: 2x halvings down to ~270 rows, no shimmer (menu blur). off = one 1/9 stretch (panels, boot) */
+		bool m_chain = false;
+		IDirect3DTexture9* m_steps[ 4 ]{ };
+		int m_step_count = 0;
+		float m_spread   = 1.f;
+	} airflow_blur{ }, screen_blur{ .m_chain = true };
 
-	void release_airflow_blur_targets( )
+	void release_airflow_blur_targets( airflow_blur_t& blur )
 	{
-		for ( auto& texture : airflow_blur.m_textures ) {
+		for ( auto& texture : blur.m_textures ) {
 			if ( texture ) {
 				texture->Release( );
 				texture = nullptr;
 			}
 		}
 
-		if ( airflow_blur.m_resolve ) {
-			airflow_blur.m_resolve->Release( );
-			airflow_blur.m_resolve = nullptr;
+		for ( auto& texture : blur.m_steps ) {
+			if ( texture ) {
+				texture->Release( );
+				texture = nullptr;
+			}
 		}
 
-		airflow_blur.m_width = airflow_blur.m_height = 0;
+		if ( blur.m_resolve ) {
+			blur.m_resolve->Release( );
+			blur.m_resolve = nullptr;
+		}
+
+		blur.m_width = blur.m_height = 0;
+		blur.m_step_count = 0;
 	}
 
-	void release_airflow_blur( const bool textures_only )
+	void release_airflow_blur( airflow_blur_t& blur, const bool textures_only )
 	{
-		release_airflow_blur_targets( );
+		release_airflow_blur_targets( blur );
 
 		if ( textures_only )
 			return;
 
-		for ( auto shader : { &airflow_blur.m_shader_x, &airflow_blur.m_shader_y } ) {
+		for ( auto shader : { &blur.m_shader_x, &blur.m_shader_y } ) {
 			if ( *shader ) {
 				( *shader )->Release( );
 				*shader = nullptr;
 			}
 		}
 
-		airflow_blur.m_failed = false;
+		blur.m_failed = false;
+	}
+
+	void release_airflow_blur( const bool textures_only )
+	{
+		release_airflow_blur( airflow_blur, textures_only );
+		release_airflow_blur( screen_blur, textures_only );
 	}
 
 	/* record time, end_scene thread (the device's). false = no blur this frame */
-	bool ensure_airflow_blur( IDirect3DDevice9* device )
+	bool ensure_airflow_blur( IDirect3DDevice9* device, airflow_blur_t& blur = airflow_blur )
 	{
-		auto& blur = airflow_blur;
-
 		if ( blur.m_failed )
 			return false;
 
 		if ( !blur.m_shader_x || !blur.m_shader_y ) {
 			if ( FAILED( device->CreatePixelShader( reinterpret_cast< const DWORD* >( airflow_blur_x ), &blur.m_shader_x ) ) ||
 			     FAILED( device->CreatePixelShader( reinterpret_cast< const DWORD* >( airflow_blur_y ), &blur.m_shader_y ) ) ) {
-				release_airflow_blur( false );
+				release_airflow_blur( blur, false );
 				blur.m_failed = true;
 				return false;
 			}
@@ -2728,19 +2745,43 @@ namespace
 
 		if ( blur.m_textures[ 0 ] && ( blur.m_width != description.Width || blur.m_height != description.Height ||
 		                               blur.m_format != description.Format || blur.m_multi_sample != description.MultiSampleType ) )
-			release_airflow_blur_targets( );
+			release_airflow_blur_targets( blur );
 
 		if ( blur.m_textures[ 0 ] )
 			return true;
 
-		blur.m_small_width  = ImMax( description.Width / airflow_blur_down_sample, 1u );
-		blur.m_small_height = ImMax( description.Height / airflow_blur_down_sample, 1u );
+		if ( blur.m_chain ) {
+			UINT w = description.Width, h = description.Height;
+			int halvings = 0;
+
+			while ( h / 2 >= 240 && halvings < 5 ) {
+				w /= 2;
+				h /= 2;
+				++halvings;
+			}
+
+			blur.m_small_width  = ImMax( w, 1u );
+			blur.m_small_height = ImMax( h, 1u );
+			blur.m_step_count   = ImMax( halvings - 1, 0 );
+
+			for ( int i = 0; i < blur.m_step_count; ++i ) {
+				if ( FAILED( device->CreateTexture( ImMax( description.Width >> ( i + 1 ), 1u ), ImMax( description.Height >> ( i + 1 ), 1u ), 1,
+				                                    D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &blur.m_steps[ i ], nullptr ) ) ) {
+					blur.m_steps[ i ] = nullptr;
+					release_airflow_blur_targets( blur );
+					return false;
+				}
+			}
+		} else {
+			blur.m_small_width  = ImMax( description.Width / airflow_blur_down_sample, 1u );
+			blur.m_small_height = ImMax( description.Height / airflow_blur_down_sample, 1u );
+		}
 
 		for ( auto& texture : blur.m_textures ) {
 			if ( FAILED( device->CreateTexture( blur.m_small_width, blur.m_small_height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT,
 			                                    &texture, nullptr ) ) ) {
 				texture = nullptr;
-				release_airflow_blur_targets( );
+				release_airflow_blur_targets( blur );
 				return false;
 			}
 		}
@@ -2749,7 +2790,7 @@ namespace
 		     FAILED( device->CreateRenderTarget( description.Width, description.Height, description.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
 		                                         &blur.m_resolve, nullptr ) ) ) {
 			blur.m_resolve = nullptr;
-			release_airflow_blur_targets( );
+			release_airflow_blur_targets( blur );
 			return false;
 		}
 
@@ -2771,10 +2812,10 @@ namespace
 		}
 	}
 
-	void airflow_blur_begin( const ImDrawList*, const ImDrawCmd* )
+	void airflow_blur_begin( const ImDrawList*, const ImDrawCmd* command )
 	{
 		const auto device = g_interfaces.m_direct_device;
-		auto& blur        = airflow_blur;
+		auto& blur        = *static_cast< airflow_blur_t* >( command->UserCallbackData );
 
 		device->GetRenderTarget( 0, &blur.m_target_backup );
 
@@ -2787,11 +2828,31 @@ namespace
 
 		if ( SUCCEEDED( device->GetBackBuffer( 0, 0, D3DBACKBUFFER_TYPE_MONO, &back_buffer ) ) && back_buffer ) {
 			if ( SUCCEEDED( blur.m_textures[ 0 ]->GetSurfaceLevel( 0, &low_res ) ) && low_res ) {
-				if ( !blur.m_resolve )
-					device->StretchRect( back_buffer, nullptr, low_res, nullptr, D3DTEXF_LINEAR );
-				else if ( SUCCEEDED( device->StretchRect( back_buffer, nullptr, blur.m_resolve, nullptr, D3DTEXF_NONE ) ) )
-					device->StretchRect( blur.m_resolve, nullptr, low_res, nullptr, D3DTEXF_LINEAR );
+				IDirect3DSurface9* source = back_buffer;
+				if ( blur.m_resolve )
+					source = SUCCEEDED( device->StretchRect( back_buffer, nullptr, blur.m_resolve, nullptr, D3DTEXF_NONE ) ) ? blur.m_resolve : nullptr;
 
+				/* each 2x linear stretch = exact 2x2 average, so no texel is skipped */
+				IDirect3DSurface9* step_surface = nullptr;
+				for ( int i = 0; source && i < blur.m_step_count; ++i ) {
+					IDirect3DSurface9* next = nullptr;
+					if ( FAILED( blur.m_steps[ i ]->GetSurfaceLevel( 0, &next ) ) || !next ) {
+						source = nullptr;
+						break;
+					}
+
+					device->StretchRect( source, nullptr, next, nullptr, D3DTEXF_LINEAR );
+
+					if ( step_surface )
+						step_surface->Release( );
+					source = step_surface = next;
+				}
+
+				if ( source )
+					device->StretchRect( source, nullptr, low_res, nullptr, D3DTEXF_LINEAR );
+
+				if ( step_surface )
+					step_surface->Release( );
 				low_res->Release( );
 			}
 
@@ -2814,30 +2875,32 @@ namespace
 		device->SetTransform( D3DTS_PROJECTION, &projection );
 	}
 
-	void airflow_blur_first_pass( const ImDrawList*, const ImDrawCmd* )
+	void airflow_blur_first_pass( const ImDrawList*, const ImDrawCmd* command )
 	{
 		const auto device    = g_interfaces.m_direct_device;
-		const float texel[4] = { 1.f / static_cast< float >( airflow_blur.m_small_width ) };
+		const auto& blur     = *static_cast< const airflow_blur_t* >( command->UserCallbackData );
+		const float texel[4] = { blur.m_spread / static_cast< float >( blur.m_small_width ) };
 
-		device->SetPixelShader( airflow_blur.m_shader_x );
+		device->SetPixelShader( blur.m_shader_x );
 		device->SetPixelShaderConstantF( 0, texel, 1 );
-		set_airflow_blur_target( device, airflow_blur.m_textures[ 1 ] );
+		set_airflow_blur_target( device, blur.m_textures[ 1 ] );
 	}
 
-	void airflow_blur_second_pass( const ImDrawList*, const ImDrawCmd* )
+	void airflow_blur_second_pass( const ImDrawList*, const ImDrawCmd* command )
 	{
 		const auto device    = g_interfaces.m_direct_device;
-		const float texel[4] = { 1.f / static_cast< float >( airflow_blur.m_small_height ) };
+		const auto& blur     = *static_cast< const airflow_blur_t* >( command->UserCallbackData );
+		const float texel[4] = { blur.m_spread / static_cast< float >( blur.m_small_height ) };
 
-		device->SetPixelShader( airflow_blur.m_shader_y );
+		device->SetPixelShader( blur.m_shader_y );
 		device->SetPixelShaderConstantF( 0, texel, 1 );
-		set_airflow_blur_target( device, airflow_blur.m_textures[ 0 ] );
+		set_airflow_blur_target( device, blur.m_textures[ 0 ] );
 	}
 
-	void airflow_blur_end( const ImDrawList*, const ImDrawCmd* )
+	void airflow_blur_end( const ImDrawList*, const ImDrawCmd* command )
 	{
 		const auto device = g_interfaces.m_direct_device;
-		auto& blur        = airflow_blur;
+		auto& blur        = *static_cast< airflow_blur_t* >( command->UserCallbackData );
 
 		device->SetRenderTarget( 0, blur.m_target_backup );
 		device->SetDepthStencilSurface( blur.m_depth_backup );
@@ -2855,40 +2918,40 @@ namespace
 		device->SetRenderState( D3DRS_SCISSORTESTENABLE, TRUE );
 	}
 
-	bool queue_airflow_blur( ImDrawList* list, const int passes = 8 )
+	bool queue_airflow_blur( ImDrawList* list, const int passes = 8, airflow_blur_t& blur = airflow_blur )
 	{
 		const auto device = g_interfaces.m_direct_device;
 
-		if ( !device || !ensure_airflow_blur( device ) )
+		if ( !device || !ensure_airflow_blur( device, blur ) )
 			return false;
 
-		const auto texture_0 = reinterpret_cast< ImTextureID >( airflow_blur.m_textures[ 0 ] );
-		const auto texture_1 = reinterpret_cast< ImTextureID >( airflow_blur.m_textures[ 1 ] );
+		const auto texture_0 = reinterpret_cast< ImTextureID >( blur.m_textures[ 0 ] );
+		const auto texture_1 = reinterpret_cast< ImTextureID >( blur.m_textures[ 1 ] );
 
-		list->AddCallback( airflow_blur_begin, nullptr );
+		list->AddCallback( airflow_blur_begin, &blur );
 
 		for ( int i = 0; i < passes; ++i ) {
-			list->AddCallback( airflow_blur_first_pass, nullptr );
+			list->AddCallback( airflow_blur_first_pass, &blur );
 			list->AddImage( texture_0, ImVec2( -1.f, -1.f ), ImVec2( 1.f, 1.f ) );
-			list->AddCallback( airflow_blur_second_pass, nullptr );
+			list->AddCallback( airflow_blur_second_pass, &blur );
 			list->AddImage( texture_1, ImVec2( -1.f, -1.f ), ImVec2( 1.f, 1.f ) );
 		}
 
-		list->AddCallback( airflow_blur_end, nullptr );
+		list->AddCallback( airflow_blur_end, &blur );
 		list->AddCallback( ImDrawCallback_ResetRenderState, nullptr );
 
 		return true;
 	}
 
 	void airflow_blur_rect( ImDrawList* list, const bool blurred, const ImVec2 min, const ImVec2 max, const ImU32 color, const float rounding,
-	                        const ImDrawFlags flags )
+	                        const ImDrawFlags flags, const airflow_blur_t& blur = airflow_blur )
 	{
 		if ( !blurred )
 			return;
 
 		const ImVec2 display = ImVec2( g_ctx.m_width, g_ctx.m_height );
 
-		list->AddImageRounded( reinterpret_cast< ImTextureID >( airflow_blur.m_textures[ 0 ] ), min, max, ImVec2( min.x / display.x, min.y / display.y ),
+		list->AddImageRounded( reinterpret_cast< ImTextureID >( blur.m_textures[ 0 ] ), min, max, ImVec2( min.x / display.x, min.y / display.y ),
 		                       ImVec2( max.x / display.x, max.y / display.y ), color, rounding, flags );
 	}
 
@@ -2904,6 +2967,26 @@ bool screen_blur_fullscreen( ImDrawList* list, const ImU32 tint, const int passe
 		return false;
 
 	airflow_blur_rect( list, true, ImVec2( 0.f, 0.f ), ImVec2( g_ctx.m_width, g_ctx.m_height ), tint, 0.f, ImDrawFlags_None );
+	return true;
+}
+
+bool screen_blur_fullscreen_smooth( ImDrawList* list, const ImU32 tint, const float amount )
+{
+	const auto device = g_interfaces.m_direct_device;
+	if ( amount <= 0.f || !device || !ensure_airflow_blur( device, screen_blur ) )
+		return false;
+
+	/* amount 1 = boot screen radius: 5 passes of sigma 1.69 texels at 1/9 = 34 screen px; same px here at the chain's res */
+	constexpr float k_tap_sigma = 1.69f, k_boot_sigma = 34.f;
+	const float sigma = amount * k_boot_sigma * static_cast< float >( screen_blur.m_small_height ) / static_cast< float >( screen_blur.m_height );
+	const int passes  = ImClamp( static_cast< int >( std::ceil( ( sigma / k_tap_sigma ) * ( sigma / k_tap_sigma ) ) ), 1, 64 );
+
+	screen_blur.m_spread = sigma / ( k_tap_sigma * std::sqrt( static_cast< float >( passes ) ) );
+
+	if ( !queue_airflow_blur( list, passes, screen_blur ) )
+		return false;
+
+	airflow_blur_rect( list, true, ImVec2( 0.f, 0.f ), ImVec2( g_ctx.m_width, g_ctx.m_height ), tint, 0.f, ImDrawFlags_None, screen_blur );
 	return true;
 }
 

@@ -2260,8 +2260,8 @@ void n_menu::impl_t::tab_settings( )
 			ImGui::OptionPopup(
 				"blur settings##menu blur settings",
 				[ & ]( ) {
-					ImGui::SliderInt( "max blur##menu blur", &GET_VARIABLE( g_variables.m_menu_blur_passes, int ), 1, 12, "%d",
-				                      ImGuiSliderFlags_AlwaysClamp );
+					ImGui::SliderFloat( "max blur##menu blur", &GET_VARIABLE( g_variables.m_menu_blur_amount, float ), 0.f, 100.f, "%.0f%%",
+				                        ImGuiSliderFlags_AlwaysClamp );
 					ImGui::SliderFloat( "darken##menu blur", &GET_VARIABLE( g_variables.m_menu_blur_darken, float ), 0.f, 100.f, "%.0f%%",
 				                        ImGuiSliderFlags_AlwaysClamp );
 				},
