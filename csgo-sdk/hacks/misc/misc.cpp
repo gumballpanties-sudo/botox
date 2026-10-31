@@ -782,6 +782,9 @@ void n_misc::impl_t::draw_watermark_clarity_v2( )
 	g_render.end_stretch_block( block );
 }
 
+static constexpr n_media_player::impl_t::e_command k_media_commands[ 3 ]{ n_media_player::impl_t::command_previous, n_media_player::impl_t::command_toggle,
+	                                                                      n_media_player::impl_t::command_next };
+
 static std::tuple< ImFont*, ImFont*, float > media_player_fonts( )
 {
 	ImFont* title  = nullptr;
@@ -942,8 +945,6 @@ static void media_player_binds( )
 	const key_bind_t* keys[ 3 ]{ &GET_VARIABLE( g_variables.m_media_player_previous_key, key_bind_t ),
 		                         &GET_VARIABLE( g_variables.m_media_player_toggle_key, key_bind_t ),
 		                         &GET_VARIABLE( g_variables.m_media_player_next_key, key_bind_t ) };
-	static constexpr n_media_player::impl_t::e_command k_commands[ 3 ]{ n_media_player::impl_t::command_previous, n_media_player::impl_t::command_toggle,
-		                                                                 n_media_player::impl_t::command_next };
 
 	const bool on      = GET_VARIABLE( g_variables.m_media_player_ingame_control, bool );
 	const bool blocked = g_input.keys_blocked( );
@@ -978,7 +979,7 @@ static void media_player_binds( )
 		}
 
 		if ( fire && !blocked )
-			g_media_player.request( k_commands[ i ] );
+			g_media_player.request( k_media_commands[ i ] );
 	}
 }
 
@@ -1136,9 +1137,6 @@ void n_misc::impl_t::draw_media_player( )
 		const ImU32 hover_color = look.m_title != look.m_artist ? look.m_title : accent;
 		const float h           = icon * 0.5f;
 
-		static constexpr n_media_player::impl_t::e_command k_commands[ 3 ]{ n_media_player::impl_t::command_previous,
-			                                                                 n_media_player::impl_t::command_toggle, n_media_player::impl_t::command_next };
-
 		int hit = -1;
 		for ( int b = 0; b < 3; b++ ) {
 			const float cx     = x + static_cast< float >( b ) * ( cell + cell_gap ) + cell * 0.5f;
@@ -1146,7 +1144,7 @@ void n_misc::impl_t::draw_media_player( )
 
 			if ( hovered && click ) {
 				hit = b;
-				g_media_player.request( k_commands[ b ] );
+				g_media_player.request( k_media_commands[ b ] );
 			}
 
 			// clockwise on screen, the aa fringe goes outward
@@ -2460,16 +2458,25 @@ namespace {
 
 		old_shader_saved.clear( );
 	}
+
+	c_material_system* material_walk_gate( )
+	{
+		auto* material_system = g_interfaces.m_material_system;
+		if ( !material_system )
+			return nullptr;
+
+		auto* engine = g_interfaces.m_engine_client;
+		if ( engine && engine->is_connected( ) && !engine->is_in_game( ) )
+			return nullptr;
+
+		return material_system;
+	}
 }
 
 void n_misc::impl_t::old_shaders( )
 {
-	auto* material_system = g_interfaces.m_material_system;
+	auto* material_system = material_walk_gate( );
 	if ( !material_system )
-		return;
-
-	auto* engine = g_interfaces.m_engine_client;
-	if ( engine && engine->is_connected( ) && !engine->is_in_game( ) )
 		return;
 
 	int mask = old_shader_group_none;
@@ -2575,12 +2582,8 @@ void n_misc::impl_t::old_shaders( )
 
 void n_misc::impl_t::world_modulation( )
 {
-	auto* material_system = g_interfaces.m_material_system;
+	auto* material_system = material_walk_gate( );
 	if ( !material_system )
-		return;
-
-	auto* engine = g_interfaces.m_engine_client;
-	if ( engine && engine->is_connected( ) && !engine->is_in_game( ) )
 		return;
 
 	const std::uint32_t enable_variables[ modulation_group_max ]     = { g_variables.m_world_modulation, g_variables.m_prop_modulation,
@@ -3231,12 +3234,8 @@ namespace
 
 void n_misc::impl_t::world_texture( )
 {
-	auto* material_system = g_interfaces.m_material_system;
+	auto* material_system = material_walk_gate( );
 	if ( !material_system )
-		return;
-
-	auto* engine = g_interfaces.m_engine_client;
-	if ( engine && engine->is_connected( ) && !engine->is_in_game( ) )
 		return;
 
 	const bool enabled  = GET_VARIABLE( g_variables.m_world_texture, bool );

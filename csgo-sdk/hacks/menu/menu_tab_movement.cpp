@@ -417,13 +417,7 @@ void n_menu::impl_t::tab_movement( )
 						if ( GET_VARIABLE( g_variables.m_edge_bug_sound, int ) == 5 ) {
 							auto&       eb_snd_var = GET_VARIABLE( g_variables.m_edge_bug_sound_custom, std::string );
 							static char eb_snd_buffer[ 128 ] = { };
-							if ( ImGui::InputText( "sound path##ebsndpath", eb_snd_buffer, sizeof( eb_snd_buffer ) ) )
-								eb_snd_var = eb_snd_buffer;
-							else if ( !ImGui::IsItemActive( ) && eb_snd_var != eb_snd_buffer ) {
-								const std::size_t len = eb_snd_var.size( ) < sizeof( eb_snd_buffer ) - 1 ? eb_snd_var.size( ) : sizeof( eb_snd_buffer ) - 1;
-								std::memcpy( eb_snd_buffer, eb_snd_var.c_str( ), len );
-								eb_snd_buffer[ len ] = '\0';
-							}
+							text_buffer_sync( "sound path##ebsndpath", eb_snd_var, eb_snd_buffer, sizeof( eb_snd_buffer ) );
 						}
 
 						if ( GET_VARIABLE( g_variables.m_edge_bug_sound, int ) > 0 )
@@ -466,13 +460,7 @@ void n_menu::impl_t::tab_movement( )
 						if ( GET_VARIABLE( g_variables.m_edge_skip_sound, int ) == 5 ) {
 							auto&       es_snd_var = GET_VARIABLE( g_variables.m_edge_skip_sound_custom, std::string );
 							static char es_snd_buffer[ 128 ] = { };
-							if ( ImGui::InputText( "sound path##essndpath", es_snd_buffer, sizeof( es_snd_buffer ) ) )
-								es_snd_var = es_snd_buffer;
-							else if ( !ImGui::IsItemActive( ) && es_snd_var != es_snd_buffer ) {
-								const std::size_t len = es_snd_var.size( ) < sizeof( es_snd_buffer ) - 1 ? es_snd_var.size( ) : sizeof( es_snd_buffer ) - 1;
-								std::memcpy( es_snd_buffer, es_snd_var.c_str( ), len );
-								es_snd_buffer[ len ] = '\0';
-							}
+							text_buffer_sync( "sound path##essndpath", es_snd_var, es_snd_buffer, sizeof( es_snd_buffer ) );
 						}
 						if ( GET_VARIABLE( g_variables.m_edge_skip_sound, int ) > 0 )
 							ImGui::SliderFloat( "sound volume##essndvol", &GET_VARIABLE( g_variables.m_edge_skip_sound_volume, float ), 0.f, 2.f, "%.2f" );
@@ -496,13 +484,7 @@ void n_menu::impl_t::tab_movement( )
 						if ( GET_VARIABLE( g_variables.m_pixel_surf_sound, int ) == 5 ) {
 							auto&       ps_snd_var = GET_VARIABLE( g_variables.m_pixel_surf_sound_custom, std::string );
 							static char ps_snd_buffer[ 128 ] = { };
-							if ( ImGui::InputText( "sound path##pssndpath", ps_snd_buffer, sizeof( ps_snd_buffer ) ) )
-								ps_snd_var = ps_snd_buffer;
-							else if ( !ImGui::IsItemActive( ) && ps_snd_var != ps_snd_buffer ) {
-								const std::size_t len = ps_snd_var.size( ) < sizeof( ps_snd_buffer ) - 1 ? ps_snd_var.size( ) : sizeof( ps_snd_buffer ) - 1;
-								std::memcpy( ps_snd_buffer, ps_snd_var.c_str( ), len );
-								ps_snd_buffer[ len ] = '\0';
-							}
+							text_buffer_sync( "sound path##pssndpath", ps_snd_var, ps_snd_buffer, sizeof( ps_snd_buffer ) );
 						}
 
 						if ( GET_VARIABLE( g_variables.m_pixel_surf_sound, int ) > 0 )
@@ -620,13 +602,7 @@ void n_menu::impl_t::tab_movement( )
 						if ( GET_VARIABLE( g_variables.m_texture_bug_sound, int ) == 5 ) {
 							auto&       tb_snd_var = GET_VARIABLE( g_variables.m_texture_bug_sound_custom, std::string );
 							static char tb_snd_buffer[ 128 ] = { };
-							if ( ImGui::InputText( "sound path##tbsndpath", tb_snd_buffer, sizeof( tb_snd_buffer ) ) )
-								tb_snd_var = tb_snd_buffer;
-							else if ( !ImGui::IsItemActive( ) && tb_snd_var != tb_snd_buffer ) {
-								const std::size_t len = tb_snd_var.size( ) < sizeof( tb_snd_buffer ) - 1 ? tb_snd_var.size( ) : sizeof( tb_snd_buffer ) - 1;
-								std::memcpy( tb_snd_buffer, tb_snd_var.c_str( ), len );
-								tb_snd_buffer[ len ] = '\0';
-							}
+							text_buffer_sync( "sound path##tbsndpath", tb_snd_var, tb_snd_buffer, sizeof( tb_snd_buffer ) );
 						}
 						if ( GET_VARIABLE( g_variables.m_texture_bug_sound, int ) > 0 )
 							ImGui::SliderFloat( "sound volume##tbsndvol", &GET_VARIABLE( g_variables.m_texture_bug_sound_volume, float ), 0.f, 2.f, "%.2f" );
@@ -1138,7 +1114,7 @@ void n_menu::impl_t::tab_movement( )
 					                       { "edgebug", "pixelsurf", "edgejump", "longjump", "delayhop", "minijump", "jumpbug", "texturebug",
 					                         "airstuck", "wallclimb", "autostrafe", "ps assist", "fireman", "ladder bug", "ladder glide",
 					                         "freelook climb", "fast ladder", "one hop", "auto crouch", "auto bounce", "tung surf", "edge skip", "half sideways",
-					                         "zeus bug", "air freeze" },
+					                         "zeus bug", "air freeze", "edge surf" },
 					                       GET_VARIABLE( g_variables.m_key_indicators, std::vector< bool > ).size( ) );
 
 						/* per-bind label override; empty = stock label (hint). buffer 16 = 15 chars keeps the
@@ -1157,17 +1133,10 @@ void n_menu::impl_t::tab_movement( )
 								ImGui::PushID( i );
 								ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) - 7.f - ( i > 0 ? ImGui::GetStyle( ).ItemSpacing.y : 0.f ) );
 								ImGui::SetCursorPosX( ImGui::GetCursorPosX( ) + name_width );
-								const bool edited = ImGui::InputTextWithHint( "##label", k_keybind_labels[ i ][ 1 ], buffers[ i ], sizeof( buffers[ i ] ) );
-								const ImVec2 box  = ImGui::GetItemRectMin( );
+								text_buffer_sync( "##label", labels[ i ], buffers[ i ], sizeof( buffers[ i ] ), k_keybind_labels[ i ][ 1 ] );
+								const ImVec2 box = ImGui::GetItemRectMin( );
 								ImGui::GetWindowDrawList( )->AddText( ImVec2( box.x - name_width, box.y + ( 17.f - ImGui::GetFontSize( ) ) * 0.5f ),
 								                                      ImGui::GetColorU32( ImGuiCol_Text ), k_keybind_labels[ i ][ 0 ] );
-								if ( edited )
-									labels[ i ] = buffers[ i ];
-								else if ( !ImGui::IsItemActive( ) && labels[ i ] != buffers[ i ] ) {
-									const std::size_t len = labels[ i ].size( ) < sizeof( buffers[ i ] ) - 1 ? labels[ i ].size( ) : sizeof( buffers[ i ] ) - 1;
-									std::memcpy( buffers[ i ], labels[ i ].c_str( ), len );
-									buffers[ i ][ len ] = '\0';
-								}
 								ImGui::PopID( );
 							}
 						}
@@ -1240,13 +1209,7 @@ void n_menu::impl_t::tab_movement( )
 
 						auto&       label_var = GET_VARIABLE( g_variables.m_detection_label, std::string );
 						static char label_buffer[ 64 ] = { };
-						if ( ImGui::InputText( "chat label##detlabel", label_buffer, sizeof( label_buffer ) ) )
-							label_var = label_buffer;
-						else if ( !ImGui::IsItemActive( ) && label_var != label_buffer ) {
-							const std::size_t len = label_var.size( ) < sizeof( label_buffer ) - 1 ? label_var.size( ) : sizeof( label_buffer ) - 1;
-							std::memcpy( label_buffer, label_var.c_str( ), len );
-							label_buffer[ len ] = '\0';
-						}
+						text_buffer_sync( "chat label##detlabel", label_var, label_buffer, sizeof( label_buffer ) );
 					},
 					ImVec2( 220.f, -1 ) );
 			}

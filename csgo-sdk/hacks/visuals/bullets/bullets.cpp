@@ -156,6 +156,9 @@ void n_bullets::impl_t::flush_tracers( )
 	const int sprite = std::clamp( GET_VARIABLE( g_variables.m_bullet_tracers_sprite, int ), 0,
 	                               static_cast< int >( std::size( k_tracer_sprites ) ) - 1 );
 
+	const bool beams_ok       = beams && *reinterpret_cast< void** >( beams );
+	const bool tracers_wanted = GET_VARIABLE( g_variables.m_bullet_tracers, bool );
+
 	for ( int index = 1; index < static_cast< int >( m_tracers.size( ) ); ++index ) {
 		auto& tracer = m_tracers[ index ];
 		if ( !tracer.m_valid )
@@ -163,7 +166,7 @@ void n_bullets::impl_t::flush_tracers( )
 
 		tracer.m_valid = false;
 
-		if ( !beams || !*reinterpret_cast< void** >( beams ) || !GET_VARIABLE( g_variables.m_bullet_tracers, bool ) )
+		if ( !beams_ok || !tracers_wanted )
 			continue;
 
 		const auto shooter = g_interfaces.m_client_entity_list->get< c_base_entity >( index );

@@ -5996,15 +5996,19 @@ void n_misc::impl_t::draw_spectator_list_howeweware( )
 	const std::string title = "         Spectators         ";
 	constexpr float size = 13.f, line = size + 4.f, pad = 8.f;
 
-	std::vector< std::string > rows{ };
-	float widest = howeweware_width( font, size, title );
+	std::vector< std::pair< std::string, float > > rows{ };
+	rows.reserve( entries.size( ) );
+
+	const float title_width = howeweware_width( font, size, title );
+	float widest            = title_width;
 
 	for ( const auto& entry : entries ) {
 		std::string text = show_target ? entry.m_name + "->" + entry.m_target_name + " " : entry.m_name;
 		std::erase( text, '\n' );
 
-		widest = ImMax( widest, howeweware_width( font, size, text ) );
-		rows.push_back( std::move( text ) );
+		const float text_width = howeweware_width( font, size, text );
+		widest                 = ImMax( widest, text_width );
+		rows.emplace_back( std::move( text ), text_width );
 	}
 
 	/* centred items converge on width = widest + padding both sides; title at y 2, Spacing( ), rows */
@@ -6034,7 +6038,7 @@ void n_misc::impl_t::draw_spectator_list_howeweware( )
 	draw_list->AddRectFilledMultiColor( ImVec2( x, header + 1.f ), ImVec2( x + width * 0.5f, header ), border_clear, border, border, border_clear );
 	draw_list->AddRectFilledMultiColor( ImVec2( x + width * 0.5f, header + 1.f ), ImVec2( x + width, header ), border, border_clear, border_clear, border );
 
-	draw_list->AddText( font, size, ImVec2( x + width * 0.5f - howeweware_width( font, size, title ) * 0.5f, y + 2.f ), IM_COL32( 255, 255, 255, 255 ),
+	draw_list->AddText( font, size, ImVec2( x + width * 0.5f - title_width * 0.5f, y + 2.f ), IM_COL32( 255, 255, 255, 255 ),
 	                    title.c_str( ) );
 
 	const c_color& other = GET_VARIABLE( g_variables.m_spectators_list_text_color_two, c_color );
@@ -6043,8 +6047,8 @@ void n_misc::impl_t::draw_spectator_list_howeweware( )
 		const bool ours = entries[ i ].m_watching_local || ( watched >= 0 && entries[ i ].m_target_index == watched );
 
 		draw_list->AddText( font, size,
-		                    ImVec2( x + width * 0.5f - howeweware_width( font, size, rows[ i ] ) * 0.5f, y + 2.f + line + 4.f + line * static_cast< float >( i ) ),
-		                    ours ? dna_accent( 1.f ) : IM_COL32( other[ 0 ], other[ 1 ], other[ 2 ], other[ 3 ] ), rows[ i ].c_str( ) );
+		                    ImVec2( x + width * 0.5f - rows[ i ].second * 0.5f, y + 2.f + line + 4.f + line * static_cast< float >( i ) ),
+		                    ours ? dna_accent( 1.f ) : IM_COL32( other[ 0 ], other[ 1 ], other[ 2 ], other[ 3 ] ), rows[ i ].first.c_str( ) );
 	}
 
 	draw_list->PopClipRect( );
@@ -6210,7 +6214,8 @@ void n_misc::impl_t::draw_spectator_list_gamesense( )
 	const float row_h    = text_h + 4.f;
 	const float avatar_w = avatars ? text_h + 4.f : 0.f;
 
-	float widest = gamesense_width( font, title );
+	const float title_width = gamesense_width( font, title );
+	float widest            = title_width;
 	for ( const auto& entry : entries )
 		widest = ImMax( widest, avatar_w + gamesense_width( font, show_target ? entry.m_name + arrow + entry.m_target_name : entry.m_name ) );
 
@@ -6233,7 +6238,7 @@ void n_misc::impl_t::draw_spectator_list_gamesense( )
 
 	constexpr ImU32 white = IM_COL32( 255, 255, 255, 230 ), grey = IM_COL32( 210, 210, 210, 255 );
 
-	draw_list->AddText( font, gamesense_size, ImVec2( x + ( width - gamesense_width( font, title ) ) * 0.5f, y + 3.f + ( bar ? 2.f : 0.f ) ), white, title );
+	draw_list->AddText( font, gamesense_size, ImVec2( x + ( width - title_width ) * 0.5f, y + 3.f + ( bar ? 2.f : 0.f ) ), white, title );
 
 	if ( !entries.empty( ) )
 		draw_list->AddRectFilled( ImVec2( x + 2.f, y + header - 1.f ), ImVec2( max.x - 2.f, y + header ), IM_COL32( 62, 62, 62, 255 ) );

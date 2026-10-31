@@ -319,7 +319,9 @@ static edge_info_t edge_find( i_trace_filter& filter, const c_vector& org, const
 			return e;
 		e.B = top - 0.05f - t2.m_fraction_left_solid * ( top - 0.05f - z_lo );
 	}
-	e.T  = top;
+	/* CM_ClipBoxToBrush leaves a brush DIST_EPSILON late: log 10-30 B=-160.031 T=-112.969 for a -160..-113 brush */
+	e.B  = e.B + 0.03125f;
+	e.T  = top - 0.03125f;
 	e.ok = e.B > z_lo + 0.1f && e.T > e.B;
 	return e;
 }
@@ -582,6 +584,8 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		float hc = 0.f, ho = 0.f, fc = org.m_z, fo = org.m_z;
 		const int kc = edge.ok ? crossing( maxs.m_z, hc, fc ) : -1;
 		const int ko = edge.ok && allowed( !ducked0 ) ? crossing( 63.f, ho, fo ) : -1;
+		/* air duck lifts the feet 9 ( unduck drops them ): D = T - feet, the band floor, moves with it */
+		fo += ducked0 ? -9.f : 9.f;
 		const auto band = [ & ]( const int k, const float h, const float feet, float& lo, float& phi ) {
 			phi = k >= 0 ? std::fmod( h, period ) : -1.f;
 			lo  = std::max( 1.3f * ulp * ( edge.T - feet ) / k_eps, 0.02f );
@@ -600,9 +604,9 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 			if ( now >= s_next || std::fabsf( edge.B - s_last_b ) > 0.01f ) {
 				s_next   = now + 250ull;
 				s_last_b = edge.B;
-				botox_dbg_log( "ESURF: %s gap=%.4f edge=%d B=%.3f T=%.3f head=%.3f k=%d/%d h=%.4f/%.4f phi=%.4f/%.4f lo=%.3f/%.3f period=%.4f pick=%d stance=%d vz=%.1f xy=%.1f",
+				botox_dbg_log( "ESURF: %s gap=%.4f edge=%d B=%.3f T=%.3f head=%.3f k=%d/%d h=%.4f/%.4f phi=%.4f/%.4f lo=%.3f/%.3f period=%.4f band=%d/%d ulp=%.1e pick=%d stance=%d vz=%.1f xy=%.1f",
 				               lead ? "lead" : "touch", gap, edge.ok ? 1 : 0, edge.B, edge.T, head_now, kc, ko, hc, ho, phi_c, phi_o, lo_c, lo_o, period,
-				               s_lead_pick, stance, vel.m_z, vel.length_2d( ) );
+				               in_c ? 1 : 0, in_o ? 1 : 0, ulp, s_lead_pick, stance, vel.m_z, vel.length_2d( ) );
 			}
 		}
 	} else

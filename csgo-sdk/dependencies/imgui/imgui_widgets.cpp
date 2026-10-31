@@ -1985,6 +1985,9 @@ bool ImGui::MultiCombo( const char* label, std::vector< bool >& values, const st
 	// wrap the preview text to the box BeginCombo is about to draw
 	const float w = GetRowFrameWidth( );
 
+	// label list shorter than enum = OOB read on open
+	items_count = ImMin( items_count, ImMin( ( int )values.size( ), ( int )item_list.size( ) ) );
+
 	std::vector< std::string_view > active_items = { };
 
 	for ( int i = 0; i < items_count; i++ ) {

@@ -2058,7 +2058,6 @@ struct speed_kami_t {
 	float m_last_time = 0.f;
 	float m_x = 0.f, m_pre_x = 0.f;
 	float m_main_w = 0.f, m_pre_w = 0.f, m_pre_a = 0.f;
-	float m_num = 0.f, m_pre_num = 0.f;
 	std::vector< speed_ghost_t > m_ghosts;
 };
 
@@ -2394,25 +2393,8 @@ void n_indicators::impl_t::velocity( const bool on_ground )
 	const int style = GET_VARIABLE( g_variables.m_velocity_indicator_style, int );
 	const bool took_off = this->m_indicator_data.m_last_on_ground_velocity && !on_ground;
 
-	int shown = velocity, shown_pre = this->m_indicator_data.m_take_off_velocity;
-	if ( style == indicator_style_kamidere ) {
-		speed_kami_t& k = s_velocity_pair.m_kami;
-		kami_touch( k );
-		if ( !k.m_init ) {
-			k.m_num     = static_cast< float >( velocity );
-			k.m_pre_num = static_cast< float >( shown_pre );
-		}
-
-		const float rate = kami_rate( ImGui::GetIO( ).DeltaTime );
-		k.m_num += ( static_cast< float >( velocity ) - k.m_num ) * rate;
-		if ( should_draw_take_off || k.m_pre_a > 0.01f )
-			k.m_pre_num += ( static_cast< float >( shown_pre ) - k.m_pre_num ) * rate;
-
-		shown     = static_cast< int >( std::round( k.m_num ) );
-		shown_pre = static_cast< int >( std::round( k.m_pre_num ) );
-	}
-
-	speed_pair( s_velocity_pair, style, "velocity_pre_speed", std::format( "{:d}", shown ), std::format( "({:d})", shown_pre ), text_color, shadow_alpha, y,
+	speed_pair( s_velocity_pair, style, "velocity_pre_speed", std::format( "{:d}", velocity ),
+	            std::format( "({:d})", this->m_indicator_data.m_take_off_velocity ), text_color, shadow_alpha, y,
 	            should_draw_take_off,
 	            shadow_opts_of( GET_VARIABLE( g_variables.m_velocity_indicator_shadow, bool ), GET_VARIABLE( g_variables.m_velocity_indicator_shadow_blur, float ),
 	                            GET_VARIABLE( g_variables.m_velocity_indicator_shadow_color, c_color ), g_variables.m_velocity_indicator_outline,
@@ -2420,7 +2402,7 @@ void n_indicators::impl_t::velocity( const bool on_ground )
 	                            g_variables.m_velocity_indicator_shadow_x, g_variables.m_velocity_indicator_shadow_y ),
 	            GET_VARIABLE( g_variables.m_velocity_indicator_scale, float ),
 	            { GET_VARIABLE( g_variables.m_velocity_indicator_pre_layout, int ), GET_VARIABLE( g_variables.m_velocity_indicator_pre_scale, float ),
-	              GET_VARIABLE( g_variables.m_velocity_indicator_pre_align, int ), took_off, true,
+	              GET_VARIABLE( g_variables.m_velocity_indicator_pre_align, int ), took_off, false,
 	              GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int ) } );
 
 	if ( this->m_indicator_data.m_tick_prev_velocity + 5 < g_interfaces.m_global_vars_base->m_tick_count ) {

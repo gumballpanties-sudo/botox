@@ -4,9 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdarg>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 
 static void fix_original_stamina( );

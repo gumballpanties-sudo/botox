@@ -8,14 +8,10 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 bool n_skins::use_tside( e_skin_group group )

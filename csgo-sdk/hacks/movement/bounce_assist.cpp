@@ -195,8 +195,6 @@ void n_movement::impl_t::autobounce_assist( c_user_cmd* cmd )
 	cmd->m_buttons  = ( cmd->m_buttons & ~( in_jump | in_duck ) ) | press;
 
 	if ( k < plan.launch ) {
-		cmd->m_forward_move  = 0.f;
-		cmd->m_side_move     = 0.f;
 		cmd->m_mouse_delta_x = 0;
 		cmd->m_mouse_delta_y = 0;
 		n_assist::set_move( cmd, 0.f, 0.f );

@@ -39,6 +39,18 @@ void save_popup( const char* str_id, bool& open, const ImVec2& window_size, cons
 /* render thread, every frame: lands a finished image box pick even when its box is hidden */
 void image_pick_apply( );
 
+inline void text_buffer_sync( const char* widget_id, std::string& var, char* buffer, const std::size_t buffer_size, const char* hint = nullptr )
+{
+	const bool changed = hint ? ImGui::InputTextWithHint( widget_id, hint, buffer, buffer_size ) : ImGui::InputText( widget_id, buffer, buffer_size );
+	if ( changed )
+		var = buffer;
+	else if ( !ImGui::IsItemActive( ) && var != buffer ) {
+		const std::size_t len = var.size( ) < buffer_size - 1 ? var.size( ) : buffer_size - 1;
+		std::memcpy( buffer, var.c_str( ), len );
+		buffer[ len ] = '\0';
+	}
+}
+
 /* safe mode: greyed + shown off, feature code skips it too */
 inline void safe_checkbox( const char* label, bool* v )
 {

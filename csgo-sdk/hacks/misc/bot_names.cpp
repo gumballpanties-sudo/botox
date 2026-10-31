@@ -423,7 +423,7 @@ void bot_names_frame( )
 		server_setup( );
 
 	std::map< std::pair< int, int >, int > wanted;
-	std::vector< int > seen;
+	std::unordered_set< int > seen;
 	for ( int i = 0; i < table->get_num_strings( ); ++i ) {
 		int length       = 0;
 		const auto* data = static_cast< const uint8_t* >( table->get_string_user_data( i, &length ) );
@@ -444,7 +444,7 @@ void bot_names_frame( )
 		}
 
 		auto& bot = it->second;
-		seen.push_back( user_id );
+		seen.insert( user_id );
 
 		for ( int field = 0; field < field_count && i < 64; ++field )
 			if ( field == field_ping ? fake_ping : fake_profile )
@@ -461,7 +461,7 @@ void bot_names_frame( )
 			table->set_string_user_data( i, static_cast< int >( bot.m_written.size( ) ), bot.m_written.data( ) );
 	}
 
-	std::erase_if( s_bots, [ & ]( const auto& entry ) { return std::find( seen.begin( ), seen.end( ), entry.first ) == seen.end( ); } );
+	std::erase_if( s_bots, [ & ]( const auto& entry ) { return !seen.contains( entry.first ); } );
 
 	set_server_values( wanted );
 }

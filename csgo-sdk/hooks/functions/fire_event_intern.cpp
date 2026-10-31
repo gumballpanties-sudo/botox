@@ -258,9 +258,9 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 
 				const std::string out =
 					std::format( "hit {} | dealt: {} hp | hitgroup: {} | {} health remaining | backtrack: {} ticks\n",
-				                   m_name,  std::to_string(m_damage), g_utilities.m_hit_groups[ m_group ], std::to_string(m_health),
-				                                        std::to_string( g_ctx.m_record ? g_math.time_to_ticks( std::fabsf( m_attacker_ent->get_simulation_time( ) -  g_ctx.m_record->m_sim_time ) )
-				                                                        : 0 )  );
+				                   m_name, m_damage, g_utilities.m_hit_groups[ m_group ], m_health,
+				                   g_ctx.m_record ? g_math.time_to_ticks( std::fabsf( m_attacker_ent->get_simulation_time( ) - g_ctx.m_record->m_sim_time ) )
+				                                   : 0 );
 
 				g_interfaces.m_convar->console_color_printf( accent_color, "[damage] " );
 				/* "%s", never out as format: enemy names can hold %s / %n */

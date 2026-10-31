@@ -110,19 +110,6 @@ __forceinline void set_move_toward_yaw( c_user_cmd* cmd, const float target_yaw,
 	cmd->m_side_move     = -std::sinf( rotation ) * forward;
 }
 
-[[nodiscard]] inline float wall_support_extent( const c_vector& wall_normal )
-{
-	const c_vector mins = g_ctx.m_local->get_collideable( )->get_obb_mins( );
-	const c_vector maxs = g_ctx.m_local->get_collideable( )->get_obb_maxs( );
-
-	const c_vector half_extents( std::max( std::fabsf( mins.m_x ), std::fabsf( maxs.m_x ) ),
-	                             std::max( std::fabsf( mins.m_y ), std::fabsf( maxs.m_y ) ),
-	                             std::max( std::fabsf( mins.m_z ), std::fabsf( maxs.m_z ) ) );
-
-	return std::fabsf( wall_normal.m_x ) * half_extents.m_x + std::fabsf( wall_normal.m_y ) * half_extents.m_y +
-	       std::fabsf( wall_normal.m_z ) * half_extents.m_z;
-}
-
 constexpr float M_PIN = 3.14159265358979323846f;
 
 inline float get_half_gravity_per_tick( )

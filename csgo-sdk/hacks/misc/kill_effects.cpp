@@ -362,9 +362,11 @@ namespace
 	}
 
 	// ExperienceOrb.getExperienceValue split + getIcon
+	constexpr int k_mc_xp_steps[] = { 2477, 1237, 617, 307, 149, 73, 37, 17, 7, 3 };
+
 	int mc_xp_value( const int xp )
 	{
-		for ( const int step : { 2477, 1237, 617, 307, 149, 73, 37, 17, 7, 3 } )
+		for ( const int step : k_mc_xp_steps )
 			if ( xp >= step )
 				return step;
 		return 1;
@@ -373,7 +375,7 @@ namespace
 	int mc_xp_icon( const int value )
 	{
 		int icon = 10;
-		for ( const int step : { 2477, 1237, 617, 307, 149, 73, 37, 17, 7, 3 } ) {
+		for ( const int step : k_mc_xp_steps ) {
 			if ( value >= step )
 				return icon;
 			icon--;
@@ -3190,7 +3192,9 @@ void on_death_particles( const int victim_index, const int attacker_index )
 	if ( !victim || victim->is_dormant( ) )
 		return;
 
-	switch ( GET_VARIABLE( g_variables.m_death_particles_type, int ) ) {
+	const int type = GET_VARIABLE( g_variables.m_death_particles_type, int );
+
+	switch ( type ) {
 	case 3: spawn_smoke( victim ); return;
 	case 5: spawn_soul( victim, victim_index ); return;
 	case 7: spawn_melt( victim, victim_index ); return;
@@ -3217,9 +3221,8 @@ void on_death_particles( const int victim_index, const int attacker_index )
 		return false;
 	};
 
-	const int type = GET_VARIABLE( g_variables.m_death_particles_type, int );
-	void* fx       = effects( );
-	bool done      = false;
+	void* fx  = effects( );
+	bool done = false;
 	switch ( type ) {
 	case 0: done = try_names( k_blood ); break;
 	case 2: done = try_names( k_confetti ); break;

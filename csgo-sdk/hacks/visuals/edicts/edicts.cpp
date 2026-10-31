@@ -222,6 +222,16 @@ void n_edicts::impl_t::projectiles( )
 
 void n_edicts::impl_t::dropped_weapons( )
 {
+	const bool box_enabled         = GET_VARIABLE( g_variables.m_dropped_weapons_box, bool );
+	const bool box_corner          = GET_VARIABLE( g_variables.m_dropped_weapons_box_corner, bool );
+	const bool box_outline         = GET_VARIABLE( g_variables.m_dropped_weapons_box_outline, bool );
+	const auto box_color           = GET_VARIABLE( g_variables.m_dropped_weapons_box_color, c_color );
+	const auto box_outline_color   = GET_VARIABLE( g_variables.m_dropped_weapons_box_outline_color, c_color );
+	const bool icon_enabled        = GET_VARIABLE( g_variables.m_dropped_weapons_icon, bool );
+	const bool name_enabled        = GET_VARIABLE( g_variables.m_dropped_weapons_name, bool );
+	const auto icon_color          = GET_VARIABLE( g_variables.m_dropped_weapons_icon_color, c_color );
+	const auto weapon_color        = GET_VARIABLE( g_variables.m_dropped_weapons_name_color, c_color );
+
 	g_entity_cache.enumerate( e_enumeration_type::type_edicts, [ & ]( c_base_entity* entity ) {
 		if ( !entity || entity == g_ctx.m_local || entity->is_dormant( ) )
 			return;
@@ -268,38 +278,30 @@ void n_edicts::impl_t::dropped_weapons( )
 
 			distance_to_weapon_alpha = g_math.divide_if_less< float >( distance_to_weapon_alpha, 250.f );
 
-			if ( GET_VARIABLE( g_variables.m_dropped_weapons_box, bool ) ) {
-				if ( !GET_VARIABLE( g_variables.m_dropped_weapons_box_corner, bool ) ) {
+			if ( box_enabled ) {
+				if ( !box_corner ) {
 					g_render.m_draw_data.emplace_back(
 						e_draw_type::draw_type_rect,
 						std::make_any< rect_draw_object_t >(
 							c_vector_2d( box.m_left, box.m_top ), c_vector_2d( box.m_right, box.m_bottom ),
-							GET_VARIABLE( g_variables.m_dropped_weapons_box_color, c_color ).get_u32( 1.f - distance_to_weapon_alpha ),
-							GET_VARIABLE( g_variables.m_dropped_weapons_box_outline_color, c_color ).get_u32( 1.f - distance_to_weapon_alpha ), false,
+							box_color.get_u32( 1.f - distance_to_weapon_alpha ), box_outline_color.get_u32( 1.f - distance_to_weapon_alpha ), false,
 							0.f, ImDrawFlags_::ImDrawFlags_None, 1.f,
-							GET_VARIABLE( g_variables.m_dropped_weapons_box_outline, bool )
-								? e_rect_flags::rect_flag_inner_outline | e_rect_flags::rect_flag_outer_outline
-								: e_rect_flags::rect_flag_none ) );
+							box_outline ? e_rect_flags::rect_flag_inner_outline | e_rect_flags::rect_flag_outer_outline
+							            : e_rect_flags::rect_flag_none ) );
 				} else {
-					if ( GET_VARIABLE( g_variables.m_dropped_weapons_box_outline, bool ) ) {
+					if ( box_outline ) {
 						g_render.corner_rect( box.m_left, box.m_top, box.m_right, box.m_bottom,
-						                      c_color( GET_VARIABLE( g_variables.m_dropped_weapons_box_outline_color, c_color ) )
-						                          .get_u32( 1.f - distance_to_weapon_alpha ),
-						                      2.f );
+						                      c_color( box_outline_color ).get_u32( 1.f - distance_to_weapon_alpha ), 2.f );
 					}
 
-					g_render.corner_rect(
-						box.m_left, box.m_top, box.m_right, box.m_bottom,
-						c_color( GET_VARIABLE( g_variables.m_dropped_weapons_box_color, c_color ) ).get_u32( 1.f - distance_to_weapon_alpha ) );
+					g_render.corner_rect( box.m_left, box.m_top, box.m_right, box.m_bottom,
+					                      c_color( box_color ).get_u32( 1.f - distance_to_weapon_alpha ) );
 				}
 			}
 
 			float top_padding = 0.f;
 
-			auto icon_color   = GET_VARIABLE( g_variables.m_dropped_weapons_icon_color, c_color );
-			auto weapon_color = GET_VARIABLE( g_variables.m_dropped_weapons_name_color, c_color );
-
-			if ( GET_VARIABLE( g_variables.m_dropped_weapons_icon, bool ) ) {
+			if ( icon_enabled ) {
 				const auto text      = reinterpret_cast< const char* >( g_utilities.get_weapon_icon( definition_index ) );
 				const auto text_size = g_render.m_fonts[ e_font_names::font_name_icon_12 ]->CalcTextSizeA(
 					g_render.m_fonts[ e_font_names::font_name_icon_12 ]->FontSize, FLT_MAX, 0.f, text );
@@ -315,7 +317,7 @@ void n_edicts::impl_t::dropped_weapons( )
 				top_padding -= text_size.y;
 			}
 
-			if ( GET_VARIABLE( g_variables.m_dropped_weapons_name, bool ) ) {
+			if ( name_enabled ) {
 				const auto localized_name = g_interfaces.m_localize->find( weapon_data->m_hud_name );
 
 				std::wstring w = localized_name;
@@ -339,8 +341,7 @@ void n_edicts::impl_t::dropped_weapons( )
 						dropped_weapon_font,
 						c_vector_2d( box.m_left + box.m_width * 0.5f - text_size.x * 0.5f, box.m_top - 3 - text_size.y - top_padding ),
 						converted_name,
-						GET_VARIABLE( g_variables.m_dropped_weapons_name_color, c_color )
-							.get_u32( weapon_color.get< color_type_a >( ) - distance_to_weapon_alpha ),
+						weapon_color.get_u32( weapon_color.get< color_type_a >( ) - distance_to_weapon_alpha ),
 						c_color( 0.f, 0.f, 0.f, 1.f ).get_u32( weapon_color.get< color_type_a >( ) - distance_to_weapon_alpha ),
 						e_text_flags::text_flag_dropshadow ) );
 			}

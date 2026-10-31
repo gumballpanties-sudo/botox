@@ -190,8 +190,11 @@ bool n_screen::impl_t::on_draw_view_models( c_view_setup& setup )
 	history.m_previous_yaw                 = normalized_angles.m_y;
 	history.m_last_time_update             = now;
 
-	if ( true ) {
+	{
 		c_texture* full_frame = g_interfaces.m_material_system->find_texture( "_rt_FullFrameFB", TEXTURE_GROUP_RENDER_TARGET );
+		if ( !full_frame )
+			return false;
+
 		float src_width       = static_cast< float >( full_frame->get_actual_width( ) );
 		float src_height      = static_cast< float >( full_frame->get_actual_height( ) );
 		int offset{ };
@@ -210,9 +213,11 @@ bool n_screen::impl_t::on_draw_view_models( c_view_setup& setup )
 	}
 
 	bool performed_motion_blur = false;
-	if ( true ) {
+	{
 		c_material_render_context* render_context = g_interfaces.m_material_system->get_render_context( );
 		c_texture* full_frame                     = g_interfaces.m_material_system->find_texture( "_rt_FullFrameFB", TEXTURE_GROUP_RENDER_TARGET );
+		if ( !render_context || !full_frame )
+			return false;
 
 		int src_width  = full_frame->get_actual_width( );
 		int src_height = full_frame->get_actual_height( );
@@ -222,6 +227,8 @@ bool n_screen::impl_t::on_draw_view_models( c_view_setup& setup )
 		update_screen_effect_texture( 0, int( x ), int( y ), int( w ), int( h ), false );
 
 		c_material* mat_motion_blur = g_interfaces.m_material_system->find_material( "dev/motion_blur", TEXTURE_GROUP_OTHER, true );
+		if ( !mat_motion_blur )
+			return false;
 
 		bool found                 = false;
 		c_material_var* blur_param = mat_motion_blur->find_var( "$MotionBlurInternal", &found, false );

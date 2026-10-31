@@ -10,26 +10,14 @@ void n_entity_cache::impl_t::on_add_entity( c_base_entity* entity )
 	if ( !entity )
 		return;
 
-	{
-		const auto it_found = std::ranges::find( cached_players, entity );
+	const int index = entity->get_index( );
 
-		if ( it_found == cached_players.cend( ) ) {
-			const int index = entity->get_index( );
-
-			if ( index >= 1 && index <= 64 )
-				cached_players.push_back( entity );
-		}
-	}
-
-	{
-		const auto it_found = std::ranges::find( cached_edicts, entity );
-
-		if ( it_found == cached_edicts.cend( ) ) {
-			const int index = entity->get_index( );
-
-			if ( index >= 1 && index > 64 )
-				cached_edicts.push_back( entity );
-		}
+	if ( index >= 1 && index <= 64 ) {
+		if ( std::ranges::find( cached_players, entity ) == cached_players.cend( ) )
+			cached_players.push_back( entity );
+	} else if ( index > 64 ) {
+		if ( std::ranges::find( cached_edicts, entity ) == cached_edicts.cend( ) )
+			cached_edicts.push_back( entity );
 	}
 }
 

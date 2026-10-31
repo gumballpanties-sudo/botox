@@ -796,13 +796,7 @@ void n_menu::impl_t::tab_fonts( )
 	};
 
 	const auto font_family_input = [ ]( std::string& font_var, char* buffer, const std::size_t buffer_size ) {
-		if ( ImGui::InputText( "font family", buffer, buffer_size ) )
-			font_var = buffer;
-		else if ( !ImGui::IsItemActive( ) && font_var != buffer ) {
-			const std::size_t len = ImMin( font_var.size( ), buffer_size - 1 );
-			std::memcpy( buffer, font_var.c_str( ), len );
-			buffer[ len ] = '\0';
-		}
+		text_buffer_sync( "font family", font_var, buffer, buffer_size );
 	};
 
 	switch ( this->m_subtab ) {
@@ -1174,12 +1168,7 @@ void n_menu::impl_t::tab_misc( )
 						static char name_buffer[ 25 ] = { };
 						auto& name_var                = GET_VARIABLE( g_variables.m_watermark_text, std::string );
 
-						if ( ImGui::InputTextWithHint( "name##watermark text", "botox", name_buffer, sizeof( name_buffer ) ) )
-							name_var = name_buffer;
-						else if ( !ImGui::IsItemActive( ) && name_var != name_buffer ) {
-							strncpy_s( name_buffer, name_var.c_str( ), sizeof( name_buffer ) - 1 );
-							name_buffer[ sizeof( name_buffer ) - 1 ] = '\0';
-						}
+						text_buffer_sync( "name##watermark text", name_var, name_buffer, sizeof( name_buffer ), "botox" );
 					}
 
 					if ( style == 0 || style == 2 || style == 15 ) {
@@ -1238,12 +1227,7 @@ void n_menu::impl_t::tab_misc( )
 						static char user_buffer[ 33 ] = { };
 						auto& user_var                = GET_VARIABLE( g_variables.m_watermark_clarity_user, std::string );
 
-						if ( ImGui::InputTextWithHint( "user name##watermark clarity user", "user", user_buffer, sizeof( user_buffer ) ) )
-							user_var = user_buffer;
-						else if ( !ImGui::IsItemActive( ) && user_var != user_buffer ) {
-							strncpy_s( user_buffer, user_var.c_str( ), sizeof( user_buffer ) - 1 );
-							user_buffer[ sizeof( user_buffer ) - 1 ] = '\0';
-						}
+						text_buffer_sync( "user name##watermark clarity user", user_var, user_buffer, sizeof( user_buffer ), "user" );
 					}
 
 					if ( style == 9 )
@@ -1326,12 +1310,7 @@ void n_menu::impl_t::tab_misc( )
 						static char text_buffer[ 21 ] = { };
 						auto& text_var                = GET_VARIABLE( g_variables.m_watermark_kami_custom_text_value, std::string );
 
-						if ( ImGui::InputTextWithHint( "##watermark kami text", "type shit here...", text_buffer, sizeof( text_buffer ) ) )
-							text_var = text_buffer;
-						else if ( !ImGui::IsItemActive( ) && text_var != text_buffer ) {
-							strncpy_s( text_buffer, text_var.c_str( ), sizeof( text_buffer ) - 1 );
-							text_buffer[ sizeof( text_buffer ) - 1 ] = '\0';
-						}
+						text_buffer_sync( "##watermark kami text", text_var, text_buffer, sizeof( text_buffer ), "type shit here..." );
 					}
 
 					ImGui::Checkbox( "typing animation##watermark kami", &GET_VARIABLE( g_variables.m_watermark_kami_typing, bool ) );
@@ -1452,12 +1431,7 @@ void n_menu::impl_t::tab_misc( )
 							static char title_buffer[ 64 ] = { };
 							auto& title_var                = GET_VARIABLE( g_variables.m_spectators_kamibebra_title_text, std::string );
 
-							if ( ImGui::InputTextWithHint( "title text##spectatorlist kamidere", "Spectators", title_buffer, sizeof( title_buffer ) ) )
-								title_var = title_buffer;
-							else if ( !ImGui::IsItemActive( ) && title_var != title_buffer ) {
-								strncpy_s( title_buffer, title_var.c_str( ), sizeof( title_buffer ) - 1 );
-								title_buffer[ sizeof( title_buffer ) - 1 ] = '\0';
-							}
+							text_buffer_sync( "title text##spectatorlist kamidere", title_var, title_buffer, sizeof( title_buffer ), "Spectators" );
 						}
 						ImGui::Checkbox( "blur background##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_kami_blur, bool ) );
 						ImGui::Checkbox( "circle avatars##spectatorlist kamidere", &GET_VARIABLE( g_variables.m_spectators_kami_circle, bool ) );
@@ -1556,12 +1530,7 @@ void n_menu::impl_t::tab_misc( )
 							static char title_buffer[ 64 ] = { };
 							auto& title_var                = GET_VARIABLE( g_variables.m_spectators_kamibebra_title_text, std::string );
 
-							if ( ImGui::InputTextWithHint( "title text##spectatorlist kamibebra title", "Spectators", title_buffer, sizeof( title_buffer ) ) )
-								title_var = title_buffer;
-							else if ( !ImGui::IsItemActive( ) && title_var != title_buffer ) {
-								strncpy_s( title_buffer, title_var.c_str( ), sizeof( title_buffer ) - 1 );
-								title_buffer[ sizeof( title_buffer ) - 1 ] = '\0';
-							}
+							text_buffer_sync( "title text##spectatorlist kamibebra title", title_var, title_buffer, sizeof( title_buffer ), "Spectators" );
 						}
 
 						ImGui::Checkbox( "bebra gif##spectatorlist kamibebra gif", &GET_VARIABLE( g_variables.m_spectators_kamibebra_gif, bool ) );
@@ -1714,14 +1683,7 @@ void n_menu::impl_t::tab_misc( )
 					if ( GET_VARIABLE( g_variables.m_hit_sound_type, int ) == 4 ) {
 						auto&       hs_snd_var           = GET_VARIABLE( g_variables.m_hit_sound_custom, std::string );
 						static char hs_snd_buffer[ 128 ] = { };
-						if ( ImGui::InputText( "sound path##hitsndpath", hs_snd_buffer, sizeof( hs_snd_buffer ) ) )
-							hs_snd_var = hs_snd_buffer;
-						else if ( !ImGui::IsItemActive( ) && hs_snd_var != hs_snd_buffer ) {
-							const std::size_t len =
-								hs_snd_var.size( ) < sizeof( hs_snd_buffer ) - 1 ? hs_snd_var.size( ) : sizeof( hs_snd_buffer ) - 1;
-							std::memcpy( hs_snd_buffer, hs_snd_var.c_str( ), len );
-							hs_snd_buffer[ len ] = '\0';
-						}
+						text_buffer_sync( "sound path##hitsndpath", hs_snd_var, hs_snd_buffer, sizeof( hs_snd_buffer ) );
 					}
 
 					ImGui::SliderFloat( "volume##hitsndvol", &GET_VARIABLE( g_variables.m_hit_sound_volume, float ), 0.f, 2.f, "%.2f" );
@@ -1834,12 +1796,7 @@ void n_menu::impl_t::tab_misc( )
 					auto& tag_var                = GET_VARIABLE( g_variables.m_clantag_text, std::string );
 
 					if ( anim != 3 ) {
-						if ( ImGui::InputText( "tag text##clantag", tag_buffer, sizeof( tag_buffer ) ) )
-							tag_var = tag_buffer;
-						else if ( !ImGui::IsItemActive( ) && tag_var != tag_buffer ) {
-							strncpy_s( tag_buffer, tag_var.c_str( ), sizeof( tag_buffer ) - 1 );
-							tag_buffer[ sizeof( tag_buffer ) - 1 ] = '\0';
-						}
+						text_buffer_sync( "tag text##clantag", tag_var, tag_buffer, sizeof( tag_buffer ) );
 					}
 
 					if ( anim == 3 ) {
@@ -1956,13 +1913,7 @@ void n_menu::impl_t::tab_misc( )
 					if ( mode == 1 ) {
 						auto& name_var               = GET_VARIABLE( g_variables.m_bot_names_same, std::string );
 						static char name_buffer[ 128 ] = { };
-						if ( ImGui::InputText( "name##botnames", name_buffer, sizeof( name_buffer ) ) )
-							name_var = name_buffer;
-						else if ( !ImGui::IsItemActive( ) && name_var != name_buffer ) {
-							const std::size_t len = name_var.size( ) < sizeof( name_buffer ) - 1 ? name_var.size( ) : sizeof( name_buffer ) - 1;
-							std::memcpy( name_buffer, name_var.c_str( ), len );
-							name_buffer[ len ] = '\0';
-						}
+						text_buffer_sync( "name##botnames", name_var, name_buffer, sizeof( name_buffer ) );
 					} else if ( mode == 2 ) {
 						ImGui::SliderInt( "length##botnames", &GET_VARIABLE( g_variables.m_bot_names_length, int ), 1, 32 );
 					} else if ( mode == 3 ) {

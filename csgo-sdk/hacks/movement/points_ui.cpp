@@ -193,7 +193,6 @@ bool InCrosshair( float x, float y, float radius )
 	float dy      = centerY - y;
 	return ( dx * dx + dy * dy ) <= ( radius * radius );
 }
-bool detect_opened_points = false;
 unsigned long long gloabal_settings_timer = 0;
 /* g_input, not GetAsyncKeyState: an Enter typed into chat / console / menus never reads down there */
 bool isEnterPressed( )
@@ -422,6 +421,29 @@ static void point_edit_sync( points_check_t& p, int owner )
 		s_point_edit_visible = false;
 	}
 }
+static void draw_point_radius_rings( const points_check_t& point )
+{
+	constexpr int circle_segments = 64;
+	constexpr float angle_step    = 2.0f * 3.14159f / circle_segments;
+	auto ring                     = [ & ]( float radius, unsigned int color ) {
+		for ( int j = 0; j < circle_segments; ++j ) {
+			float angle1  = j * angle_step;
+			float angle2  = ( j + 1 ) * angle_step;
+			c_vector pos1 = point.pos + c_vector( cos( angle1 ) * radius, sin( angle1 ) * radius, 0.f );
+			c_vector pos2 = point.pos + c_vector( cos( angle2 ) * radius, sin( angle2 ) * radius, 0.f );
+			c_vector_2d screen_pos1, screen_pos2;
+			if ( g_render.world_to_screen( pos1, screen_pos1 ) && g_render.world_to_screen( pos2, screen_pos2 ) ) {
+				line_draw_object_t radius_line{ screen_pos1, screen_pos2, color, 1.0f };
+				g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( radius_line ) );
+			}
+		}
+	};
+	ring( point.radius, c_color( 255, 255, 255, 200 ).get_u32( ) );
+	if ( point.use_custom_first_jump_radius )
+		ring( point.first_jump_radius, c_color( 0, 255, 0, 200 ).get_u32( ) );
+	if ( point.enable_restricted_binds && point.selected_restricted_bind != 0 )
+		ring( point.restricted_binds_radius, c_color( 255, 0, 0, 200 ).get_u32( ) );
+}
 void RenderPoints( std::vector< points_check_t >& points, const c_vector& playerPos, const std::string& currentMap )
 {
 	if ( ImGui::GetCurrentContext( ) == nullptr )
@@ -541,53 +563,8 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 				const unsigned int arrowColor = ( crossColor & 0x00FFFFFFu ) | ( static_cast< unsigned int >( arrowAlpha ) << 24 );
 				draw_double_arrow( screenPos, arrowHalf, arrowDirX, arrowDirY, arrowColor, 1.0f );
 			}
-			if ( isHovered && point.show_3d_radius ) {
-				float display_radius      = point.radius;
-				const int circle_segments = 64;
-				const float angle_step    = 2.0f * 3.14159f / circle_segments;
-				for ( int j = 0; j < circle_segments; ++j ) {
-					float angle1  = j * angle_step;
-					float angle2  = ( j + 1 ) * angle_step;
-					c_vector pos1 = point.pos + c_vector( cos( angle1 ) * display_radius, sin( angle1 ) * display_radius, 0.f );
-					c_vector pos2 = point.pos + c_vector( cos( angle2 ) * display_radius, sin( angle2 ) * display_radius, 0.f );
-					c_vector_2d screen_pos1, screen_pos2;
-					if ( g_render.world_to_screen( pos1, screen_pos1 ) && g_render.world_to_screen( pos2, screen_pos2 ) ) {
-						unsigned int white_color = c_color( 255, 255, 255, 200 ).get_u32( );
-						line_draw_object_t radius_line{ screen_pos1, screen_pos2, white_color, 1.0f };
-						g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( radius_line ) );
-					}
-				}
-				if ( point.use_custom_first_jump_radius ) {
-					float first_jump_radius = point.first_jump_radius;
-					for ( int j = 0; j < circle_segments; ++j ) {
-						float angle1  = j * angle_step;
-						float angle2  = ( j + 1 ) * angle_step;
-						c_vector pos1 = point.pos + c_vector( cos( angle1 ) * first_jump_radius, sin( angle1 ) * first_jump_radius, 0.f );
-						c_vector pos2 = point.pos + c_vector( cos( angle2 ) * first_jump_radius, sin( angle2 ) * first_jump_radius, 0.f );
-						c_vector_2d screen_pos1, screen_pos2;
-						if ( g_render.world_to_screen( pos1, screen_pos1 ) && g_render.world_to_screen( pos2, screen_pos2 ) ) {
-							unsigned int green_color = c_color( 0, 255, 0, 200 ).get_u32( );
-							line_draw_object_t radius_line{ screen_pos1, screen_pos2, green_color, 1.0f };
-							g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( radius_line ) );
-						}
-					}
-				}
-				if ( point.enable_restricted_binds && point.selected_restricted_bind != 0 ) {
-					float restricted_radius = point.restricted_binds_radius;
-					for ( int j = 0; j < circle_segments; ++j ) {
-						float angle1  = j * angle_step;
-						float angle2  = ( j + 1 ) * angle_step;
-						c_vector pos1 = point.pos + c_vector( cos( angle1 ) * restricted_radius, sin( angle1 ) * restricted_radius, 0.f );
-						c_vector pos2 = point.pos + c_vector( cos( angle2 ) * restricted_radius, sin( angle2 ) * restricted_radius, 0.f );
-						c_vector_2d screen_pos1, screen_pos2;
-						if ( g_render.world_to_screen( pos1, screen_pos1 ) && g_render.world_to_screen( pos2, screen_pos2 ) ) {
-							unsigned int red_color = c_color( 255, 0, 0, 200 ).get_u32( );
-							line_draw_object_t radius_line{ screen_pos1, screen_pos2, red_color, 1.0f };
-							g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( radius_line ) );
-						}
-					}
-				}
-			}
+			if ( isHovered && point.show_3d_radius )
+				draw_point_radius_rings( point );
 			if ( isHovered && isBackspacePressed ) {
 				points.erase( points.begin( ) + i );
 				save_points_file( pixelsurf_points_file( ), m_points_check );
@@ -724,53 +701,8 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 				const unsigned int bFadedColor = ( bArrowColor & 0x00FFFFFFu ) | ( static_cast< unsigned int >( bFadedAlpha ) << 24 );
 				draw_double_arrow( screenPos, bArrowHalf, bDirX, bDirY, bFadedColor, 1.0f );
 			}
-			if ( isHovered && point.show_3d_radius ) {
-				float display_radius      = point.radius;
-				const int circle_segments = 64;
-				const float angle_step    = 2.0f * 3.14159f / circle_segments;
-				for ( int j = 0; j < circle_segments; ++j ) {
-					float angle1  = j * angle_step;
-					float angle2  = ( j + 1 ) * angle_step;
-					c_vector pos1 = point.pos + c_vector( cos( angle1 ) * display_radius, sin( angle1 ) * display_radius, 0.f );
-					c_vector pos2 = point.pos + c_vector( cos( angle2 ) * display_radius, sin( angle2 ) * display_radius, 0.f );
-					c_vector_2d screen_pos1, screen_pos2;
-					if ( g_render.world_to_screen( pos1, screen_pos1 ) && g_render.world_to_screen( pos2, screen_pos2 ) ) {
-						unsigned int white_color = c_color( 255, 255, 255, 200 ).get_u32( );
-						line_draw_object_t radius_line{ screen_pos1, screen_pos2, white_color, 1.0f };
-						g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( radius_line ) );
-					}
-				}
-				if ( point.use_custom_first_jump_radius ) {
-					float first_jump_radius = point.first_jump_radius;
-					for ( int j = 0; j < circle_segments; ++j ) {
-						float angle1  = j * angle_step;
-						float angle2  = ( j + 1 ) * angle_step;
-						c_vector pos1 = point.pos + c_vector( cos( angle1 ) * first_jump_radius, sin( angle1 ) * first_jump_radius, 0.f );
-						c_vector pos2 = point.pos + c_vector( cos( angle2 ) * first_jump_radius, sin( angle2 ) * first_jump_radius, 0.f );
-						c_vector_2d screen_pos1, screen_pos2;
-						if ( g_render.world_to_screen( pos1, screen_pos1 ) && g_render.world_to_screen( pos2, screen_pos2 ) ) {
-							unsigned int green_color = c_color( 0, 255, 0, 200 ).get_u32( );
-							line_draw_object_t radius_line{ screen_pos1, screen_pos2, green_color, 1.0f };
-							g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( radius_line ) );
-						}
-					}
-				}
-				if ( point.enable_restricted_binds && point.selected_restricted_bind != 0 ) {
-					float restricted_radius = point.restricted_binds_radius;
-					for ( int j = 0; j < circle_segments; ++j ) {
-						float angle1  = j * angle_step;
-						float angle2  = ( j + 1 ) * angle_step;
-						c_vector pos1 = point.pos + c_vector( cos( angle1 ) * restricted_radius, sin( angle1 ) * restricted_radius, 0.f );
-						c_vector pos2 = point.pos + c_vector( cos( angle2 ) * restricted_radius, sin( angle2 ) * restricted_radius, 0.f );
-						c_vector_2d screen_pos1, screen_pos2;
-						if ( g_render.world_to_screen( pos1, screen_pos1 ) && g_render.world_to_screen( pos2, screen_pos2 ) ) {
-							unsigned int red_color = c_color( 255, 0, 0, 200 ).get_u32( );
-							line_draw_object_t radius_line{ screen_pos1, screen_pos2, red_color, 1.0f };
-							g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( radius_line ) );
-						}
-					}
-				}
-			}
+			if ( isHovered && point.show_3d_radius )
+				draw_point_radius_rings( point );
 			if ( isHovered && isBackspacePressed ) {
 				m_bounce_points_check.erase( m_bounce_points_check.begin( ) + i );
 				save_points_file( bounce_points_file( ), m_bounce_points_check );

@@ -25,11 +25,16 @@ namespace n_tb
 	inline bool s_budget_live = false;
 	inline long long s_budget_us_last = 0ll;
 
+	/* clock gone before tb ran ( hitch upstream ) still verifies a ride: log 10-31 nuke, 38 tick ride dropped at sims=0 us=70.
+	   hold tick = user + W + both ladders ~13 sims */
+	constexpr int k_sim_floor = 16;
+
 	inline int sims_left( )
 	{
+		const int left = k_cmd_sim_cap - s_sim_reserve - s_sims_this_cmd;
 		if ( s_budget_live && s_budget.expired( ) )
-			return 0;
-		return k_cmd_sim_cap - s_sim_reserve - s_sims_this_cmd;
+			return std::max( 0, std::min( left, k_sim_floor - s_sims_this_cmd ) );
+		return left;
 	}
 
 	inline float s_target_predict_z_vel = -6.f;

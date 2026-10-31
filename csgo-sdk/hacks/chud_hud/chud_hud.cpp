@@ -857,13 +857,12 @@ void n_chud::impl_t::tick( )
 	if ( alive ) {
 		const int health = std::clamp( g_ctx.m_local->get_health( ), 0, 100 );
 		if ( health != m_old_health ) {
-			char hp[ 16 ]{ }, frac[ 16 ]{ };
+			char hp[ 16 ]{ };
 			sprintf_s( hp, "%d", health );
-			sprintf_s( frac, "%d", health );
 
 			std::string js = k_set_health;
 			replace_all( js, "${hp}", hp );
-			replace_all( js, "${hpFrac}", frac );
+			replace_all( js, "${hpFrac}", hp );
 			run( js );
 
 			m_old_health = health;

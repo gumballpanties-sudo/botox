@@ -1,24 +1,8 @@
 #include "movement_internal.h"
 #include <algorithm>
-#include <atomic>
-#include <climits>
 #include <cmath>
-#include <cstdarg>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
-#include <share.h>
-#include <cwchar>
 #include <format>
-#include <fstream>
-#include <mutex>
-#include <string>
-#include "../../dependencies/imgui/imgui.h"
-#include "../../dependencies/json/json.hpp"
-#include "../chat_hud.h"
 #include "../../utilities/perf/perf_watch.h"
-#include "texturebug.h"
-#include "edgebug.h"
 #include "../aimbot/aimbot.h"
 
 static struct {

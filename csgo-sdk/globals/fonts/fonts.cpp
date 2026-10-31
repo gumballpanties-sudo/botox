@@ -18,6 +18,14 @@ namespace
 		return text;
 	}
 
+	// "Rubik-Regular" == "rubik_regular" == "Rubik Regular": configs saved off a downloaded file still hit the embedded one
+	std::string font_key( const std::string& text )
+	{
+		std::string key = to_lower( text );
+		std::erase_if( key, []( const char c ) { return c == ' ' || c == '-' || c == '_'; } );
+		return key;
+	}
+
 	void scan_directory( const std::string& directory, std::vector< font_file_t >& out )
 	{
 		std::error_code error_code{ };
@@ -160,6 +168,13 @@ std::string n_fonts::impl_t::find_path( const std::string& display_name )
 	for ( const font_file_t& font_file : this->m_font_files )
 		if ( to_lower( font_file.m_display_name ) == lower_name )
 			return font_file.m_full_path;
+
+	// bare family ("Rubik") = its regular file
+	const std::string key = font_key( display_name );
+	for ( const std::string& want : { key, key + "regular" } )
+		for ( const font_file_t& font_file : this->m_font_files )
+			if ( font_key( font_file.m_display_name ) == want )
+				return font_file.m_full_path;
 
 	return std::vformat( "{}\\Fonts\\{}.ttf", std::make_format_args( g_ctx.m_windows_directory, display_name ) );
 }

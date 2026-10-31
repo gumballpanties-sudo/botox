@@ -2321,13 +2321,6 @@ void n_movement::impl_t::blockbot( c_user_cmd* cmd )
 	}
 }
 
-struct fake_user_move {
-	float sidemove     = 0.f;
-	float forwardmove  = 0.f;
-	int buttons        = 0;
-	c_angle viewangles = c_angle( 0.f, 0.f, 0.f );
-};
-fake_user_move g_moveuser[ 1000 ];
 void n_movement::impl_t::ladder_bug( c_user_cmd* cmd )
 {
 	m_ladder_bug_data.founded = false;
@@ -2338,7 +2331,7 @@ void n_movement::impl_t::ladder_bug( c_user_cmd* cmd )
 	static bool held          = false;
 	static int stored_autohop = -1;
 
-	auto cvar = g_interfaces.m_convar->find_var( "sv_autobunnyhopping" );
+	static auto cvar = g_interfaces.m_convar->find_var( "sv_autobunnyhopping" );
 
 	const bool wants = GET_VARIABLE( g_variables.m_ladder_bug, bool ) &&
 	                   g_input.check_input( &GET_VARIABLE( g_variables.m_ladder_bug_key, key_bind_t ) ) && g_ctx.m_local &&
@@ -3662,7 +3655,7 @@ void poop_ladder_jump( c_user_cmd* cmd )
 	/* ladder bug = ridobebra ladder_bug 1:1 ( its movement.cpp:4807 ), autohop given back on key up */
 	static bool held          = false;
 	static int stored_autohop = -1;
-	auto cvar                 = g_interfaces.m_convar->find_var( "sv_autobunnyhopping" );
+	static auto cvar          = g_interfaces.m_convar->find_var( "sv_autobunnyhopping" );
 
 	if ( !GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) || !g_input.check_input( &GET_VARIABLE( g_variables.m_poop_ladder_jump_key, key_bind_t ) ) ||
 	     !g_ctx.m_local || !g_interfaces.m_engine_client->is_in_game( ) || !g_ctx.m_local->is_alive( ) ) {

@@ -23,8 +23,6 @@ namespace n_flip_world
 		void on_mouse_input( float* x );
 		void on_create_move( c_user_cmd* cmd );
 
-		bool mirroring( ) const { return this->m_mirroring.load( std::memory_order_relaxed ); }
-
 		void on_device_lost( );
 		void on_release( );
 

@@ -613,6 +613,7 @@ namespace
 		if ( !local )
 			return;
 
+		const float grav       = gravity_per_tick( );
 		const int flags        = local->get_flags( );
 		const bool on_ground   = ( flags & fl_onground ) != 0;
 		const bool ducking     = ( flags & fl_ducking ) != 0;
@@ -629,7 +630,7 @@ namespace
 				g_rec.tail_n  = 0;
 				/* launch z off THIS tick ( the launch tick's move = vz + half a gravity step ). a jumpbug's `from` / stam
 				   read a landing that never happened ( log 40862: from 17.649 stam 12.06, the catch says it left 17.876 ) */
-				const float launch_z = z - ( vz + 0.5f * gravity_per_tick( ) ) * n_tick::engine_interval( );
+				const float launch_z = z - ( vz + 0.5f * grav ) * n_tick::engine_interval( );
 				botox_dbg_log( "[rc rec] press %d from %9.3f stam %5.2f duck %d | launch z %9.3f vz %7.2f\n", g_rec.presses,
 				               g_rec.prev_z, g_rec.prev_stam, g_rec.prev_duck ? 1 : 0, launch_z, vz );
 			}
@@ -660,7 +661,7 @@ namespace
 		/* test VELOCITY, not height ( the apex barely moves either ): a real fall loses a whole gravity
 		   step per tick, a clipped move ~0. half a step splits the two at any tickrate, never a constant. */
 		const bool clipped =
-			!on_ground && g_rec.prev_vz <= 0.f && vz > g_rec.prev_vz - gravity_per_tick( ) * 0.5f;
+			!on_ground && g_rec.prev_vz <= 0.f && vz > g_rec.prev_vz - grav * 0.5f;
 		if ( g_rec.have_prev && clipped && !g_rec.prev_ground ) {
 			if ( ++g_rec.hang == 1 ) {
 				g_rec.hang_z  = z;
@@ -696,8 +697,8 @@ namespace
 		}
 
 		const bool walk = local->get_move_type( ) == e_move_types::move_type_walk;
-		if ( g_rec.have_prev && !g_rec.prev_ground && !on_ground && walk && g_rec.prev_walk && g_rec.prev_vz > gravity_per_tick( ) &&
-		     vz < g_rec.prev_vz - gravity_per_tick( ) * 1.5f ) {
+		if ( g_rec.have_prev && !g_rec.prev_ground && !on_ground && walk && g_rec.prev_walk && g_rec.prev_vz > grav &&
+		     vz < g_rec.prev_vz - grav * 1.5f ) {
 			const c_vector o = local->get_origin( );
 			botox_dbg_log( "[rc bang] head stopped at %9.4f ( vz %7.2f -> %7.2f, duck %d ) at %.2f %.2f\n", z + ( ducking ? 54.f : 72.f ),
 			               g_rec.prev_vz, vz, ducking ? 1 : 0, o.m_x, o.m_y );

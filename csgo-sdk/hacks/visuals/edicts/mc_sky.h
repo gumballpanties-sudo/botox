@@ -192,16 +192,6 @@ namespace n_mc_sky
 		return c;
 	}
 
-	// cloud_color #ccffffff * face shade, alpha *= 1 - dist / cloud fog end, translucent blend over the sky
-	inline rgb_t with_clouds( const rgb_t& sky, const float d[ 3 ], const float offset[ 2 ] )
-	{
-		float face = 0.f, dist = 0.f;
-		if ( !cloud_hit( d, offset, face, dist ) )
-			return sky;
-
-		return mix( sky, { face, face, face }, k_cloud_alpha * ( 1.f - std::min( dist / k_cloud_fog_end, 1.f ) ) );
-	}
-
 	// one face, BGR888 rows top to bottom
 	inline void render_face( const int face, const int size, std::uint8_t* bgr )
 	{
