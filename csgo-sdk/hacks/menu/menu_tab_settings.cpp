@@ -2004,19 +2004,24 @@ void n_menu::impl_t::tab_misc( )
 			if ( tab == std::string::npos )
 				continue;
 
-			const ImVec2 x_size = ImGui::CalcTextSize( "x" );
-
 			ImGui::PushID( i );
-			if ( ImGui::Button( lines[ i ].substr( 0, tab ).c_str( ), ImVec2( ImGui::GetContentRegionAvail( ).x - 7.f - x_size.x, 15.f ) ) )
+			/* frames draw 2 px past bb, 7 px gap = same 3 px seam as cvars rows */
+			if ( ImGui::Button( lines[ i ].substr( 0, tab ).c_str( ), ImVec2( ImGui::GetContentRegionAvail( ).x - 7.f - 16.f, 15.f ) ) )
 				g_interfaces.m_engine_client->client_cmd_unrestricted( lines[ i ].substr( tab + 1 ).c_str( ) );
 			ImGui::SameLine( 0.f, 7.f );
-			if ( ImGui::InvisibleButton( "##delete", ImVec2( x_size.x, 15.f ) ) )
+			if ( icon_button( "##delete", 2, 15.f ) )
 				remove = i;
-			const ImVec2 x_min = ImGui::GetItemRectMin( );
-			ImGui::GetWindowDrawList( )->AddText( ImVec2( x_min.x, ImFloor( x_min.y + ( 15.f - x_size.y ) * 0.5f ) ),
-			                                      ImGui::GetColorU32( ImGui::IsItemHovered( ) ? ImGuiCol_Text : ImGuiCol_TextDisabled ), "x" );
 			ImGui::PopID( );
 		}
+
+		if ( lines.empty( ) )
+			ImGui::TextDisabled( "no buttons" );
+
+		/* line spans frame edges (bb + 2 px) */
+		const ImVec2 line = ImGui::GetCursorScreenPos( );
+		ImGui::GetWindowDrawList( )->AddLine( ImVec2( line.x - 2.f, line.y ), ImVec2( line.x + ImGui::GetContentRegionAvail( ).x + 2.f, line.y ),
+		                                      ImGui::GetColorU32( ImGuiCol_Separator ) );
+		ImGui::Dummy( ImVec2( 0.f, 1.f ) );
 
 		if ( remove >= 0 ) {
 			std::string joined;
@@ -2182,6 +2187,13 @@ static void config_panel( const bool visuals, int& selected, char* file_buffer, 
 	}
 }
 
+/* none / lmb / rmb would lock the menu shut or toggle it on every click */
+int n_menu::impl_t::menu_key( )
+{
+	const int key = GET_VARIABLE( g_variables.m_menu_key, key_bind_t ).m_key;
+	return key > VK_RBUTTON && key < 256 ? key : VK_INSERT;
+}
+
 void n_menu::impl_t::tab_settings( )
 {
 	menu_columns_begin( );
@@ -2236,6 +2248,9 @@ void n_menu::impl_t::tab_settings( )
 
 			ImGui::Checkbox( "dpi scale panels", &GET_VARIABLE( g_variables.m_dpi_scale_panels, bool ) );
 		}
+
+		ImGui::Label( "menu key" );
+		ImGui::Keybind( "menu key##menu key", &GET_VARIABLE( g_variables.m_menu_key, key_bind_t ), false );
 	}
 	menu_group_end( );
 

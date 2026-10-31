@@ -397,7 +397,18 @@ void n_menu::impl_t::tab_movement( )
 								   outside it are never picked. 180 = unclamped */
 								ImGui::SliderFloat( "max path bend##ebstrafemax",
 								                    &GET_VARIABLE( g_variables.m_edgebug_autostrafe_max_angle, float ), 0.f, 180.f, "%.0f deg" );
+								/* bisect a sideways push between a run that lands on the lip and one that misses it */
+								ImGui::Checkbox( "lip refine##ebrefine", &GET_VARIABLE( g_variables.m_edgebug_lip_refine, bool ) );
+								if ( GET_VARIABLE( g_variables.m_edgebug_lip_refine, bool ) )
+									ImGui::SliderInt( "refine steps##ebrefsteps", &GET_VARIABLE( g_variables.m_edgebug_refine_steps, int ), 1, 12 );
+								ImGui::Checkbox( "path bend##ebbend", &GET_VARIABLE( g_variables.m_edgebug_path_bend, bool ) );
+								ImGui::Checkbox( "ebanat shapes##ebshapes", &GET_VARIABLE( g_variables.m_edgebug_ebanat_shapes, bool ) );
 							}
+							ImGui::Checkbox( "duck timing##ebducktiming", &GET_VARIABLE( g_variables.m_edgebug_duck_timing, bool ) );
+							if ( GET_VARIABLE( g_variables.m_edgebug_duck_timing, bool ) )
+								ImGui::Checkbox( "full window##ebfullwin", &GET_VARIABLE( g_variables.m_edgebug_full_window, bool ) );
+							/* sim budget per search: 1x = old cost, higher = more finds + more cpu per tick near lips */
+							ImGui::SliderFloat( "search effort##ebeffort", &GET_VARIABLE( g_variables.m_edgebug_search_effort, float ), 0.25f, 3.f, "%.2fx" );
 
 							ImGui::Checkbox( "mouse steer##ebsteer", &GET_VARIABLE( g_variables.m_edgebug_mouse_steer, bool ) );
 							if ( GET_VARIABLE( g_variables.m_edgebug_mouse_steer, bool ) )
@@ -648,6 +659,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "wall climb key", &GET_VARIABLE( g_variables.m_wall_climb_key, key_bind_t ) );
 						ImGui::Checkbox( "prevent slow", &GET_VARIABLE( g_variables.m_wall_climb_prevent_slow, bool ) );
 						ImGui::Checkbox( "crouch catches", &GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) );
+						ImGui::SliderInt( "spot reach", &GET_VARIABLE( g_variables.m_wall_climb_spot_reach, int ), 0, 32, "%d u" );
 						ImGui::Checkbox( "show wall slope", &GET_VARIABLE( g_variables.m_show_wall_slope, bool ) );
 						if ( GET_VARIABLE( g_variables.m_show_wall_slope, bool ) ) {
 							ImGui::Label( "show wall slope key" );

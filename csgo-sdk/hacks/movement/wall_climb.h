@@ -40,6 +40,15 @@ namespace n_wall_climb
 		int m_hold_buttons = 0; /* stance the hold plan was proven in */
 		int m_free_cmd   = -1; /* cmd wc sent off a sim that ended unpinned */
 		bool m_park_off  = false;
+
+		/* ground: one wc hop replayed from each spot along the wall within reach, sliced over ticks, best one walked to */
+		struct spot_job_t {
+			bool valid = false, rolling = false, done = false;
+			c_vector base{ }, n{ };
+			float reach = 0.f;
+			int count = 0, idx = 0, ticks = 0, sims = 0, slices = 0;
+			int score[ 33 ]{ };
+		} m_spot{ };
 	};
 }
 

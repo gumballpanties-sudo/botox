@@ -47,7 +47,10 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 		return;
 	}
 
+	// classic crosshair (styles 2-4), the panorama one is hud_removal's
 	if ( panel_hash == HASH_BT( "HudWeapon" ) ) {
+		if ( n_cod4_hud::enabled( ) )
+			return;
 		g_ctx.m_is_hud_weapon_being_drawn = true;
 		g_ctx.m_crosshair_outline_next    = true;
 		original( ecx, edx, panel, force_repaint, force );
@@ -108,7 +111,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 				g_mc_hud.on_paint_traverse( );
 			}
 
-			// every frame, on or off: off puts the crosshair back
+			// every frame, on or off: off drops an open chat line
 			{
 				PERF_ZONE( zone_paint_mc_hud );
 				g_cod4_hud.on_paint_traverse( );

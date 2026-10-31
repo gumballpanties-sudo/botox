@@ -357,6 +357,9 @@ static const char* k_hud_removal = R"js(
 })();
 )js";
 
+// panorama reticle (styles 0 / 1), stock in chud mode too. not a menu element, cod4 hud only
+static constexpr int k_rm_crosshair = 1 << hud_element_max;
+
 static int s_hud_rm_mask   = 0;
 static int s_hud_rm_chud   = -1;
 static float s_hud_rm_heal = 0.f;
@@ -396,7 +399,8 @@ void n_scaleform::impl_t::hud_removal( )
 	// cod4 hud draws ammo / weapon / offhand, killfeed + messages, compass, score bars, xp bar. csgo chat stays (typing works)
 	if ( GET_VARIABLE( g_variables.m_cod4_hud, bool ) )
 		mask |= 1 << hud_element_health | 1 << hud_element_ammo | 1 << hud_element_weapon_select | 1 << hud_element_killfeed |
-		        1 << hud_element_radar | 1 << hud_element_money | 1 << hud_element_timer | 1 << hud_element_winpanel | 1 << hud_element_alerts;
+		        1 << hud_element_radar | 1 << hud_element_money | 1 << hud_element_timer | 1 << hud_element_winpanel | 1 << hud_element_alerts |
+		        k_rm_crosshair;
 
 	if ( !mask && !s_hud_rm_mask )
 		return;
@@ -431,6 +435,11 @@ void n_scaleform::impl_t::hud_removal( )
 
 		auto& list = ( mask & ( 1 << row.m_element ) ) ? hide : show;
 		list += std::string( list.empty( ) ? "'" : ",'" ) + row.m_id + "'";
+	}
+
+	{
+		auto& list = ( mask & k_rm_crosshair ) ? hide : show;
+		list += list.empty( ) ? "'Crosshair'" : ",'Crosshair'";
 	}
 
 	std::string js = k_hud_removal;

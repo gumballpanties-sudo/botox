@@ -122,7 +122,7 @@ bool n_input::impl_t::on_wndproc( unsigned int msg, unsigned int wide_param, lon
 
 	/* a press typed into a menu / chat / console never goes down: nothing fires on it or on its late
 	   release after the ui closes. releases always land, so a key held into the ui can't stick down */
-	if ( current_state == e_key_state::down && current_key != VK_INSERT && current_key != VK_END && this->keys_blocked( ) )
+	if ( current_state == e_key_state::down && current_key != g_menu.menu_key( ) && current_key != VK_END && this->keys_blocked( ) )
 		return false;
 
 	if ( current_state == e_key_state::up && this->m_key_state[ current_key ] == e_key_state::down ) {

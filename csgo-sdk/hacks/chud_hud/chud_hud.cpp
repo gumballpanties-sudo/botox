@@ -1345,7 +1345,7 @@ bool n_chud::impl_t::chat_on_key( unsigned int msg, unsigned int wide_param, lon
 	if ( msg != WM_KEYDOWN && msg != WM_KEYUP && msg != WM_CHAR )
 		return false;
 
-	if ( ui_input || wide_param == VK_INSERT )
+	if ( ui_input || wide_param == g_menu.menu_key( ) )
 		return false;
 
 	std::scoped_lock lock( m_chat_mutex );

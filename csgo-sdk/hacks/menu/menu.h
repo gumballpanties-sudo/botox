@@ -16,6 +16,7 @@ namespace n_menu
 		void tab_settings( );
 		void player_list_page( );
 		void cvars_page( );
+		int menu_key( );
 
 		struct faded_list_t {
 			ImDrawList* m_list;

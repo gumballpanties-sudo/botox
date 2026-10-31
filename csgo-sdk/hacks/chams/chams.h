@@ -8,6 +8,7 @@
 #include "../../globals/config/variables.h"
 #include "../../globals/interfaces/interfaces.h"
 #include "../../utilities/perf/perf_watch.h"
+#include "../visuals/lsd_chams.h"
 
 namespace n_chams
 {
@@ -24,11 +25,12 @@ namespace n_chams
 		chams_material_damascus,
 		chams_material_crystal,
 		chams_material_wet,
+		chams_material_lsd,
 		chams_material_max
 	};
 
 	inline const char* material_names[ chams_material_max ] = { "original", "flat",     "shaded",      "wireframe", "glow",     "metallic",
-		                                                        "pearlescent", "ambient", "gold",      "damascus",  "crystal", "wet" };
+		                                                        "pearlescent", "ambient", "gold",      "damascus",  "crystal", "wet",      "lsd" };
 
 	constexpr float gold_envmap_tint[ 3 ] = { 0.55f, 0.3f, 0.05f };
 	constexpr float gold_phong_tint[ 3 ]  = { 0.6f, 0.35f, 0.08f };
@@ -245,6 +247,12 @@ namespace n_chams
 	"$phongdisablehalflambert" "1"
 )" );
 				break;
+
+			case 11: /* carrier: flat white, the DIP hook swaps in the lsd shaders */
+				make_variants( chams_material_lsd, "botox_lsd", "UnlitGeneric", R"(	"$basetexture" "vgui/white"
+	"$model"       "1"
+)" );
+				break;
 			}
 
 			if ( ++this->m_build_index >= chams_material_max - 1 )
@@ -432,7 +440,13 @@ namespace n_chams
 				}
 
 				g_interfaces.m_model_render->forced_material_override( material );
-				draw_pass( );
+
+				if ( index == chams_material_lsd ) {
+					g_lsd_chams.begin( layer_color.base< e_color_type::color_type_a >( ) * alpha_scale );
+					draw_pass( );
+					g_lsd_chams.end( );
+				} else
+					draw_pass( );
 			}
 
 			g_interfaces.m_model_render->forced_material_override( nullptr );

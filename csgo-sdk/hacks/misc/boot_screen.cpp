@@ -73,34 +73,6 @@ namespace
 		fraction = filled / total;
 	}
 
-	float cubic( const float a, const float b, const float s )
-	{
-		const float r = 1.f - s;
-		return 3.f * a * s * r * r + 3.f * b * s * s * r + s * s * s;
-	}
-
-	/* svg keySplines = css cubic-bezier: x -> y */
-	float ease( const float x1, const float y1, const float x2, const float y2, const float x )
-	{
-		float lo = 0.f, hi = 1.f;
-		for ( int i = 0; i < 16; ++i ) {
-			const float mid = ( lo + hi ) * 0.5f;
-			( cubic( x1, x2, mid ) < x ? lo : hi ) = mid;
-		}
-		return cubic( y1, y2, ( lo + hi ) * 0.5f );
-	}
-
-	/* 6-dots-scale: r 0 -> 2 at 20% -> 0 over 0.6s, then frozen at 0 */
-	float dot_radius( const float t )
-	{
-		const float u = t / 0.6f;
-		if ( u >= 1.f )
-			return 0.f;
-		if ( u < 0.2f )
-			return 2.f * ease( 0.f, 1.f, 0.f, 1.f, u / 0.2f );
-		return 2.f * ( 1.f - ease( 0.53f, 0.f, 0.61f, 0.73f, ( u - 0.2f ) / 0.8f ) );
-	}
-
 	/* shadertoy port, warped fbm blob. iChannel0 ( 256 white noise, repeat ) = hashed value noise, smoothstep lerp.
 	   uv = shadertoy ( I*2-R )/R.y, y up, square spans -2..2. luma in LEVELS steps, tinted c1 = accent.
 	   c0 = time, fade ( 50% ). output on black = additive */
@@ -418,7 +390,7 @@ void boot_screen_draw( )
 	const float grow = 0.94f + 0.06f * fade;
 	const ImVec2 center( w * 0.5f, h * 0.5f + 10.f * u * ( 1.f - fade ) );
 
-	/* glow behind spinner + bar + label: own quad + shader, fade rides in c0 ( fade_others skips it, no verts ) */
+	/* glow behind bar + label: own quad + shader, fade rides in c0 ( fade_others skips it, no verts ) */
 	g_glow.m_size = std::round( 640.f * u * grow );
 	g_glow.m_x    = std::floor( center.x - g_glow.m_size * 0.5f );
 	g_glow.m_y    = std::floor( center.y - g_glow.m_size * 0.5f );
@@ -428,27 +400,6 @@ void boot_screen_draw( )
 
 	list->AddCallback( glow_draw, nullptr );
 	list->AddCallback( ImDrawCallback_ResetRenderState, nullptr );
-
-	/* svg: 24 unit box, 12 dots on r 9 clockwise from top, 0.1s apart, 1.2s loop */
-	const float scale = 52.f * u * grow / 24.f;
-	const ImVec2 spin( center.x, center.y - 22.f * u * grow );
-
-	for ( int i = 0; i < 12; ++i ) {
-		const float r = dot_radius( std::fmod( clock + 1.2f - static_cast< float >( i ) * 0.1f, 1.2f ) ) * scale;
-		if ( r < 0.25f )
-			continue;
-
-		const float angle = static_cast< float >( i ) * ( IM_PI / 6.f );
-		list->AddCircleFilled( ImVec2( spin.x + std::sin( angle ) * 9.f * scale, spin.y - std::cos( angle ) * 9.f * scale ), r, color( 1.f ) );
-	}
-
-	const float bar_w = 260.f * u * grow, bar_h = std::max( std::round( 4.f * u ), 2.f );
-	const ImVec2 bar_min( std::floor( center.x - bar_w * 0.5f ), std::floor( center.y + 24.f * u * grow ) );
-	const ImVec2 bar_max( bar_min.x + bar_w, bar_min.y + bar_h );
-
-	list->AddRectFilled( bar_min, bar_max, color( 0.15f ), bar_h * 0.5f );
-	if ( shown > 0.001f )
-		list->AddRectFilled( bar_min, ImVec2( bar_min.x + bar_w * std::min( shown, 1.f ), bar_max.y ), color( 0.95f ), bar_h * 0.5f );
 
 	char text[ 96 ];
 	if ( ejecting )
@@ -461,8 +412,26 @@ void boot_screen_draw( )
 	/* menu "botox" label font, native size: monochrome verdana goes soft when scaled */
 	ImFont* const font  = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ] ? g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ] : ImGui::GetFont( );
 	const ImVec2 extent = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, text );
+	const float dot_w   = done ? 0.f : font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, "." ).x;
 
-	list->AddText( font, font->FontSize, ImVec2( std::floor( center.x - extent.x * 0.5f ), std::floor( bar_max.y + 12.f * u ) ), color( 1.f ), text );
+	/* bar + gap + label centered as one block */
+	const float bar_w = 260.f * u * grow, bar_h = std::max( std::round( 4.f * u ), 2.f ), gap = std::round( 12.f * u );
+	const ImVec2 bar_min( std::floor( center.x - bar_w * 0.5f ), std::floor( center.y - ( bar_h + gap + extent.y ) * 0.5f ) );
+	const ImVec2 bar_max( bar_min.x + bar_w, bar_min.y + bar_h );
+
+	list->AddRectFilled( bar_min, bar_max, color( 0.15f ), bar_h * 0.5f );
+	if ( shown > 0.001f )
+		list->AddRectFilled( bar_min, ImVec2( bar_min.x + bar_w * std::min( shown, 1.f ), bar_max.y ), color( 0.95f ), bar_h * 0.5f );
+
+	/* dots counted in the width so the label never shifts */
+	const ImVec2 text_pos( std::floor( center.x - ( extent.x + 3.f * dot_w ) * 0.5f ), bar_max.y + gap );
+	list->AddText( font, font->FontSize, text_pos, color( 1.f ), text );
+
+	/* working: 3 dots pulse left to right, 1.2s loop */
+	for ( int i = 0; i < 3 && !done; ++i ) {
+		const float wave = 0.5f + 0.5f * std::cos( ( clock - static_cast< float >( i ) * 0.2f ) * ( 2.f * IM_PI / 1.2f ) );
+		list->AddText( font, font->FontSize, ImVec2( text_pos.x + extent.x + static_cast< float >( i ) * dot_w, text_pos.y ), color( 0.2f + 0.8f * wave ), "." );
+	}
 }
 
 void boot_screen_fade_others( ImDrawData* draw_data )

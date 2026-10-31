@@ -76,9 +76,6 @@ namespace n_cod4_hud
 		snapshot_t m_snapshot{ };
 		std::mutex m_lock{ }; // m_snapshot + the event state in cod4_hud.cpp
 
-		bool m_crosshair_hidden = false;
-		int m_saved_crosshair   = 1;
-
 		// window thread, true = chat line took the key (csgo's chat never opens)
 		bool chat_on_key( unsigned int msg, unsigned int wide_param, long long_param, bool ui_input );
 

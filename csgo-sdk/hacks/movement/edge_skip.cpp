@@ -192,7 +192,7 @@ bool n_edge_skip::impl_t::grab( c_user_cmd* cmd, const int prefix, const float g
 				return false;
 		}
 		m_chains++;
-		constexpr int k_max_cand = 64;
+		constexpr int k_max_cand = 60; /* snapshot slots 62 / 63 = wall climb spot job */
 		int cand[ k_max_cand ], slot[ k_max_cand ];
 		int n_cand = 0;
 		for ( int k = prefix; k <= last && !out( ); k++ ) {

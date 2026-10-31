@@ -1,4 +1,5 @@
 #include "weapon_sheen.h"
+#include "model_shader.h"
 #include "../misc/scaleform/image_cache.h"
 #include "screen/render_queue.h"
 #include "../../game/sdk/includes/includes.h"
@@ -27,6 +28,8 @@
 
 namespace
 {
+	using namespace n_model_shader;
+
 	constexpr const char* k_base_url  = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/sheen/";
 	constexpr const char* k_cache_dir = "C:\\botox\\sheen\\";
 	constexpr float k_frame_rate      = 25.f;
@@ -396,38 +399,6 @@ float4 main( PS_INPUT i ) : COLOR
 		return g_carrier;
 	}
 
-	ID3DXBuffer* compile( const char* source, const char* profile, const D3DXMACRO* macros )
-	{
-		ID3DXBuffer *code = nullptr, *errors = nullptr;
-		D3DXCompileShader( source, static_cast< UINT >( std::strlen( source ) ), macros, nullptr, "main", profile, 0, &code, &errors, nullptr );
-
-		if ( errors ) {
-			botox_dbg_log( "SHEEN: %s compile: %s", profile, static_cast< const char* >( errors->GetBufferPointer( ) ) );
-			errors->Release( );
-		}
-
-		return code;
-	}
-
-	// def literals can leak into the hw register file under the engine's state cache: save + restore each
-	void collect_defs( const DWORD* code, std::vector< std::pair< int, int > >& out )
-	{
-		for ( std::size_t i = 1; code[ i ] != 0x0000FFFF; ) {
-			const DWORD token  = code[ i ];
-			const DWORD opcode = token & 0xFFFF;
-
-			if ( opcode == D3DSIO_COMMENT ) {
-				i += 1 + ( ( token & D3DSI_COMMENTSIZE_MASK ) >> D3DSI_COMMENTSIZE_SHIFT );
-				continue;
-			}
-
-			if ( opcode == D3DSIO_DEF || opcode == D3DSIO_DEFI || opcode == D3DSIO_DEFB )
-				out.emplace_back( opcode == D3DSIO_DEF ? 0 : opcode == D3DSIO_DEFI ? 1 : 2, static_cast< int >( code[ i + 1 ] & D3DSP_REGNUM_MASK ) );
-
-			i += 1 + ( ( token & D3DSI_INSTLENGTH_MASK ) >> D3DSI_INSTLENGTH_SHIFT );
-		}
-	}
-
 	void fill_level( const vtf_t& vtf, const int level, const int frame, const int face, const D3DLOCKED_RECT& rect )
 	{
 		const int w = ( std::max )( 1, vtf.m_width >> level ), h = ( std::max )( 1, vtf.m_height >> level );
@@ -536,7 +507,7 @@ float4 main( PS_INPUT i ) : COLOR
 		const D3DXMACRO plain[]      = { { "COMPRESSED_VERTS", "0" }, { nullptr, nullptr } };
 		const D3DXMACRO compressed[] = { { "COMPRESSED_VERTS", "1" }, { nullptr, nullptr } };
 
-		ID3DXBuffer* code[ 3 ] = { compile( k_vs, "vs_3_0", plain ), compile( k_vs, "vs_3_0", compressed ), compile( k_ps, "ps_3_0", nullptr ) };
+		ID3DXBuffer* code[ 3 ] = { compile( "SHEEN", k_vs, "vs_3_0", plain ), compile( "SHEEN", k_vs, "vs_3_0", compressed ), compile( "SHEEN", k_ps, "ps_3_0", nullptr ) };
 
 		bool ok = code[ 0 ] && code[ 1 ] && code[ 2 ];
 		for ( int i = 0; i < 2 && ok; i++ ) {
@@ -574,74 +545,6 @@ float4 main( PS_INPUT i ) : COLOR
 		}
 
 		return true;
-	}
-
-	// -1 = not a studio decl we can read, 0 = float normals, 1 = csgo UBYTE4 compressed (vertexdecl.cpp:142)
-	int vertex_compression( IDirect3DDevice9* device )
-	{
-		static IDirect3DVertexDeclaration9* last = nullptr;
-		static int result                        = -1;
-
-		IDirect3DVertexDeclaration9* declaration = nullptr;
-		if ( FAILED( device->GetVertexDeclaration( &declaration ) ) || !declaration )
-			return -1;
-
-		if ( declaration != last ) {
-			D3DVERTEXELEMENT9 elements[ MAXD3DDECLLENGTH + 1 ]{ };
-			UINT count = 0;
-			result     = -1;
-
-			if ( SUCCEEDED( declaration->GetDeclaration( nullptr, &count ) ) && count <= std::size( elements ) &&
-			     SUCCEEDED( declaration->GetDeclaration( elements, &count ) ) ) {
-				for ( UINT i = 0; i < count && elements[ i ].Stream != 0xFF; i++ ) {
-					if ( elements[ i ].Usage == D3DDECLUSAGE_NORMAL && elements[ i ].UsageIndex == 0 )
-						result = elements[ i ].Type == D3DDECLTYPE_UBYTE4 ? 1 : elements[ i ].Type == D3DDECLTYPE_FLOAT3 ? 0 : -1;
-				}
-			}
-
-			last = declaration;
-		}
-
-		declaration->Release( );
-		return result;
-	}
-
-	struct saved_constant_t {
-		int m_kind;
-		int m_register;
-		float m_value[ 4 ];
-	};
-
-	void save_constants( IDirect3DDevice9* device, const bool vertex, const std::vector< std::pair< int, int > >& defs, std::vector< saved_constant_t >& out )
-	{
-		for ( const auto& [ kind, reg ] : defs ) {
-			saved_constant_t saved{ kind, reg, { } };
-
-			if ( kind == 0 )
-				vertex ? device->GetVertexShaderConstantF( reg, saved.m_value, 1 ) : device->GetPixelShaderConstantF( reg, saved.m_value, 1 );
-			else if ( kind == 1 )
-				vertex ? device->GetVertexShaderConstantI( reg, reinterpret_cast< int* >( saved.m_value ), 1 )
-				       : device->GetPixelShaderConstantI( reg, reinterpret_cast< int* >( saved.m_value ), 1 );
-			else
-				vertex ? device->GetVertexShaderConstantB( reg, reinterpret_cast< BOOL* >( saved.m_value ), 1 )
-				       : device->GetPixelShaderConstantB( reg, reinterpret_cast< BOOL* >( saved.m_value ), 1 );
-
-			out.push_back( saved );
-		}
-	}
-
-	void restore_constants( IDirect3DDevice9* device, const bool vertex, const std::vector< saved_constant_t >& saved )
-	{
-		for ( const saved_constant_t& entry : saved ) {
-			if ( entry.m_kind == 0 )
-				vertex ? device->SetVertexShaderConstantF( entry.m_register, entry.m_value, 1 ) : device->SetPixelShaderConstantF( entry.m_register, entry.m_value, 1 );
-			else if ( entry.m_kind == 1 )
-				vertex ? device->SetVertexShaderConstantI( entry.m_register, reinterpret_cast< const int* >( entry.m_value ), 1 )
-				       : device->SetPixelShaderConstantI( entry.m_register, reinterpret_cast< const int* >( entry.m_value ), 1 );
-			else
-				vertex ? device->SetVertexShaderConstantB( entry.m_register, reinterpret_cast< const BOOL* >( entry.m_value ), 1 )
-				       : device->SetPixelShaderConstantB( entry.m_register, reinterpret_cast< const BOOL* >( entry.m_value ), 1 );
-		}
 	}
 }
 

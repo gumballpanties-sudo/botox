@@ -193,6 +193,20 @@ namespace {
 		return fabsf( std::remainderf( rad2deg( atan2f( dy, dx ) ) - aim_yaw, 360.f ) );
 	}
 
+	/* base run state at loop top of tick i ( no candidate pending ): duck sweeps resume here instead of re-simming 0..i-1.
+	   tools/wc_engine/eb_lab.cpp EB_CHECK = resumed run == full run. slots 0..55 ( wall climb owns 62 / 63 ) */
+	struct eb_snap_t {
+		int slot = -1;
+		float strafe_side = 1.f, last_yaw = 0.f;
+		c_angle cur{ }, view{ };
+		float fwd = 0.f, side = 0.f;
+		int buttons = 0;
+		c_vector vel_backup{ };
+	};
+	constexpr int k_eb_snap_slots = 56;
+	eb_snap_t s_eb_snap[ 8 ][ n_edgebug::k_predicted_cmd_max ];
+	n_edgebug::predicted_cmd_t s_eb_snap_cmds[ 8 ][ n_edgebug::k_predicted_cmd_max ];
+
 	/* ebanat FUN_1011ac10 ring: 16 vertical rays 32u out, +200 -> -100; a face under 0.6 nz = a ramp clipped the fall, not a lip */
 	bool eb_steep_ring( )
 	{
@@ -655,7 +669,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 	const float user_fwd = m_user_forward_move;
 	const float user_side = m_user_side_move;
 	const int user_buttons = m_user_buttons;
-	static int last_variant = 0, last_bend = 0;
+	static int last_variant = 0, last_fam = 0;
+	static float last_bend = 0.f;
 	/* mouse steer re-plan: turned >= 1 deg since the plan latched, ticks(2)+ before its bug tick ( never swap a bug
 	   that close ). runs write m_run_cmds, so no find keeps the old plan in m_predicted_cmds */
 	if ( m_found && steer )
@@ -724,10 +739,12 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		const bool near_geometry = every_tick || ( reach_tick >= 0 && reach_tick <= eb_ticks( 12 ) );
 		/* share is WALL CLOCK: ask for the 64-tick microseconds on any tickrate, then cap against this
 		   tick ( 0.60 normal / 0.75 enhanced ). 64 unchanged. */
+		/* search effort slider scales the ask and lifts the cap with it ( c_sim_budget clamps 0.9 ) */
+		const float effort = std::clamp( GET_VARIABLE( g_variables.m_edgebug_search_effort, float ), 0.25f, 3.f );
 		const float want_s = ( detection_mode >= 1 ? 0.45f : 0.30f ) * ( 1.f / 64.f ) *
-		                     static_cast< float >( gap_owned ) * ( near_geometry ? 1.f : 0.5f );
+		                     static_cast< float >( gap_owned ) * ( near_geometry ? 1.f : 0.5f ) * effort;
 		/* enhanced / ebanat = deeper search, may own more of a tick. */
-		const float budget_share = std::min( detection_mode >= 1 ? 0.75f : 0.60f, want_s / n_tick::interval( ) );
+		const float budget_share = std::min( std::min( 0.9f, ( detection_mode >= 1 ? 0.75f : 0.60f ) * std::max( 1.f, effort ) ), want_s / n_tick::interval( ) );
 		/* runaway ceiling derived from the clock at 8 us/sim ( real sims ~20-25 ), so it only fires on a
 		   broken timer; never a tick-scaled sim count. floor = one pass of this window. */
 		const int MAX_PREDICTIONS = std::clamp(
@@ -739,9 +756,20 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		long long worst_run_us = 0ll;
 		/* duck press window: 9u duck vs 12.5u fall step @64, 6.25 @128 -> finer timing, twice the ticks. */
 		const int duck_retry    = std::clamp( eb_ticks( 3 ), 2, 8 );
-		const bool duck_sweep   = true;
-		/* last pass's first ground tick, -1 = never. */
+		const bool duck_sweep   = GET_VARIABLE( g_variables.m_edgebug_duck_timing, bool );
+		/* last pass's first ground tick, -1 = never; contact_z = origin z there ( refine tells lip vs lower floor ). */
 		int contact_tick = -1;
+		float contact_z  = 0.f;
+		/* SNAPSHOTS: base runs save their loop-top state from snap_lo on ( slot quota per variant ), press / release runs
+		   resume at their tick instead of re-simming the shared prefix. lab ( eb_lab.cpp ): same finds, sweeps ~4x cheaper */
+		const int snap_cap = std::min( k_eb_snap_slots, g_prediction.snapshot_slots( ) );
+		const int snap_lo  = std::max( 1, reach_tick + 1 - duck_retry - std::max( 2, eb_ticks( 2 ) ) - 4 );
+		int snap_used = 0, snap_limit = 0, snap_runs = 0;
+		for ( auto& row : s_eb_snap )
+			for ( auto& sn : row )
+				sn.slot = -1;
+		/* plan family for the log: 0 base 1 press 2 release 3 bend 4 ebanat 5 refine 6 wide press 7 wide release */
+		int fam_now = 0;
 		/* constant for the whole search. */
 		const float grav_tick = get_edgebug_half_gravity_per_tick( );
 		/* TAIL PROBE: past reach_tick, re-run the conservative hull sweep for the ticks left and end the
@@ -753,14 +781,18 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		   duck toggled every tick. wish offsets off its max angle ( 15..360 there ). */
 		constexpr float k_eb_turn = 4.f;
 		const float eb_cap        = std::clamp( GET_VARIABLE( g_variables.m_edgebug_autostrafe_max_angle, float ), 15.f, 180.f );
+		static auto sv_airaccelerate = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
+		const float air_accel        = std::max( 0.1f, sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.f );
 		/* user-move pair ( 2/3 strafe off, 4/5 on ): with no move + no view delta it equals 0/1 exactly, skip. */
 		const bool user_move_dead = fabsf( user_fwd ) < 0.1f && fabsf( user_side ) < 0.1f &&
 		                           fabsf( delta_angle.m_y ) < 0.01f && fabsf( delta_angle.m_x ) < 0.01f;
 
 		/* one pass. duck_at = press held from this tick ( -1 = variant's own rule ); undo_at = released
-		   and left released ( -1 = never ). bend = first |bend| ticks pushed across the velocity ( + right ).
-		   fills m_run_cmds, latches m_found, sets contact_tick. */
-		auto run_variant = [ & ]( const int v, const int duck_at, const int undo_at = -1, const int bend = 0 ) {
+		   and left released ( -1 = never ). bend = first |bend| ticks pushed across the velocity ( + right ), a fraction
+		   = the last tick pushed that much. from > 0 = resume at tick `from` off base variant from_v's snapshot; save = this
+		   base run stores its own. fills m_run_cmds, latches m_found, sets contact_tick. */
+		auto run_variant = [ & ]( const int v, const int duck_at, const int undo_at = -1, const float bend = 0.f, const int from = -1,
+		                          const int from_v = -1, const bool save = false ) {
 			const long long run_started_us = budget.used_us( );
 			ReStorePrediction( );
 			m_strafe_side = 1.f; /* same opening side + yaw every run, so runs are comparable */
@@ -772,6 +804,22 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			cmd->m_buttons = user_buttons;
 			c_angle current_angle = cmd->m_view_point;
 			contact_tick = -1;
+			int i0 = 0, written = 0;
+			if ( from > 0 ) {
+				const eb_snap_t& sn = s_eb_snap[ from_v ][ from ];
+				g_prediction.snapshot_load( sn.slot );
+				m_strafe_side       = sn.strafe_side;
+				m_strafe_last_yaw   = sn.last_yaw;
+				current_angle       = sn.cur;
+				cmd->m_view_point   = sn.view;
+				cmd->m_forward_move = sn.fwd;
+				cmd->m_side_move    = sn.side;
+				cmd->m_buttons      = sn.buttons;
+				search_vel_backup   = sn.vel_backup;
+				std::memcpy( m_run_cmds, s_eb_snap_cmds[ from_v ], sizeof( predicted_cmd_t ) * from );
+				i0 = written = from;
+				snap_runs++;
+			}
 			/* user's own air move + view delta carried forward; shared by cases 2/3 and 4/5. */
 			auto replay_user_move = [ & ]( const bool duck ) {
 				if ( duck )
@@ -836,16 +884,33 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				pl.ticks   = tick_index;
 				pl.variant = v;
 				pl.bend    = bend;
+				pl.fam     = fam_now;
 				pl.end_pos = end_pos;
 			};
 			/* a candidate on the trimmed window's last tick still gets its confirm tick ( buffer allows max_ticks ). */
-			for ( int i = 0; i < run_ticks || ( pending >= 0 && i < max_ticks ); i++ ) {
+			for ( int i = i0; i < run_ticks || ( pending >= 0 && i < max_ticks ); i++ ) {
 				if ( const bool grounded = ( g_ctx.m_local->get_flags( ) & 1 ) != 0;
 				     grounded || g_ctx.m_local->get_velocity( ).m_z > 0.f ) {
-					if ( grounded )
+					if ( grounded ) {
 						contact_tick = i;
+						contact_z    = g_ctx.m_local->get_origin( ).m_z;
+					}
 					pending = -1; /* landed / bounced: not an edgebug */
 					break;
+				}
+				/* loop top = START of cmd i: the state a press / release at i resumes from */
+				if ( save && pending < 0 && i >= snap_lo && snap_used < snap_limit && i < k_predicted_cmd_max &&
+				     g_prediction.snapshot_save( snap_used ) ) {
+					eb_snap_t& sn  = s_eb_snap[ v ][ i ];
+					sn.slot        = snap_used++;
+					sn.strafe_side = m_strafe_side;
+					sn.last_yaw    = m_strafe_last_yaw;
+					sn.cur         = current_angle;
+					sn.view        = cmd->m_view_point;
+					sn.fwd         = cmd->m_forward_move;
+					sn.side        = cmd->m_side_move;
+					sn.buttons     = cmd->m_buttons;
+					sn.vel_backup  = search_vel_backup;
 				}
 				switch ( v ) {
 				case 0:
@@ -912,14 +977,16 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 					strafe( ( i & 1 ) != 0 );
 					break;
 				}
-				/* square to velocity: +30 u/s lateral a tick, speed kept, cone capped in CommitStrafe */
-				if ( i < abs( bend ) ) {
+				/* square to velocity: +30 u/s lateral a tick, speed kept, cone capped in CommitStrafe. fractional last tick:
+				   accel = airaccelerate * wishspeed * ipt, so wishspeed 30 * frac / ( airaccel * ipt ) buys 30 * frac */
+				if ( i < static_cast< int >( ceilf( fabsf( bend ) ) ) ) {
 					const c_vector vel = g_ctx.m_local->get_velocity( );
 					if ( vel.length_2d( ) > 1.f ) {
 						c_angle wish;
 						wish.m_x = 0.f;
-						wish.m_y = rad2deg( atan2f( vel.m_y, vel.m_x ) ) + ( bend > 0 ? -90.f : 90.f );
-						cmd->m_forward_move = 450.f;
+						wish.m_y = rad2deg( atan2f( vel.m_y, vel.m_x ) ) + ( bend > 0.f ? -90.f : 90.f );
+						const float frac = std::min( 1.f, fabsf( bend ) - static_cast< float >( i ) );
+						cmd->m_forward_move = frac >= 1.f ? 450.f : std::min( 450.f, 30.f * frac / ( air_accel * n_tick::interval( ) ) );
 						cmd->m_side_move    = 0.f;
 						CommitStrafe( cmd, wish );
 					}
@@ -949,6 +1016,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				m_run_cmds[i].buttons = cmd->m_buttons;
 				m_run_cmds[i].viewangle = cmd->m_view_point;
 				m_run_cmds[i].origin = g_ctx.m_local->get_origin( );
+				written = i + 1;
 				if ( total_predictions >= MAX_PREDICTIONS || budget.expired( ) ) break;
 				g_prediction.begin( g_ctx.m_local, cmd );
 				g_prediction.end( g_ctx.m_local );
@@ -962,8 +1030,10 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				/* confirm tick: the candidate's verdict comes off THIS sim, then the run is over. */
 				if ( pending >= 0 ) {
 					const bool grounded = ( g_ctx.m_local->get_flags( ) & 1 ) != 0;
-					if ( grounded )
+					if ( grounded ) {
 						contact_tick = i + 1; /* same index the loop-top check would give */
+						contact_z    = g_ctx.m_local->get_origin( ).m_z;
+					}
 					else if ( const float vz_now = g_ctx.m_local->get_velocity( ).m_z;
 					          vz_now <= 0.f && ( detection_mode != 2 || roundf( vz_now ) == roundf( pending_vz - 2.f * grav_tick ) ) )
 						latch( pending, pending_pos ); /* mode 2: ebanat's exact free step after the slowdown */
@@ -1000,6 +1070,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			/* window / budget ran out before the confirm tick: take it unconfirmed. */
 			if ( !run_found && pending >= 0 )
 				latch( pending, pending_pos );
+			if ( save )
+				std::memcpy( s_eb_snap_cmds[ v ], m_run_cmds, sizeof( predicted_cmd_t ) * written );
 			cmd->m_view_point = orig_viewangle;
 			cmd->m_forward_move = orig_fwd;
 			cmd->m_side_move = orig_side;
@@ -1032,7 +1104,13 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			/* don't start a run that can't finish; never gates the FIRST run. */
 			return total_predictions > 0 && ( total_predictions >= MAX_PREDICTIONS || budget.cannot_fit( worst_run_us ) );
 		};
-		/* pass 0: every variant once */
+		/* base outcome per variant: the refine pass brackets on these */
+		int base_contact[ 8 ];
+		float base_contact_z[ 8 ]{ };
+		for ( int& c : base_contact )
+			c = -1;
+		/* pass 0: every variant once, each saving up to its share of the snapshot slots */
+		const int snap_quota = snap_cap / std::max( 1, search_count );
 		for ( int idx = 0; idx < search_count && !enough( ); idx++ ) {
 			const int v = variant_at( idx );
 			if ( user_move_dead && ( v == replay_variant || v == replay_variant + 1 ) )
@@ -1042,15 +1120,87 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				continue;
 			if ( out_of_budget( ) )
 				break;
-			run_variant( v, -1 );
+			snap_limit = std::min( snap_cap, snap_used + snap_quota );
+			run_variant( v, -1, -1, 0.f, -1, -1, duck_sweep && snap_quota > 0 );
 			base_runs++;
-			base_ran[ v ] = true;
+			base_ran[ v ]       = true;
+			base_contact[ v ]   = contact_tick;
+			base_contact_z[ v ] = contact_z;
 			if ( contact_tick > best_contact )
 				best_contact = contact_tick;
 			/* no contact != no edge: a tiny missed lip grounds nothing, so centre the sweep on reach_tick.
 			   >= 0, not > 0: reach 0 = geometry already in the first chord, the lip that matters most. */
 			sweep_center[ v ] = contact_tick > 0 ? contact_tick : ( reach_tick >= 0 ? reach_tick + 1 : -1 );
 			sweep_approx[ v ] = contact_tick <= 0;
+		}
+		/* press / release at k off base variant w's snapshot at k when it has one, else the full run */
+		auto run_at = [ & ]( const int v, const int duck_at, const int undo_at, const int k, const int w ) {
+			if ( k > 0 && k < k_predicted_cmd_max && s_eb_snap[ w ][ k ].slot >= 0 )
+				run_variant( v, duck_at, undo_at, 0.f, k, w );
+			else
+				run_variant( v, duck_at, undo_at );
+		};
+		/* PASS 0b: LIP REFINE ( eb_lab 10-31: strafe on 20.5% -> 52% of falls, strips 27 -> 64, pillars 27 -> 93 / 150 ).
+		   zero move ( 0 stand / 1 duck ) pushed square to the path for b ticks: grid +-2 +-6 +-12, then between two b that
+		   land on the lip / miss it the bug sits on the boundary, bisect b ( fractional last tick ). steers = to edge only */
+		int refine_runs = 0;
+		if ( GET_VARIABLE( g_variables.m_edgebug_lip_refine, bool ) && autostrafe && near_geometry && m_plan_count == 0 ) {
+			const int steps = std::clamp( GET_VARIABLE( g_variables.m_edgebug_refine_steps, int ), 1, 12 );
+			constexpr float k_grid[] = { 2.f, -2.f, 6.f, -6.f, 12.f, -12.f };
+			fam_now = 5;
+			for ( int v = 0; v < 2 && m_plan_count == 0 && !out_of_budget( ); v++ ) {
+				if ( !base_ran[ v ] )
+					continue;
+				float val[ 7 ], cz[ 7 ];
+				int con[ 7 ], n = 0;
+				val[ n ] = 0.f;
+				con[ n ] = base_contact[ v ];
+				cz[ n++ ] = base_contact_z[ v ];
+				for ( const float g : k_grid ) {
+					if ( m_plan_count || out_of_budget( ) || fabsf( g ) >= static_cast< float >( run_ticks ) )
+						break;
+					run_variant( v, -1, -1, g );
+					refine_runs++;
+					val[ n ] = g;
+					con[ n ] = contact_tick;
+					cz[ n++ ] = contact_z;
+				}
+				/* brackets = neighbours on the signed b line, the ones nearest b = 0 first */
+				int idx[ 7 ], order[ 6 ], no = 0;
+				for ( int j = 0; j < n; j++ )
+					idx[ j ] = j;
+				std::sort( idx, idx + n, [ & ]( const int a, const int b ) { return val[ a ] < val[ b ]; } );
+				for ( int j = 0; j + 1 < n; j++ )
+					order[ no++ ] = j;
+				std::sort( order, order + no, [ & ]( const int a, const int b ) {
+					return fabsf( val[ idx[ a ] ] + val[ idx[ a + 1 ] ] ) < fabsf( val[ idx[ b ] ] + val[ idx[ b + 1 ] ] );
+				} );
+				/* ONE lip per variant: the landing nearest b = 0 ( your path ). a run on any other floor = miss, so no
+				   bracket can lock onto a step the big pushes carried it to */
+				int near_land = -1;
+				for ( int j = 0; j < n; j++ )
+					if ( con[ j ] >= 0 && ( near_land < 0 || fabsf( val[ j ] ) < fabsf( val[ near_land ] ) ) )
+						near_land = j;
+				const float lip = near_land >= 0 ? cz[ near_land ] : 0.f;
+				const auto on_lip = [ & ]( const int j ) { return con[ j ] >= 0 && fabsf( cz[ j ] - lip ) < 1.f; };
+				for ( int q = 0; q < no && near_land >= 0 && m_plan_count == 0 && !out_of_budget( ); q++ ) {
+					const int ja = idx[ order[ q ] ], jb = idx[ order[ q ] + 1 ];
+					const bool la = on_lip( ja ), lb = on_lip( jb );
+					if ( la == lb )
+						continue;
+					float land = la ? val[ ja ] : val[ jb ], miss = la ? val[ jb ] : val[ ja ];
+					for ( int st = 0; st < steps && m_plan_count == 0 && !out_of_budget( ); st++ ) {
+						const float mid = 0.5f * ( land + miss );
+						run_variant( v, -1, -1, mid );
+						refine_runs++;
+						/* a lower floor counts as a miss: only the lip level is the edge being bracketed */
+						if ( contact_tick >= 0 && fabsf( contact_z - lip ) < 1.f )
+							land = mid;
+						else
+							miss = mid;
+					}
+				}
+			}
 		}
 		/* PASS 1: DUCK TIMING. the press tick decides the bug ( 9u press vs 6.25u fall step @128 ).
 		   only ticks around contact. EVEN variants only: the overlay makes an odd twin re-sim its even
@@ -1086,24 +1236,46 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 						off = max_off; /* budget gone for every variant */
 						break;
 					}
-					run_variant( v, k );
+					fam_now = 1;
+					run_at( v, k, -1, k, v );
 					sweep_runs++;
 					/* release at k ( -9u family ): ducked from 0, released at k, never re-pressed ( 0.4 s
 					   sv_timebetweenducks ). INTERLEAVED with presses or it never gets budget. release at 0
 					   = even base run, skipped. */
 					if ( !enough( ) && k >= 1 && !out_of_budget( ) ) {
-						run_variant( v, 0, k );
+						fam_now = 2;
+						run_at( v, 0, k, k, v + 1 );
 						release_runs++;
 					}
 				}
 			}
+		}
+		/* PASS 1b: FULL WINDOW. near ticks done, the rest latest first while budget lasts ( 10-30 log: strafe-off
+		   searches stopped at ~60% of budget, out of variants ). eb_lab: strafe off 6.3% -> 9.0%. duck only, no steer */
+		int wide_runs = 0;
+		if ( duck_sweep && GET_VARIABLE( g_variables.m_edgebug_full_window, bool ) && !enough( ) ) {
+			for ( int k = run_ticks - 1; k >= 1 && !enough( ) && !out_of_budget( ); k-- )
+				for ( int idx = 0; idx < search_count && !enough( ) && !out_of_budget( ); idx++ ) {
+					const int v = variant_at( idx );
+					if ( ( v & 1 ) || !base_ran[ v ] || ( sweep_last[ v ] >= 0 && k >= sweep_first[ v ] && k <= sweep_last[ v ] ) )
+						continue;
+					fam_now = 6;
+					run_at( v, k, -1, k, v );
+					wide_runs++;
+					if ( !enough( ) && base_ran[ v + 1 ] && !out_of_budget( ) ) {
+						fam_now = 7;
+						run_at( v, 0, k, k, v + 1 );
+						wide_runs++;
+					}
+				}
 		}
 		/* PASS 2: BEND. no-finds all land ( 10-11 log: 327/327 con>=0 ) = lip crossed at the wrong phase, duck only
 		   moves height. bend turns heading ~7 deg a tick @250 = lateral + along-path phase. smallest first, near
 		   geometry + nothing found so any base find stays as before. */
 		int bend_runs = 0;
 		/* bend + ebanat shapes steer the path: only with the autostrafe switch ( to edge ) on. off = your move / duck only */
-		if ( autostrafe && near_geometry && m_plan_count == 0 ) {
+		if ( GET_VARIABLE( g_variables.m_edgebug_path_bend, bool ) && autostrafe && near_geometry && m_plan_count == 0 ) {
+			fam_now = 3;
 			constexpr int k_bend[] = { 1, 2, 3, 4, 6, 8, 12 };
 			for ( int b = 0; b < 2 * static_cast< int >( std::size( k_bend ) ) && !enough( ) && !out_of_budget( ); b++ ) {
 				const int bend = ( b & 1 ) ? -k_bend[ b / 2 ] : k_bend[ b / 2 ];
@@ -1113,7 +1285,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 					const int v = variant_at( idx );
 					if ( !base_ran[ v ] )
 						continue;
-					run_variant( v, -1, -1, bend );
+					run_variant( v, -1, -1, static_cast< float >( bend ) );
 					bend_runs++;
 				}
 			}
@@ -1121,7 +1293,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		/* PASS 3: EBANAT SHAPES. 10-11 log: no-find searches ran out of variants, not budget ( 290/327 under 90% ) -> the
 		   rest goes to FUN_1011b8c0's shapes. zero plans only, so every base / sweep / bend find stays as before. */
 		int eb_runs = 0;
-		if ( autostrafe && near_geometry && m_plan_count == 0 ) {
+		if ( GET_VARIABLE( g_variables.m_edgebug_ebanat_shapes, bool ) && autostrafe && near_geometry && m_plan_count == 0 ) {
+			fam_now = 4;
 			for ( int v = 8; v < 16 && !enough( ) && !out_of_budget( ); v++ ) {
 				run_variant( v, -1 );
 				eb_runs++;
@@ -1164,6 +1337,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			m_replay_hits      = 0;
 			m_follow_end       = pl.end_pos;
 			last_bend          = pl.bend;
+			last_fam           = pl.fam;
 			m_viz_count        = 0;
 			m_viz_alts         = 0;
 			m_viz_base         = now_tick;
@@ -1189,13 +1363,14 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		}
 		/* every search logs. win = slider window, run = trimmed window, reach = first hull contact, edge = lip
 		   found, base = distinct variants run, sw / rel = press / release runs, sims = spent / ceiling,
-		   us = spent / share, tick = tick the bug is due. */
-		botox_dbg_log( "EB: mode=%d win=%d run=%d reach=%d edge=%d vars=%d base=%d sw=%d rel=%d sims=%d/%d cut=%d us=%lld/%lld con=%d ipt=%.5f vz=%.2f found=%d var=%d at=%d tick=%d pth=%d/%d bd=%d bnd=%d ebv=%d\n",
+		   us = spent / share, tick = tick the bug is due. rf / wd = refine / full-window runs, snp = runs resumed off a
+		   snapshot, fam = picked plan's family ( 0 base 1 press 2 release 3 bend 4 ebanat 5 refine 6 / 7 wide press / release ). */
+		botox_dbg_log( "EB: mode=%d win=%d run=%d reach=%d edge=%d vars=%d base=%d sw=%d rel=%d sims=%d/%d cut=%d us=%lld/%lld con=%d ipt=%.5f vz=%.2f found=%d var=%d at=%d tick=%d pth=%d/%d bd=%d bnd=%.2f ebv=%d rf=%d wd=%d snp=%d fam=%d\n",
 		               detection_mode, max_ticks, run_ticks, reach_tick, m_edge_target_valid ? 1 : 0,
 		               search_count, base_runs, sweep_runs, release_runs, total_predictions, MAX_PREDICTIONS, tail_cut_ticks,
 		               budget.used_us( ), static_cast< long long >( n_tick::interval( ) * 1000000.f * budget_share ),
 		               best_contact, n_tick::interval( ), m_backup_velocity.m_z, m_found ? 1 : 0, last_variant,
-		               m_found ? m_prediction_ticks : -1, m_found ? m_found_tick : 0, m_plan_count, want_paths, bend_runs, last_bend, eb_runs );
+		               m_found ? m_prediction_ticks : -1, m_found ? m_found_tick : 0, m_plan_count, want_paths, bend_runs, last_bend, eb_runs, refine_runs, wide_runs, snap_runs, last_fam );
 	} while ( false );
 	if ( m_found ) {
 		ReStorePrediction( );

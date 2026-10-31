@@ -90,7 +90,8 @@ namespace n_edgebug
 		static constexpr int k_plan_max = 4;
 		struct plan_t {
 			predicted_cmd_t cmds[k_predicted_cmd_max];
-			int ticks = 0, variant = 0, bend = 0;
+			int ticks = 0, variant = 0, fam = 0;
+			float bend = 0.f;
 			c_vector end_pos{ };
 		};
 		plan_t m_plans[k_plan_max];

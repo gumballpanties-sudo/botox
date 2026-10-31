@@ -1481,19 +1481,7 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 	auto* const engine = g_interfaces.m_engine_client;
 	const bool in_game = engine && engine->is_in_game( ) && g_ctx.m_local;
 
-	// stock crosshair off while ours draws (hud_weapon.cpp:77 + reticle both stop on `crosshair 0`)
-	const bool hide = on && in_game;
-	if ( hide != m_crosshair_hidden ) {
-		if ( hide ) {
-			const int current = g_convars.int_or( HASH_BT( "crosshair" ), 1 );
-			// ponytail: crosshair is archived, a 0 here is our own leftover from quitting while on, put back 1
-			m_saved_crosshair = current ? current : 1;
-			g_convars.set_if_present( HASH_BT( "crosshair" ), 0.f );
-		}
-		else
-			g_convars.set_if_present( HASH_BT( "crosshair" ), static_cast< float >( m_saved_crosshair ) );
-		m_crosshair_hidden = hide;
-	}
+	// stock crosshair: hud edit, not a convar. panorama = scaleform hud_removal, classic = paint_traverse HudWeapon skip
 
 	if ( on && s_load_state == 0 ) {
 		s_load_state = 1;
@@ -1933,7 +1921,7 @@ bool n_cod4_hud::impl_t::chat_on_key( unsigned int msg, unsigned int wide_param,
 	// no WM_SYSKEY*: alt+f4 / alt+tab keep working
 	if ( msg != WM_KEYDOWN && msg != WM_KEYUP && msg != WM_CHAR )
 		return false;
-	if ( ui_input || wide_param == VK_INSERT )
+	if ( ui_input || wide_param == g_menu.menu_key( ) )
 		return false;
 
 	std::scoped_lock lock( m_chat_mutex );
@@ -2010,10 +1998,6 @@ void n_cod4_hud::impl_t::on_release( )
 	if ( s_listening && g_interfaces.m_game_event_manager ) {
 		g_interfaces.m_game_event_manager->remove_listener( &s_listener );
 		s_listening = false;
-	}
-	if ( m_crosshair_hidden ) {
-		g_convars.set_if_present( HASH_BT( "crosshair" ), static_cast< float >( m_saved_crosshair ) );
-		m_crosshair_hidden = false;
 	}
 }
 

@@ -274,6 +274,7 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_accent, c_color( 129, 99, 251, 255 ) );
 		ADD_VARIABLE( float, m_dpi_scale, 100.f );
 		ADD_VARIABLE( bool, m_dpi_scale_panels, false );
+		ADD_VARIABLE( key_bind_t, m_menu_key, key_bind_t( 0x2D /* VK_INSERT */, 1 ) );
 		ADD_VARIABLE( bool, m_console_color_enable, false );
 		ADD_VARIABLE( c_color, m_console_color, c_color( 102, 111, 102, 255 ) );
 
@@ -1025,6 +1026,7 @@ namespace n_variables
 		ADD_VARIABLE( key_bind_t, m_wall_climb_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_wall_climb_prevent_slow, true );
 		ADD_VARIABLE( bool, m_wall_climb_duck, true );
+		ADD_VARIABLE( int, m_wall_climb_spot_reach, 16 );
 		ADD_VARIABLE( bool, m_show_wall_slope, false );
 		ADD_VARIABLE( key_bind_t, m_show_wall_slope_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_auto_strafe, false );
@@ -1090,6 +1092,13 @@ namespace n_variables
 		ADD_VARIABLE( int, m_edgebug_search_amount, 2 );
 		ADD_VARIABLE( bool, m_edgebug_mouse_steer, true );
 		ADD_VARIABLE( int, m_edgebug_paths, 3 );
+		ADD_VARIABLE( float, m_edgebug_search_effort, 1.f );
+		ADD_VARIABLE( bool, m_edgebug_duck_timing, true );
+		ADD_VARIABLE( bool, m_edgebug_full_window, true );
+		ADD_VARIABLE( bool, m_edgebug_lip_refine, true );
+		ADD_VARIABLE( int, m_edgebug_refine_steps, 7 );
+		ADD_VARIABLE( bool, m_edgebug_path_bend, true );
+		ADD_VARIABLE( bool, m_edgebug_ebanat_shapes, true );
 		ADD_VARIABLE( bool, m_edgebug_mouse_lock, false );
 		ADD_VARIABLE( int, m_edgebug_mouse_lock_type, 1 );
 		ADD_VARIABLE( float, m_edgebug_mouse_lock_strength, 100.f );

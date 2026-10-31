@@ -34,7 +34,7 @@ long __stdcall n_detoured_functions::wndproc( HWND window, unsigned int message,
 	if ( !chat_input )
 		g_input.on_wndproc( message, wide_param, long_param );
 
-	if ( g_input.is_key_released( VK_INSERT ) )
+	if ( g_input.is_key_released( g_menu.menu_key( ) ) )
 		g_menu.m_opened = !g_menu.m_opened;
 
 	const bool imgui_input = g_menu.m_opened || point_menu_is_opened( ) || g_movement_recorder.m_editor_open;
