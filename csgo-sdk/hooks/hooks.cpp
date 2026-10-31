@@ -314,6 +314,7 @@ void n_hooks::impl_t::release_render_resources( )
 	kill_effects_release_textures( );
 
 	g_misc.release_spectator_textures( );
+	boot_screen_release( );
 
 	g_mc_hud.release_textures( );
 	g_cod4_hud.release_textures( );

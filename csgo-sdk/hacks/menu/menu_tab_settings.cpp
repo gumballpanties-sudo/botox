@@ -1545,9 +1545,11 @@ void n_menu::impl_t::tab_misc( )
 						}
 					}
 
-					if ( style == 8 )
+					if ( style == 8 ) {
 						ImGui::SliderFloat( "size##spectatorlist eyes size", &GET_VARIABLE( g_variables.m_spectators_eyes_size, float ), 16.f,
 						                    64.f, "%.0f px" );
+						ImGui::Checkbox( "emoji##spectatorlist eyes emoji", &GET_VARIABLE( g_variables.m_spectators_eyes_emoji, bool ) );
+					}
 
 					if ( style == 11 ) {
 						ImGui::ColorEdit4( "title color##spectatorlist airplane title", &GET_VARIABLE( g_variables.m_spectators_airplane_title_color, c_color ),
@@ -1738,8 +1740,10 @@ void n_menu::impl_t::tab_misc( )
 								dp_color[ 3 ] = static_cast< std::uint8_t >( dp_alpha );
 						}
 					}
-					if ( type == 5 )
+					if ( type == 5 ) {
 						ImGui::Checkbox( "glow##deathparticles", &GET_VARIABLE( g_variables.m_death_particles_glow, bool ) );
+						ImGui::Checkbox( "stars##deathparticles", &GET_VARIABLE( g_variables.m_death_particles_soul_stars, bool ) );
+					}
 
 					if ( type == 7 ) {
 						ImGui::SliderFloat( "goo##deathparticlesmelt", &GET_VARIABLE( g_variables.m_death_particles_melt_goo, float ), 0.5f, 3.f, "%.2fx body",

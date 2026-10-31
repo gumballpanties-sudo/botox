@@ -226,6 +226,7 @@ namespace
 
 				particle.m_size  = rand_range( 1.f, 2.f ) * size;
 				particle.m_life  = rand_range( 0.7f, 1.f ) * life;
+				particle.m_seed  = rand01( );
 				particle.m_color = particle_color( );
 				if ( body )
 					want_body_color( particle, point, victim_index );
@@ -552,12 +553,12 @@ namespace
 		float m_su, m_sv;
 	};
 
-	enum e_kfx_kind : int { kfx_square, kfx_disc, kfx_glow, kfx_smoke };
+	enum e_kfx_kind : int { kfx_square, kfx_disc, kfx_glow, kfx_smoke, kfx_star };
 
 	// rebuilt every paint, drawn in kill_effects_world ( main thread both )
 	std::vector< kfx_vertex_t > g_kfx_quads{ };
 
-	// spin = 0..1 shader param packed into frac( kind ), smoke only
+	// spin = 0..1 shader param packed into frac( kind ), smoke + star only
 	void kfx_quad( const c_vector& at, const float radius, const float x0, const float y0, const float x1, const float y1, const e_kfx_kind kind,
 	               const ImU32 color, const float spin = 0.f )
 	{
@@ -2281,6 +2282,16 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 	const float glow = g < 0.4 ? 1.0 : g < 1.0 ? lerp( 1.0, 0.5, ( g - 0.4 ) / 0.6 ) : g < 1.7 ? lerp( 0.5, 0.16, ( g - 1.0 ) / 0.7 ) : lerp( 0.16, 0.0, saturate( ( g - 1.7 ) / 1.1 ) );
 
 	const float kind = shape.z;
+	if ( kind > 3.5 ) {
+		// star: 4 points, tip 1 / notch 0.43 ( star-2-solid svg ), frac( kind ) = orientation; fold to first octant, sign dist to tip-notch edge
+		const float spin = frac( kind ) * 6.2831853;
+		const float2 cs  = float2( cos( spin ), sin( spin ) );
+		float2 q         = abs( float2( shape.x * cs.x - shape.y * cs.y, shape.x * cs.y + shape.y * cs.x ) );
+		if ( q.y > q.x )
+			q = q.yx;
+		const float d = dot( q - float2( 1.0, 0.0 ), float2( 0.402, 0.916 ) );
+		return float4( color.rgb, color.a * saturate( -d / max( fwidth( d ), 1e-4 ) + 0.5 ) );
+	}
 	if ( kind > 2.5 ) {
 		// smoke: warped fbm puff, frac( kind ) = spin -> rotation + noise offset ( both wrap at 1 ), edge 0 before r = 1
 		const float spin = frac( kind ) * 6.2831853;
@@ -2818,7 +2829,8 @@ void kill_effects_paint( )
 	if ( g_kfx.empty( ) )
 		return;
 
-	const bool glow = GET_VARIABLE( g_variables.m_death_particles_glow, bool );
+	const bool glow  = GET_VARIABLE( g_variables.m_death_particles_glow, bool );
+	const bool stars = GET_VARIABLE( g_variables.m_death_particles_soul_stars, bool );
 
 	for ( kfx_particle_t& particle : g_kfx ) {
 		particle.m_age += dt;
@@ -2889,6 +2901,13 @@ void kill_effects_paint( )
 			// slow swirl, half spin each way
 			const float spin = particle.m_seed + particle.m_age * ( particle.m_seed < 0.5f ? 0.04f : -0.04f );
 			kfx_quad( particle.m_pos, size, -1.f, -1.f, 1.f, 1.f, kfx_smoke, color.get_u32( alpha * 0.55f ), spin - std::floor( spin ) );
+			continue;
+		}
+		if ( particle.m_style >= 0 && stars ) {
+			// star over its glow, m_seed = fixed random orientation
+			if ( glow )
+				kfx_quad( particle.m_pos, size, -2.8f, -2.8f, 2.8f, 2.8f, kfx_glow, color.get_u32( alpha * 0.5f ) );
+			kfx_quad( particle.m_pos, size * 1.6f, -1.f, -1.f, 1.f, 1.f, kfx_star, color.get_u32( alpha ), particle.m_seed );
 			continue;
 		}
 		if ( glow && particle.m_style >= 0 ) {

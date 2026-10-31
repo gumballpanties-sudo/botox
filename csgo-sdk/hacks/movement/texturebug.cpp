@@ -153,6 +153,15 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 	const int align_buttons   = cmd->m_buttons;
 	this->texture_bug( cmd );
 	this->head_bounce( cmd );
+	/* wall climb ran first and owns this air wall tick: tb keeps only a real catch. its park / wallstrafe / unstick replaced wc's
+	   flush park ( 10-31 log: 888 STOMP@texture_bug, act W 703 + K 164 = side shove + lost catches ) */
+	if ( g_wall_climb.active( cmd ) && !m_hit && !m_hs_hit && !m_hb_hit ) {
+		cmd->m_forward_move = pre_forward;
+		cmd->m_side_move    = pre_side;
+		cmd->m_buttons      = pre_buttons;
+		m_owns_cmd          = false;
+		reset_command( );
+	}
 	const bool caught = m_hit || m_hb_hit;
 	if ( caught && !s_caught_prev && GET_VARIABLE( g_variables.m_debug_log, bool ) )
 		s_trick_pending = m_hb_hit ? "head_bounce" : "texture_bug";

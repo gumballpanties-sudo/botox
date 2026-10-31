@@ -67,6 +67,7 @@ static void route_calc_page( )
 
 		ImGui::Checkbox( "snap points to nearest edge", &GET_VARIABLE( g_variables.m_route_calc_snap_edge, bool ) );
 		ImGui::Checkbox( "show key list", &GET_VARIABLE( g_variables.m_route_calc_show_keys, bool ) );
+		ImGui::Checkbox( "show path", &GET_VARIABLE( g_variables.m_route_calc_show_path, bool ) );
 		ImGui::Checkbox( "show combos on screen", &GET_VARIABLE( g_variables.m_route_calc_show_bar, bool ) );
 		ImGui::Checkbox( "advanced readout##route calc", &GET_VARIABLE( g_variables.m_route_calc_advanced_readout, bool ) );
 
@@ -647,9 +648,6 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "wall climb key", &GET_VARIABLE( g_variables.m_wall_climb_key, key_bind_t ) );
 						ImGui::Checkbox( "prevent slow", &GET_VARIABLE( g_variables.m_wall_climb_prevent_slow, bool ) );
 						ImGui::Checkbox( "crouch catches", &GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) );
-						if ( GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) )
-							ImGui::SliderInt( "stand ticks before crouch", &GET_VARIABLE( g_variables.m_wall_climb_duck_ticks, int ), 2, 16, "%d ticks" );
-						ImGui::Checkbox( "turn view off wall", &GET_VARIABLE( g_variables.m_wall_climb_visual_angles, bool ) );
 						ImGui::Checkbox( "show wall slope", &GET_VARIABLE( g_variables.m_show_wall_slope, bool ) );
 						if ( GET_VARIABLE( g_variables.m_show_wall_slope, bool ) ) {
 							ImGui::Label( "show wall slope key" );

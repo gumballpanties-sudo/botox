@@ -1507,6 +1507,25 @@ void n_movement::impl_t::route_calc_render( )
 	if ( !font )
 		return;
 
+	/* point order line, drawn under the markers */
+	if ( GET_VARIABLE( g_variables.m_route_calc_show_path, bool ) ) {
+		const unsigned int line_color = c_color( 110, 110, 110, 160 ).get_u32( );
+		c_vector_2d prev{ };
+		bool have_prev = false;
+		for ( const route_point_t& pt : data.points ) {
+			c_vector_2d screen;
+			if ( !g_render.world_to_screen( route_point_mark( pt ), screen ) ) {
+				have_prev = false;
+				continue;
+			}
+			if ( have_prev )
+				g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line,
+				                                   std::make_any< line_draw_object_t >( line_draw_object_t{ prev, screen, line_color, 1.f } ) );
+			prev      = screen;
+			have_prev = true;
+		}
+	}
+
 	for ( std::size_t i = 0; i < data.points.size( ); ++i ) {
 		c_vector_2d screen_pos;
 		if ( !g_render.world_to_screen( route_point_mark( data.points[ i ] ), screen_pos ) )

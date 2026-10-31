@@ -1025,8 +1025,6 @@ namespace n_variables
 		ADD_VARIABLE( key_bind_t, m_wall_climb_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_wall_climb_prevent_slow, true );
 		ADD_VARIABLE( bool, m_wall_climb_duck, true );
-		ADD_VARIABLE( int, m_wall_climb_duck_ticks, 2 );
-		ADD_VARIABLE( bool, m_wall_climb_visual_angles, false );
 		ADD_VARIABLE( bool, m_show_wall_slope, false );
 		ADD_VARIABLE( key_bind_t, m_show_wall_slope_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_auto_strafe, false );
@@ -1073,6 +1071,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_death_particles, false );
 		ADD_VARIABLE( int, m_death_particles_type, 0 );
 		ADD_VARIABLE( int, m_death_particles_soul_style, 0 );
+		ADD_VARIABLE( bool, m_death_particles_soul_stars, false );
 		ADD_VARIABLE( c_color, m_death_particles_color, c_color( 140, 200, 255, 255 ) );
 		ADD_VARIABLE( int, m_death_particles_amount, 8 );
 		ADD_VARIABLE( float, m_death_particles_size, 1.f );
@@ -1224,6 +1223,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_route_calc_allow_invalid, false );
 		ADD_VARIABLE( bool, m_route_calc_snap_edge, false );
 		ADD_VARIABLE( bool, m_route_calc_show_keys, true );
+		ADD_VARIABLE( bool, m_route_calc_show_path, true );
 		ADD_VARIABLE( bool, m_route_calc_show_bar, true );
 		ADD_VARIABLE( bool, m_route_calc_advanced_readout, false );
 		ADD_VARIABLE( bool, m_route_calc_pinned, false );
@@ -1431,6 +1431,7 @@ namespace n_variables
 		ADD_VARIABLE( std::string, m_spectators_kamibebra_gif_path, "" );
 		ADD_VARIABLE( float, m_spectators_kamibebra_gif_size, 64.f );
 		ADD_VARIABLE( float, m_spectators_eyes_size, 28.f );
+		ADD_VARIABLE( bool, m_spectators_eyes_emoji, false );
 		ADD_VARIABLE( c_color, m_spectators_airplane_title_color, c_color( 254, 254, 254, 254 ) );
 		ADD_VARIABLE( c_color, m_spectators_airplane_gradient_color, c_color( 39, 39, 39, 254 ) );
 		ADD_VARIABLE( c_color, m_spectators_airplane_local_color, c_color( 0, 254, 0, 254 ) );

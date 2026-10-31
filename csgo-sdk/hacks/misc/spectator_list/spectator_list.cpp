@@ -2409,7 +2409,100 @@ namespace
 		bool m_failed = false;
 	};
 
-	eye_row_texture_t eye_row_textures[ 2 ] = { };
+	/* 0 closed, 1 open, 2 emoji closed, 3 emoji open */
+	eye_row_texture_t eye_row_textures[ 4 ] = { };
+
+	/* twemoji eyes, 36 viewbox. ring = outer ellipse minus inner; closed = ring below y 20.1738 */
+	struct emoji_shape_t {
+		ImVec2 m_center;
+		float m_rx, m_ry;
+		float m_inner_rx, m_inner_ry; /* 0 = solid */
+		std::uint32_t m_color;
+	};
+
+	constexpr float k_emoji_lid_y = 20.1738f;
+
+	constexpr emoji_shape_t k_emoji_open[ 10 ] = {
+		{ { 8.828f, 18.f }, 7.953f, 13.281f, 0.f, 0.f, 0xFFF5F8FA },
+		{ { 8.828f, 18.f }, 8.703f, 14.031f, 7.203f, 12.531f, 0xFFE1E8ED },
+		{ { 6.594f, 18.f }, 4.96f, 4.96f, 0.f, 0.f, 0xFF8899A6 },
+		{ { 6.594f, 18.f }, 3.565f, 3.565f, 0.f, 0.f, 0xFF292F33 },
+		{ { 7.911f, 15.443f }, 1.426f, 1.426f, 0.f, 0.f, 0xFFF5F8FA },
+		{ { 27.234f, 18.f }, 7.953f, 13.281f, 0.f, 0.f, 0xFFF5F8FA },
+		{ { 27.234f, 18.f }, 8.703f, 14.031f, 7.203f, 12.531f, 0xFFE1E8ED },
+		{ { 25.f, 18.f }, 4.96f, 4.96f, 0.f, 0.f, 0xFF8899A6 },
+		{ { 25.f, 18.f }, 3.565f, 3.565f, 0.f, 0.f, 0xFF292F33 },
+		{ { 26.317f, 15.443f }, 1.426f, 1.426f, 0.f, 0.f, 0xFFF5F8FA },
+	};
+
+	constexpr emoji_shape_t k_emoji_closed[ 2 ] = {
+		{ { 8.828f, 18.f }, 8.703f, 14.031f, 7.203f, 12.531f, 0xFFAAAAAA },
+		{ { 27.234f, 18.f }, 8.703f, 14.031f, 7.203f, 12.531f, 0xFFAAAAAA },
+	};
+
+	bool emoji_inside( const emoji_shape_t& shape, const ImVec2& p )
+	{
+		const auto in = [ & ]( const float rx, const float ry ) {
+			const float dx = ( p.x - shape.m_center.x ) / rx, dy = ( p.y - shape.m_center.y ) / ry;
+			return dx * dx + dy * dy <= 1.f;
+		};
+
+		return in( shape.m_rx, shape.m_ry ) && !( shape.m_inner_rx > 0.f && in( shape.m_inner_rx, shape.m_inner_ry ) );
+	}
+
+	/* 4x4 supersample, painter order, straight alpha out */
+	void emoji_eye_pixels( const bool open, const eye_row_layout_t& layout, std::vector< std::uint32_t >& pixels )
+	{
+		constexpr int k_samples = 4;
+
+		const float scale = layout.m_icon / 36.f;
+		const ImVec2 box( layout.m_pad + layout.m_face + layout.m_gap, layout.m_pad + layout.m_radius - layout.m_icon * 0.5f );
+
+		const emoji_shape_t* shapes = open ? k_emoji_open : k_emoji_closed;
+		const int shape_count       = open ? IM_ARRAYSIZE( k_emoji_open ) : IM_ARRAYSIZE( k_emoji_closed );
+
+		for ( int y = 0; y < layout.m_height; y++ ) {
+			for ( int x = 0; x < layout.m_width; x++ ) {
+				int covered = 0;
+				float r = 0.f, g = 0.f, b = 0.f;
+
+				for ( int sy = 0; sy < k_samples; sy++ ) {
+					for ( int sx = 0; sx < k_samples; sx++ ) {
+						const ImVec2 p( ( x + ( sx + 0.5f ) / k_samples - box.x ) / scale, ( y + ( sy + 0.5f ) / k_samples - box.y ) / scale );
+
+						if ( !open && p.y < k_emoji_lid_y )
+							continue;
+
+						std::uint32_t color = 0;
+
+						for ( int i = 0; i < shape_count; i++ )
+							if ( emoji_inside( shapes[ i ], p ) )
+								color = shapes[ i ].m_color;
+
+						if ( !color )
+							continue;
+
+						covered++;
+						r += ( color >> 16 ) & 0xFF;
+						g += ( color >> 8 ) & 0xFF;
+						b += color & 0xFF;
+					}
+				}
+
+				std::uint32_t out = 0;
+
+				if ( covered ) {
+					const auto a8 = static_cast< std::uint32_t >( covered * 255 / ( k_samples * k_samples ) );
+					const auto r8 = static_cast< std::uint32_t >( r / covered + 0.5f ), g8 = static_cast< std::uint32_t >( g / covered + 0.5f ),
+					           b8 = static_cast< std::uint32_t >( b / covered + 0.5f );
+
+					out = ( a8 << 24 ) | ( r8 << 16 ) | ( g8 << 8 ) | b8;
+				}
+
+				pixels[ static_cast< std::size_t >( y ) * layout.m_width + x ] = out;
+			}
+		}
+	}
 
 	float segment_distance( const ImVec2& p, const ImVec2& a, const ImVec2& b )
 	{
@@ -2421,9 +2514,10 @@ namespace
 		return std::sqrt( ImLengthSqr( ImVec2( ap.x - ab.x * t, ap.y - ab.y * t ) ) );
 	}
 
-	IDirect3DTexture9* eye_row_texture( const bool open, const eye_row_layout_t& layout )
+	/* emoji rows = full color, no avatar ring (ring drawn tinted by caller) */
+	IDirect3DTexture9* eye_row_texture( const bool open, const bool emoji, const eye_row_layout_t& layout )
 	{
-		auto& row = eye_row_textures[ open ? 1 : 0 ];
+		auto& row = eye_row_textures[ ( emoji ? 2 : 0 ) + ( open ? 1 : 0 ) ];
 
 		if ( row.m_face == layout.m_face && ( row.m_texture || row.m_failed ) )
 			return row.m_texture;
@@ -2441,65 +2535,70 @@ namespace
 		row.m_face   = layout.m_face;
 		row.m_failed = true;
 
-		const float scale = layout.m_icon / 24.f;
-		const float drop  = open ? 0.f : k_eye_lid_drop;
-		const ImVec2 box( layout.m_pad + layout.m_face + layout.m_gap, layout.m_pad + layout.m_radius - layout.m_icon * 0.5f );
-
-		const auto at = [ & ]( const ImVec2& point ) { return ImVec2( box.x + point.x * scale, box.y + ( point.y + drop ) * scale ); };
-
-		std::vector< std::pair< ImVec2, ImVec2 > > segments{ };
-		std::vector< std::pair< ImVec2, float > > circles{ { ImVec2( layout.m_pad + layout.m_radius, layout.m_pad + layout.m_radius ), layout.m_radius } };
-
-		if ( open ) {
-			ImVec2 from = k_eye_lens_start;
-
-			for ( const auto& curve : k_eye_lens ) {
-				ImVec2 last = at( from );
-
-				for ( int step = 1; step <= k_eye_lens_steps; step++ ) {
-					const ImVec2 point = at( ImBezierCubicCalc( from, curve[ 0 ], curve[ 1 ], curve[ 2 ], step / static_cast< float >( k_eye_lens_steps ) ) );
-
-					segments.emplace_back( last, point );
-					last = point;
-				}
-
-				from = curve[ 2 ];
-			}
-
-			circles.emplace_back( at( k_eye_iris_center ), k_eye_iris_radius * scale );
-		} else {
-			for ( int i = 1; i < IM_ARRAYSIZE( k_eye_lid ); i++ )
-				segments.emplace_back( at( k_eye_lid[ i - 1 ] ), at( k_eye_lid[ i ] ) );
-
-			for ( const auto& lash : k_eye_lashes )
-				segments.emplace_back( at( lash[ 0 ] ), at( lash[ 1 ] ) );
-		}
-
 		const int width = layout.m_width, height = layout.m_height;
-		const float half = layout.m_stroke * 0.5f;
 
 		std::vector< std::uint32_t > pixels( static_cast< std::size_t >( width ) * height );
 
-		for ( int y = 0; y < height; y++ ) {
-			for ( int x = 0; x < width; x++ ) {
-				const ImVec2 p( x + 0.5f, y + 0.5f );
+		if ( emoji ) {
+			emoji_eye_pixels( open, layout, pixels );
+		} else {
+			const float scale = layout.m_icon / 24.f;
+			const float drop  = open ? 0.f : k_eye_lid_drop;
+			const ImVec2 box( layout.m_pad + layout.m_face + layout.m_gap, layout.m_pad + layout.m_radius - layout.m_icon * 0.5f );
 
-				float distance = FLT_MAX;
+			const auto at = [ & ]( const ImVec2& point ) { return ImVec2( box.x + point.x * scale, box.y + ( point.y + drop ) * scale ); };
 
-				for ( const auto& [ a, b ] : segments )
-					distance = ImMin( distance, segment_distance( p, a, b ) );
+			std::vector< std::pair< ImVec2, ImVec2 > > segments{ };
+			std::vector< std::pair< ImVec2, float > > circles{ { ImVec2( layout.m_pad + layout.m_radius, layout.m_pad + layout.m_radius ), layout.m_radius } };
 
-				for ( const auto& [ center, radius ] : circles )
-					distance = ImMin( distance, std::fabs( std::sqrt( ImLengthSqr( ImVec2( p.x - center.x, p.y - center.y ) ) ) - radius ) );
+			if ( open ) {
+				ImVec2 from = k_eye_lens_start;
 
-				const float glyph = ImSaturate( half + 0.5f - distance );
-				const float halo  = ImSaturate( half + 1.5f - distance ) * k_eye_halo_alpha;
-				const float alpha = glyph + halo * ( 1.f - glyph );
-				const float gray  = alpha > 0.f ? glyph / alpha : 0.f;
+				for ( const auto& curve : k_eye_lens ) {
+					ImVec2 last = at( from );
 
-				const auto a8 = static_cast< std::uint32_t >( alpha * 255.f + 0.5f ), g8 = static_cast< std::uint32_t >( gray * 255.f + 0.5f );
+					for ( int step = 1; step <= k_eye_lens_steps; step++ ) {
+						const ImVec2 point = at( ImBezierCubicCalc( from, curve[ 0 ], curve[ 1 ], curve[ 2 ], step / static_cast< float >( k_eye_lens_steps ) ) );
 
-				pixels[ static_cast< std::size_t >( y ) * width + x ] = ( a8 << 24 ) | ( g8 << 16 ) | ( g8 << 8 ) | g8;
+						segments.emplace_back( last, point );
+						last = point;
+					}
+
+					from = curve[ 2 ];
+				}
+
+				circles.emplace_back( at( k_eye_iris_center ), k_eye_iris_radius * scale );
+			} else {
+				for ( int i = 1; i < IM_ARRAYSIZE( k_eye_lid ); i++ )
+					segments.emplace_back( at( k_eye_lid[ i - 1 ] ), at( k_eye_lid[ i ] ) );
+
+				for ( const auto& lash : k_eye_lashes )
+					segments.emplace_back( at( lash[ 0 ] ), at( lash[ 1 ] ) );
+			}
+
+			const float half = layout.m_stroke * 0.5f;
+
+			for ( int y = 0; y < height; y++ ) {
+				for ( int x = 0; x < width; x++ ) {
+					const ImVec2 p( x + 0.5f, y + 0.5f );
+
+					float distance = FLT_MAX;
+
+					for ( const auto& [ a, b ] : segments )
+						distance = ImMin( distance, segment_distance( p, a, b ) );
+
+					for ( const auto& [ center, radius ] : circles )
+						distance = ImMin( distance, std::fabs( std::sqrt( ImLengthSqr( ImVec2( p.x - center.x, p.y - center.y ) ) ) - radius ) );
+
+					const float glyph = ImSaturate( half + 0.5f - distance );
+					const float halo  = ImSaturate( half + 1.5f - distance ) * k_eye_halo_alpha;
+					const float alpha = glyph + halo * ( 1.f - glyph );
+					const float gray  = alpha > 0.f ? glyph / alpha : 0.f;
+
+					const auto a8 = static_cast< std::uint32_t >( alpha * 255.f + 0.5f ), g8 = static_cast< std::uint32_t >( gray * 255.f + 0.5f );
+
+					pixels[ static_cast< std::size_t >( y ) * width + x ] = ( a8 << 24 ) | ( g8 << 16 ) | ( g8 << 8 ) | g8;
+				}
 			}
 		}
 
@@ -2876,6 +2975,8 @@ void n_misc::impl_t::draw_spectator_list_eyes( )
 		const c_color local_color = GET_VARIABLE( g_variables.m_spectators_list_text_color_one, c_color );
 		const c_color other_color = GET_VARIABLE( g_variables.m_spectators_list_text_color_two, c_color );
 
+		const bool emoji = GET_VARIABLE( g_variables.m_spectators_eyes_emoji, bool );
+
 		for ( int i = 0; i < count; i++ ) {
 			const auto& entry = entries[ i ];
 
@@ -2890,9 +2991,19 @@ void n_misc::impl_t::draw_spectator_list_eyes( )
 			else
 				draw_list->AddCircleFilled( center, radius, IM_COL32( 45, 45, 45, 200 ) );
 
-			if ( const auto art = eye_row_texture( entry.m_watching_local, layout ) )
+			const ImU32 tint = ( entry.m_watching_local ? local_color : other_color ).get_u32( );
+
+			if ( emoji ) {
+				/* ring: texture ring is tinted, emoji art is not -> draw ring here */
+				const ImU32 halo = IM_COL32( 0, 0, 0, static_cast< int >( ( ( tint >> IM_COL32_A_SHIFT ) & 0xFF ) * k_eye_halo_alpha ) );
+
+				draw_list->AddCircle( center, radius, halo, 0, layout.m_stroke + 2.f );
+				draw_list->AddCircle( center, radius, tint, 0, layout.m_stroke );
+			}
+
+			if ( const auto art = eye_row_texture( entry.m_watching_local, emoji, layout ) )
 				draw_list->AddImage( art, row_min, ImVec2( row_min.x + layout.m_width, row_min.y + layout.m_height ), ImVec2( 0.f, 0.f ),
-				                     ImVec2( 1.f, 1.f ), ( entry.m_watching_local ? local_color : other_color ).get_u32( ) );
+				                     ImVec2( 1.f, 1.f ), emoji ? IM_COL32_WHITE : tint );
 		}
 	}
 	ImGui::End( );
