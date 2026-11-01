@@ -22,7 +22,11 @@
 #include <unordered_map>
 #include <utility>
 
+#include "korean_common_ranges.h"
+
 extern char g_ft_build_fail[ 160 ];
+extern char g_font_tex_fail[ 160 ];
+extern void botox_dbg_log( const char* fmt, ... );
 
 static unsigned largest_free_block_mb( )
 {
@@ -48,10 +52,13 @@ struct font_set_t {
 	ImFont* m_custom_fonts[ e_custom_font_names::custom_font_name_max ]{ };
 	float m_build_ms = 0.f;
 	void* m_stage    = nullptr;
+	int m_upload_fails = 0;
+	std::chrono::steady_clock::time_point m_retry_at{ };
 };
 
 /* 2 mb of texture a frame: a reload uploads over frames, never in one */
 constexpr unsigned int k_font_upload_budget = 2u << 20;
+constexpr int k_font_upload_tries           = 5;
 
 /* side atlas of scaled indicator fonts. m_base = the indicator font it was baked against (a main rebuild
    retires it). TexID = our own d3d texture, made on the render thread (update_indicator_fonts) */
@@ -218,11 +225,12 @@ namespace
 		0,
 	};
 
+	/* build worker only (one at a time) */
+	std::unordered_map< std::string, std::vector< unsigned char > > g_font_files{ };
+
 	const std::vector< unsigned char >& font_file( const std::string& path )
 	{
-		static std::unordered_map< std::string, std::vector< unsigned char > > cache{ };
-
-		const auto [ it, inserted ] = cache.try_emplace( path );
+		const auto [ it, inserted ] = g_font_files.try_emplace( path );
 
 		if ( inserted ) {
 			std::ifstream file( path, std::ios::binary | std::ios::ate );
@@ -488,7 +496,7 @@ static void merge_extended_glyphs( ImFontAtlas* atlas, const float size, const u
 		const std::string malgun = system_font_path( "malgun.ttf" ), gulim = system_font_path( "gulim.ttc" );
 		const char* candidates[] = { malgun.c_str( ), gulim.c_str( ), nullptr };
 
-		merge_font( atlas, candidates,size, builder_flags, atlas->GetGlyphRangesKorean( ) );
+		merge_font( atlas, candidates,size, builder_flags, k_korean_common_ranges );
 	}
 
 	{
@@ -811,7 +819,21 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 	                                                                          : fonts[ e_font_names::font_name_verdana_11 ],
 	                    e_glyph_tier::glyph_tier_basic );
 
-	return ImGuiFreeType::BuildFontAtlas( atlas, 0x0 );
+	const bool built = ImGuiFreeType::BuildFontAtlas( atlas, 0x0 );
+
+	/* full tier fallback files (cjk .ttc, ~50 mb) are read by the build only: drop their bytes. the dpi twin bake reads
+	   base + latin / symbol merges only (build_dpi_fonts), a nulled entry is never touched again */
+	for ( ImFontConfig& config : atlas->ConfigData )
+		if ( config.MergeMode && config.GlyphRanges != k_latin_ext_ranges && config.GlyphRanges != k_symbol_ranges ) {
+			config.FontData     = nullptr;
+			config.FontDataSize = 0;
+		}
+
+	std::erase_if( g_font_files, [ & ]( const auto& entry ) {
+		return std::ranges::none_of( atlas->ConfigData, [ & ]( const ImFontConfig& config ) { return config.FontData == entry.second.data( ); } );
+	} );
+
+	return built;
 }
 
 /* worker body: one build, parked for on_end_scene. the flag drops LAST - it is what eject and the
@@ -830,6 +852,10 @@ static void build_fonts_worker( const font_request_t request )
 		set->m_stage = ImGui_ImplDX9_StageFontsTexture( set->m_atlas );
 
 	set->m_build_ms = std::chrono::duration< float, std::milli >( std::chrono::steady_clock::now( ) - start ).count( );
+
+	botox_dbg_log( "FONT: main built ok=%d stage=%d %.0f ms ind='%s' %d fell_back=%d", set->m_atlas != nullptr, set->m_stage != nullptr, set->m_build_ms,
+	               request.m_indicator.m_name.c_str( ), request.m_indicator.m_size,
+	               set->m_custom_fonts[ e_custom_font_names::custom_font_name_indicator ] == set->m_fonts[ e_font_names::font_name_indicator_29 ] );
 
 	discard_font_set( g_render.m_pending_fonts.exchange( set ) );
 
@@ -865,6 +891,9 @@ void n_render::impl_t::install_fonts( font_set_t* set )
 		std::ranges::copy( set->m_fonts, this->m_fonts );
 		std::ranges::copy( set->m_custom_fonts, this->m_custom_fonts );
 	}
+
+	const ImFont* const ind = this->m_custom_fonts[ e_custom_font_names::custom_font_name_indicator ];
+	botox_dbg_log( "FONT: installed atlas=%p ind=%p %.1f px", static_cast< void* >( set->m_atlas ), static_cast< const void* >( ind ), ind ? ind->FontSize : 0.f );
 
 	/* queued text carries the retired atlas' ImFont pointers: drop it, the game thread refills next pass */
 	{
@@ -957,6 +986,8 @@ static void build_indicator_fonts_worker( const indicator_font_request_t request
 void n_render::impl_t::update_indicator_fonts( IDirect3DDevice9* device )
 {
 	if ( indicator_font_set_t* const set = this->m_pending_indicator_fonts.exchange( nullptr ) ) {
+		botox_dbg_log( "FONT: ind bake done ok=%d base=%p live=%p", set->m_atlas != nullptr, static_cast< const void* >( set->m_base ),
+		               static_cast< const void* >( this->m_custom_fonts[ e_custom_font_names::custom_font_name_indicator ] ) );
 		if ( !set->m_atlas ) {
 			g_console.print< n_console::log_level::WARNING >( "indicator font bake failed (unreadable font) - drawing the base font scaled" );
 			delete set;
@@ -1003,6 +1034,8 @@ void n_render::impl_t::update_indicator_fonts( IDirect3DDevice9* device )
 	s_baked                    = want;
 	this->m_font_build_running = true;
 
+	botox_dbg_log( "FONT: ind bake start base=%p %.1f px '%s' scales=%d", static_cast< const void* >( want.m_base ), want.m_base_size, want.m_name.c_str( ),
+	               want.m_count );
 	std::thread( build_indicator_fonts_worker, std::move( want ) ).detach( );
 }
 
@@ -1872,25 +1905,51 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& under, cons
 	if ( !this->m_uploading_fonts && !this->m_font_build_running )
 		this->m_uploading_fonts = this->m_pending_fonts.exchange( nullptr );
 
-	if ( font_set_t* const set = this->m_uploading_fonts ) {
+	/* failed upload = retried every 2 s, k_font_upload_tries in all, before the set is dropped (vram can be short for a moment) */
+	if ( font_set_t* const set = this->m_uploading_fonts; set && std::chrono::steady_clock::now( ) >= set->m_retry_at ) {
 		const int step = set->m_stage ? ImGui_ImplDX9_UploadFontsStep( set->m_stage, k_font_upload_budget ) : 1;
 
-		if ( step != 0 )
+		if ( step > 0 ) {
 			this->m_uploading_fonts = nullptr;
-
-		if ( step > 0 )
 			this->install_fonts( set );
+		}
 		else if ( step < 0 ) {
-			g_console.print< n_console::log_level::WARNING >( "font texture upload failed (out of video memory) - kept the old fonts" );
-			discard_font_set( set );
+			const std::string why = g_font_tex_fail;
+			const int tries       = ++set->m_upload_fails;
+
+			if ( tries < k_font_upload_tries ) {
+				set->m_retry_at = std::chrono::steady_clock::now( ) + std::chrono::seconds( 2 );
+				g_console.print< n_console::log_level::WARNING >(
+					std::vformat( "font texture upload failed ({}) - retry {}/{} in 2 s", std::make_format_args( why, tries, k_font_upload_tries ) ).c_str( ) );
+			}
+			else {
+				this->m_uploading_fonts = nullptr;
+				g_console.print< n_console::log_level::WARNING >(
+					std::vformat( "font texture upload failed ({}) - gave up, kept the old fonts", std::make_format_args( why ) ).c_str( ) );
+				discard_font_set( set );
+			}
 		}
 	}
 
 	/* reload starts a worker, never builds here. pressed mid-build: flag stays up, next build starts after */
+	/* waiting reload: log once a second so a stuck flag shows */
+	if ( this->m_reload_fonts && ( this->m_font_build_running || this->m_uploading_fonts ) ) {
+		static auto s_said = std::chrono::steady_clock::time_point{ };
+		if ( const auto now = std::chrono::steady_clock::now( ); now - s_said > std::chrono::seconds( 1 ) ) {
+			s_said = now;
+			botox_dbg_log( "FONT: reload waiting running=%d uploading=%d", this->m_font_build_running.load( ), this->m_uploading_fonts != nullptr );
+		}
+	}
+
 	if ( this->m_reload_fonts && !this->m_font_build_running && !this->m_uploading_fonts ) {
 		this->m_font_build_running = true;
 		this->m_reload_fonts       = false;
 
+		/* live atlas' cpu pixels (~33 mb) go first: the new one needs a block that size in a 32 bit process. its texture
+		   stays up, mitosis / soft shadows draw plain text till the swap */
+		ImGui::GetIO( ).Fonts->ClearTexData( );
+
+		botox_dbg_log( "FONT: reload start" );
 		std::thread( build_fonts_worker, current_font_request( ) ).detach( );
 	}
 

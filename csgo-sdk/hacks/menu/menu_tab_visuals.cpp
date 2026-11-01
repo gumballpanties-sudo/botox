@@ -701,7 +701,7 @@ void n_menu::impl_t::tab_visuals( )
 					two_tone_used |= slot == n_chams::chams_material_two_tone;
 
 			if ( two_tone_used ) {
-				ImGui::SliderFloat( "two tone threshold", &GET_VARIABLE( g_variables.m_chams_two_tone_threshold, float ), 0.f, 1.5f, "%.2f",
+				ImGui::SliderFloat( "two tone threshold", &GET_VARIABLE( g_variables.m_chams_two_tone_threshold, float ), 0.f, 1.f, "%.2f",
 				                    ImGuiSliderFlags_AlwaysClamp );
 				ImGui::SliderFloat( "two tone edge", &GET_VARIABLE( g_variables.m_chams_two_tone_edge, float ), 0.f, 0.5f, "%.2f",
 				                    ImGuiSliderFlags_AlwaysClamp );
@@ -2130,16 +2130,6 @@ void n_menu::impl_t::tab_visuals( )
 					[ & ]( ) {
 						ImGui::Label( "hardpoint key" );
 						ImGui::Keybind( "hardpoint key##cod4", &GET_VARIABLE( g_variables.m_cod4_hud_hardpoint_key, key_bind_t ), false );
-
-						static char path_buffer[ 260 ] = { };
-						static std::string path_seen   = { "\x01" };
-						auto& path_var                 = GET_VARIABLE( g_variables.m_cod4_hud_path, std::string );
-						if ( path_var != path_seen ) {
-							strncpy_s( path_buffer, path_var.c_str( ), _TRUNCATE );
-							path_seen = path_var;
-						}
-						if ( ImGui::InputText( "cod4 folder (empty = steam)##cod4", path_buffer, IM_ARRAYSIZE( path_buffer ) ) )
-							path_var = path_seen = path_buffer;
 
 						n_cod4_hud::draw_options( );
 					},

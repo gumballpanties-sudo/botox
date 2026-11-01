@@ -46,6 +46,7 @@ void ImGui_ImplDX9_SetTwinTextureA8( void* texture ) { g_TwinTextureA8 = ( LPDIR
 // botox: font texture levels ( 100 / 50 / 25 % ), the dpi scale's floor is 25 %
 static const int k_font_mip_levels = 3;
 void botox_dbg_log( const char* fmt, ... ); // globals/logger/debug_log.cpp
+char g_font_tex_fail[ 160 ] = { }; // botox: last UploadFontsStep failure, render.cpp prints it
 
 // botox: offscreen layer for ImGui_ImplDX9_RenderDrawDataFaded, D3DPOOL_DEFAULT so it goes with the other device objects
 static LPDIRECT3DTEXTURE9 g_LayerTexture = NULL;
@@ -534,11 +535,14 @@ struct ImGui_ImplDX9_FontStage {
 	int w[ k_font_mip_levels ], h[ k_font_mip_levels ];
 	int levels;
 	LPDIRECT3DTEXTURE9 tex;
-	bool a8;
+	LPDIRECT3DTEXTURE9 staging; // botox: SYSTEMMEM strip, tex filled with UpdateSurface ( upd )
+	int staging_h;
+	bool a8, upd;
 	int level, row;
 	unsigned int ms_start;
 };
 static ImGui_ImplDX9_FontStage* g_UploadingStage = NULL;
+static const int k_font_staging_rows             = 256;
 
 void* ImGui_ImplDX9_StageFontsTexture( ImFontAtlas* atlas )
 {
@@ -547,6 +551,9 @@ void* ImGui_ImplDX9_StageFontsTexture( ImFontAtlas* atlas )
 	   imgui wrote through null (crash on config load). a colour build ( LoadColor ) is still rgba. */
 	unsigned char* alpha = NULL;
 	int width = atlas->TexWidth, height = atlas->TexHeight;
+	// botox: built but cpu pixels freed ( render.cpp, reload start ): GetTexDataAsAlpha8 would rebuild it here
+	if ( atlas->TexReady && !atlas->TexPixelsAlpha8 && !atlas->TexPixelsRGBA32 )
+		return NULL;
 	if ( !atlas->TexPixelsRGBA32 )
 		atlas->GetTexDataAsAlpha8( &alpha, &width, &height );
 	if ( !atlas->TexPixelsRGBA32 && !alpha )
@@ -599,6 +606,8 @@ void ImGui_ImplDX9_FreeFontsStage( void* stage )
 		g_UploadingStage = NULL;
 	if ( s->tex )
 		s->tex->Release( );
+	if ( s->staging )
+		s->staging->Release( );
 	for ( int l = 1; l < s->levels; l++ )
 		IM_FREE( s->px[ l ] );
 	IM_FREE( s );
@@ -618,25 +627,45 @@ int ImGui_ImplDX9_UploadFontsStep( void* stage, unsigned int budget_bytes )
 			D3DDISPLAYMODE mode;
 			if ( g_pd3dDevice->GetDirect3D( &d3d ) == D3D_OK && d3d ) {
 				s->a8 = g_pd3dDevice->GetCreationParameters( &cp ) == D3D_OK && g_pd3dDevice->GetDisplayMode( 0, &mode ) == D3D_OK &&
-				        d3d->CheckDeviceFormat( cp.AdapterOrdinal, cp.DeviceType, mode.Format, D3DUSAGE_DYNAMIC, D3DRTYPE_TEXTURE, D3DFMT_A8 ) == D3D_OK;
+				        d3d->CheckDeviceFormat( cp.AdapterOrdinal, cp.DeviceType, mode.Format, 0, D3DRTYPE_TEXTURE, D3DFMT_A8 ) == D3D_OK;
 				d3d->Release( );
 			}
 		}
 
+		/* botox: plain DEFAULT first = video memory only, filled from a small SYSTEMMEM strip with UpdateSurface. a DYNAMIC
+		   texture is driver memory mapped into our 32 bit address space: a 30+ mb atlas failed OUTOFVIDEOMEMORY there.
+		   DYNAMIC + LockRect stays as the fallback */
 		const D3DFORMAT format = s->a8 ? D3DFMT_A8 : D3DFMT_A8R8G8B8;
-		HRESULT hr = g_pd3dDevice->CreateTexture( s->w[ 0 ], s->h[ 0 ], s->levels, D3DUSAGE_DYNAMIC, format, D3DPOOL_DEFAULT, &s->tex, NULL );
-		// botox: no room for the chain = old single level, text just minifies rough again
-		if ( hr < 0 && s->levels > 1 ) {
-			for ( int l = 1; l < s->levels; l++ )
-				IM_FREE( s->px[ l ] );
-			s->levels = 1;
-			hr        = g_pd3dDevice->CreateTexture( s->w[ 0 ], s->h[ 0 ], 1, D3DUSAGE_DYNAMIC, format, D3DPOOL_DEFAULT, &s->tex, NULL );
+		HRESULT hr             = E_FAIL;
+		for ( const DWORD usage : { ( DWORD )0, ( DWORD )D3DUSAGE_DYNAMIC } ) {
+			s->upd = usage == 0;
+			if ( s->upd && !s->staging ) {
+				s->staging_h = s->h[ 0 ] < k_font_staging_rows ? s->h[ 0 ] : k_font_staging_rows;
+				if ( g_pd3dDevice->CreateTexture( s->w[ 0 ], s->staging_h, 1, 0, format, D3DPOOL_SYSTEMMEM, &s->staging, NULL ) < 0 ) {
+					s->staging = NULL;
+					continue;
+				}
+			}
+			hr = g_pd3dDevice->CreateTexture( s->w[ 0 ], s->h[ 0 ], s->levels, usage, format, D3DPOOL_DEFAULT, &s->tex, NULL );
+			// botox: no room for the chain = old single level, text just minifies rough again
+			if ( hr < 0 && s->levels > 1 ) {
+				for ( int l = 1; l < s->levels; l++ )
+					IM_FREE( s->px[ l ] );
+				s->levels = 1;
+				hr        = g_pd3dDevice->CreateTexture( s->w[ 0 ], s->h[ 0 ], 1, usage, format, D3DPOOL_DEFAULT, &s->tex, NULL );
+			}
+			if ( hr >= 0 )
+				break;
 		}
 		if ( hr < 0 ) {
+			D3DCAPS9 caps = { };
+			g_pd3dDevice->GetDeviceCaps( &caps );
+			snprintf( g_font_tex_fail, sizeof( g_font_tex_fail ), "create hr=%08x %dx%d %s, device max %lux%lu", ( unsigned )hr, s->w[ 0 ], s->h[ 0 ],
+			          s->a8 ? "a8" : "argb", caps.MaxTextureWidth, caps.MaxTextureHeight );
 			// botox: one line per failure streak, NewFrame retries every frame ( text = blocks meanwhile )
 			static int s_fails = 0;
 			if ( s_fails++ % 256 == 0 )
-				botox_dbg_log( "FONT: texture create failed hr=%08x %dx%d a8=%d fails=%d", ( unsigned )hr, s->w[ 0 ], s->h[ 0 ], ( int )s->a8, s_fails );
+				botox_dbg_log( "FONT: texture %s fails=%d", g_font_tex_fail, s_fails );
 			s->tex = NULL;
 			return -1;
 		}
@@ -655,14 +684,28 @@ int ImGui_ImplDX9_UploadFontsStep( void* stage, unsigned int budget_bytes )
 			rows = 1;
 		if ( rows > ( size_t )( lh - s->row ) )
 			rows = ( size_t )( lh - s->row );
+		if ( s->upd && rows > ( size_t )s->staging_h )
+			rows = ( size_t )s->staging_h;
 
-		RECT rect = { 0, s->row, lw, s->row + ( LONG )rows };
-		D3DLOCKED_RECT locked;
-		if ( s->tex->LockRect( s->level, &locked, &rect, 0 ) != D3D_OK ) {
-			// botox: drop it, or NewFrame sees a texture and never retries - text stays blank
-			botox_dbg_log( "FONT: texture lock failed %dx%d a8=%d level=%d", s->w[ 0 ], s->h[ 0 ], ( int )s->a8, s->level );
+		// botox: drop it, or NewFrame sees a texture and never retries - text stays blank. next step starts over
+		const auto drop = [ & ]( const char* what, const HRESULT hr ) {
+			snprintf( g_font_tex_fail, sizeof( g_font_tex_fail ), "%s hr=%08x %dx%d %s level %d", what, ( unsigned )hr, s->w[ 0 ], s->h[ 0 ],
+			          s->a8 ? "a8" : "argb", s->level );
+			botox_dbg_log( "FONT: texture %s", g_font_tex_fail );
+			s->tex->Release( );
+			s->tex = NULL;
+			if ( g_UploadingStage == s )
+				g_UploadingStage = NULL;
 			return -1;
-		}
+		};
+
+		/* upd: rows go to the strip's top, then UpdateSurface puts them at s->row */
+		LPDIRECT3DTEXTURE9 const target = s->upd ? s->staging : s->tex;
+		const UINT lock_level           = s->upd ? 0 : ( UINT )s->level;
+		RECT rect                       = { 0, s->upd ? 0 : s->row, lw, ( s->upd ? 0 : s->row ) + ( LONG )rows };
+		D3DLOCKED_RECT locked;
+		if ( const HRESULT hr = target->LockRect( lock_level, &locked, &rect, 0 ); hr != D3D_OK )
+			return drop( "lock", hr );
 		for ( size_t i = 0; i < rows; i++ ) {
 			const size_t y         = ( size_t )s->row + i;
 			unsigned char* const row = ( unsigned char* )locked.pBits + locked.Pitch * i;
@@ -679,7 +722,24 @@ int ImGui_ImplDX9_UploadFontsStep( void* stage, unsigned int budget_bytes )
 			for ( int x = 0; x < lw; x++ )
 				dst[ x ] = IM_COL32( 255, 255, 255, src[ x ] );
 		}
-		s->tex->UnlockRect( s->level );
+		target->UnlockRect( lock_level );
+
+		if ( s->upd ) {
+			IDirect3DSurface9 *from = NULL, *to = NULL;
+			HRESULT hr = s->staging->GetSurfaceLevel( 0, &from );
+			if ( hr >= 0 )
+				hr = s->tex->GetSurfaceLevel( s->level, &to );
+			if ( hr >= 0 ) {
+				const POINT at = { 0, s->row };
+				hr             = g_pd3dDevice->UpdateSurface( from, &rect, to, &at );
+			}
+			if ( from )
+				from->Release( );
+			if ( to )
+				to->Release( );
+			if ( hr < 0 )
+				return drop( "update", hr );
+		}
 
 		spent += rows * row_bytes;
 		s->row += ( int )rows;
@@ -705,8 +765,8 @@ void ImGui_ImplDX9_InstallFontsTexture( void* stage )
 	double bytes = 0.0;
 	for ( int level = 0; level < s->levels; level++ )
 		bytes += ( double )s->w[ level ] * s->h[ level ] * ( s->a8 ? 1 : 4 );
-	botox_dbg_log( "FONT: texture up %dx%d %s levels=%d = %.1f mb in %u ms", s->w[ 0 ], s->h[ 0 ], s->a8 ? "a8" : "argb", s->levels,
-	               bytes / ( 1024.0 * 1024.0 ), ( unsigned )( GetTickCount( ) - s->ms_start ) );
+	botox_dbg_log( "FONT: texture up %dx%d %s %s levels=%d = %.1f mb in %u ms", s->w[ 0 ], s->h[ 0 ], s->a8 ? "a8" : "argb", s->upd ? "default" : "dynamic",
+	               s->levels, bytes / ( 1024.0 * 1024.0 ), ( unsigned )( GetTickCount( ) - s->ms_start ) );
 
 	ImGui_ImplDX9_FreeFontsStage( s );
 }

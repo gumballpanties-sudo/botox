@@ -78,7 +78,7 @@ for (var hudHaBg of hudHa.FindChildrenWithClassTraverse('hud-HA-bg')) {
     hudHaBg.style.opacity = '1.0';
 }
 for (var hudHaBgH of hudHa.FindChildrenWithClassTraverse('hud-HA-bg-h')) {
-    hudHaBgH.style.backgroundImage = 'url("https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/hp.png")'; // HP.png
+    hudHaBgH.style.backgroundImage = 'url("https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/hp.png")'; // HP.png
     hudHaBgH.style.backgroundSize = '107% 100%';
     hudHaBgH.style.backgroundImgOpacity = '1';
     hudHaBgH.style.width = '200px';
@@ -87,7 +87,7 @@ for (var hudHaBgH of hudHa.FindChildrenWithClassTraverse('hud-HA-bg-h')) {
 }
 
 for (var hudHaBgA of hudHa.FindChildrenWithClassTraverse('hud-HA-bg-a')) {
-    hudHaBgA.style.backgroundImage = 'url("https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/armor.png")'; // Armor.png
+    hudHaBgA.style.backgroundImage = 'url("https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/armor.png")'; // Armor.png
     hudHaBgA.style.backgroundSize = '100% 100%';
     hudHaBgA.style.backgroundImgOpacity = '1.0';
     hudHaBgA.style.width = '210px';
@@ -105,21 +105,21 @@ for (var onDmg of hudHa.FindChildrenWithClassTraverse('hud-HA--on-damage')) {
 
 for (var oncrit of hudHa.FindChildrenWithClassTraverse('hud-HA--critical')) {
     for (var hudHaBg of oncrit.FindChildTraverse('HudHealthArmor').FindChildrenWithClassTraverse('hud-HA-bg-h')) {
-        hudHaBg.style.backgroundImage = 'url("https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/hpred.png")';
+        hudHaBg.style.backgroundImage = 'url("https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/hpred.png")';
         hudHaBg.style.backgroundImgOpacity = '0.92';
     }
 }
 
 for (var health of contextPanel.FindChildTraverse('HudHealthArmor').FindChildrenWithClassTraverse('hud-HA-icon--health')) {
 
-    health.SetImage('https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/healtharmor/hp.png');
+    health.SetImage('https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/healtharmor/hp.png');
     health.style.marginTop = '0px';
     health.style.overflow = 'noclip';
     health.style.backgroundColor = '#00000000';
 }
 
 for (var shield of contextPanel.FindChildTraverse('HudHealthArmor').FindChildrenWithClassTraverse('hud-HA-icon--armor')) {
-    shield.SetImage('https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/healtharmor/armor.png');
+    shield.SetImage('https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/healtharmor/armor.png');
     shield.style.marginTop = '0px';
     shield.style.overflow = 'noclip';
     shield.style.backgroundColor = '#00000000';

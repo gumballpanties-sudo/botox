@@ -1985,7 +1985,7 @@ void n_menu::impl_t::tab_misc( )
 			ImGui::OptionPopup(
 				"discord rpc settings",
 				[]( ) {
-					image_path_input( "image url##discord rpc", "https://i.imgur.com/KDUzwZf.png", GET_VARIABLE( g_variables.m_discord_rpc_image, std::string ),
+					image_path_input( "image url##discord rpc", "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/misc/KDUzwZf.png", GET_VARIABLE( g_variables.m_discord_rpc_image, std::string ),
 					                  true );
 				},
 				ImVec2( 220.f, -1.f ) );

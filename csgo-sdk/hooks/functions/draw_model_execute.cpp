@@ -232,7 +232,11 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 			g_chams.draw_layers( sound_layers, sound_colors, sound_darks, true, sound_alpha, draw_live );
 	}
 
-	if ( draw_backtrack ) {
+	/* translucent two tone ghosts lay depth (prepass vs own inner parts): drawn after the live model so they blend over it, not cut it */
+	const bool backtrack_late = draw_backtrack && !GET_VARIABLE( g_variables.m_chams_backtrack_xqz, bool ) &&
+	                            std::find( backtrack_layers.begin( ), backtrack_layers.end( ), n_chams::chams_material_two_tone ) != backtrack_layers.end( );
+
+	const auto draw_backtrack_records = [ & ]( ) {
 		const int backtrack_type = GET_VARIABLE( g_variables.m_chams_backtrack_type, int );
 
 		/* not const: m_matrix must decay to a mutable matrix3x4_t*. skipped in aimbot-record mode */
@@ -332,7 +336,10 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 		default:
 			break;
 		}
-	}
+	};
+
+	if ( draw_backtrack && !backtrack_late )
+		draw_backtrack_records( );
 
 	if ( draw_occluded && esp_gate > 0.f )
 		g_chams.draw_layers( occluded_layers, occluded_colors, occluded_darks, true, esp_gate, draw_live );
@@ -341,6 +348,9 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 		g_chams.draw_layers( visible_layers, visible_colors, visible_darks, false, 1.f, draw_live );
 	else
 		draw_live( );
+
+	if ( backtrack_late )
+		draw_backtrack_records( );
 
 	g_interfaces.m_model_render->forced_material_override( nullptr );
 

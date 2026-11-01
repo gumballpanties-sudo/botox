@@ -426,9 +426,12 @@ namespace n_chams
 					if ( alpha <= 0.f )
 						continue;
 
-					/* own materials keep the model's normal maps + lighting constants bound; blend < 1 = engine draws translucent */
+					/* own materials keep the model's normal maps bound; blend < 1 = engine draws translucent, any colour under 255
+					   counts (dip blends per pixel with the picked alphas, blend value itself unused) */
+					const bool translucent = light[ 3 ] < 1.f || dark[ 3 ] < 1.f;
+
 					g_interfaces.m_model_render->forced_material_override( nullptr );
-					apply_original_color( c_color( 255, 255, 255, 255 ), alpha );
+					apply_original_color( c_color( 255, 255, 255, 255 ), translucent ? ( alpha < 0.99f ? alpha : 0.99f ) : 1.f );
 
 					g_two_tone_chams.begin( light, dark, ignorez );
 					draw_pass( );

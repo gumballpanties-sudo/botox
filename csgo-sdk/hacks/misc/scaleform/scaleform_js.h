@@ -11,13 +11,13 @@ else{ return false; }
 
 var contextPanel = $.GetContextPanel();
 
-var weaponmodule = "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/ammo.png" //weaponpanel (#AmmoBackground art)
+var weaponmodule = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/ammo.png" //weaponpanel (#AmmoBackground art)
 // MoneyBG is afxhidden in the pack - no art exists, so paint it with the hud's own fade-out gradient
 var moneyBgImg = 'gradient( linear, 0% 0%, 100% 0%, from( #000000D4 ), color-stop( 0.55, #000000D4 ), to( #00000000 ) )'
-var buycartBgImg = "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/icons/ui/buyzone.png" //buycart
-var dashboardLabelImg = "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/location_corner.png" //radar
-var hudTeamCountBgT = "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/teamcounter/teamcounter_alivebgT.png"; //team icon T
-var hudTeamCountBgCT = "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/teamcounter/teamcounter_alivebgCT.png"; //team icon CT
+var buycartBgImg = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/icons/ui/buyzone.png" //buycart
+var dashboardLabelImg = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/location_corner.png" //radar
+var hudTeamCountBgT = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/teamcounter/teamcounter_alivebgT.png"; //team icon T
+var hudTeamCountBgCT = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/teamcounter/teamcounter_alivebgCT.png"; //team icon CT
 
 
 //weaponmodule
@@ -292,7 +292,7 @@ buyzoneicon1.style.S2MixBlendMode = 'SRGBadditive'
 buyzoneicon1.style.opacity = '0.8'
 
 if(exist('buyzoneicon2')){
-$.CreatePanel('Image', $.GetContextPanel().FindChildrenWithClassTraverse('money-text-bg')[0], 'buyzoneicon2', {src: "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/icons/ui/buyzone.png", style: "height: ${buyZone}; width: 32px; wash-color-fast: #ceff78; horizontal-align: left; y: -1px; x: 10px; -s2-mix-blend-mode: SRGBadditive; opacity: 0.8;"});
+$.CreatePanel('Image', $.GetContextPanel().FindChildrenWithClassTraverse('money-text-bg')[0], 'buyzoneicon2', {src: "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/icons/ui/buyzone.png", style: "height: ${buyZone}; width: 32px; wash-color-fast: #ceff78; horizontal-align: left; y: -1px; x: 10px; -s2-mix-blend-mode: SRGBadditive; opacity: 0.8;"});
 }
 
 $.GetContextPanel().FindChildTraverse('buyzoneicon2').AddClass('money-text-buy-icon')
@@ -404,7 +404,7 @@ for(var hudHaBg of hudHa.FindChildrenWithClassTraverse('hud-HA-bg'))
 
 for(var hudHaBgH of hudHa.FindChildrenWithClassTraverse('hud-HA-bg-h'))
 {
-    hudHaBgH.style.backgroundImage = 'url("https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/hp.png")'; // HP.png
+    hudHaBgH.style.backgroundImage = 'url("https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/hp.png")'; // HP.png
     hudHaBgH.style.backgroundSize = '107% 100%';
     hudHaBgH.style.backgroundImgOpacity = '1.0';
     hudHaBgH.style.width = '200px';
@@ -414,7 +414,7 @@ for(var hudHaBgH of hudHa.FindChildrenWithClassTraverse('hud-HA-bg-h'))
 
 for(var hudHaBgA of hudHa.FindChildrenWithClassTraverse('hud-HA-bg-a'))
 {
-    hudHaBgA.style.backgroundImage = 'url("https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/armor.png")'; // Armor.png
+    hudHaBgA.style.backgroundImage = 'url("https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/armor.png")'; // Armor.png
     hudHaBgA.style.backgroundSize = '100% 100%';
     hudHaBgA.style.backgroundImgOpacity = '1.0';
     hudHaBgA.style.width = '210px'; // value from files/health_and_ammo.js
@@ -446,23 +446,23 @@ for(var oncrit of hudHa.FindChildrenWithClassTraverse('hud-HA--critical'))
 {
     for(var hudHaBg of oncrit.FindChildTraverse('HudHealthArmor').FindChildrenWithClassTraverse('hud-HA-bg-h'))
     {
-        hudHaBg.style.backgroundImage = 'url("https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/hpred.png")';
+        hudHaBg.style.backgroundImage = 'url("https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/hpred.png")';
         hudHaBg.style.backgroundImgOpacity = '0.92';
     }
 }
 
 
 if(exist('hud-HA-icon-Healthsf')){
-$.CreatePanel('Image', $.GetContextPanel().FindChildrenWithClassTraverse('hud-HA')[0], 'hud-HA-icon-Healthsf', {src: "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/healtharmor/hp.png", style: "height: 20px; width: 20px; y: 21px; x: 16px; opacity: 0.85; -s2-mix-blend-mode: Additive; z-index: 31;"});
+$.CreatePanel('Image', $.GetContextPanel().FindChildrenWithClassTraverse('hud-HA')[0], 'hud-HA-icon-Healthsf', {src: "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/healtharmor/hp.png", style: "height: 20px; width: 20px; y: 21px; x: 16px; opacity: 0.85; -s2-mix-blend-mode: Additive; z-index: 31;"});
 }
 
 
 if(exist('hud-HA-icon-Armorsf')){
-$.CreatePanel('Image', $.GetContextPanel().FindChildrenWithClassTraverse('hud-HA')[0], 'hud-HA-icon-Armorsf', {src: "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/healtharmor/armor.png", style: "height: 20px; width: 20px; y: 21px; x: 226px; opacity: 0.85; -s2-mix-blend-mode: Additive; z-index: 31;"});
+$.CreatePanel('Image', $.GetContextPanel().FindChildrenWithClassTraverse('hud-HA')[0], 'hud-HA-icon-Armorsf', {src: "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/healtharmor/armor.png", style: "height: 20px; width: 20px; y: 21px; x: 226px; opacity: 0.85; -s2-mix-blend-mode: Additive; z-index: 31;"});
 }
 
 if(exist('hud-HA-icon-Helmetsf')){
-$.CreatePanel('Image', $.GetContextPanel().FindChildrenWithClassTraverse('hud-HA')[0], 'hud-HA-icon-Helmetsf', {src: "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/healtharmor/helmet.png", style: "height: 20px; width: 20px; y: 21px; x: 226px; opacity: 0.85; -s2-mix-blend-mode: Additive; z-index: 31;"});
+$.CreatePanel('Image', $.GetContextPanel().FindChildrenWithClassTraverse('hud-HA')[0], 'hud-HA-icon-Helmetsf', {src: "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/healtharmor/helmet.png", style: "height: 20px; width: 20px; y: 21px; x: 226px; opacity: 0.85; -s2-mix-blend-mode: Additive; z-index: 31;"});
 }
 
 	if(exist('hudhabarborder')){
@@ -643,9 +643,9 @@ for (var deathnotice of contextPanel.FindChildrenWithClassTraverse('DeathNotice'
 	// headshot + penetrate are the only two icons the pack actually reskins; Suicide
 	// keeps the game's own icon_suicide.svg (the old discord link is dead = blank icon)
 	var dnHs = dnChild(deathnotice, 'HeadShot');
-	if (dnHs) dnHs.SetImage('https://raw.githubusercontent.com/abandonedpools/scaleform/3e4c1f244351844a6236d952356ea087f59ad29e/p_scaleform/materials/panorama/images/hud/deathnotice/icon_headshot.svg')
+	if (dnHs) dnHs.SetImage('https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/deathnotice/icon_headshot.svg')
 	var dnPen = dnChild(deathnotice, 'Penetrate');
-	if (dnPen) dnPen.SetImage('https://raw.githubusercontent.com/abandonedpools/scaleform/3e4c1f244351844a6236d952356ea087f59ad29e/p_scaleform/materials/panorama/images/hud/deathnotice/penetrate.svg')
+	if (dnPen) dnPen.SetImage('https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/deathnotice/penetrate.svg')
     deathnotice.style.margin = '0px -8px 1px 18px'
 	// ---------------- REMOVALS ----------------
 	if(deathnotice.BHasClass('DeathNotice_Killer'))
@@ -695,7 +695,7 @@ var weaponRowBG = $.GetContextPanel().FindChildrenWithClassTraverse('weapon-row-
 	weaponRowBG[i].style.height = '80px'
 	weaponRowBG[i].style.horizontalAlign = 'right'
 
-	$.CreatePanel('Image', weaponRowBG[i], 'weaponrowoutline-Center', {src: "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/weapon.png", style: "height: 80px; width: 280px; horizontal-align: right; vertical-align: center; x: 0px; opacity: 0.58;"});
+	$.CreatePanel('Image', weaponRowBG[i], 'weaponrowoutline-Center', {src: "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/weapon.png", style: "height: 80px; width: 280px; horizontal-align: right; vertical-align: center; x: 0px; opacity: 0.58;"});
 	var weaponrowcenter = $.GetContextPanel().FindChildTraverse('weaponrowoutline-Center')
 				}
 			}
@@ -956,9 +956,9 @@ $.Schedule(0.3, runner);
 
 JS alerts = R"alert(
 var contextPanel = $.GetContextPanel();
-var joinPanelCTBG = "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/fade.png";
-var joinPanelTBG = "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/fade.png";
-var joinPanelBotBG = "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/fade.png";
+var joinPanelCTBG = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/fade.png";
+var joinPanelTBG = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/fade.png";
+var joinPanelBotBG = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/fade.png";
 
 for(var hudHint of $.GetContextPanel().FindChildrenWithClassTraverse('hud-hint'))
 {
@@ -993,7 +993,7 @@ for(var hint of $.GetContextPanel().FindChildrenWithClassTraverse('hud-hint__ico
 
 
 if(exist('hud-hint__icon2')){
-$.CreatePanel('Image', $.GetContextPanel().FindChildrenWithClassTraverse('hud-hint')[0], 'hud-hint__icon2', {src: "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/icons/ui/alert.png", style: "height: 110px; width: 110px; y: -4px; x: -40px; z-index: 21;"});
+$.CreatePanel('Image', $.GetContextPanel().FindChildrenWithClassTraverse('hud-hint')[0], 'hud-hint__icon2', {src: "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/icons/ui/alert.png", style: "height: 110px; width: 110px; y: -4px; x: -40px; z-index: 21;"});
 }
 
 for(var hudHintText of $.GetContextPanel().FindChildrenWithClassTraverse('hud-hint__text'))
@@ -1164,8 +1164,8 @@ var contextPanel = $.GetContextPanel();
 var textColor = ${isCt} ? '#B4BBBE' : '#D6C8B5';
 var winPanelFg = contextPanel.FindChildrenWithClassTraverse('WinPanelTeam')[0].FindChildrenWithClassTraverse('TeamFG')[0];
 winPanelFg.backgroundColor = '#ffffff00';
-var mvpStar = 'https://raw.githubusercontent.com/abandonedpools/scaleform/3e4c1f244351844a6236d952356ea087f59ad29e/p_scaleform/materials/panorama/images/hud/star.svg';
-var winpanelBackground = ${isCt} ? 'https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/mvp.png' : ${isT} ? 'https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/mvp2.png' : 'https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/mvp.png';
+var mvpStar = 'https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/star.svg';
+var winpanelBackground = ${isCt} ? 'https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/mvp.png' : ${isT} ? 'https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/mvp2.png' : 'https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/mvp.png';
 
 
 for (var mvp of contextPanel.FindChildTraverse('HudWinPanel').FindChildrenWithClassTraverse('MVP'))
@@ -1398,7 +1398,7 @@ dashboardbg.style.width = '350px'
 dashboardbg.style.height = '46px'
 dashboardbg.style.verticalAlign = 'top';
 dashboardbg.style.horizontalAlign = 'left';
-dashboardbg.style.backgroundImage = 'url(\'https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/location_corner.png\')'//radar
+dashboardbg.style.backgroundImage = 'url(\'https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/location_corner.png\')'//radar
 dashboardbg.style.backgroundSize = '100% 100%'
 dashboardbg.style.transform = 'translateX(-1px)'
 

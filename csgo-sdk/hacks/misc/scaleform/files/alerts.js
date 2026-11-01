@@ -2,7 +2,7 @@ R"alert(
 var contextPanel = $.GetContextPanel();
 var joinPanelCTBG = "https://cdn.discordapp.com/attachments/808866622701830186/977922886042026015/Group_69.png";
 var joinPanelTBG = "https://cdn.discordapp.com/attachments/808866622701830186/977919617194418195/Group_66.png";
-var joinPanelBotBG = "https://raw.githubusercontent.com/abandonedpools/scaleform/refs/heads/master/p_scaleform/materials/panorama/images/hud/fade.png";
+var joinPanelBotBG = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/fade.png";
 
 for (var hudHint of contextPanel.FindChildrenWithClassTraverse('hud-hint')) {
     hudHint.style.backgroundImage = 'none';

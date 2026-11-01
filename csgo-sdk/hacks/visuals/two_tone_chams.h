@@ -28,6 +28,7 @@ namespace n_two_tone_chams
 		float m_dark[ 4 ]   = { };
 		float m_params[ 4 ] = { };
 		bool m_ignorez      = false;
+	bool m_translucent  = false;
 	};
 }
 

@@ -13,7 +13,7 @@
 namespace
 {
 	constexpr const char* k_client_id = "1554733253632720926";
-	constexpr const char* k_image     = "https://i.imgur.com/KDUzwZf.png";
+	constexpr const char* k_image     = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/misc/KDUzwZf.png";
 
 	enum e_op : uint32_t { op_handshake = 0, op_frame = 1, op_close = 2, op_ping = 3, op_pong = 4 };
 

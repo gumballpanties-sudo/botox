@@ -1775,6 +1775,18 @@ void n_indicators::impl_t::keybind_indicators( )
 	if ( !font )
 		return;
 
+	{
+		static const void *s_font = nullptr, *s_atlas = nullptr;
+		static float s_fs = 0.f;
+		if ( font != s_font || font->ContainerAtlas != s_atlas || fs != s_fs ) {
+			s_font  = font;
+			s_atlas = font->ContainerAtlas;
+			s_fs    = fs;
+			botox_dbg_log( "FONT: keys font=%p atlas=%p main=%d base=%.1f fs=%.1f style=%d", s_font, s_atlas, font->ContainerAtlas == ImGui::GetIO( ).Fonts,
+			               font->FontSize, fs, style );
+		}
+	}
+
 	if ( GET_VARIABLE( g_variables.m_key_indicators_particles, bool ) )
 		part_track( pending, g_interfaces.m_global_vars_base->m_real_time );
 

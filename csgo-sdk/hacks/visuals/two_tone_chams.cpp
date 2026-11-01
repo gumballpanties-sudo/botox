@@ -16,22 +16,12 @@ namespace
 {
 	using namespace n_model_shader;
 
-	/* skinned position + normal + tangent. engine constants left by the model's own (phong / character /
-	   vertexlit) shader: c8 viewproj, c27 lights (common_vs_fxc.h:130), c58 bones. c240 = which lights are live */
+	/* skinned position + normal + tangent. engine constants left by the model's own shader: c2 camera pos
+	   (IShader.h:126 VERTEX_SHADER_CAMERA_POS), c8 viewproj, c58 bones */
 	constexpr const char k_vs[] = R"(
+float4 cEyePos : register( c2 );
 float4x4 cViewProj : register( c8 );
-
-struct LightInfo {
-	float4 color;
-	float4 dir;
-	float4 pos;
-	float4 spotParams;
-	float4 atten;
-};
-LightInfo cLightInfo[ 4 ] : register( c27 );
-
 float4x3 cModel[ 53 ] : register( c58 );
-float4 cLightUsed : register( c240 );
 
 struct VS_INPUT {
 	float4 vPos : POSITION;
@@ -49,8 +39,7 @@ struct VS_OUTPUT {
 	float2 vUv : TEXCOORD0;
 	float3 vNormal : TEXCOORD1;
 	float4 vTangent : TEXCOORD2;
-	float3 vWorld : TEXCOORD3;
-	float4 vAtten : TEXCOORD4;
+	float3 vView : TEXCOORD3;
 };
 
 // common_vs_fxc.h _DecompressUByte4NormalTangent 1:1
@@ -76,27 +65,6 @@ void decompress( float4 inputNormal, out float3 outputNormal, out float4 outputT
 	outputTangent.xy  *= xyxySigns.zw;
 	outputTangent.z   *= ztztSigns.z;
 	outputTangent.w    = ztztSigns.w;
-}
-
-// common_vs_fxc.h VertexAttenInternal 1:1
-float light_atten( const float3 worldPos, const int lightNum )
-{
-	float3 lightDir        = cLightInfo[ lightNum ].pos.xyz - worldPos;
-	float lightDistSquared = dot( lightDir, lightDir );
-	float ooLightDist      = rsqrt( lightDistSquared );
-	lightDir *= ooLightDist;
-
-	float3 vDist          = dst( lightDistSquared, ooLightDist ).xyz;
-	float flDistanceAtten = 1.0f / dot( cLightInfo[ lightNum ].atten.xyz, vDist );
-
-	float flCosTheta  = dot( cLightInfo[ lightNum ].dir.xyz, -lightDir );
-	float flSpotAtten = ( flCosTheta - cLightInfo[ lightNum ].spotParams.z ) * cLightInfo[ lightNum ].spotParams.w;
-	flSpotAtten       = max( 0.0001f, flSpotAtten );
-	flSpotAtten       = pow( flSpotAtten, cLightInfo[ lightNum ].spotParams.x );
-	flSpotAtten       = saturate( flSpotAtten );
-
-	float flAtten = lerp( flDistanceAtten, flDistanceAtten * flSpotAtten, cLightInfo[ lightNum ].dir.w );
-	return lerp( flAtten, 1.0f, cLightInfo[ lightNum ].color.w );
 }
 
 VS_OUTPUT main( const VS_INPUT i )
@@ -130,23 +98,14 @@ VS_OUTPUT main( const VS_INPUT i )
 	o.vUv      = i.vTexCoord0.xy;
 	o.vNormal  = mul( normal, ( float3x3 )blendMatrix );
 	o.vTangent = float4( mul( tangent.xyz, ( float3x3 )blendMatrix ), tangent.w );
-	o.vWorld   = world;
-
-	// unused light slots hold another draw's leftovers: never evaluate them
-	o.vAtten = 0;
-	[branch] if ( cLightUsed.x > 0.5 ) o.vAtten.x = light_atten( world, 0 );
-	[branch] if ( cLightUsed.y > 0.5 ) o.vAtten.y = light_atten( world, 1 );
-	[branch] if ( cLightUsed.z > 0.5 ) o.vAtten.z = light_atten( world, 2 );
-	[branch] if ( cLightUsed.w > 0.5 ) o.vAtten.w = light_atten( world, 3 );
+	o.vView    = cEyePos.xyz - world;
 	return o;
 }
 )";
 
-	/* engine pixel constants of the same draw: c4 ambient cube, c20 lights packed (shaderapidx8.cpp:14477,
-	   4th light in the w's). ours: c30 light colour, c31 dark colour, c32 threshold / edge / alpha test */
+	/* light = the camera: lit where the surface (normal map included) faces the eye.
+	   c30 light colour, c31 dark colour, c32 threshold / edge / alpha test on / alpha ref */
 	constexpr const char k_ps[] = R"(
-const float3 cAmbientCube[ 6 ] : register( c4 );
-const float4 cLight[ 6 ] : register( c20 );
 const float4 cLightColor : register( c30 );
 const float4 cDarkColor : register( c31 );
 const float4 cParams : register( c32 );
@@ -162,17 +121,14 @@ struct PS_INPUT {
 	float2 vUv : TEXCOORD0;
 	float3 vNormal : TEXCOORD1;
 	float4 vTangent : TEXCOORD2;
-	float3 vWorld : TEXCOORD3;
-	float4 vAtten : TEXCOORD4;
+	float3 vView : TEXCOORD3;
 };
-
-float3 diffuse( float3 n, float3 world, float3 pos, float3 color, float atten )
-{
-	return color * atten * saturate( dot( n, normalize( pos - world ) ) );
-}
 
 float4 main( PS_INPUT i ) : COLOR
 {
+	// material alpha test done here: picked alpha stays out of the cutout (hair, straps keep shape when translucent)
+	clip( cParams.z * ( tex2D( BaseSampler, i.vUv ).a - cParams.w ) );
+
 	float3 n = normalize( i.vNormal );
 #if BUMP_SAMPLER
 	// phong_ps20b.fxc:502-553
@@ -182,23 +138,10 @@ float4 main( PS_INPUT i ) : COLOR
 	n = normalize( tn.x * t + tn.y * b + tn.z * n );
 #endif
 
-	float3 sq    = n * n;
-	float3 light = sq.x * ( n.x < 0 ? cAmbientCube[ 1 ] : cAmbientCube[ 0 ] ) +
-	               sq.y * ( n.y < 0 ? cAmbientCube[ 3 ] : cAmbientCube[ 2 ] ) +
-	               sq.z * ( n.z < 0 ? cAmbientCube[ 5 ] : cAmbientCube[ 4 ] );
-
-	light += diffuse( n, i.vWorld, cLight[ 1 ].xyz, cLight[ 0 ].xyz, i.vAtten.x );
-	light += diffuse( n, i.vWorld, cLight[ 3 ].xyz, cLight[ 2 ].xyz, i.vAtten.y );
-	light += diffuse( n, i.vWorld, cLight[ 5 ].xyz, cLight[ 4 ].xyz, i.vAtten.z );
-	light += diffuse( n, i.vWorld, float3( cLight[ 3 ].w, cLight[ 4 ].w, cLight[ 5 ].w ), float3( cLight[ 0 ].w, cLight[ 1 ].w, cLight[ 2 ].w ), i.vAtten.w );
-
-	// cut in gamma space so the threshold slider feels even. fwidth floor = 1 px anti aliased line at edge 0
-	float level = pow( max( dot( light, float3( 0.2126f, 0.7152f, 0.0722f ) ), 0.0f ), 1.0f / 2.2f );
+	// fwidth floor = 1 px anti aliased line at edge 0
+	float level = saturate( dot( n, normalize( i.vView ) ) );
 	float width = max( max( cParams.y, fwidth( level ) ), 0.0001f );
-	float4 col  = lerp( cDarkColor, cLightColor, smoothstep( cParams.x - width, cParams.x + width, level ) );
-
-	col.a *= lerp( 1.0f, tex2D( BaseSampler, i.vUv ).a, cParams.z );
-	return col;
+	return lerp( cDarkColor, cLightColor, smoothstep( cParams.x - width, cParams.x + width, level ) );
 }
 )";
 
@@ -343,9 +286,10 @@ void n_two_tone_chams::impl_t::begin( const float light[ 4 ], const float dark[ 
 {
 	const float threshold = GET_VARIABLE( g_variables.m_chams_two_tone_threshold, float );
 	const float edge      = GET_VARIABLE( g_variables.m_chams_two_tone_edge, float );
+	const bool translucent = light[ 3 ] < 1.f || dark[ 3 ] < 1.f;
 
 	auto arm = [ l = std::to_array( { light[ 0 ], light[ 1 ], light[ 2 ], light[ 3 ] } ), d = std::to_array( { dark[ 0 ], dark[ 1 ], dark[ 2 ], dark[ 3 ] } ),
-	             threshold, edge, ignorez ] {
+	             threshold, edge, ignorez, translucent ] {
 		for ( int i = 0; i < 4; i++ ) {
 			g_two_tone_chams.m_light[ i ] = l[ i ];
 			g_two_tone_chams.m_dark[ i ]  = d[ i ];
@@ -354,6 +298,7 @@ void n_two_tone_chams::impl_t::begin( const float light[ 4 ], const float dark[ 
 		g_two_tone_chams.m_params[ 0 ] = threshold;
 		g_two_tone_chams.m_params[ 1 ] = edge;
 		g_two_tone_chams.m_ignorez     = ignorez;
+		g_two_tone_chams.m_translucent = translucent;
 		g_two_tone_chams.m_armed.store( true, std::memory_order_relaxed );
 	};
 
@@ -386,46 +331,62 @@ long n_two_tone_chams::impl_t::draw( const draw_indexed_primitive_t original, ID
 	const int vs_index = compressed ? 2 : has_tangent_stream( device ) ? 1 : 0;
 	const int ps_index = bump == 1 ? 1 : bump == 3 ? 2 : 0;
 
-	// i0.x = engine light count for this draw (CommitVertexShaderLighting, shaderapidx8.cpp:14548)
-	int light_loop[ 4 ]{ };
-	device->GetVertexShaderConstantI( 0, light_loop, 1 );
-	const int lights = std::clamp( light_loop[ 0 ], 0, 4 );
+	DWORD old_srgb = 0, old_zfunc = 0, old_zwrite = 0, old_alpha_test = 0, old_alpha_ref = 0, old_blend = 0, old_src = 0, old_dest = 0, old_color_write = 0;
+	float old_ps_constants[ 3 ][ 4 ]{ };
 
-	DWORD alpha_test = FALSE;
-	device->GetRenderState( D3DRS_ALPHATESTENABLE, &alpha_test );
+	device->GetRenderState( D3DRS_SRGBWRITEENABLE, &old_srgb );
+	device->GetRenderState( D3DRS_ZFUNC, &old_zfunc );
+	device->GetRenderState( D3DRS_ZWRITEENABLE, &old_zwrite );
+	device->GetRenderState( D3DRS_ALPHATESTENABLE, &old_alpha_test );
+	device->GetRenderState( D3DRS_ALPHAREF, &old_alpha_ref );
+	device->GetRenderState( D3DRS_ALPHABLENDENABLE, &old_blend );
+	device->GetRenderState( D3DRS_SRCBLEND, &old_src );
+	device->GetRenderState( D3DRS_DESTBLEND, &old_dest );
+	device->GetRenderState( D3DRS_COLORWRITEENABLE, &old_color_write );
 
-	const float vs_constant[ 4 ]     = { lights > 0 ? 1.f : 0.f, lights > 1 ? 1.f : 0.f, lights > 2 ? 1.f : 0.f, lights > 3 ? 1.f : 0.f };
 	const float ps_constants[ 3 ][ 4 ] = { { this->m_light[ 0 ], this->m_light[ 1 ], this->m_light[ 2 ], this->m_light[ 3 ] },
 		                                   { this->m_dark[ 0 ], this->m_dark[ 1 ], this->m_dark[ 2 ], this->m_dark[ 3 ] },
-		                                   { this->m_params[ 0 ], this->m_params[ 1 ], alpha_test ? 1.f : 0.f, 0.f } };
-
-	DWORD old_srgb = 0, old_zfunc = 0, old_zwrite = 0;
-	float old_vs_constant[ 4 ]{ };
-	float old_ps_constants[ 3 ][ 4 ]{ };
+		                                   { this->m_params[ 0 ], this->m_params[ 1 ], old_alpha_test ? 1.f : 0.f, static_cast< float >( old_alpha_ref & 0xFF ) / 255.f } };
 
 	static std::vector< saved_constant_t > saved_vs{ }, saved_ps{ };
 	saved_vs.clear( );
 	saved_ps.clear( );
 
-	device->GetRenderState( D3DRS_SRGBWRITEENABLE, &old_srgb );
-	device->GetRenderState( D3DRS_ZFUNC, &old_zfunc );
-	device->GetRenderState( D3DRS_ZWRITEENABLE, &old_zwrite );
-	device->GetVertexShaderConstantF( 240, old_vs_constant, 1 );
 	device->GetPixelShaderConstantF( 30, old_ps_constants[ 0 ], 3 );
 	save_constants( device, true, g_vs_defs, saved_vs );
 	save_constants( device, false, g_ps_defs, saved_ps );
 
-	// picked colours are display values: no linear -> srgb on write
+	// picked colours are display values: no linear -> srgb on write. alpha test = clip in our ps
 	device->SetRenderState( D3DRS_SRGBWRITEENABLE, FALSE );
-	if ( this->m_ignorez ) {
+	device->SetRenderState( D3DRS_ALPHATESTENABLE, FALSE );
+
+	// prepass lays depth, colour pass then only hits each pixel's nearest surface (equal depth must pass)
+	if ( this->m_ignorez )
 		device->SetRenderState( D3DRS_ZFUNC, D3DCMP_ALWAYS );
-		device->SetRenderState( D3DRS_ZWRITEENABLE, FALSE );
-	}
+	else if ( this->m_translucent && ( old_zfunc == D3DCMP_LESS || old_zfunc == D3DCMP_GREATER ) )
+		device->SetRenderState( D3DRS_ZFUNC, old_zfunc == D3DCMP_LESS ? D3DCMP_LESSEQUAL : D3DCMP_GREATEREQUAL );
 
 	device->SetVertexShader( g_vs[ vs_index ] );
 	device->SetPixelShader( g_ps[ ps_index ] );
-	device->SetVertexShaderConstantF( 240, vs_constant, 1 );
 	device->SetPixelShaderConstantF( 30, ps_constants[ 0 ], 3 );
+
+	/* translucent: own blend whatever the material asked (additive, opaque snapshot). not ignorez = depth only
+	   prepass first so inner parts (far arm, legs, gun) never show through. ignorez can't: depth there is the world */
+	if ( this->m_translucent ) {
+		if ( !this->m_ignorez ) {
+			device->SetRenderState( D3DRS_COLORWRITEENABLE, 0 );
+			device->SetRenderState( D3DRS_ZWRITEENABLE, TRUE );
+			original( device, type, base_vertex, min_vertex, vertices, start_index, primitives );
+			device->SetRenderState( D3DRS_COLORWRITEENABLE, old_color_write );
+		}
+
+		device->SetRenderState( D3DRS_ALPHABLENDENABLE, TRUE );
+		device->SetRenderState( D3DRS_SRCBLEND, D3DBLEND_SRCALPHA );
+		device->SetRenderState( D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA );
+	}
+
+	if ( this->m_ignorez || this->m_translucent )
+		device->SetRenderState( D3DRS_ZWRITEENABLE, FALSE );
 
 	const long result = original( device, type, base_vertex, min_vertex, vertices, start_index, primitives );
 
@@ -433,7 +394,10 @@ long n_two_tone_chams::impl_t::draw( const draw_indexed_primitive_t original, ID
 	device->SetRenderState( D3DRS_SRGBWRITEENABLE, old_srgb );
 	device->SetRenderState( D3DRS_ZFUNC, old_zfunc );
 	device->SetRenderState( D3DRS_ZWRITEENABLE, old_zwrite );
-	device->SetVertexShaderConstantF( 240, old_vs_constant, 1 );
+	device->SetRenderState( D3DRS_ALPHATESTENABLE, old_alpha_test );
+	device->SetRenderState( D3DRS_ALPHABLENDENABLE, old_blend );
+	device->SetRenderState( D3DRS_SRCBLEND, old_src );
+	device->SetRenderState( D3DRS_DESTBLEND, old_dest );
 	device->SetPixelShaderConstantF( 30, old_ps_constants[ 0 ], 3 );
 	restore_constants( device, true, saved_vs );
 	restore_constants( device, false, saved_ps );

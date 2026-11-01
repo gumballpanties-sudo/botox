@@ -600,7 +600,7 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_occluded_colors, c_color( 0, 200, 221, 153 ) );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_occluded_dark_colors, c_color( 0, 40, 60, 153 ) );
 
-		/* two tone slot: gamma lighting level of the light/dark cut, edge = softness */
+		/* two tone slot: camera light, cut = cos of the facing angle (0.5 = 60 deg), edge = softness */
 		ADD_VARIABLE( float, m_chams_two_tone_threshold, 0.5f );
 		ADD_VARIABLE( float, m_chams_two_tone_edge, 0.f );
 
@@ -1576,7 +1576,6 @@ namespace n_variables
 		ADD_VARIABLE( key_bind_t, m_cod4_hud_hardpoint_key, key_bind_t( 0x4E, 1 ) );
 		ADD_VARIABLE( int, m_cod4_hud_xp, 0 );
 		ADD_VARIABLE( std::string, m_cod4_hud_dvars, "" );
-		ADD_VARIABLE( std::string, m_cod4_hud_path, "" );
 
 		ADD_VARIABLE( bool, m_fps_warning, true );
 

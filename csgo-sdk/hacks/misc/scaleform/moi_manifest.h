@@ -3,7 +3,8 @@
 namespace n_moi_manifest
 {
 	inline constexpr const char* k_commit = "656423881014e7f5c6a8a714d176971919372e91";
-	inline constexpr const char* k_raw_base = "https://raw.githubusercontent.com/MoiiCS/Moi-ScaleFormV2/656423881014e7f5c6a8a714d176971919372e91/";
+	// mirror of MoiiCS/Moi-ScaleFormV2 @ k_commit (tools/botox_assets_fetch.py), k_commit still keys the local cache
+	inline constexpr const char* k_raw_base = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/moi/";
 
 	inline constexpr const char* k_layouts[] = {
 		"layout/hud/hudalerts.xml",

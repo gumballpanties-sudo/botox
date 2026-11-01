@@ -231,7 +231,7 @@ mk('Panel', root, 'ChudWeapons',
    pop in late while it downloaded. warm it here with an offscreen instance, and
    keep that instance ALIVE for the whole session so it stays in panorama's cache.
    the url lives on a global the killfeed script reuses. */
-CHUD_HS_ICON = 'https://raw.githubusercontent.com/abandonedpools/scaleform/3e4c1f244351844a6236d952356ea087f59ad29e/p_scaleform/materials/panorama/images/hud/deathnotice/icon_headshot.svg';
+CHUD_HS_ICON = 'https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/deathnotice/icon_headshot.svg';
 
 var preload = mk('Panel', root, 'ChudPreload',
     'width: 1px; height: 1px; opacity: 0.0; position: -9998px -9998px 0px;');
@@ -1238,7 +1238,7 @@ try {
             /* same url string the preload warmed at install — panorama caches per
                url, so this resolves instantly instead of hitting the network */
             var hsIcon = (typeof CHUD_HS_ICON !== 'undefined') ? CHUD_HS_ICON :
-                'https://raw.githubusercontent.com/abandonedpools/scaleform/3e4c1f244351844a6236d952356ea087f59ad29e/p_scaleform/materials/panorama/images/hud/deathnotice/icon_headshot.svg';
+                'https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/deathnotice/icon_headshot.svg';
 
             $.CreatePanel('Image', row, '', {
                 src: hsIcon,

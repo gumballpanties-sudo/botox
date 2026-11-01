@@ -6,6 +6,8 @@
 #include "../../dependencies/imgui/imgui.h"
 #include "../../utilities/console/console.h"
 #include "../menu/menu.h"
+#include "../misc/misc.h"
+#include "../misc/scaleform/image_cache.h"
 
 #include <algorithm>
 #include <atomic>
@@ -119,7 +121,7 @@ namespace
 	};
 
 	std::atomic< int > s_load_state{ 0 }; // 0 idle, 1 loading, 2 ready, 3 failed
-	std::string s_cod4_dir{ };
+	int s_missing = 0; // images that failed to fetch / decode, written by the worker before state 2 / 3
 	std::vector< n_cod4_iwd::image_t > s_images{ }; // per k_materials, written by the worker before state 2
 	std::vector< texture_t > s_textures{ };
 
@@ -130,68 +132,48 @@ namespace
 		bool m_tried = false;
 	} s_overview{ };
 
-	std::string steam_path( )
+	// images/<name>.iwi pulled out of the cod4 iwds by tools/cod4_assets_extract.py, cached once, no install needed
+	constexpr const char* k_base_url  = "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/cod4/images/";
+	constexpr const char* k_cache_dir = "C:\\botox\\cod4\\images\\";
+	constexpr int k_fetch_threads     = 8;
+
+	bool read_bytes( const std::string& path, std::vector< std::uint8_t >& out )
 	{
-		char buf[ MAX_PATH ]{ };
-		DWORD size = sizeof( buf );
-		if ( RegGetValueA( HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath", RRF_RT_REG_SZ, nullptr, buf, &size ) == ERROR_SUCCESS )
-			return buf;
-		return "C:/Program Files (x86)/Steam";
-	}
-
-	std::string find_cod4( )
-	{
-		const std::string custom = GET_VARIABLE( g_variables.m_cod4_hud_path, std::string );
-		std::vector< std::string > roots{ };
-		if ( !custom.empty( ) )
-			roots.push_back( custom );
-
-		const std::string steam = steam_path( );
-		roots.push_back( steam + "/steamapps/common/Call of Duty 4" );
-
-		// other steam libraries: "path"  "D:\\SteamLibrary"
-		std::ifstream vdf( steam + "/steamapps/libraryfolders.vdf" );
-		for ( std::string line; std::getline( vdf, line ); ) {
-			const size_t key = line.find( "\"path\"" );
-			if ( key == std::string::npos )
-				continue;
-			const size_t a = line.find( '"', key + 6 ), b = a == std::string::npos ? a : line.find( '"', a + 1 );
-			if ( b == std::string::npos )
-				continue;
-			std::string p = line.substr( a + 1, b - a - 1 );
-			for ( size_t i = 0; ( i = p.find( "\\\\", i ) ) != std::string::npos; )
-				p.erase( i, 1 );
-			roots.push_back( p + "/steamapps/common/Call of Duty 4" );
-		}
-
-		std::error_code ec{ };
-		for ( const std::string& r : roots )
-			if ( std::filesystem::exists( std::filesystem::path( r ) / "main" / "iw_00.iwd", ec ) )
-				return r;
-		return { };
+		std::ifstream file( path, std::ios::binary );
+		out.assign( std::istreambuf_iterator< char >( file ), std::istreambuf_iterator< char >( ) );
+		return !out.empty( );
 	}
 
 	void load_worker( )
 	{
-		const std::string dir = find_cod4( );
-		if ( dir.empty( ) ) {
-			g_console.print( "COD4: no call of duty 4 install found (set the path under visuals > cod4 hud)" );
-			s_load_state = 3;
-			return;
-		}
+		CreateDirectoryA( "C:\\botox", nullptr );
+		CreateDirectoryA( "C:\\botox\\cod4", nullptr );
+		CreateDirectoryA( k_cache_dir, nullptr );
 
-		std::unordered_map< std::string, n_cod4_iwd::entry_t > index{ };
-		std::vector< std::string > files{ };
-		std::error_code ec{ };
-		for ( const auto& e : std::filesystem::directory_iterator( std::filesystem::path( dir ) / "main", ec ) )
-			if ( e.path( ).extension( ) == ".iwd" )
-				files.push_back( e.path( ).string( ) );
-		std::sort( files.begin( ), files.end( ) );
-		for ( const std::string& f : files )
-			n_cod4_iwd::index_iwd( f, index );
+		std::vector< std::string > names{ };
+		for ( const material_t& m : k_materials )
+			if ( m.m_image[ 0 ] != '$' )
+				names.push_back( n_cod4_iwd::lower( m.m_image ) );
+		std::sort( names.begin( ), names.end( ) );
+		names.erase( std::unique( names.begin( ), names.end( ) ), names.end( ) );
+
+		// unique names only: two threads on one file would share its .part
+		std::atomic< size_t > next{ 0 };
+		std::vector< std::thread > pool{ };
+		for ( int t = 0; t < k_fetch_threads; ++t )
+			pool.emplace_back( [ & ] {
+				std::error_code ec{ };
+				for ( size_t i; ( i = next++ ) < names.size( ); ) {
+					const std::string path = k_cache_dir + names[ i ] + ".iwi";
+					if ( !std::filesystem::exists( path, ec ) && !n_image_cache::download_file( k_base_url + names[ i ] + ".iwi", path ) )
+						botox_dbg_log( "COD4: download failed %s%s.iwi", k_base_url, names[ i ].c_str( ) );
+				}
+			} );
+		for ( std::thread& t : pool )
+			t.join( );
 
 		std::vector< n_cod4_iwd::image_t > images( std::size( k_materials ) );
-		int missing = 0;
+		int missing = 0, wanted = 0;
 		for ( size_t i = 0; i < std::size( k_materials ); ++i ) {
 			const material_t& m = k_materials[ i ];
 			if ( m.m_image[ 0 ] == '$' ) {
@@ -199,18 +181,28 @@ namespace
 				images[ i ].m_bgra = { 255, 255, 255, 255 };
 				continue;
 			}
-			const auto it = index.find( "images/" + n_cod4_iwd::lower( m.m_image ) + ".iwi" );
+			++wanted;
+			const std::string path = k_cache_dir + n_cod4_iwd::lower( m.m_image ) + ".iwi";
 			std::vector< std::uint8_t > file{ };
-			if ( it == index.end( ) || !n_cod4_iwd::read_entry( it->second, file ) || !n_cod4_iwd::decode_iwi( file, images[ i ] ) )
+			if ( !read_bytes( path, file ) || !n_cod4_iwd::decode_iwi( file, images[ i ] ) ) {
+				DeleteFileA( path.c_str( ) ); // bad cache = fetched again on retry
 				++missing;
+			}
 		}
 
-		s_cod4_dir = dir;
-		s_images   = std::move( images );
 		char line[ 160 ]{ };
-		sprintf_s( line, "COD4: %zu iwds, %zu materials, %d missing (%s)", files.size( ), std::size( k_materials ), missing, dir.c_str( ) );
+		sprintf_s( line, "COD4: %zu materials, %d missing (%s)", std::size( k_materials ), missing, k_cache_dir );
 		g_console.print( line );
-		s_load_state = 2;
+		s_missing = missing;
+		if ( missing == wanted ) {
+			g_console.print( "COD4: no hud images (offline?), retry under visuals > cod4 hud" );
+			s_load_state = 3;
+		}
+		else {
+			s_images     = std::move( images );
+			s_load_state = 2;
+		}
+		--g_url_image_downloads;
 	}
 
 	IDirect3DTexture9* make_texture( const n_cod4_iwd::image_t& img )
@@ -1489,6 +1481,7 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 
 	if ( on && s_load_state == 0 ) {
 		s_load_state = 1;
+		++g_url_image_downloads; // before the thread runs: an eject right now must still wait for it
 		std::thread( load_worker ).detach( );
 	}
 
@@ -2154,9 +2147,9 @@ void n_cod4_hud::draw_options( )
 
 	const int state = s_load_state;
 	if ( state == 2 )
-		ImGui::TextDisabled( "cod4: %s", s_cod4_dir.c_str( ) );
+		ImGui::TextDisabled( s_missing ? "cod4: %d images missing" : "cod4: ready", s_missing );
 	else if ( state == 3 ) {
-		ImGui::TextDisabled( "cod4: install not found" );
+		ImGui::TextDisabled( "cod4: download failed" );
 		if ( ImGui::Button( "retry##cod4", ImVec2( -1.f, 15.f ) ) )
 			s_load_state = 0;
 	}

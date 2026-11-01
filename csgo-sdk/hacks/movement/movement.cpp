@@ -4167,8 +4167,14 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 	const auto col       = g_ctx.m_local->get_collideable( );
 	c_trace_filter fil( g_ctx.m_local );
 	const c_vector dir = nlen > 0.01f ? c_vector( -n.m_x / nlen, -n.m_y / nlen, 0.f ) : c_vector( 0.f, 0.f, 0.f );
-	const float gap    = nlen > 0.01f ? tung_wall_gap( o0, dir ) : -1.f;
-	int tried[ 2 ] = { }, count[ 2 ] = { }, f_path = 0, f_t0 = 0, f_t1 = 0, f_t2 = 0, f_slant = 0, f_stuck = 0, pulls = 0, flip_took = -1, f_stance = 0;
+	/* ~30 traces: only when a learned / lip plane flies a pull */
+	float gap_v       = -2.f;
+	const auto gap_of = [ & ]( ) {
+		if ( gap_v == -2.f )
+			gap_v = nlen > 0.01f ? tung_wall_gap( o0, dir ) : -1.f;
+		return gap_v;
+	};
+	int tried[ 2 ] = { }, count[ 2 ] = { }, n_cand[ 2 ] = { }, rest_tried = 0, f_path = 0, f_t0 = 0, f_t1 = 0, f_t2 = 0, f_slant = 0, f_stuck = 0, pulls = 0, flip_took = -1, f_stance = 0;
 	int lips[ 2 ] = { }, lip_fail[ 3 ] = { };
 	int banned = 0, learned = 0;
 	int regaps = 0, f_pull_blk = 0;
@@ -4188,6 +4194,7 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 		g_prediction.begin( g_ctx.m_local, cmd );
 		g_prediction.end( g_ctx.m_local );
 		const c_vector e    = g_ctx.m_local->get_abs_origin( );
+		const c_vector ve   = g_ctx.m_local->get_velocity( );
 		const float z_nat   = e.m_z;
 		const bool nat_pin  = pinned( );
 		const bool nat_land = ( g_ctx.m_local->get_flags( ) & fl_onground ) != 0;
@@ -4246,27 +4253,64 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 			bool lip;
 			double rank;
 		};
-		const auto rank_of = [ & ]( const float p ) {
-			const int tier = learned_at( p ) ? 0 : outside( p ) == 0.f ? 1 : 2;
-			return tier * 1e6 + tung_grid_rank( p ) * 1e4 + static_cast< double >( outside( p ) );
+		const c_vector hmin = col ? col->get_obb_mins( ) : c_vector( -16.f, -16.f, 0.f );
+		const c_vector hmax( col ? col->get_obb_maxs( ).m_x : 16.f, col ? col->get_obb_maxs( ).m_y : 16.f, e_duck ? 54.f : 72.f );
+		/* lip probe: catch = tick 1 hull end enters a lower brush through its top face ( reflect clip, vz 0 ), so the face
+		   under p must stick out past every face the hull spans above p. feet slice per band ( exact same frac = flush ),
+		   then hull confirm at p ( stance height ). columns at the natural end + one tick on. -1 = start solid / no wall */
+		const c_vector at_xy[ 2 ] = { e, c_vector( e.m_x + ve.m_x * n_tick::engine_interval( ), e.m_y + ve.m_y * n_tick::engine_interval( ), 0.f ) };
+		const int k_lo = static_cast< int >( std::ceil( z_nat - snap - 0.5f * k_eps ) ) - 1;
+		float band_f[ 2 ][ 130 ];
+		for ( auto& c : band_f )
+			for ( float& f : c )
+				f = -2.f;
+		const auto probe = [ & ]( const c_vector& at, const float z, const c_vector& mn, const c_vector& mx ) {
+			trace_t tr;
+			ray_t ray( c_vector( at.m_x, at.m_y, z ), c_vector( at.m_x + dir.m_x * 2.f, at.m_y + dir.m_y * 2.f, z ), mn, mx );
+			g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &fil, &tr );
+			return tr.m_start_solid ? -1.f : tr.m_fraction;
+		};
+		const auto band = [ & ]( const int c, const int k ) {
+			const auto run = [ & ]( ) {
+				return probe( at_xy[ c ], static_cast< float >( k ) + 0.0625f, c_vector( hmin.m_x, hmin.m_y, 0.f ), c_vector( hmax.m_x, hmax.m_y, 0.875f ) );
+			};
+			if ( k - k_lo < 0 || k - k_lo >= 130 )
+				return run( );
+			float& f = band_f[ c ][ k - k_lo ];
+			if ( f == -2.f )
+				f = run( );
+			return f;
+		};
+		const auto lip_of = [ & ]( const float p ) {
+			if ( nlen <= 0.01f || !col )
+				return false;
+			const int k = static_cast< int >( p );
+			for ( int c = 0; c < 2; c++ ) {
+				const float below = band( c, k - 1 ), above = band( c, k );
+				if ( below < 0.f || above < 0.f || below >= above )
+					continue;
+				if ( const float hull = probe( at_xy[ c ], p + 0.5f * k_eps, hmin, hmax ); hull >= 0.f && below < hull )
+					return true;
+			}
+			return false;
+		};
+		/* tiers learned / lip / crossed / rest. a lip is real geometry: nearest first, no grid guess. pulls only on
+		   learned / lip ( blank planes never needed one, log snaps pull=0 ). rest = blind, capped 8 tries */
+		const auto rank_of = [ & ]( const float p, const bool lip ) {
+			const int tier = learned_at( p ) ? 0 : lip ? 1 : outside( p ) == 0.f ? 2 : 3;
+			return tier * 1e6 + ( tier == 1 ? 0 : tung_grid_rank( p ) ) * 1e4 + static_cast< double >( outside( p ) );
 		};
 		cand_t cands[ 256 ];
 		int n_c = 0;
-		const c_vector hmin = col ? col->get_obb_mins( ) : c_vector( -16.f, -16.f, 0.f );
-		const c_vector hmax( col ? col->get_obb_maxs( ).m_x : 16.f, col ? col->get_obb_maxs( ).m_y : 16.f, e_duck ? 54.f : 72.f );
 		for ( int i = 0; i < n_pl && !s_chain; i++ ) {
-			const double r = rank_of( planes[ i ] );
+			const bool lip = lip_of( planes[ i ] );
+			const double r = rank_of( planes[ i ], lip );
 			learned += r < 1e6;
-			for ( int pull = 0; pull < ( gap > 0.f && col ? 2 : 1 ); pull++ )
-				cands[ n_c++ ] = { planes[ i ], pull, false, r };
+			lips[ st ] += lip;
+			for ( int pull = 0; pull < ( r < 2e6 && nlen > 0.01f && col ? 2 : 1 ); pull++ )
+				cands[ n_c++ ] = { planes[ i ], pull, lip, r };
 		}
-		const auto lip_at = [ & ]( const cand_t& c ) {
-			const c_vector s( e.m_x + dir.m_x * gap * c.pull, e.m_y + dir.m_y * gap * c.pull, c.p + 0.5f * k_eps );
-			trace_t tr;
-			ray_t ray( s, c_vector( s.m_x, s.m_y, s.m_z - 1.f ), hmin, hmax );
-			g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &fil, &tr );
-			return !tr.m_start_solid && tr.did_hit( ) && s.m_z - tr.m_end.m_z < k_eps;
-		};
+		n_cand[ st ] = n_c;
 		std::stable_sort( cands, cands + n_c, []( const cand_t& a, const cand_t& b ) { return a.rank < b.rank; } );
 
 		/* predicted ride length ranks proven snaps: a short one waits up to 8 more tries for a longer ride */
@@ -4279,18 +4323,16 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 			tung_plane_t* l;
 			int ride, at_try;
 		} best{ };
-		for ( int i = 0, grp_end = 0; i < n_c && !s_chain && tried[ st ] < cap && !budget.expired( ); i++ ) {
-			if ( i == grp_end ) {
-				const double o = cands[ i ].rank;
-				for ( grp_end = i; grp_end < n_c && cands[ grp_end ].rank == o; grp_end++ ) {
-					cands[ grp_end ].lip = lip_at( cands[ grp_end ] );
-					lips[ st ] += cands[ grp_end ].lip;
-				}
-				std::stable_partition( cands + i, cands + grp_end, []( const cand_t& c ) { return c.lip; } );
-			}
+		for ( int i = 0; i < n_c && !s_chain && tried[ st ] < cap && !budget.expired( ); i++ ) {
+			const bool rest = cands[ i ].rank >= 3e6;
+			if ( rest && rest_tried >= 8 )
+				break;
 			const float p     = cands[ i ].p;
 			const int pull    = cands[ i ].pull;
 			const float shift = p + 0.5f * k_eps - z_nat;
+			const float gap   = pull ? gap_of( ) : -1.f;
+			if ( pull && gap <= 0.f )
+				continue;
 			if ( col ) {
 				trace_t tr;
 				ray_t ray( o0, c_vector( o0.m_x, o0.m_y, o0.m_z + shift ), col->get_obb_mins( ), col->get_obb_maxs( ) );
@@ -4320,6 +4362,7 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 				}
 			}
 			tried[ st ]++;
+			rest_tried += rest;
 			pulls += pull;
 			slot    = { cmd->m_command_number, base, o0, to, false, pressing ? press_yaw : rad2deg( std::atan2f( wy, wx ) ), pressing ? 450.f : wlen };
 			int bad = -1, ride = 2;
@@ -4382,11 +4425,11 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 
 	static unsigned long long next = 0ull;
 	if ( const unsigned long long now = GetTickCount64( ); now >= next ) {
-		botox_dbg_log( "TUNG: miss us=%lld/%lld ban=%d learned=%d tried=%d+%d/%d+%d lips=%d+%d lip_fail=%d/%d/%d chain=%d pulls=%d gap=%.6f regap=%d "
+		botox_dbg_log( "TUNG: miss us=%lld/%lld ban=%d learned=%d tried=%d+%d/%d+%d planes=%d+%d rest=%d lips=%d+%d lip_fail=%d/%d/%d chain=%d pulls=%d gap=%.6f regap=%d "
 		               "pull_blk=%d flip_took=%d mid_crouch=%d path=%d t0=%d t1=%d t2=%d slant=%d stuck=%d z=%.3f nat=%.3f fall=%.2f vz=%.2f spd=%.1f duck=%d/%d press=%d away=%.2f",
 		               budget.used_us( ), budget.used_us( ) + budget.left_us( ), banned, learned,
-		               tried[ 0 ], tried[ 1 ], count[ 0 ] * ( gap > 0.f && col ? 2 : 1 ), count[ 1 ] * ( gap > 0.f && col ? 2 : 1 ), lips[ 0 ],
-		               lips[ 1 ], lip_fail[ 0 ], lip_fail[ 1 ], lip_fail[ 2 ], s_chain ? 1 : 0, pulls, gap, regaps, f_pull_blk, flip_took, f_stance, f_path, f_t0, f_t1,
+		               tried[ 0 ], tried[ 1 ], n_cand[ 0 ], n_cand[ 1 ], count[ 0 ], count[ 1 ], rest_tried, lips[ 0 ],
+		               lips[ 1 ], lip_fail[ 0 ], lip_fail[ 1 ], lip_fail[ 2 ], s_chain ? 1 : 0, pulls, gap_v, regaps, f_pull_blk, flip_took, f_stance, f_path, f_t0, f_t1,
 		               f_t2, f_slant, f_stuck,
 		               o0.m_z, z_nat0, fall, v0.m_z, v0.length_2d( ), ( live_btn & in_duck ) ? 1 : 0,
 		               ( g_prediction.backup_data.m_flags & e_flags::fl_ducking ) ? 1 : 0, pressing ? 1 : 0, away );

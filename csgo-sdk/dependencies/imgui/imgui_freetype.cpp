@@ -146,7 +146,7 @@ namespace
 		void SetPixelHeight( int pixel_height ); // Change font pixel size. All following calls to RasterizeGlyph() will use this size
 		const FT_Glyph_Metrics* LoadGlyph( uint32_t in_codepoint );
 		const FT_Bitmap* RenderGlyphAndGetInfo( GlyphInfo* out_glyph_info );
-		void BlitGlyph( const FT_Bitmap* ft_bitmap, uint32_t* dst, uint32_t dst_pitch, unsigned char* multiply_table = NULL );
+		void BlitGlyph( const FT_Bitmap* ft_bitmap, void* dst, uint32_t dst_pitch, unsigned char* multiply_table = NULL, bool a8 = false );
 		~FreeTypeFont( )
 		{
 			CloseFont( );
@@ -293,7 +293,8 @@ namespace
 		return ft_bitmap;
 	}
 
-	void FreeTypeFont::BlitGlyph( const FT_Bitmap* ft_bitmap, uint32_t* dst, uint32_t dst_pitch, unsigned char* multiply_table )
+	/* botox: a8 = alpha byte only ( alpha atlases ), 1 byte a pixel instead of 4 */
+	void FreeTypeFont::BlitGlyph( const FT_Bitmap* ft_bitmap, void* dst_void, uint32_t dst_pitch, unsigned char* multiply_table, bool a8 )
 	{
 		IM_ASSERT( ft_bitmap != NULL );
 		const uint32_t w         = ft_bitmap->width;
@@ -301,17 +302,31 @@ namespace
 		const uint8_t* src       = ft_bitmap->buffer;
 		const uint32_t src_pitch = ft_bitmap->pitch;
 
+		uint32_t* dst = ( uint32_t* )dst_void;
+		uint8_t* dst8 = ( uint8_t* )dst_void;
+		const auto put = [ & ]( const uint32_t x, const ImU32 c ) {
+			if ( a8 )
+				dst8[ x ] = ( uint8_t )( ( c >> IM_COL32_A_SHIFT ) & 0xFF );
+			else
+				dst[ x ] = c;
+		};
+		const auto next_row = [ & ]( ) {
+			src += src_pitch;
+			dst += dst_pitch;
+			dst8 += dst_pitch;
+		};
+
 		switch ( ft_bitmap->pixel_mode ) {
 		case FT_PIXEL_MODE_GRAY: // Grayscale image, 1 byte per pixel.
 		{
 			if ( multiply_table == NULL ) {
-				for ( uint32_t y = 0; y < h; y++, src += src_pitch, dst += dst_pitch )
+				for ( uint32_t y = 0; y < h; y++, next_row( ) )
 					for ( uint32_t x = 0; x < w; x++ )
-						dst[ x ] = IM_COL32( 255, 255, 255, src[ x ] );
+						put( x, IM_COL32( 255, 255, 255, src[ x ] ) );
 			} else {
-				for ( uint32_t y = 0; y < h; y++, src += src_pitch, dst += dst_pitch )
+				for ( uint32_t y = 0; y < h; y++, next_row( ) )
 					for ( uint32_t x = 0; x < w; x++ )
-						dst[ x ] = IM_COL32( 255, 255, 255, multiply_table[ src[ x ] ] );
+						put( x, IM_COL32( 255, 255, 255, multiply_table[ src[ x ] ] ) );
 			}
 			break;
 		}
@@ -319,13 +334,13 @@ namespace
 		{
 			uint8_t color0 = multiply_table ? multiply_table[ 0 ] : 0;
 			uint8_t color1 = multiply_table ? multiply_table[ 255 ] : 255;
-			for ( uint32_t y = 0; y < h; y++, src += src_pitch, dst += dst_pitch ) {
+			for ( uint32_t y = 0; y < h; y++, next_row( ) ) {
 				uint8_t bits            = 0;
 				const uint8_t* bits_ptr = src;
 				for ( uint32_t x = 0; x < w; x++, bits <<= 1 ) {
 					if ( ( x & 7 ) == 0 )
 						bits = *bits_ptr++;
-					dst[ x ] = IM_COL32( 255, 255, 255, ( bits & 0x80 ) ? color1 : color0 );
+					put( x, IM_COL32( 255, 255, 255, ( bits & 0x80 ) ? color1 : color0 ) );
 				}
 			}
 			break;
@@ -334,17 +349,17 @@ namespace
 // FIXME: Converting pre-multiplied alpha to straight. Doesn't smell good.
 #define DE_MULTIPLY( color, alpha ) ( ImU32 )( 255.0f * ( float )color / ( float )alpha + 0.5f )
 			if ( multiply_table == NULL ) {
-				for ( uint32_t y = 0; y < h; y++, src += src_pitch, dst += dst_pitch )
+				for ( uint32_t y = 0; y < h; y++, next_row( ) )
 					for ( uint32_t x = 0; x < w; x++ ) {
 						uint8_t r = src[ x * 4 + 2 ], g = src[ x * 4 + 1 ], b = src[ x * 4 ], a = src[ x * 4 + 3 ];
-						dst[ x ] = IM_COL32( DE_MULTIPLY( r, a ), DE_MULTIPLY( g, a ), DE_MULTIPLY( b, a ), a );
+						put( x, IM_COL32( DE_MULTIPLY( r, a ), DE_MULTIPLY( g, a ), DE_MULTIPLY( b, a ), a ) );
 					}
 			} else {
-				for ( uint32_t y = 0; y < h; y++, src += src_pitch, dst += dst_pitch ) {
+				for ( uint32_t y = 0; y < h; y++, next_row( ) ) {
 					for ( uint32_t x = 0; x < w; x++ ) {
 						uint8_t r = src[ x * 4 + 2 ], g = src[ x * 4 + 1 ], b = src[ x * 4 ], a = src[ x * 4 + 3 ];
-						dst[ x ] = IM_COL32( multiply_table[ DE_MULTIPLY( r, a ) ], multiply_table[ DE_MULTIPLY( g, a ) ],
-						                     multiply_table[ DE_MULTIPLY( b, a ) ], multiply_table[ a ] );
+						put( x, IM_COL32( multiply_table[ DE_MULTIPLY( r, a ) ], multiply_table[ DE_MULTIPLY( g, a ) ],
+						                  multiply_table[ DE_MULTIPLY( b, a ) ], multiply_table[ a ] ) );
 					}
 				}
 			}
@@ -376,7 +391,7 @@ namespace
 struct ImFontBuildSrcGlyphFT {
 	GlyphInfo Info;
 	uint32_t Codepoint;
-	unsigned int* BitmapData; // Point within one of the dst_tmp_bitmap_buffers[] array
+	unsigned char* BitmapData; // Point within one of the dst_tmp_bitmap_buffers[] array ( botox: a8 unless the atlas loads colour )
 
 	ImFontBuildSrcGlyphFT( )
 	{
@@ -563,7 +578,7 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 				continue;
 
 			// Allocate new temporary chunk if needed
-			const int bitmap_size_in_bytes = src_glyph.Info.Width * src_glyph.Info.Height * 4;
+			const int bitmap_size_in_bytes = src_glyph.Info.Width * src_glyph.Info.Height * ( src_load_color ? 4 : 1 );
 			if ( buf_bitmap_current_used_bytes + bitmap_size_in_bytes > BITMAP_BUFFERS_CHUNK_SIZE ) {
 				buf_bitmap_current_used_bytes = 0;
 				buf_bitmap_buffers.push_back( ( unsigned char* )IM_ALLOC( BITMAP_BUFFERS_CHUNK_SIZE ) );
@@ -572,9 +587,9 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 			           BITMAP_BUFFERS_CHUNK_SIZE ); // We could probably allocate custom-sized buffer instead.
 
 			// Blit rasterized pixels to our temporary buffer and keep a pointer to it.
-			src_glyph.BitmapData = ( unsigned int* )( buf_bitmap_buffers.back( ) + buf_bitmap_current_used_bytes );
+			src_glyph.BitmapData = buf_bitmap_buffers.back( ) + buf_bitmap_current_used_bytes;
 			buf_bitmap_current_used_bytes += bitmap_size_in_bytes;
-			src_tmp.Font.BlitGlyph( ft_bitmap, src_glyph.BitmapData, src_glyph.Info.Width, multiply_enabled ? multiply_table : NULL );
+			src_tmp.Font.BlitGlyph( ft_bitmap, src_glyph.BitmapData, src_glyph.Info.Width, multiply_enabled ? multiply_table : NULL, !src_load_color );
 
 			src_tmp.Rects[ glyph_i ].w = ( stbrp_coord )( src_glyph.Info.Width + padding );
 			src_tmp.Rects[ glyph_i ].h = ( stbrp_coord )( src_glyph.Info.Height + padding );
@@ -636,6 +651,22 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 			memset( atlas->TexPixelsAlpha8, 0, tex_size );
 	}
 
+	/* botox: no room for the one big block with the glyph chunks still held: free them, try again and render the
+	   glyphs a second time straight into the texture ( alpha only ). peak = the texture alone */
+	bool rerender = false;
+	if ( !src_load_color && !atlas->TexPixelsAlpha8 ) {
+		for ( int buf_i = 0; buf_i < buf_bitmap_buffers.Size; buf_i++ )
+			IM_FREE( buf_bitmap_buffers[ buf_i ] );
+		buf_bitmap_buffers.clear( );
+
+		const size_t tex_size  = ( size_t )atlas->TexWidth * atlas->TexHeight;
+		atlas->TexPixelsAlpha8 = ( unsigned char* )IM_ALLOC( tex_size );
+		if ( atlas->TexPixelsAlpha8 ) {
+			memset( atlas->TexPixelsAlpha8, 0, tex_size );
+			rerender = true;
+		}
+	}
+
 	/* botox: one big block in a 32 bit process - fail the build (caller keeps its old fonts) instead
 	   of memset through null. same cleanup as the success path below. */
 	if ( !atlas->TexPixelsRGBA32 && !atlas->TexPixelsAlpha8 ) {
@@ -666,12 +697,22 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 		const float font_off_x = cfg.GlyphOffset.x;
 		const float font_off_y = cfg.GlyphOffset.y + IM_ROUND( dst_font->Ascent );
 
+		unsigned char multiply_table[ 256 ];
+		const bool multiply_enabled = rerender && cfg.RasterizerMultiply != 1.0f;
+		if ( multiply_enabled )
+			ImFontAtlasBuildMultiplyCalcLookupTable( multiply_table, cfg.RasterizerMultiply );
+
 		const int padding = atlas->TexGlyphPadding;
 		for ( int glyph_i = 0; glyph_i < src_tmp.GlyphsCount; glyph_i++ ) {
 			ImFontBuildSrcGlyphFT& src_glyph = src_tmp.GlyphsList[ glyph_i ];
 			stbrp_rect& pack_rect            = src_tmp.Rects[ glyph_i ];
 			IM_ASSERT( pack_rect.was_packed );
 			if ( pack_rect.w == 0 && pack_rect.h == 0 )
+				continue;
+
+			/* same glyph, same size as pass one ( freetype is deterministic ): no metrics = it had no rect either */
+			const FT_Bitmap* rerender_bitmap = NULL;
+			if ( rerender && ( !src_tmp.Font.LoadGlyph( src_glyph.Codepoint ) || !( rerender_bitmap = src_tmp.Font.RenderGlyphAndGetInfo( &src_glyph.Info ) ) ) )
 				continue;
 
 			GlyphInfo& info = src_glyph.Info;
@@ -699,14 +740,17 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 			// Blit from temporary buffer to final texture
 			size_t blit_src_stride = ( size_t )src_glyph.Info.Width;
 			size_t blit_dst_stride = ( size_t )atlas->TexWidth;
-			unsigned int* blit_src = src_glyph.BitmapData;
-			if ( atlas->TexPixelsAlpha8 != NULL ) {
-				unsigned char* blit_dst = atlas->TexPixelsAlpha8 + ( ty * blit_dst_stride ) + tx;
+			if ( rerender ) {
+				src_tmp.Font.BlitGlyph( rerender_bitmap, atlas->TexPixelsAlpha8 + ( ty * blit_dst_stride ) + tx, ( uint32_t )blit_dst_stride,
+				                        multiply_enabled ? multiply_table : NULL, true );
+			} else if ( atlas->TexPixelsAlpha8 != NULL ) {
+				const unsigned char* blit_src = src_glyph.BitmapData;
+				unsigned char* blit_dst       = atlas->TexPixelsAlpha8 + ( ty * blit_dst_stride ) + tx;
 				for ( int y = 0; y < info.Height; y++, blit_dst += blit_dst_stride, blit_src += blit_src_stride )
-					for ( int x = 0; x < info.Width; x++ )
-						blit_dst[ x ] = ( unsigned char )( ( blit_src[ x ] >> IM_COL32_A_SHIFT ) & 0xFF );
+					memcpy( blit_dst, blit_src, ( size_t )info.Width );
 			} else {
-				unsigned int* blit_dst = atlas->TexPixelsRGBA32 + ( ty * blit_dst_stride ) + tx;
+				const unsigned int* blit_src = ( const unsigned int* )src_glyph.BitmapData;
+				unsigned int* blit_dst       = atlas->TexPixelsRGBA32 + ( ty * blit_dst_stride ) + tx;
 				for ( int y = 0; y < info.Height; y++, blit_dst += blit_dst_stride, blit_src += blit_src_stride )
 					for ( int x = 0; x < info.Width; x++ )
 						blit_dst[ x ] = blit_src[ x ];

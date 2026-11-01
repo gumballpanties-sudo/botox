@@ -103,9 +103,9 @@ for (var deathnotice of contextPanel.FindChildrenWithClassTraverse('DeathNotice'
 	// headshot + penetrate are the only two icons the pack reskins; Suicide keeps the
 	// game's own icon_suicide.svg (the old discord link is dead = blank icon)
 	var dnHs = dnChild(deathnotice, 'HeadShot');
-	if (dnHs) dnHs.SetImage('https://raw.githubusercontent.com/abandonedpools/scaleform/3e4c1f244351844a6236d952356ea087f59ad29e/p_scaleform/materials/panorama/images/hud/deathnotice/icon_headshot.svg')
+	if (dnHs) dnHs.SetImage('https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/deathnotice/icon_headshot.svg')
 	var dnPen = dnChild(deathnotice, 'Penetrate');
-	if (dnPen) dnPen.SetImage('https://raw.githubusercontent.com/abandonedpools/scaleform/3e4c1f244351844a6236d952356ea087f59ad29e/p_scaleform/materials/panorama/images/hud/deathnotice/penetrate.svg')
+	if (dnPen) dnPen.SetImage('https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/scaleform/p_scaleform/materials/panorama/images/hud/deathnotice/penetrate.svg')
     deathnotice.style.margin = '0px -8px 1px 18px'
 	// ---------------- REMOVALS ----------------
 	if(deathnotice.BHasClass('DeathNotice_Killer'))
