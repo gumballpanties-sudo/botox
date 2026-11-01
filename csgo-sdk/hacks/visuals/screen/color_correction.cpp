@@ -269,7 +269,7 @@ unsigned int n_color_correction::impl_t::grade_flags( )
 	if ( GET_VARIABLE( g_variables.m_deband, bool ) )
 		flags |= grade_deband;
 
-	if ( GET_VARIABLE( g_variables.m_channel_shift, bool ) ) {
+	if ( GET_VARIABLE( g_variables.m_channel_shift, bool ) && !GET_VARIABLE( g_variables.m_channel_shift_depth, bool ) ) {
 		const float offsets[ 6 ] = { GET_VARIABLE( g_variables.m_channel_shift_red_x, float ),   GET_VARIABLE( g_variables.m_channel_shift_red_y, float ),
 			                         GET_VARIABLE( g_variables.m_channel_shift_green_x, float ), GET_VARIABLE( g_variables.m_channel_shift_green_y, float ),
 			                         GET_VARIABLE( g_variables.m_channel_shift_blue_x, float ),  GET_VARIABLE( g_variables.m_channel_shift_blue_y, float ) };

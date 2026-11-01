@@ -89,32 +89,9 @@ void draw_color_correction_curves( )
 	ImGui::Label( "curves" );
 
 	const float row_width = ImGui::GetRowFrameWidth( );
-	const float spacing   = ImGui::GetStyle( ).ItemSpacing.x;
 
-	{
-		const float button_width = ( row_width - spacing * 3.f ) / 4.f;
-
-		for ( int channel = 0; channel < 4; channel++ ) {
-			if ( channel > 0 )
-				ImGui::SameLine( 0.f, spacing );
-
-			const bool selected = active_channel == channel;
-			if ( selected ) {
-				ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( ImColor( line_colors[ channel ] ) ) );
-				ImGui::PushStyleColor( ImGuiCol_Text, ImVec4( 0.f, 0.f, 0.f, 1.f ) );
-			}
-
-			ImGui::PushID( channel );
-			if ( ImGui::Button( labels[ channel ], ImVec2( button_width, 15.f ) ) ) {
-				active_channel = channel;
-				dragged_point  = -1;
-			}
-			ImGui::PopID( );
-
-			if ( selected )
-				ImGui::PopStyleColor( 2 );
-		}
-	}
+	if ( ImGui::Combo( "channel##color correction curve", &active_channel, labels, 4 ) )
+		dragged_point = -1;
 
 	const float graph_height = row_width * 0.65f;
 	const ImVec2 origin      = ImVec2( ImGui::GetRowFrameLeft( ), ImGui::GetCursorScreenPos( ).y );
@@ -224,10 +201,10 @@ void draw_color_correction_curves( )
 	else
 		ImGui::TextDisabled( "%s   %d points", labels[ active_channel ], active.m_count );
 
-	if ( ImGui::Button( "reset channel##color correction curve", ImVec2( row_width, 15.f ) ) )
+	if ( ImGui::Button( "reset channel##color correction curve", ImVec2( -1.f, 15.f ) ) )
 		channels[ active_channel ]->assign( n_color_curve::config_size, -1.f );
 
-	if ( ImGui::Button( "reset curves##color correction curve", ImVec2( row_width, 15.f ) ) ) {
+	if ( ImGui::Button( "reset curves##color correction curve", ImVec2( -1.f, 15.f ) ) ) {
 		for ( auto* channel : channels )
 			channel->assign( n_color_curve::config_size, -1.f );
 	}
@@ -926,7 +903,7 @@ void n_menu::impl_t::tab_aimbot( )
 		if ( GET_VARIABLE( g_variables.m_aimbot_autowall, bool ) ) {
 			ImGui::OptionPopup(
 				"autowall settings", [ & ]( ) { ImGui::SliderInt( "min damage", &GET_VARIABLE( g_variables.m_aimbot_min_damage, int ), 1, 100 ); },
-				ImVec2( 200.f, -1 ) );
+				ImVec2( 220.f, -1.f ) );
 		}
 
 		ImGui::Checkbox( "backtrack", &GET_VARIABLE( g_variables.m_backtrack_enable, bool ) );
@@ -943,7 +920,7 @@ void n_menu::impl_t::tab_aimbot( )
 					                      ImGuiSliderFlags_AlwaysClamp );
 					}
 				},
-				ImVec2( 220.f, -1 ) );
+				ImVec2( 220.f, -1.f ) );
 		}
 
 		/* weapon_accuracy_nospread, held only across its shot (render never sees it). hosted
@@ -952,7 +929,7 @@ void n_menu::impl_t::tab_aimbot( )
 		if ( GET_VARIABLE( g_variables.m_nospread_enable, bool ) ) {
 			ImGui::OptionPopup(
 				"nospread settings", [ & ]( ) { ImGui::Checkbox( "sm_nospread", &GET_VARIABLE( g_variables.m_nospread_sourcemod, bool ) ); },
-				ImVec2( 200.f, -1 ) );
+				ImVec2( 220.f, -1.f ) );
 		}
 
 		ImGui::Checkbox( "zeus bug", &GET_VARIABLE( g_variables.m_zeusbug, bool ) );
@@ -981,7 +958,7 @@ void n_menu::impl_t::tab_aimbot( )
 					ImGui::ColorEdit4( "path##grenade aim color", &GET_VARIABLE( g_variables.m_grenade_aim_color, c_color ),
 				                       color_picker_alpha_flags );
 				},
-				ImVec2( 200.f, -1 ) );
+				ImVec2( 220.f, -1.f ) );
 	}
 	menu_group_end( );
 

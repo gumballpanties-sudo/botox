@@ -5,6 +5,7 @@
 #include "../../hacks/visuals/screen/bloom.h"
 #include "../../hacks/visuals/screen/depth_of_field.h"
 #include "../../hacks/visuals/screen/depth_view.h"
+#include "../../hacks/visuals/screen/depth_warp.h"
 #include "../../hacks/visuals/screen/flip_world.h"
 #include "../../hacks/visuals/screen/player_stencil.h"
 #include "../../hacks/visuals/screen/reflections.h"
@@ -47,6 +48,8 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 
 	if ( passes ) {
 		g_true_motion_blur.on_post_screen_space_effects( setup );
+
+		g_depth_warp.on_post_screen_space_effects( setup );
 
 		g_bloom.on_post_screen_space_effects( setup );
 	}

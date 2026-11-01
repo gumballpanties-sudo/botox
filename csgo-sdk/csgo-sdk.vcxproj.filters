@@ -101,6 +101,7 @@
     <ClCompile Include="hacks\visuals\screen\flip_world.cpp" />
     <ClCompile Include="hacks\visuals\screen\reflections.cpp" />
     <ClCompile Include="hacks\visuals\screen\depth_view.cpp" />
+    <ClCompile Include="hacks\visuals\screen\depth_warp.cpp" />
     <ClCompile Include="hacks\visuals\screen\mc_clouds.cpp" />
     <ClCompile Include="hacks\visuals\screen\player_stencil.cpp" />
     <ClCompile Include="hacks\visuals\screen\color_correction.cpp" />
@@ -446,6 +447,8 @@
     <ClInclude Include="hacks\visuals\screen\flip_world.h" />
     <ClInclude Include="hacks\visuals\screen\reflections.h" />
     <ClInclude Include="hacks\visuals\screen\depth_view.h" />
+    <ClInclude Include="hacks\visuals\screen\depth_warp.h" />
+    <ClInclude Include="hacks\visuals\screen\depth_warp_shader.h" />
     <ClInclude Include="hacks\visuals\screen\mc_clouds.h" />
     <ClInclude Include="hacks\visuals\screen\player_stencil.h" />
     <ClInclude Include="hacks\visuals\screen\color_correction.h" />

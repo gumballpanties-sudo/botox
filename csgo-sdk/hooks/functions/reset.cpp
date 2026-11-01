@@ -10,6 +10,7 @@
 #include "../../hacks/visuals/screen/depth_of_field.h"
 #include "../../hacks/visuals/screen/depth_source.h"
 #include "../../hacks/visuals/screen/depth_view.h"
+#include "../../hacks/visuals/screen/depth_warp.h"
 #include "../../hacks/visuals/screen/flip_world.h"
 #include "../../hacks/visuals/screen/fx_compat.h"
 #include "../../hacks/visuals/screen/mc_clouds.h"
@@ -39,6 +40,7 @@ long __stdcall n_detoured_functions::reset( IDirect3DDevice9* device, D3DPRESENT
 	g_color_correction.on_device_lost( );
 	g_depth_of_field.on_device_lost( );
 	g_depth_view.on_device_lost( );
+	g_depth_warp.on_device_lost( );
 	g_reflections.on_device_lost( );
 	g_ambient_occlusion.on_device_lost( );
 	g_true_motion_blur.on_device_lost( );

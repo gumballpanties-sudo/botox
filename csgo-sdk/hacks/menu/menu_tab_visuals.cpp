@@ -47,7 +47,7 @@ void n_menu::impl_t::tab_visuals( )
 
 						if ( GET_VARIABLE( g_variables.m_players_sound_only, bool ) ) {
 							ImGui::SliderFloat( "sound duration##player esp", &GET_VARIABLE( g_variables.m_players_sound_duration, float ), 0.2f,
-						                        5.f, "%.1fs" );
+						                        5.f, "%.1f s" );
 							ImGui::Checkbox( "sound fade##player esp", &GET_VARIABLE( g_variables.m_players_sound_fade, bool ) );
 
 							ImGui::SliderFloat( "min volume##sound esp players", &GET_VARIABLE( g_variables.m_sound_esp_min_volume, float ), 0.f,
@@ -57,7 +57,7 @@ void n_menu::impl_t::tab_visuals( )
 						                        ImGuiSliderFlags_AlwaysClamp );
 						}
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 
 				ImGui::Checkbox( "bounding box##player", &GET_VARIABLE( g_variables.m_players_box, bool ) );
 				if ( GET_VARIABLE( g_variables.m_players_box, bool ) ) {
@@ -107,7 +107,7 @@ void n_menu::impl_t::tab_visuals( )
 								                  "inside\0outside\0both\0" );
 							}
 						},
-						ImVec2( 200.f, -1 ) );
+						ImVec2( 220.f, -1.f ) );
 				}
 
 				/* own row: fill without a frame is a valid look, box toggle must not gate it */
@@ -127,7 +127,7 @@ void n_menu::impl_t::tab_visuals( )
 							                       &GET_VARIABLE( g_variables.m_players_box_fill_bottom_color, c_color ),
 							                       color_picker_alpha_flags );
 						},
-						ImVec2( 200.f, -1 ) );
+						ImVec2( 220.f, -1.f ) );
 				}
 
 				ImGui::Checkbox( "name##player", &GET_VARIABLE( g_variables.m_players_name, bool ) );
@@ -153,7 +153,7 @@ void n_menu::impl_t::tab_visuals( )
 							                       &GET_VARIABLE( g_variables.m_players_name_color, c_color ), color_picker_alpha_flags );
 							}
 						},
-						ImVec2( 200.f, -1 ) );
+						ImVec2( 220.f, -1.f ) );
 				}
 
 				ImGui::Checkbox( "health bar##player", &GET_VARIABLE( g_variables.m_players_health_bar, bool ) );
@@ -203,7 +203,7 @@ void n_menu::impl_t::tab_visuals( )
 						                       &GET_VARIABLE( g_variables.m_players_health_bar_bg_color, c_color ),
 						                       color_picker_alpha_flags );
 						},
-						ImVec2( 200.f, -1 ) );
+						ImVec2( 220.f, -1.f ) );
 				}
 
 				ImGui::Checkbox( "health number##player", &GET_VARIABLE( g_variables.m_players_health_text, bool ) );
@@ -223,7 +223,7 @@ void n_menu::impl_t::tab_visuals( )
 							                       &GET_VARIABLE( g_variables.m_players_health_text_color, c_color ),
 							                       color_picker_alpha_flags );
 						},
-						ImVec2( 200.f, -1 ) );
+						ImVec2( 220.f, -1.f ) );
 				}
 
 				ImGui::Checkbox( "weapon name##player", &GET_VARIABLE( g_variables.m_weapon_name, bool ) );
@@ -258,7 +258,7 @@ void n_menu::impl_t::tab_visuals( )
 							ImGui::ColorEdit4( "distance color##player distance color",
 						                       &GET_VARIABLE( g_variables.m_players_distance_color, c_color ), color_picker_alpha_flags );
 						},
-						ImVec2( 200.f, -1 ) );
+						ImVec2( 220.f, -1.f ) );
 				}
 
 				ImGui::Checkbox( "flags##player", &GET_VARIABLE( g_variables.m_players_flags, bool ) );
@@ -277,7 +277,7 @@ void n_menu::impl_t::tab_visuals( )
 							ImGui::ColorEdit4( "alert color##player flag alert color",
 						                       &GET_VARIABLE( g_variables.m_players_flags_alert_color, c_color ), color_picker_alpha_flags );
 						},
-						ImVec2( 210.f, -1 ) );
+						ImVec2( 220.f, -1.f ) );
 				}
 			}
 
@@ -309,7 +309,7 @@ void n_menu::impl_t::tab_visuals( )
 					                        &GET_VARIABLE( g_variables.m_players_skeleton_thickness, float ), 0.5f, 5.f, "%.1f px",
 					                        ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "show hitboxes", &GET_VARIABLE( g_variables.m_players_hitboxes, bool ) );
@@ -326,7 +326,7 @@ void n_menu::impl_t::tab_visuals( )
 							ImGui::SliderFloat( "duration##player hitboxes", &GET_VARIABLE( g_variables.m_players_hitboxes_duration, float ), 0.1f,
 						                        10.f, "%.1f s", ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "player glow", &GET_VARIABLE( g_variables.m_glow_enable, bool ) );
@@ -391,7 +391,7 @@ void n_menu::impl_t::tab_visuals( )
 							ImGui::SliderFloat( "inner size##player glow gradient", &GET_VARIABLE( g_variables.m_glow_gradient_inner, float ), 0.f,
 						                        100.f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "player stencil", &GET_VARIABLE( g_variables.m_players_stencil, bool ) );
@@ -406,7 +406,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "thickness##player stencil", &GET_VARIABLE( g_variables.m_players_stencil_thickness, float ), 0.5f, 8.f,
 					                        "%.1f px", ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "internal player glow", &GET_VARIABLE( g_variables.m_inner_glow, bool ) );
@@ -428,7 +428,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "intensity##inner glow", &GET_VARIABLE( g_variables.m_inner_glow_intensity, float ), 0.25f, 4.f, "%.2fx",
 					                        ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::EndDisabled( );
@@ -452,7 +452,7 @@ void n_menu::impl_t::tab_visuals( )
 							ImGui::SliderFloat( "avatar size##player avatar", &GET_VARIABLE( g_variables.m_players_avatar_size, float ),
 						                        6.f, 40.f, "%.0f px", ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "damage numbers", &GET_VARIABLE( g_variables.m_damage_numbers, bool ) );
@@ -468,7 +468,7 @@ void n_menu::impl_t::tab_visuals( )
 					                        "%.0f u/s" );
 						ImGui::Checkbox( "stack fast hits", &GET_VARIABLE( g_variables.m_damage_numbers_stack, bool ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( ( "out of fov arrows" ), &GET_VARIABLE( g_variables.m_out_of_fov_arrows, bool ) );
@@ -496,7 +496,7 @@ void n_menu::impl_t::tab_visuals( )
 						                       color_picker_alpha_flags );
 							ImGui::SliderFloat( "sound arrow duration",
 						                        &GET_VARIABLE( g_variables.m_out_of_fov_arrows_sound_duration, float ), 0.2f, 5.f,
-						                        "%.1fs" );
+						                        "%.1f s" );
 							ImGui::Checkbox( "sound arrow fade", &GET_VARIABLE( g_variables.m_out_of_fov_arrows_sound_fade, bool ) );
 
 							ImGui::SliderFloat( "min volume##sound esp arrows",
@@ -520,7 +520,7 @@ void n_menu::impl_t::tab_visuals( )
 
 						ImGui::Checkbox( "follow aspect ratio", &GET_VARIABLE( g_variables.m_out_of_fov_arrows_aspect, bool ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::EndDisabled( );
@@ -535,23 +535,18 @@ void n_menu::impl_t::tab_visuals( )
 					[ & ]( ) {
 						ImGui::Checkbox( "bounding box##dropped weapons", &GET_VARIABLE( g_variables.m_dropped_weapons_box, bool ) );
 						if ( GET_VARIABLE( g_variables.m_dropped_weapons_box, bool ) ) {
-							if ( GET_VARIABLE( g_variables.m_dropped_weapons_box_outline, bool ) ) {
-								ImGui::ColorEdit4( "box / outline##dropped weapons bounding box color",
-							                       &GET_VARIABLE( g_variables.m_dropped_weapons_box_color, c_color ),
-							                       color_picker_alpha_flags );
+							ImGui::ColorEdit4( "box color##dropped weapons bounding box color",
+						                       &GET_VARIABLE( g_variables.m_dropped_weapons_box_color, c_color ), color_picker_alpha_flags );
 
-								ImGui::SameLine( );
-								ImGui::ColorEdit4( "##dropped weapons bounding box outline color",
-							                       &GET_VARIABLE( g_variables.m_dropped_weapons_box_outline_color, c_color ),
-							                       color_picker_alpha_flags, 1 );
-							}
-
-							ImGui::IndentRow( );
 							ImGui::Checkbox( "corner bounding box##dropped weapons",
 						                     &GET_VARIABLE( g_variables.m_dropped_weapons_box_corner, bool ) );
-							ImGui::IndentRow( );
 							ImGui::Checkbox( "bounding box outline##dropped weapons",
 						                     &GET_VARIABLE( g_variables.m_dropped_weapons_box_outline, bool ) );
+
+							if ( GET_VARIABLE( g_variables.m_dropped_weapons_box_outline, bool ) )
+								ImGui::ColorEdit4( "outline color##dropped weapons bounding box outline color",
+							                       &GET_VARIABLE( g_variables.m_dropped_weapons_box_outline_color, c_color ),
+							                       color_picker_alpha_flags );
 						}
 
 						ImGui::Checkbox( "name##dropped weapons", &GET_VARIABLE( g_variables.m_dropped_weapons_name, bool ) );
@@ -568,7 +563,7 @@ void n_menu::impl_t::tab_visuals( )
 						                       &GET_VARIABLE( g_variables.m_dropped_weapons_icon_color, c_color ), color_picker_alpha_flags );
 						}
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "planted bomb", &GET_VARIABLE( g_variables.m_bomb_esp, bool ) );
@@ -588,7 +583,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::ColorEdit4( "defuse too late##bomb esp fail color",
 					                       &GET_VARIABLE( g_variables.m_bomb_esp_fail_color, c_color ), color_picker_alpha_flags );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "bomb timer bar", &GET_VARIABLE( g_variables.m_bomb_timer_bar, bool ) );
@@ -599,13 +594,13 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderInt( "height##bomb timer bar", &GET_VARIABLE( g_variables.m_bomb_timer_bar_position, int ), 0, 1000,
 					                      "%d px" );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "thrown projectiles", &GET_VARIABLE( g_variables.m_thrown_objects, bool ) );
 			if ( GET_VARIABLE( g_variables.m_thrown_objects, bool ) ) {
 				ImGui::OptionPopup(
-					"health number settings",
+					"thrown projectiles settings",
 					[ & ]( ) {
 						ImGui::Checkbox( "thrown objects name", &GET_VARIABLE( g_variables.m_thrown_objects_name, bool ) );
 						if ( GET_VARIABLE( g_variables.m_thrown_objects_name, bool ) ) {
@@ -620,7 +615,7 @@ void n_menu::impl_t::tab_visuals( )
 						                       &GET_VARIABLE( g_variables.m_thrown_objects_icon_color, c_color ), color_picker_alpha_flags );
 						}
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "grenade path", &GET_VARIABLE( g_variables.m_grenade_path, bool ) );
@@ -640,7 +635,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "thickness##grenade path", &GET_VARIABLE( g_variables.m_grenade_path_thickness, float ), 1.f, 5.f,
 					                        "%.1f px" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 		}
 		menu_group_end( );
@@ -662,7 +657,7 @@ void n_menu::impl_t::tab_visuals( )
 			chams_dropdown( "sound material", g_variables.m_chams_sound_layers, g_variables.m_chams_sound_colors );
 
 			if ( n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_sound_layers, std::vector< int > ) ) ) {
-				ImGui::SliderFloat( "sound duration", &GET_VARIABLE( g_variables.m_chams_sound_duration, float ), 0.2f, 5.f, "%.1fs" );
+				ImGui::SliderFloat( "sound duration", &GET_VARIABLE( g_variables.m_chams_sound_duration, float ), 0.2f, 5.f, "%.1f s" );
 				ImGui::Checkbox( "sound fade", &GET_VARIABLE( g_variables.m_chams_sound_fade, bool ) );
 
 				ImGui::SliderFloat( "sound min volume##sound esp chams", &GET_VARIABLE( g_variables.m_sound_esp_min_volume, float ), 0.f, 1.f,
@@ -757,7 +752,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "shadow distance##sun angle", &GET_VARIABLE( g_variables.m_sun_angle_shadow_distance, float ), 0.f,
 						                    3000.f, "%.0f u" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "fog", &GET_VARIABLE( g_variables.m_fog, bool ) );
@@ -772,16 +767,14 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "density##fog", &GET_VARIABLE( g_variables.m_fog_density, float ), 0.f, 100.f, "%.0f%%",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "fullbright", &GET_VARIABLE( g_variables.m_fullbright, bool ) );
 
 			ImGui::Checkbox( "flip world", &GET_VARIABLE( g_variables.m_flip_world, bool ) );
-			if ( GET_VARIABLE( g_variables.m_flip_world, bool ) ) {
-				ImGui::SameLine( );
+			if ( GET_VARIABLE( g_variables.m_flip_world, bool ) )
 				ImGui::Checkbox( "gun other side##flip world", &GET_VARIABLE( g_variables.m_flip_world_mirror_hand, bool ) );
-			}
 
 			ImGui::Checkbox( "dlight", &GET_VARIABLE( g_variables.m_dlight, bool ) );
 			if ( GET_VARIABLE( g_variables.m_dlight, bool ) ) {
@@ -798,7 +791,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderInt( "brightness##dlight", &GET_VARIABLE( g_variables.m_dlight_brightness, int ), 0, 10, "%d",
 						                  ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Combo( "ragdoll gravity", &GET_VARIABLE( g_variables.m_ragdoll_gravity, int ), "off\0away\0fly up\0" );
@@ -852,7 +845,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::Checkbox( "world", &GET_VARIABLE( g_variables.m_old_shaders_world, bool ) );
 						ImGui::Checkbox( "props", &GET_VARIABLE( g_variables.m_old_shaders_props, bool ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "world texture", &GET_VARIABLE( g_variables.m_world_texture, bool ) );
@@ -882,8 +875,6 @@ void n_menu::impl_t::tab_visuals( )
 
 						ImGui::Checkbox( "remove decals", &GET_VARIABLE( g_variables.m_world_texture_remove_decals, bool ) );
 
-						ImGui::Separator( );
-
 						static char custom_buffers[ n_misc::world_texture_category_count ][ 128 ] = { };
 
 						for ( int category = 0; category < n_misc::world_texture_category_count; category++ ) {
@@ -904,7 +895,7 @@ void n_menu::impl_t::tab_visuals( )
 							ImGui::PopID( );
 						}
 					},
-					ImVec2( 260.f, -1 ) );
+					ImVec2( 260.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "prop texture", &GET_VARIABLE( g_variables.m_prop_texture, bool ) );
@@ -933,7 +924,7 @@ void n_menu::impl_t::tab_visuals( )
 							}
 						}
 					},
-					ImVec2( 260.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "bullet tracers", &GET_VARIABLE( g_variables.m_bullet_tracers, bool ) );
@@ -963,7 +954,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "width##bullet tracers", &GET_VARIABLE( g_variables.m_bullet_tracers_width, float ), 0.5f, 10.f, "%.1f",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "movement trail", &GET_VARIABLE( g_variables.m_movement_trail, bool ) );
@@ -983,7 +974,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "width##movement trail", &GET_VARIABLE( g_variables.m_movement_trail_width, float ), 0.5f, 20.f, "%.1f",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "bullet impacts", &GET_VARIABLE( g_variables.m_bullet_impacts, bool ) );
@@ -1000,7 +991,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "duration##bullet impacts", &GET_VARIABLE( g_variables.m_bullet_impacts_duration, float ), 0.1f, 30.f,
 						                    "%.1f s", ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "world hit marker", &GET_VARIABLE( g_variables.m_world_hit_marker, bool ) );
@@ -1015,7 +1006,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "duration##world hit marker", &GET_VARIABLE( g_variables.m_world_hit_marker_duration, float ), 0.1f, 5.f,
 						                    "%.1f s", ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 		}
 		menu_group_end( );
@@ -1023,7 +1014,7 @@ void n_menu::impl_t::tab_visuals( )
 		menu_columns_next( );
 
 		if ( menu_group_begin( "removals" ) ) {
-			safe_checkbox( "disable post processing",&GET_VARIABLE( g_variables.m_disable_post_processing, bool ) );
+			safe_checkbox( "disable post processing", &GET_VARIABLE( g_variables.m_disable_post_processing, bool ) );
 			ImGui::Checkbox( "remove panorama blur", &GET_VARIABLE( g_variables.m_remove_panorama_blur, bool ) );
 
 			ImGui::Checkbox( "remove 3d skybox", &GET_VARIABLE( g_variables.m_remove_3d_skybox, bool ) );
@@ -1045,7 +1036,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::Combo( "smoke##remove smoke mode", &GET_VARIABLE( g_variables.m_remove_smoke_mode, int ),
 					                  "wireframe\0disabled\0" );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "remove flash", &GET_VARIABLE( g_variables.m_remove_flash, bool ) );
@@ -1056,7 +1047,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "opacity##remove flash", &GET_VARIABLE( g_variables.m_remove_flash_opacity, float ), 0.f,
 					                        100.f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "remove visual recoil", &GET_VARIABLE( g_variables.m_remove_visual_recoil, bool ) );
@@ -1077,7 +1068,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "z##viewmodel", &GET_VARIABLE( g_variables.m_viewmodel_z, float ), -30.f, 30.f, "%.2f" );
 						ImGui::SliderFloat( "roll##viewmodel", &GET_VARIABLE( g_variables.m_viewmodel_roll, float ), -180.f, 180.f, "%.1f" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "viewmodel fov", &GET_VARIABLE( g_variables.m_viewmodel_fov_enable, bool ) );
@@ -1085,7 +1076,7 @@ void n_menu::impl_t::tab_visuals( )
 				ImGui::OptionPopup(
 					"viewmodel fov settings",
 					[ & ]( ) { ImGui::SliderFloat( "fov##viewmodel", &GET_VARIABLE( g_variables.m_viewmodel_fov, float ), 1.f, 179.f, "%.1f" ); },
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "weapon sway", &GET_VARIABLE( g_variables.m_weapon_sway, bool ) );
@@ -1095,7 +1086,7 @@ void n_menu::impl_t::tab_visuals( )
 					[ & ]( ) {
 						ImGui::SliderFloat( "scale##weapon sway", &GET_VARIABLE( g_variables.m_weapon_sway_scale, float ), 0.f, 50.f, "%.2f" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "weapon sheen", &GET_VARIABLE( g_variables.m_weapon_sheen, bool ) );
@@ -1110,7 +1101,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "width##weapon sheen", &GET_VARIABLE( g_variables.m_weapon_sheen_width, float ), 0.1f, 1.f, "%.2f",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "bob changer", &GET_VARIABLE( g_variables.m_viewmodel_bob, bool ) );
@@ -1126,7 +1117,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "shift left", &GET_VARIABLE( g_variables.m_viewmodel_shift_left, float ), 0.f, 10.f, "%.2f" );
 						ImGui::SliderFloat( "shift right", &GET_VARIABLE( g_variables.m_viewmodel_shift_right, float ), 0.f, 10.f, "%.2f" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 		}
 		menu_group_end( );
@@ -1151,7 +1142,7 @@ void n_menu::impl_t::tab_visuals( )
 
 						ImGui::Checkbox( "wall collision##third person", &GET_VARIABLE( g_variables.m_third_person_collision, bool ) );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "aspect ratio", &GET_VARIABLE( g_variables.m_aspect_ratio_enable, bool ) );
@@ -1183,7 +1174,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::Checkbox( "stretch cheat overlays##aspect ratio",
 						                 &GET_VARIABLE( g_variables.m_aspect_ratio_cheat_overlay, bool ) );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			/* one shader pass over the finished back buffer in end_scene; menu drawn after, never graded */
@@ -1192,7 +1183,6 @@ void n_menu::impl_t::tab_visuals( )
 				ImGui::OptionPopup(
 					"color correction settings",
 					[ & ]( ) {
-						ImGui::Label( "exposure" );
 						ImGui::SliderFloat( "exposure##color correction", &GET_VARIABLE( g_variables.m_color_correction_exposure, float ), -3.f,
 						                    3.f, "%+.2f ev" );
 
@@ -1243,7 +1233,7 @@ void n_menu::impl_t::tab_visuals( )
 						if ( ImGui::Button( "reset##color correction", ImVec2( -1.f, 15.f ) ) )
 							reset_color_correction( );
 					},
-					ImVec2( 250.f, -1 ) );
+					ImVec2( 260.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "sharpen", &GET_VARIABLE( g_variables.m_sharpen, bool ) );
@@ -1257,7 +1247,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "threshold##sharpen", &GET_VARIABLE( g_variables.m_sharpen_threshold, float ), 0.f, 0.2f, "%.3f",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "film grain", &GET_VARIABLE( g_variables.m_film_grain, bool ) );
@@ -1278,7 +1268,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "minimum response##film grain", &GET_VARIABLE( g_variables.m_film_grain_response_minimum, float ),
 						                    0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "vignette", &GET_VARIABLE( g_variables.m_vignette, bool ) );
@@ -1301,7 +1291,7 @@ void n_menu::impl_t::tab_visuals( )
 
 						ImGui::Checkbox( "invert##vignette", &GET_VARIABLE( g_variables.m_vignette_invert, bool ) );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "invert", &GET_VARIABLE( g_variables.m_invert_filter, bool ) );
@@ -1313,7 +1303,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "strength##invert", &GET_VARIABLE( g_variables.m_invert_filter_strength, float ), 0.f, 1.f, "%.2f",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "posterize", &GET_VARIABLE( g_variables.m_posterize, bool ) );
@@ -1328,7 +1318,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "strength##posterize", &GET_VARIABLE( g_variables.m_posterize_strength, float ), 0.f, 1.f, "%.2f",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "deband", &GET_VARIABLE( g_variables.m_deband, bool ) );
@@ -1345,7 +1335,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "dither##deband", &GET_VARIABLE( g_variables.m_deband_grain, float ), 0.f, 64.f, "%.0f",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "channel shift", &GET_VARIABLE( g_variables.m_channel_shift, bool ) );
@@ -1363,8 +1353,184 @@ void n_menu::impl_t::tab_visuals( )
 						                    "%.1f px" );
 						ImGui::SliderFloat( "blue y##channel shift", &GET_VARIABLE( g_variables.m_channel_shift_blue_y, float ), -32.f, 32.f,
 						                    "%.1f px" );
+
+						ImGui::Checkbox( "depth based##channel shift", &GET_VARIABLE( g_variables.m_channel_shift_depth, bool ) );
+						if ( GET_VARIABLE( g_variables.m_channel_shift_depth, bool ) ) {
+							ImGui::Combo( "depth side##channel shift", &GET_VARIABLE( g_variables.m_channel_shift_depth_mode, int ),
+							              "background\0" "foreground\0" "both sides\0" );
+							ImGui::SliderFloat( "distance##channel shift", &GET_VARIABLE( g_variables.m_channel_shift_depth_distance, float ), 0.f, 4000.f,
+							                    "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "range##channel shift", &GET_VARIABLE( g_variables.m_channel_shift_depth_range, float ), 0.f, 2000.f,
+							                    "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "ramp##channel shift", &GET_VARIABLE( g_variables.m_channel_shift_depth_ramp, float ), 1.f, 4000.f,
+							                    "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+						}
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "depth distort", &GET_VARIABLE( g_variables.m_depth_distort, bool ) );
+			if ( GET_VARIABLE( g_variables.m_depth_distort, bool ) ) {
+				ImGui::OptionPopup(
+					"depth distort settings",
+					[ & ]( ) {
+						int& effect = GET_VARIABLE( g_variables.m_depth_distort_effect, int );
+						ImGui::Combo( "effect##depth distort", &effect,
+						              "bulge / pinch\0" "swirl\0" "spliced radials\0" "zigzag\0" "ripple\0" "wave\0" "drunk\0" "tiny planet\0"
+						              "slit scan\0" "radial slit scan\0" );
+						const bool radial = effect <= 4;
+
+						int& animate = GET_VARIABLE( g_variables.m_depth_distort_animate, int );
+						constexpr const char* k_animate[] = { "no\0" "yes\0", "no\0" "amplitude\0" "phase\0", "no\0" "amplitude\0" "phase\0" "angle\0" };
+						const int anim_kind = ( effect == 3 || effect == 4 ) ? 1 : ( effect == 5 ? 2 : 0 );
+						if ( effect != 6 && effect != 7 ) {
+							if ( animate < 0 || animate > anim_kind + 1 )
+								animate = 0;
+							ImGui::Combo( "animate##depth distort", &animate, k_animate[ anim_kind ] );
+							if ( animate )
+								ImGui::SliderFloat( "animation speed##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_anim_speed, float ), 0.05f,
+								                    10.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+						}
+
+						ImGui::Label( "properties" );
+
+						switch ( effect ) {
+						case 0:
+							ImGui::SliderFloat( "magnitude##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_magnitude, float ), -1.f, 1.f, "%.2f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							break;
+						case 1:
+						case 2:
+							ImGui::SliderFloat( "angle##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_angle, float ), -1800.f, 1800.f,
+							                    "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "inner radius##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_inner_radius, float ), 0.f, 1.f,
+							                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+							if ( effect == 1 )
+								ImGui::Checkbox( "inverse angle##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_inverse, bool ) );
+							else
+								ImGui::SliderInt( "splices##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_splices, int ), 1, 50, "%d",
+								                  ImGuiSliderFlags_AlwaysClamp );
+							break;
+						case 3:
+						case 4:
+							ImGui::SliderFloat( "angle##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_angle, float ), -999.f, 999.f, "%.0f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "period##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_period, float ), 0.1f, 10.f, "%.2f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "amplitude##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_amplitude, float ), -10.f, 10.f,
+							                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "phase##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_phase, float ), -5.f, 5.f, "%.2f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							break;
+						case 5:
+							ImGui::Combo( "wave type##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_wave_type, int ), "x/x\0" "x/y\0" );
+							ImGui::SliderFloat( "angle##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_wave_angle, float ), -360.f, 360.f,
+							                    "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "period##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_wave_period, float ), 0.1f, 10.f,
+							                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "amplitude##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_wave_amplitude, float ), -1.f, 1.f,
+							                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "phase##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_phase, float ), -5.f, 5.f, "%.2f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							break;
+						case 6:
+							ImGui::SliderFloat( "strength x##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_drunk_strength_x, float ), 0.f,
+							                    100.f, "%.1f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "strength y##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_drunk_strength_y, float ), 0.f,
+							                    100.f, "%.1f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "speed##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_drunk_speed, float ), 0.f, 10.f, "%.1f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "bending angle##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_drunk_angle, float ), -1800.f,
+							                    1800.f, "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "bending speed##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_drunk_angle_speed, float ), 0.f,
+							                    10.f, "%.1f", ImGuiSliderFlags_AlwaysClamp );
+							break;
+						case 7:
+							ImGui::SliderFloat( "scale##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_planet_scale, float ), 0.f, 10.f, "%.2f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "rotation x##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_planet_rot_x, float ), 0.f, 1.f,
+							                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "rotation y##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_planet_rot_y, float ), 0.f, 1.f,
+							                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "rotation z##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_planet_rot_z, float ), 0.f, 360.f,
+							                    "%.1f deg", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "offset x##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_planet_offset_x, float ), -0.5f, 0.5f,
+							                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "offset y##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_planet_offset_y, float ), -0.5f, 0.5f,
+							                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "seam blending##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_planet_seam, float ), 0.5f, 1.f,
+							                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+							break;
+						case 8:
+							ImGui::Combo( "direction##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_slit_direction, int ),
+							              "left\0" "right\0" "up\0" "down\0" );
+							if ( !animate )
+								ImGui::SliderFloat( "position##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_slit_position, float ), 0.f, 1.f,
+								                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "scan speed##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_slit_speed, float ), 0.f, 3.f,
+							                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							break;
+						case 9:
+							if ( !animate )
+								ImGui::SliderFloat( "position##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_slit_position, float ), 0.f, 1.f,
+								                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::ColorEdit4( "border color##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_border_color, c_color ) );
+							break;
+						default:
+							break;
+						}
+
+						if ( radial || effect == 9 ) {
+							ImGui::SliderFloat( "center x##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_center_x, float ), 0.f, 1.f, "%.3f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "center y##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_center_y, float ), 0.f, 1.f, "%.3f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+						}
+
+						if ( radial ) {
+							ImGui::SliderFloat( "radius##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_radius, float ), 0.f, 1.f, "%.3f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "tension##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_tension, float ), 0.f, 10.f, "%.3f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "aspect ratio##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_aspect, float ), -100.f, 100.f,
+							                    "%.1f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "aspect angle##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_aspect_angle, float ), -180.f,
+							                    180.f, "%.1f deg", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::Checkbox( "use offset coordinates##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_use_offset, bool ) );
+							if ( GET_VARIABLE( g_variables.m_depth_distort_use_offset, bool ) ) {
+								ImGui::SliderFloat( "offset x##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_offset_x, float ), 0.f, 1.f, "%.3f",
+								                    ImGuiSliderFlags_AlwaysClamp );
+								ImGui::SliderFloat( "offset y##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_offset_y, float ), 0.f, 1.f, "%.3f",
+								                    ImGuiSliderFlags_AlwaysClamp );
+							}
+						}
+
+						ImGui::Label( "blending" );
+						ImGui::Combo( "blending mode##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_blend, int ),
+						              "normal\0" "darken\0" "  multiply\0" "  color burn\0" "  linear burn\0" "lighten\0" "  screen\0"
+						              "  color dodge\0" "  linear dodge\0" "  addition\0" "  glow\0" "overlay\0" "  soft light\0"
+						              "  hard light\0" "  vivid light\0" "  linear light\0" "  pin light\0" "  hard mix\0" "difference\0"
+						              "  exclusion\0" "subtract\0" "  divide\0" "  divide (alternative)\0" "  divide (photoshop)\0"
+						              "  reflect\0" "  grain extract\0" "  grain merge\0" "hue\0" "  saturation\0" "  color\0"
+						              "  luminosity\0" );
+						ImGui::SliderFloat( "opacity##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_opacity, float ), 0.f, 1.f, "%.2f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+
+						ImGui::Label( "depth" );
+						ImGui::Combo( "depth side##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_depth_mode, int ),
+						              "background\0" "foreground\0" "both sides\0" );
+						ImGui::SliderFloat( "distance##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_depth_distance, float ), 0.f, 4000.f,
+						                    "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "range##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_depth_range, float ), 0.f, 2000.f,
+						                    "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "ramp##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_depth_ramp, float ), 1.f, 4000.f,
+						                    "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+						if ( effect <= 7 ) {
+							ImGui::Checkbox( "fade transition##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_fade, bool ) );
+							ImGui::Checkbox( "protect edges##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_protect, bool ) );
+						}
+					},
+					ImVec2( 230.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "reflections", &GET_VARIABLE( g_variables.m_reflections, bool ) );
@@ -1389,7 +1555,7 @@ void n_menu::impl_t::tab_visuals( )
 						              "low\0" "medium\0" "high\0" );
 						ImGui::Checkbox( "smooth normals##reflections", &GET_VARIABLE( g_variables.m_reflections_smooth_normals, bool ) );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "emphasize", &GET_VARIABLE( g_variables.m_emphasize, bool ) );
@@ -1421,7 +1587,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "effect factor##emphasize", &GET_VARIABLE( g_variables.m_emphasize_effect_factor, float ), 0.f, 1.f,
 						                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "show depth", &GET_VARIABLE( g_variables.m_show_depth, bool ) );
@@ -1455,7 +1621,7 @@ void n_menu::impl_t::tab_visuals( )
 							                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
 						}
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "depth of field", &GET_VARIABLE( g_variables.m_depth_of_field, bool ) );
@@ -1531,7 +1697,7 @@ void n_menu::impl_t::tab_visuals( )
 
 						ImGui::TextDisabled( "depth: %s %s", g_depth_source.route_name( ), g_depth_source.verify_name( ) );
 					},
-					ImVec2( 240.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "ambient occlusion", &GET_VARIABLE( g_variables.m_ambient_occlusion, bool ) );
@@ -1580,7 +1746,7 @@ void n_menu::impl_t::tab_visuals( )
 
 						ImGui::Checkbox( "show occlusion##ambient occlusion", &GET_VARIABLE( g_variables.m_ambient_occlusion_debug, bool ) );
 					},
-					ImVec2( 240.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "motion blur", &GET_VARIABLE( g_variables.m_motion_blur, bool ) );
@@ -1602,7 +1768,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "falling min", &GET_VARIABLE( g_variables.m_motion_blur_falling_min, float ), 0.f, 50.f, "%.2f" );
 						ImGui::SliderFloat( "falling max", &GET_VARIABLE( g_variables.m_motion_blur_falling_max, float ), 0.f, 50.f, "%.2f" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "true motion blur", &GET_VARIABLE( g_variables.m_true_motion_blur, bool ) );
@@ -1662,7 +1828,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::Checkbox( "universal depth##true motion blur", &GET_VARIABLE( g_variables.m_depth_force_live, bool ) );
 						ImGui::TextDisabled( "depth: %s %s", g_depth_source.route_name( ), g_depth_source.verify_name( ) );
 					},
-					ImVec2( 240.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "bloom", &GET_VARIABLE( g_variables.m_bloom, bool ) );
@@ -1686,7 +1852,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "aspect ratio##bloom", &GET_VARIABLE( g_variables.m_bloom_aspect, float ), -1.f, 1.f, "%.2f",
 						                    ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 240.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "low fps viewmodel", &GET_VARIABLE( g_variables.m_viewmodel_low_fps, bool ) );
@@ -1698,7 +1864,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "fps##low fps viewmodel", &GET_VARIABLE( g_variables.m_viewmodel_low_fps_rate, float ), 15.f, 60.f,
 						                    "%.0f fps", ImGuiSliderFlags_AlwaysClamp );
 					},
-					ImVec2( 210.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 		}
 		menu_group_end( );
@@ -1766,7 +1932,7 @@ void n_menu::impl_t::tab_visuals( )
 							                    &GET_VARIABLE( g_variables.m_sniper_crosshair_outline_thickness, float ), 0.1f, 3.f, "%.1f" );
 						}
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "aimbot fov circle", &GET_VARIABLE( g_variables.m_aimbot_fov_circle, bool ) );
@@ -1784,7 +1950,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::Checkbox( "only while aim key held##aimbot fov circle",
 						                 &GET_VARIABLE( g_variables.m_aimbot_fov_circle_key_only, bool ) );
 					},
-					ImVec2( 230.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "custom net graph", &GET_VARIABLE( g_variables.m_net_graph, bool ) );
@@ -1793,7 +1959,8 @@ void n_menu::impl_t::tab_visuals( )
 				ImGui::OptionPopup(
 					"net graph settings",
 					[ & ]( ) {
-						ImGui::TextDisabled( "shows with net_graph 1, font: fonts > net graph" );
+						ImGui::TextDisabled( "shown with net_graph 1" );
+						ImGui::TextDisabled( "font: fonts > net graph" );
 
 						ImGui::MultiCombo( "shown##net graph", GET_VARIABLE( g_variables.m_net_graph_items, std::vector< bool > ),
 						                   { "fps", "frame var", "ping", "up rate", "loss", "choke", "cmd rate", "tick", "sv time", "sv var", "server type" },
@@ -1829,10 +1996,10 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderInt( "y##net graph", &GET_VARIABLE( g_variables.m_net_graph_y, int ), -1, g_ctx.m_height,
 						                  GET_VARIABLE( g_variables.m_net_graph_y, int ) < 0 ? "stock" : "%d px" );
 					},
-					ImVec2( 230.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
-			safe_checkbox( "force crosshair",&GET_VARIABLE( g_variables.m_force_crosshair, bool ) );
+			safe_checkbox( "force crosshair", &GET_VARIABLE( g_variables.m_force_crosshair, bool ) );
 
 			ImGui::Checkbox( "default crosshair color", &GET_VARIABLE( g_variables.m_panorama_crosshair_color, bool ) );
 
@@ -1891,7 +2058,9 @@ void n_menu::impl_t::tab_visuals( )
 
 						ImGui::SliderFloat( "hud padding", &GET_VARIABLE( g_variables.m_chud_hud_padding, float ), 0.f, 120.f, "%.0f" );
 
-						ImGui::Checkbox( "background blur (lower bg alpha to see it)", &GET_VARIABLE( g_variables.m_chud_hud_blur, bool ) );
+						ImGui::Checkbox( "background blur", &GET_VARIABLE( g_variables.m_chud_hud_blur, bool ) );
+						if ( ImGui::IsItemHovered( ) )
+							ImGui::SetTooltip( "lower background alpha to see it" );
 
 						ImGui::Checkbox( "watermark background", &GET_VARIABLE( g_variables.m_chud_hud_watermark_bg, bool ) );
 
@@ -1925,7 +2094,7 @@ void n_menu::impl_t::tab_visuals( )
 							                   color_picker_alpha_flags );
 						}
 					},
-					ImVec2( 240.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "minecraft hud", &GET_VARIABLE( g_variables.m_mc_hud, bool ) );
@@ -1939,7 +2108,7 @@ void n_menu::impl_t::tab_visuals( )
 						int& gui_scale = GET_VARIABLE( g_variables.m_mc_hud_gui_scale, int );
 						ImGui::SliderInt( "gui scale##mc hud", &gui_scale, 0, 6, gui_scale == 0 ? "auto" : "%d" );
 					},
-					ImVec2( 240.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "call of duty 4 hud", &GET_VARIABLE( g_variables.m_cod4_hud, bool ) );
@@ -1948,6 +2117,7 @@ void n_menu::impl_t::tab_visuals( )
 				ImGui::OptionPopup(
 					"call of duty 4 hud settings",
 					[ & ]( ) {
+						ImGui::Label( "hardpoint key" );
 						ImGui::Keybind( "hardpoint key##cod4", &GET_VARIABLE( g_variables.m_cod4_hud_hardpoint_key, key_bind_t ), false );
 
 						static char path_buffer[ 260 ] = { };
@@ -1962,13 +2132,13 @@ void n_menu::impl_t::tab_visuals( )
 
 						n_cod4_hud::draw_options( );
 					},
-					ImVec2( 320.f, -1 ) );
+					ImVec2( 320.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "web on surface", &GET_VARIABLE( g_variables.m_web, bool ) );
 			if ( GET_VARIABLE( g_variables.m_web, bool ) ) {
 				ImGui::OptionPopup(
-					"web configuration",
+					"web settings",
 					[]( ) {
 						ImGui::TextWrapped( "%s", Web_Status( ) );
 
@@ -2010,10 +2180,8 @@ void n_menu::impl_t::tab_visuals( )
 
 						ImGui::Combo( "shape##web", &aspect, aspect_names, k_wsAspectCount );
 
-						if ( ImGui::Button( "place at crosshair##web", ImVec2( ( ImGui::GetRowFrameWidth( ) - 14.f ) * 0.5f, 15.f ) ) )
+						if ( ImGui::Button( "place at crosshair##web", ImVec2( -1.f, 15.f ) ) )
 							Web_PlaceAtCrosshair( );
-
-						ImGui::SameLine( );
 
 						if ( ImGui::Button( "remove##web", ImVec2( -1.f, 15.f ) ) )
 							Web_Unplace( );
@@ -2054,18 +2222,16 @@ void n_menu::impl_t::tab_visuals( )
 						if ( GET_VARIABLE( g_variables.m_web_panel, bool ) )
 							ImGui::SliderFloat( "window opacity##web", &GET_VARIABLE( g_variables.m_web_panel_opacity, float ), 0.05f, 1.f, "%.2f" );
 
-						if ( ImGui::Button( "clear cache##web", ImVec2( ( ImGui::GetRowFrameWidth( ) - 14.f ) * 0.5f, 15.f ) ) )
+						if ( ImGui::Button( "clear cache##web", ImVec2( -1.f, 15.f ) ) )
 							Web_ClearCache( );
-
-						ImGui::SameLine( );
 
 						if ( ImGui::Button( "clear memory##web", ImVec2( -1.f, 15.f ) ) )
 							Web_ClearMemory( );
 					},
-					ImVec2( 240.f, -1.f ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
-			if ( ImGui::Button( "force hud update" ) ) {
+			if ( ImGui::Button( "force hud update", ImVec2( -1.f, 15.f ) ) ) {
 				g_scaleform.m_should_force_reload = true;
 				g_scaleform.m_should_force_update = true;
 				g_chud.m_should_force_update      = true;
@@ -2077,9 +2243,9 @@ void n_menu::impl_t::tab_visuals( )
 			static char buffer[ 1024 * 16 ];
 			ImGui::InputText( "panorama script text", buffer, IM_ARRAYSIZE( buffer ) );
 
-			ImGui::Combo( "context panel#panel", &ctx_panel, "CSGOHud\0CSGOMainMenu\0" );
+			ImGui::Combo( "context panel##panel", &ctx_panel, "CSGOHud\0CSGOMainMenu\0" );
 
-			if ( ImGui::Button( "run panorama script" ) )
+			if ( ImGui::Button( "run panorama script", ImVec2( -1.f, 15.f ) ) )
 				g_scaleform.m_uiengine->run_script( ctx_panel == 0 ? g_scaleform.m_hud_panel : g_scaleform.m_menu_panel, buffer,
 				                                    ctx_panel == 0 ? "panorama/layout/hud/hud.xml" : "panorama/layout/mainmenu.xml", 8, 10,
 				                                    false, false );

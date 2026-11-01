@@ -1133,8 +1133,7 @@ void n_aimbot::impl_t::on_create_move_post( )
 	c_angle aim{ };
 	if ( aiming ) {
 		aim = g_math.calculate_angle( g_ctx.m_local->get_eye_position( false ), target.m_position );
-		if ( !camlock )
-			aim -= silent ? g_ctx.m_local->get_punch( ) * recoil_scale( ) : want;
+		aim -= silent ? g_ctx.m_local->get_punch( ) * recoil_scale( ) : want;
 		aim.normalize( );
 	}
 
@@ -1182,47 +1181,28 @@ void n_aimbot::impl_t::on_create_move_post( )
 		return;
 	}
 
-	/* camlock: camera rides the target, bullets keep leaving along the mouse. lock end = aim becomes where the camera stopped */
-	if ( camlock ) {
-		m_rcs_applied_x = m_rcs_applied_y = 0.f;
+	/* camlock ( salvia FUN_1009d890 ): silent off, camera + bullets ride the target ( SetViewAngles( cmd view ) ). smooth from the
+	   camera, 1 - ( 1 - 1/s )^( interval * 64 ), no first bullet snap. no target = normal path ( mouse + standalone rcs ) */
+	if ( camlock && aiming ) {
+		c_angle delta = aim - camera;
+		delta.normalize( );
 
-		c_angle user = camera;
-		if ( m_cam_active ) {
-			c_angle delta = camera - c_angle( m_cam_set_x, m_cam_set_y, 0.f );
-			delta.normalize( );
-			user = c_angle( m_cam_user_x, m_cam_user_y, 0.f ) + delta;
-			user.normalize( );
-			user.clamp( );
-		}
+		if ( settings.m_smooth > 1.f )
+			delta = delta * ( 1.f - std::pow( 1.f - 1.f / settings.m_smooth, interval * 64.f ) );
 
-		if ( aiming ) {
-			c_angle delta = aim - camera;
-			delta.normalize( );
+		camera += delta;
+		camera.normalize( );
+		camera.clamp( );
 
-			if ( settings.m_smooth > 1.f )
-				delta = delta * ( 1.f / settings.m_smooth );
+		if ( !std::isfinite( camera.m_x ) || !std::isfinite( camera.m_y ) )
+			return;
 
-			camera += delta;
-			camera.normalize( );
-			camera.clamp( );
+		/* aim holds the full comp, lock end unwinds it from here */
+		m_rcs_applied_x = want.m_x;
+		m_rcs_applied_y = want.m_y;
 
-			if ( !std::isfinite( camera.m_x ) || !std::isfinite( camera.m_y ) )
-				return;
-
-			g_interfaces.m_engine_client->set_view_angles( camera );
-
-			if ( !m_cam_active )
-				botox_dbg_log( "AIM: camlock on idx=%d user=%.1f/%.1f", m_lock_index, user.m_x, user.m_y );
-		}
-
-		m_cam_active = aiming;
-		m_cam_set_x  = camera.m_x;
-		m_cam_set_y  = camera.m_y;
-		m_cam_user_x = user.m_x;
-		m_cam_user_y = user.m_y;
-
-		publish( user - want );
-		m_shot_is_aim = false;
+		g_interfaces.m_engine_client->set_view_angles( camera );
+		publish( camera );
 		return;
 	}
 

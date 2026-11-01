@@ -23,6 +23,7 @@
 #include "../hacks/visuals/screen/depth_of_field.h"
 #include "../hacks/visuals/screen/depth_source.h"
 #include "../hacks/visuals/screen/depth_view.h"
+#include "../hacks/visuals/screen/depth_warp.h"
 #include "../hacks/visuals/screen/flip_world.h"
 #include "../hacks/visuals/screen/mc_clouds.h"
 #include "../hacks/visuals/screen/player_stencil.h"
@@ -233,6 +234,11 @@ bool n_hooks::impl_t::on_attach( )
 	initialise_hook( m_check_for_pure_server_whitelist, g_modules[ ENGINE_DLL ].find_pattern( "8B 0D ? ? ? ? 56 83 B9 ? ? ? ? ? 7E 6E" ),
 	                 &n_detoured_functions::check_for_pure_server_whitelist, "CL_CheckForPureServerWhitelist()" );
 
+	initialise_hook( m_aaa_bypass,
+	                 g_modules[ ENGINE_DLL ].find_pattern(
+						 "56 8B 35 ? ? ? ? FF D6 68 ? ? ? ? 8B C8 8B 10 FF 52 2C 85 C0 75 2B FF D6 68 ? ? ? ? 8B C8 8B 10 FF 52 2C" ),
+	                 &n_detoured_functions::aaa_bypass, "aaa bypass" );
+
 	initialise_hook( m_lock_cursor, safe_vfunc( g_interfaces.m_surface, 67 ), &n_detoured_functions::lock_cursor, "ISurface::LockCursor()" );
 	initialise_hook( m_reset, safe_vfunc( g_interfaces.m_direct_device, 16 ), &n_detoured_functions::reset, "IDirect3DDevice9::Reset()" );
 
@@ -296,6 +302,7 @@ void n_hooks::impl_t::release_render_resources( )
 	g_color_correction.on_device_lost( );
 	g_depth_of_field.on_device_lost( );
 	g_depth_view.on_device_lost( );
+	g_depth_warp.on_device_lost( );
 	g_reflections.on_device_lost( );
 	g_ambient_occlusion.on_device_lost( );
 	g_true_motion_blur.on_device_lost( );

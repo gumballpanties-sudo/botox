@@ -75,7 +75,7 @@ static void route_calc_page( )
 		ImGui::Checkbox( "show combos on screen", &GET_VARIABLE( g_variables.m_route_calc_show_bar, bool ) );
 		ImGui::Checkbox( "advanced readout##route calc", &GET_VARIABLE( g_variables.m_route_calc_advanced_readout, bool ) );
 
-		ImGui::SliderInt( "popup duration", &GET_VARIABLE( g_variables.m_route_calc_popup_time, int ), 1, 30, "%d sec" );
+		ImGui::SliderInt( "popup duration", &GET_VARIABLE( g_variables.m_route_calc_popup_time, int ), 1, 30, "%d s" );
 		ImGui::SliderInt( "max displayed combos", &GET_VARIABLE( g_variables.m_route_calc_max_results, int ), 1, 64, "%d combos" );
 
 		if ( ImGui::SliderInt( "delay hop ticks", &GET_VARIABLE( g_variables.m_route_calc_delay_ticks, int ), 0, 8, "%d ticks" ) )
@@ -215,7 +215,7 @@ void n_menu::impl_t::tab_movement( )
 					[ & ]( ) {
 						ImGui::SliderInt( "success rate##bunny hop chance", &GET_VARIABLE( g_variables.m_bunny_hop_chance, int ), 0, 100, "%d%%" );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "delay hop", &GET_VARIABLE( g_variables.m_delay_hop, bool ) );
@@ -228,7 +228,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderInt( "ticks to wait##delay hop ticks", &GET_VARIABLE( g_variables.m_delay_hop_ticks, int ), 1, 8,
 						                  "%d ticks" );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "edge jump", &GET_VARIABLE( g_variables.m_edge_jump, bool ) );
@@ -240,7 +240,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "edge jump key", &GET_VARIABLE( g_variables.m_edge_jump_key, key_bind_t ) );
 						ImGui::Checkbox( "on ladders##edge jump ladder", &GET_VARIABLE( g_variables.m_edge_jump_ladder, bool ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "long jump", &GET_VARIABLE( g_variables.m_long_jump, bool ) );
@@ -262,7 +262,7 @@ void n_menu::impl_t::tab_movement( )
 						if ( GET_VARIABLE( g_variables.m_long_jump_edge_jump, bool ) )
 							ImGui::Checkbox( "on ladders##ljejladder", &GET_VARIABLE( g_variables.m_long_jump_edge_jump_ladder, bool ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "mini jump", &GET_VARIABLE( g_variables.m_mini_jump, bool ) );
@@ -275,7 +275,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "edge jump", &GET_VARIABLE( g_variables.m_mini_jump_edge_jump, bool ) );
 						ImGui::Checkbox( "hold crouch", &GET_VARIABLE( g_variables.m_mini_jump_hold_duck, bool ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "jump bug", &GET_VARIABLE( g_variables.m_jump_bug, bool ) );
@@ -292,7 +292,7 @@ void n_menu::impl_t::tab_movement( )
 						if ( GET_VARIABLE( g_variables.m_jump_bug_assist, bool ) )
 							ImGui::SliderInt( "assist ticks##jba", &GET_VARIABLE( g_variables.m_jump_bug_assist_ticks, int ), 1, 8 );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "auto crouch", &GET_VARIABLE( g_variables.m_auto_crouch, bool ) );
@@ -304,7 +304,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "auto crouch key", &GET_VARIABLE( g_variables.m_auto_crouch_key, key_bind_t ) );
 						ImGui::SliderInt( "ticks##autocrouch", &GET_VARIABLE( g_variables.m_auto_crouch_ticks, int ), 1, 32 );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "auto strafe", &GET_VARIABLE( g_variables.m_auto_strafe, bool ) );
@@ -322,9 +322,9 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::Checkbox( "strafe in last mouse direction", &GET_VARIABLE( g_variables.m_auto_strafe_last_mouse, bool ) );
 						ImGui::Checkbox( "avoid wall collisions", &GET_VARIABLE( g_variables.m_auto_strafe_avoid_walls, bool ) );
 						if ( GET_VARIABLE( g_variables.m_auto_strafe_avoid_walls, bool ) )
-							ImGui::SliderFloat( "avoid distance", &GET_VARIABLE( g_variables.m_auto_strafe_avoid_dist, float ), 0.f, 200.f, "%.0f units" );
+							ImGui::SliderFloat( "avoid distance", &GET_VARIABLE( g_variables.m_auto_strafe_avoid_dist, float ), 0.f, 200.f, "%.0f u" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "strafe optimizer", &GET_VARIABLE( g_variables.m_strafe_optimizer, bool ) );
@@ -335,7 +335,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderFloat( "gain", &GET_VARIABLE( g_variables.m_strafe_optimizer_gain, float ), 0.f, 100.f, "%.0f%%" );
 						ImGui::SliderFloat( "min speed", &GET_VARIABLE( g_variables.m_strafe_optimizer_min_speed, float ), 0.f, 250.f, "%.0f" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "ladder bug", &GET_VARIABLE( g_variables.m_ladder_bug, bool ) );
@@ -351,10 +351,10 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderFloat( "strength", &GET_VARIABLE( g_variables.m_poop_ladder_jump_strength, float ), 0.f, 500.f, "%.0f%%" );
 						ImGui::SliderFloat( "jetpack boost (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_boost, float ), 0.f, 1000.f, "%.0f" );
 						ImGui::SliderFloat( "jetpack angle (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_angle, float ), 0.f, 90.f, "%.0f deg" );
-						ImGui::SliderFloat( "jetpack height", &GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ), 10.f, 2000.f, "%.0fu" );
+						ImGui::SliderFloat( "jetpack height", &GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ), 10.f, 2000.f, "%.0f u" );
 						ImGui::SliderFloat( "sv_gravity (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_gravity, float ), 50.f, 800.f, "%.0f" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "ladder glide", &GET_VARIABLE( g_variables.m_ladder_glide, bool ) );
@@ -370,7 +370,7 @@ void n_menu::impl_t::tab_movement( )
 
 			if ( GET_VARIABLE( g_variables.edge_bug, bool ) ) {
 				ImGui::OptionPopup(
-					"edgebug advanced settings",
+					"edge bug settings",
 					[ & ]( ) {
 						ImGui::Label( "edgebug keybind" );
 						ImGui::Keybind( "edge bug key", &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) );
@@ -454,7 +454,7 @@ void n_menu::impl_t::tab_movement( )
 								ImGui::SliderInt( "search amount##ebsearch", &GET_VARIABLE( g_variables.m_edgebug_search_amount, int ), 1, 4 );
 						}
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			/* edge skip: walk off / bug on a lip, strafe back + air duck onto it. own key, never while holding duck */
@@ -491,7 +491,7 @@ void n_menu::impl_t::tab_movement( )
 
 						ImGui::Checkbox( "visualize##esviz", &GET_VARIABLE( g_variables.m_edge_skip_visualize, bool ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "pixel surf", &GET_VARIABLE( g_variables.m_pixel_surf, bool ) );
@@ -514,7 +514,7 @@ void n_menu::impl_t::tab_movement( )
 						if ( GET_VARIABLE( g_variables.m_pixel_surf_sound, int ) > 0 )
 							ImGui::SliderFloat( "sound volume##pssndvol", &GET_VARIABLE( g_variables.m_pixel_surf_sound_volume, float ), 0.f, 2.f, "%.2f" );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "tung surf (local y6 ast)", &GET_VARIABLE( g_variables.m_tung_surf, bool ) );
@@ -530,7 +530,7 @@ void n_menu::impl_t::tab_movement( )
 						/* a catch / ride needs a move INTO the wall: presses when your keys don't, never when they point away */
 						ImGui::Checkbox( "press into wall##tungpress", &GET_VARIABLE( g_variables.m_tung_surf_press, bool ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "pixelsurf assist", &GET_VARIABLE( g_variables.m_pixel_surf_assist, bool ) );
@@ -568,7 +568,7 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderFloat( "render height", &GET_VARIABLE( g_variables.m_pixel_surf_assist_render_height, float ), 0.f,
 							                    100.f, "%.1f" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "bounce assist", &GET_VARIABLE( g_variables.m_bouncee_assist, bool ) );
@@ -584,7 +584,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "stamina hops", &GET_VARIABLE( g_variables.m_bouncee_assist_brokehop, bool ) );
 						ImGui::Checkbox( "render", &GET_VARIABLE( g_variables.m_bouncee_assist_render, bool ) );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "auto bounce", &GET_VARIABLE( g_variables.m_auto_bounce, bool ) );
@@ -597,7 +597,7 @@ void n_menu::impl_t::tab_movement( )
 
 						ImGui::Combo( "mode##abmode", &GET_VARIABLE( g_variables.m_auto_bounce_mode, int ), "drop in\0keep speed\0stop\0" );
 						ImGui::SliderFloat( "min speed gain", &GET_VARIABLE( g_variables.m_auto_bounce_min_gain, float ), 0.f, 500.f, "%.0f" );
-						ImGui::SliderFloat( "max sim reach##abreach", &GET_VARIABLE( g_variables.m_auto_bounce_reach, float ), 16.f, 512.f, "%.0fu" );
+						ImGui::SliderFloat( "max sim reach##abreach", &GET_VARIABLE( g_variables.m_auto_bounce_reach, float ), 16.f, 512.f, "%.0f u" );
 						ImGui::Checkbox( "auto jump", &GET_VARIABLE( g_variables.m_auto_bounce_jump, bool ) );
 						ImGui::Checkbox( "crouch jump##abcrouch", &GET_VARIABLE( g_variables.m_auto_bounce_crouch, bool ) );
 						ImGui::Checkbox( "auto align##abalign", &GET_VARIABLE( g_variables.m_auto_bounce_align, bool ) );
@@ -605,7 +605,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::ColorEdit4( "visualize color##abvizcolor", &GET_VARIABLE( g_variables.m_auto_bounce_visualize_color, c_color ),
 						                   color_picker_alpha_flags );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "texture bug", &GET_VARIABLE( g_variables.m_texture_bug, bool ) );
@@ -631,7 +631,7 @@ void n_menu::impl_t::tab_movement( )
 						if ( GET_VARIABLE( g_variables.m_texture_bug_sound, int ) > 0 )
 							ImGui::SliderFloat( "sound volume##tbsndvol", &GET_VARIABLE( g_variables.m_texture_bug_sound_volume, float ), 0.f, 2.f, "%.2f" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "edge surf", &GET_VARIABLE( g_variables.m_edge_surf, bool ) );
@@ -643,7 +643,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "edge surf key", &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
 						ImGui::SliderFloat( "lead range##esurfrange", &GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f, "%.0f u" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "air stuck", &GET_VARIABLE( g_variables.m_air_stuck, bool ) );
@@ -659,7 +659,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderFloat( "extra reach", &GET_VARIABLE( g_variables.m_air_stuck_extra_reach, float ), 0.f, 32.f, "%.2f" );
 						ImGui::SliderFloat( "fan budget", &GET_VARIABLE( g_variables.m_air_stuck_budget, float ), 5.f, 90.f, "%.0f%%" );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "wall climb", &GET_VARIABLE( g_variables.m_wall_climb, bool ) );
@@ -681,7 +681,7 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::Keybind( "show wall slope key", &GET_VARIABLE( g_variables.m_show_wall_slope_key, key_bind_t ) );
 						}
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "fire man", &GET_VARIABLE( g_variables.m_fire_man, bool ) );
@@ -709,7 +709,7 @@ void n_menu::impl_t::tab_movement( )
 
 						ImGui::Checkbox( "push off early", &GET_VARIABLE( g_variables.m_fire_man_push_off, bool ) );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "air freeze", &GET_VARIABLE( g_variables.m_air_freeze, bool ) );
@@ -720,7 +720,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Label( "air freeze keybind" );
 						ImGui::Keybind( "air freeze key", &GET_VARIABLE( g_variables.m_air_freeze_key, key_bind_t ) );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 		}
 		menu_group_end( );
@@ -753,7 +753,7 @@ void n_menu::impl_t::tab_movement( )
 						if ( GET_VARIABLE( g_variables.m_hsw_pre_onground, bool ) )
 							ImGui::Checkbox( "allow A / D inputs on ground", &GET_VARIABLE( g_variables.m_hsw_allow_a_d, bool ) );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "auto one hop", &GET_VARIABLE( g_variables.m_auto_one_hop, bool ) );
@@ -762,7 +762,7 @@ void n_menu::impl_t::tab_movement( )
 			ImGui::Checkbox( "blockbot", &GET_VARIABLE( g_variables.m_blockbot, bool ) );
 			ImGui::Keybind( "blockbot key", &GET_VARIABLE( g_variables.m_blockbot_key, key_bind_t ) );
 
-			safe_checkbox( "no crouch cooldown",&GET_VARIABLE( g_variables.m_no_crouch_cooldown, bool ) );
+			safe_checkbox( "no crouch cooldown", &GET_VARIABLE( g_variables.m_no_crouch_cooldown, bool ) );
 
 			ImGui::Checkbox( "fast stop", &GET_VARIABLE( g_variables.m_fast_stop, bool ) );
 
@@ -778,7 +778,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "headbounces", &GET_VARIABLE( g_variables.m_pixel_finder_headbounces, bool ) );
 						ImGui::Checkbox( "pixeljumps", &GET_VARIABLE( g_variables.m_pixel_finder_pixeljumps, bool ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "pixel calculator", &GET_VARIABLE( g_variables.m_pixel_calc, bool ) );
@@ -796,7 +796,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Label( "allowed jumps" );
 						move_mask_combo( "##pixel calculator jump types", GET_VARIABLE( g_variables.m_pixel_calc_moves, int ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "distance calculator", &GET_VARIABLE( g_variables.m_dist_calc, bool ) );
@@ -807,7 +807,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Label( "point key" );
 						ImGui::Keybind( "distance calculator key", &GET_VARIABLE( g_variables.m_dist_calc_key, key_bind_t ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "practice window", &GET_VARIABLE( g_variables.m_practice_window, bool ) );
@@ -821,30 +821,32 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "practice tp key", &GET_VARIABLE( g_variables.m_practice_tp_key, key_bind_t ) );
 						ImGui::Checkbox( "show window", &GET_VARIABLE( g_variables.m_practice_window_show, bool ) );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "fake pov in demos", &GET_VARIABLE( g_variables.m_fake_pov, bool ) );
-			ImGui::OptionPopup(
-				"fake pov settings",
-				[ & ]( ) {
-					ImGui::Label( "fake pov keybind" );
-					ImGui::Keybind( "fake pov key", &GET_VARIABLE( g_variables.m_fake_pov_key, key_bind_t ) );
-					ImGui::Combo( "angle##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_mode, int ),
-					              "right\0left\0up\0bottom\0backwards\0spinning\0" );
-					if ( GET_VARIABLE( g_variables.m_fake_pov_mode, int ) == 5 )
-						ImGui::SliderFloat( "spin speed##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_spin_speed, float ), 10.f, 540.f, "%.0f deg/s" );
-					ImGui::SliderFloat( "smoothing##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_smooth, float ), 0.5f, 20.f, "%.1f" );
-					ImGui::Checkbox( "snap view on disable##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_snap_view, bool ) );
+			if ( GET_VARIABLE( g_variables.m_fake_pov, bool ) ) {
+				ImGui::OptionPopup(
+					"fake pov settings",
+					[ & ]( ) {
+						ImGui::Label( "fake pov keybind" );
+						ImGui::Keybind( "fake pov key", &GET_VARIABLE( g_variables.m_fake_pov_key, key_bind_t ) );
+						ImGui::Combo( "angle##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_mode, int ),
+						              "right\0left\0up\0bottom\0backwards\0spinning\0" );
+						if ( GET_VARIABLE( g_variables.m_fake_pov_mode, int ) == 5 )
+							ImGui::SliderFloat( "spin speed##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_spin_speed, float ), 10.f, 540.f, "%.0f deg/s" );
+						ImGui::SliderFloat( "smoothing##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_smooth, float ), 0.5f, 20.f, "%.1f" );
+						ImGui::Checkbox( "snap view on disable##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_snap_view, bool ) );
 
-					ImGui::Checkbox( "indicator arrow##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow, bool ) );
-					if ( GET_VARIABLE( g_variables.m_fake_pov_arrow, bool ) ) {
-						ImGui::ColorEdit4( "arrow color##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_color, c_color ), color_picker_alpha_flags );
-						ImGui::SliderFloat( "arrow size##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_size, float ), 4.f, 64.f, "%.0f" );
-						ImGui::SliderFloat( "arrow distance##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_dist, float ), 0.f, 400.f, "%.0f" );
-					}
-				},
-				ImVec2( 220.f, -1 ) );
+						ImGui::Checkbox( "indicator arrow##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow, bool ) );
+						if ( GET_VARIABLE( g_variables.m_fake_pov_arrow, bool ) ) {
+							ImGui::ColorEdit4( "arrow color##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_color, c_color ), color_picker_alpha_flags );
+							ImGui::SliderFloat( "arrow size##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_size, float ), 4.f, 64.f, "%.0f" );
+							ImGui::SliderFloat( "arrow distance##fake pov", &GET_VARIABLE( g_variables.m_fake_pov_arrow_dist, float ), 0.f, 400.f, "%.0f" );
+						}
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
 
 			ImGui::Checkbox( "hide y6o ps", &GET_VARIABLE( g_variables.m_hide_y6o_ps, bool ) );
 
@@ -855,7 +857,7 @@ void n_menu::impl_t::tab_movement( )
 					[ & ]( ) {
 						ImGui::Checkbox( "show fails##jumpstats", &GET_VARIABLE( g_variables.m_jump_stats_show_fails, bool ) );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 		}
 		menu_group_end( );
@@ -944,7 +946,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderInt( "position##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_padding, int ), 30,
 					                      g_ctx.m_height );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator, bool ) );
@@ -1008,7 +1010,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderInt( "position##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_padding, int ), 30,
 					                      g_ctx.m_height );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "velocity graph", &GET_VARIABLE( g_variables.m_velocity_graph, bool ) );
@@ -1055,7 +1057,7 @@ void n_menu::impl_t::tab_movement( )
 						                  g_ctx.m_width / 2 );
 						ImGui::SliderInt( "position##velocity graph", &GET_VARIABLE( g_variables.m_velocity_graph_position, int ), 0, g_ctx.m_height );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_enable, bool ) );
@@ -1166,7 +1168,7 @@ void n_menu::impl_t::tab_movement( )
 							}
 						}
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "keystroke indicators", &GET_VARIABLE( g_variables.m_key_press_indicator, bool ) );
@@ -1201,7 +1203,7 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderInt( "outline thickness##key press", &GET_VARIABLE( g_variables.m_key_press_outline_px, int ), 1, 5, "%d px" );
 						}
 
-						ImGui::SliderFloat( "fade##key press", &GET_VARIABLE( g_variables.m_key_press_fade, float ), 0.f, 0.3f, "%.2fs" );
+						ImGui::SliderFloat( "fade##key press", &GET_VARIABLE( g_variables.m_key_press_fade, float ), 0.f, 0.3f, "%.2f s" );
 
 						ImGui::SliderInt( "key gap##key press", &GET_VARIABLE( g_variables.m_key_press_gap_x, int ), 0, 60 );
 						ImGui::SliderInt( "row gap##key press", &GET_VARIABLE( g_variables.m_key_press_gap_y, int ), -10, 60 );
@@ -1213,7 +1215,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderInt( "x offset##key press", &GET_VARIABLE( g_variables.m_key_press_offset_x, int ),
 						                  -static_cast< int >( g_ctx.m_width / 2.f ), static_cast< int >( g_ctx.m_width / 2.f ) );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 		}
 		menu_group_end( );
@@ -1236,7 +1238,7 @@ void n_menu::impl_t::tab_movement( )
 						static char label_buffer[ 64 ] = { };
 						text_buffer_sync( "chat label##detlabel", label_var, label_buffer, sizeof( label_buffer ) );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "edgebug visualize", &GET_VARIABLE( g_variables.m_edgebug_visualize, bool ) );
@@ -1262,7 +1264,7 @@ void n_menu::impl_t::tab_movement( )
 						                    4.f, 64.f, "%.0f" );
 						ImGui::Checkbox( "project onto geometry", &GET_VARIABLE( g_variables.m_edgebug_visualize_projected, bool ) );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "pixelsurf lines", &GET_VARIABLE( g_variables.m_pixel_surf_line_render, bool ) );
@@ -1278,7 +1280,7 @@ void n_menu::impl_t::tab_movement( )
 						                    10.f, "%.1f" );
 						ImGui::Checkbox( "full trajectory", &GET_VARIABLE( g_variables.m_pixel_surf_line_full_trajectory, bool ) );
 					},
-					ImVec2( 220.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 		}
 		menu_group_end( );
@@ -1312,7 +1314,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Combo( "position##recorder timer", &GET_VARIABLE( g_variables.m_movement_rec_position, int ),
 						              "top left\0bottom left\0bottom right\0" );
 					},
-					ImVec2( 200.f, -1 ) );
+					ImVec2( 220.f, -1.f ) );
 			}
 			ImGui::Checkbox( "clipper", &GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) );
 			if ( GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) ) {
@@ -1386,7 +1388,7 @@ void n_menu::impl_t::tab_movement( )
 				for ( std::size_t i = 0; i < mr.m_clips.size( ); ++i ) {
 					const auto& clip      = mr.m_clips[ i ];
 					const float seconds   = static_cast< float >( clip.frames.size( ) ) / static_cast< float >( std::max( clip.tickrate, 1 ) );
-					const std::string row = std::format( "{}   {} ticks  {:.1f}s##route {}", clip.label( ), clip.frames.size( ), seconds, i );
+					const std::string row = std::format( "{}   {} ticks  {:.1f} s##route {}", clip.label( ), clip.frames.size( ), seconds, i );
 					if ( ImGui::Selectable( row.c_str( ), mr.m_selected_clip == static_cast< int >( i ), ImGuiSelectableFlags_AllowDoubleClick ) ) {
 						mr.m_selected_clip = static_cast< int >( i );
 						if ( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )

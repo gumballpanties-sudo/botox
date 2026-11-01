@@ -23,3 +23,14 @@ void __cdecl n_detoured_functions::check_for_pure_server_whitelist( )
 
 	original( );
 }
+
+char __stdcall n_detoured_functions::aaa_bypass( )
+{
+	static auto original = g_hooks.m_aaa_bypass.get_original< decltype( &n_detoured_functions::aaa_bypass ) >( );
+	HOOK_SCOPE_OR_BAIL( original( ) );
+
+	if ( GET_VARIABLE( g_variables.m_aaa_bypass, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) )
+		return true;
+
+	return original( );
+}

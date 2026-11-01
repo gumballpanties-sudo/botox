@@ -574,7 +574,7 @@ void n_menu::impl_t::tab_inventory( )
 				// applies live, knife_anim_live
 				if ( !n_skins::knife_anims_fit( GET_VARIABLE( TV( m_knife_anims_model ), int ),
 				                                GET_VARIABLE( TV( m_knife_model ), int ), GET_VARIABLE( TV( m_knife_enable ), bool ) ) )
-					ImGui::TextColored( ImVec4( 1.f, 0.4f, 0.4f, 1.f ), "wrong bones for this knife — draw will not play" );
+					ImGui::TextColored( ImVec4( 1.f, 0.4f, 0.4f, 1.f ), "wrong bones for this knife, draw will not play" );
 
 				ImGui::Combo( "knife anims", &GET_VARIABLE( TV( m_knife_anims_model ), int ),
 				              "default\0bayonet\0m9 bayonet\0karambit\0bowie\0butterfly\0falchion\0flip\0gut\0huntsman\0shadow "
@@ -821,18 +821,18 @@ void n_menu::impl_t::tab_fonts( )
 		menu_columns_begin( );
 
 		if ( menu_group_begin( "chud hud font" ) ) {
-			if ( ImGui::Button( "register selected font (restart game after)", ImVec2( -1.f, 15.f ) ) )
-				g_chud.register_system_fonts( );
-
-			if ( ImGui::Button( "restore stock fonts.conf", ImVec2( -1.f, 15.f ) ) )
-				g_chud.restore_fonts_conf( );
-
 			font_family_input( font_var, chud_font_buffer, sizeof( chud_font_buffer ) );
 
 			ImGui::SliderFloat( "font scale", &GET_VARIABLE( g_variables.m_chud_hud_font_scale, float ), 50.f, 150.f, "%.0f%%" );
 
 			ImGui::SliderFloat( "text nudge x", &GET_VARIABLE( g_variables.m_chud_hud_font_nudge_x, float ), -20.f, 20.f, "%.0f" );
 			ImGui::SliderFloat( "text nudge y", &GET_VARIABLE( g_variables.m_chud_hud_font_nudge_y, float ), -20.f, 20.f, "%.0f" );
+
+			if ( ImGui::Button( "register selected font (restart game after)", ImVec2( -1.f, 15.f ) ) )
+				g_chud.register_system_fonts( );
+
+			if ( ImGui::Button( "restore stock fonts.conf", ImVec2( -1.f, 15.f ) ) )
+				g_chud.restore_fonts_conf( );
 		}
 		menu_group_end( );
 
@@ -854,6 +854,8 @@ void n_menu::impl_t::tab_fonts( )
 		menu_columns_begin( );
 
 		if ( menu_group_begin( "default hud font" ) ) {
+			font_family_input( font_var, def_font_buffer, sizeof( def_font_buffer ) );
+
 			if ( ImGui::Button( "apply to default hud (restart game after)", ImVec2( -1.f, 15.f ) ) )
 				g_chud.register_def_hud_font( );
 
@@ -862,8 +864,6 @@ void n_menu::impl_t::tab_fonts( )
 
 			if ( ImGui::Button( "restore stock fonts.conf", ImVec2( -1.f, 15.f ) ) )
 				g_chud.restore_fonts_conf( );
-
-			font_family_input( font_var, def_font_buffer, sizeof( def_font_buffer ) );
 		}
 		menu_group_end( );
 
@@ -1081,7 +1081,8 @@ void n_menu::impl_t::cvars_page( )
 		                                      ImGui::GetColorU32( ImGuiCol_Separator ) );
 		ImGui::SetCursorPosY( line_y + 1.f + spacing );
 
-		if ( ImGui::BeginChild( "##cvar rows", ImVec2( 0.f, -( k_frame + spacing ) ), false, 0, false ) ) {
+		/* bottom = execute: standard 15 px button, frame 19 */
+		if ( ImGui::BeginChild( "##cvar rows", ImVec2( 0.f, -( 15.f + 4.f + spacing ) ), false, 0, false ) ) {
 			const int count = static_cast< int >( rows.size( ) );
 			int move_from = -1, move_to = -1, remove = -1;
 
@@ -1124,7 +1125,7 @@ void n_menu::impl_t::cvars_page( )
 
 		ImGui::SetCursorScreenPos( ImVec2( ImGui::GetCursorScreenPos( ).x, ImGui::GetItemRectMax( ).y + spacing + 2.f ) );
 		ImGui::BeginDisabled( rows.empty( ) );
-		execute = ImGui::Button( "execute", ImVec2( -1.f, k_frame - 4.f ) );
+		execute = ImGui::Button( "execute", ImVec2( -1.f, 15.f ) );
 		ImGui::EndDisabled( );
 	}
 	ImGui::EndChild( );
@@ -1160,7 +1161,7 @@ void n_menu::impl_t::tab_misc( )
 		ImGui::Checkbox( "watermark", &GET_VARIABLE( g_variables.m_watermark, bool ) );
 		if ( GET_VARIABLE( g_variables.m_watermark, bool ) ) {
 			ImGui::OptionPopup(
-				"watermark configuration",
+				"watermark settings",
 				[]( ) {
 					auto& style = GET_VARIABLE( g_variables.m_watermark_style, int );
 					if ( style < 0 || style > 21 )
@@ -1325,9 +1326,9 @@ void n_menu::impl_t::tab_misc( )
 						ImGui::SliderInt( "deleting speed##watermark kami", &GET_VARIABLE( g_variables.m_watermark_kami_deleting_speed, int ), 1, 30,
 						                  "%d chars/s" );
 						ImGui::SliderFloat( "hold typed##watermark kami", &GET_VARIABLE( g_variables.m_watermark_kami_typing_inactive, float ), 0.f, 10.f,
-						                    "%.1fs" );
+						                    "%.1f s" );
 						ImGui::SliderFloat( "hold deleted##watermark kami", &GET_VARIABLE( g_variables.m_watermark_kami_deleting_inactive, float ), 0.f,
-						                    10.f, "%.1fs" );
+						                    10.f, "%.1f s" );
 					}
 
 					ImGui::Checkbox( "mikudere type##watermark kami", &GET_VARIABLE( g_variables.m_watermark_kami_mikudere_type, bool ) );
@@ -1356,7 +1357,7 @@ void n_menu::impl_t::tab_misc( )
 		ImGui::Checkbox( "spectator list", &GET_VARIABLE( g_variables.m_spectators_list, bool ) );
 		if ( GET_VARIABLE( g_variables.m_spectators_list, bool ) ) {
 			ImGui::OptionPopup(
-				"spectators configuration",
+				"spectators settings",
 				[]( ) {
 					const int color_style = GET_VARIABLE( g_variables.m_spectators_list_style, int );
 					const int lumi_type = color_style == 25 ? GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) : -1;
@@ -1582,13 +1583,13 @@ void n_menu::impl_t::tab_misc( )
 					if ( style == 10 )
 						ImGui::Checkbox( "always show##spectatorlist clarity v2", &GET_VARIABLE( g_variables.m_spectators_always_show, bool ) );
 				},
-				ImVec2( 200.f, -1.f ) );
+				ImVec2( 220.f, -1.f ) );
 		}
 
 		ImGui::Checkbox( "media player", &GET_VARIABLE( g_variables.m_media_player, bool ) );
 		if ( GET_VARIABLE( g_variables.m_media_player, bool ) ) {
 			ImGui::OptionPopup(
-				"media player configuration",
+				"media player settings",
 				[]( ) {
 					auto& position = GET_VARIABLE( g_variables.m_media_player_position, int );
 					if ( position < 0 || position > 5 )
@@ -1601,7 +1602,7 @@ void n_menu::impl_t::tab_misc( )
 						ImGui::Checkbox( "background", &GET_VARIABLE( g_variables.m_media_player_background, bool ) );
 						ImGui::Checkbox( "progress bar", &GET_VARIABLE( g_variables.m_media_player_progress_bar, bool ) );
 
-						ImGui::Checkbox( "waveform",&GET_VARIABLE( g_variables.m_media_player_visualizer, bool ) );
+						ImGui::Checkbox( "waveform", &GET_VARIABLE( g_variables.m_media_player_visualizer, bool ) );
 						if ( GET_VARIABLE( g_variables.m_media_player_visualizer, bool ) ) {
 							ImGui::SliderFloat( "height##visualizer", &GET_VARIABLE( g_variables.m_media_player_visualizer_height, float ), 4.f, 64.f,
 							                    "%.0f px", ImGuiSliderFlags_AlwaysClamp );
@@ -1637,21 +1638,21 @@ void n_menu::impl_t::tab_misc( )
 						ImGui::Keybind( "next##media key", &GET_VARIABLE( g_variables.m_media_player_next_key, key_bind_t ), false );
 					}
 				},
-				ImVec2( 200.f, -1.f ) );
+				ImVec2( 220.f, -1.f ) );
 		}
 
 		ImGui::Checkbox( "points", &GET_VARIABLE( g_variables.m_points, bool ) );
 		if ( GET_VARIABLE( g_variables.m_points, bool ) ) {
 			ImGui::OptionPopup(
-				"points configuration",
+				"points settings",
 				[]( ) {
 					ImGui::Checkbox( "big font##points", &GET_VARIABLE( g_variables.m_points_big_font, bool ) );
-					ImGui::SliderFloat( "appear speed##points", &GET_VARIABLE( g_variables.m_points_appear_speed, float ), 0.5f, 20.f, "x%.2f" );
-					ImGui::SliderFloat( "bob speed##points", &GET_VARIABLE( g_variables.m_points_speed, float ), 0.1f, 10.f, "x%.2f" );
+					ImGui::SliderFloat( "appear speed##points", &GET_VARIABLE( g_variables.m_points_appear_speed, float ), 0.5f, 20.f, "%.2fx" );
+					ImGui::SliderFloat( "bob speed##points", &GET_VARIABLE( g_variables.m_points_speed, float ), 0.1f, 10.f, "%.2fx" );
 					ImGui::SliderFloat( "x offset##points", &GET_VARIABLE( g_variables.m_points_x_offset, float ), -300.f, 300.f, "%.0f px" );
 					ImGui::SliderFloat( "y offset##points", &GET_VARIABLE( g_variables.m_points_y_offset, float ), -50.f, 50.f, "%.0f px" );
 				},
-				ImVec2( 200.f, -1.f ) );
+				ImVec2( 220.f, -1.f ) );
 		}
 
 		ImGui::Checkbox( "low fps warning", &GET_VARIABLE( g_variables.m_fps_warning, bool ) );
@@ -1659,7 +1660,7 @@ void n_menu::impl_t::tab_misc( )
 		ImGui::Checkbox( "hit marker", &GET_VARIABLE( g_variables.m_hit_marker, bool ) );
 		if ( GET_VARIABLE( g_variables.m_hit_marker, bool ) ) {
 			ImGui::OptionPopup(
-				"hit marker configuration",
+				"hit marker settings",
 				[]( ) {
 					ImGui::SliderFloat( "size##hitmarkersize", &GET_VARIABLE( g_variables.m_hit_marker_size, float ), 4.f, 30.f, "%.0f" );
 					ImGui::SliderFloat( "speed##hitmarkerspeed", &GET_VARIABLE( g_variables.m_hit_marker_speed, float ), 0.25f, 3.f,
@@ -1683,7 +1684,7 @@ void n_menu::impl_t::tab_misc( )
 		ImGui::Checkbox( "hit sound", &GET_VARIABLE( g_variables.m_hit_sound, bool ) );
 		if ( GET_VARIABLE( g_variables.m_hit_sound, bool ) ) {
 			ImGui::OptionPopup(
-				"hit sound configuration",
+				"hit sound settings",
 				[]( ) {
 					ImGui::Combo( "sound##hitsound", &GET_VARIABLE( g_variables.m_hit_sound_type, int ),
 				                  "arena switch\0button\0money\0beep\0custom\0" );
@@ -1794,7 +1795,7 @@ void n_menu::impl_t::tab_misc( )
 		safe_checkbox( "clantag", &GET_VARIABLE( g_variables.m_clantag, bool ) );
 		if ( GET_VARIABLE( g_variables.m_clantag, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) ) {
 			ImGui::OptionPopup(
-				"clantag configuration",
+				"clantag settings",
 				[]( ) {
 					auto& anim = GET_VARIABLE( g_variables.m_clantag_animation, int );
 					if ( anim > 4 )
@@ -1820,15 +1821,14 @@ void n_menu::impl_t::tab_misc( )
 							synced = frames_var;
 						}
 
-						bool changed     = false;
-						const int count  = static_cast< int >( rows.size( ) );
-						const float half = ( ImGui::GetRowFrameWidth( ) - 14.f ) * 0.5f;
+						bool changed    = false;
+						const int count = static_cast< int >( rows.size( ) );
 
 						ImGui::Label( "frames" );
 						if ( ImGui::BeginListBox( "##clantag frames", ImVec2( 0.f, 92.f ) ) ) {
 							for ( int i = 0; i < count; i++ ) {
 								char row[ 64 ];
-								snprintf( row, sizeof( row ), "%d. %s   %.1fs", i + 1, rows[ i ].m_text.empty( ) ? "(empty)" : rows[ i ].m_text.c_str( ),
+								snprintf( row, sizeof( row ), "%d. %s   %.1f s", i + 1, rows[ i ].m_text.empty( ) ? "(empty)" : rows[ i ].m_text.c_str( ),
 								          rows[ i ].m_hold );
 
 								ImGui::PushID( i );
@@ -1851,15 +1851,14 @@ void n_menu::impl_t::tab_misc( )
 								changed      = true;
 							}
 
-							if ( ImGui::SliderFloat( "hold time##clantag frame", &frame.m_hold, 0.1f, 10.f, "%.1fs", ImGuiSliderFlags_AlwaysClamp ) )
+							if ( ImGui::SliderFloat( "hold time##clantag frame", &frame.m_hold, 0.1f, 10.f, "%.1f s", ImGuiSliderFlags_AlwaysClamp ) )
 								changed = true;
 
-							if ( ImGui::Button( "move up##clantag", ImVec2( half, 15.f ) ) && selected > 0 ) {
+							if ( ImGui::Button( "move up##clantag", ImVec2( -1.f, 15.f ) ) && selected > 0 ) {
 								std::swap( rows[ selected ], rows[ selected - 1 ] );
 								selected -= 1;
 								changed = true;
 							}
-							ImGui::SameLine( );
 							if ( ImGui::Button( "move down##clantag", ImVec2( -1.f, 15.f ) ) && selected + 1 < count ) {
 								std::swap( rows[ selected ], rows[ selected + 1 ] );
 								selected += 1;
@@ -1867,7 +1866,7 @@ void n_menu::impl_t::tab_misc( )
 							}
 						}
 
-						if ( ImGui::Button( "add frame##clantag", ImVec2( half, 15.f ) ) && count < 32 ) {
+						if ( ImGui::Button( "add frame##clantag", ImVec2( -1.f, 15.f ) ) && count < 32 ) {
 							n_misc::clantag_frame_t frame;
 							if ( count > 0 )
 								frame.m_hold = rows[ selected ].m_hold;
@@ -1876,7 +1875,6 @@ void n_menu::impl_t::tab_misc( )
 							rows.insert( rows.begin( ) + selected, frame );
 							changed = true;
 						}
-						ImGui::SameLine( );
 						if ( ImGui::Button( "remove frame##clantag", ImVec2( -1.f, 15.f ) ) && count > 0 ) {
 							rows.erase( rows.begin( ) + selected );
 							changed = true;
@@ -1891,11 +1889,11 @@ void n_menu::impl_t::tab_misc( )
 					if ( anim == 4 )
 						ImGui::TextDisabled( "tag text shows when nothing plays" );
 					if ( anim == 1 || anim == 2 || anim == 4 )
-						ImGui::SliderFloat( "speed##clantag", &GET_VARIABLE( g_variables.m_clantag_speed, float ), 0.1f, 2.f, "%.1fs" );
+						ImGui::SliderFloat( "speed##clantag", &GET_VARIABLE( g_variables.m_clantag_speed, float ), 0.1f, 2.f, "%.1f s" );
 					if ( anim == 1 )
-						ImGui::SliderFloat( "hold time##clantag", &GET_VARIABLE( g_variables.m_clantag_hold, float ), 0.5f, 10.f, "%.1fs" );
+						ImGui::SliderFloat( "hold time##clantag", &GET_VARIABLE( g_variables.m_clantag_hold, float ), 0.5f, 10.f, "%.1f s" );
 				},
-				ImVec2( 200.f, -1.f ) );
+				ImVec2( 220.f, -1.f ) );
 		}
 
 		ImGui::Checkbox( "chat translator", &GET_VARIABLE( g_variables.m_chat_translator, bool ) );
@@ -1914,7 +1912,7 @@ void n_menu::impl_t::tab_misc( )
 		ImGui::Checkbox( "bot names", &GET_VARIABLE( g_variables.m_bot_names, bool ) );
 		if ( GET_VARIABLE( g_variables.m_bot_names, bool ) ) {
 			ImGui::OptionPopup(
-				"bot names configuration",
+				"bot names settings",
 				[]( ) {
 					const int mode = GET_VARIABLE( g_variables.m_bot_names_mode, int );
 					ImGui::Combo( "names##botnames", &GET_VARIABLE( g_variables.m_bot_names_mode, int ),
@@ -1957,11 +1955,12 @@ void n_menu::impl_t::tab_misc( )
 		ImGui::Keybind( "deagle spinner key", &GET_VARIABLE( g_variables.m_deagle_spinner_key, key_bind_t ) );
 
 		safe_checkbox( "sv_pure bypass", &GET_VARIABLE( g_variables.m_pure_bypass, bool ) );
+		safe_checkbox( "insecure bypass", &GET_VARIABLE( g_variables.m_aaa_bypass, bool ) );
 
 		ImGui::Checkbox( "performance", &GET_VARIABLE( g_variables.m_performance, bool ) );
 		if ( GET_VARIABLE( g_variables.m_performance, bool ) ) {
 			ImGui::OptionPopup(
-				"performance configuration",
+				"performance settings",
 				[]( ) {
 					ImGui::Checkbox( "threaded bone setup", &GET_VARIABLE( g_variables.m_performance_threaded_bones, bool ) );
 
@@ -1976,19 +1975,20 @@ void n_menu::impl_t::tab_misc( )
 
 					ImGui::Checkbox( "game on fast cores", &GET_VARIABLE( g_variables.m_performance_fast_cores, bool ) );
 
-					ImGui::Checkbox( "full fps when tabbed out", &GET_VARIABLE( g_variables.m_performance_no_focus_sleep, bool ) );				},
+					ImGui::Checkbox( "full fps when tabbed out", &GET_VARIABLE( g_variables.m_performance_no_focus_sleep, bool ) );
+				},
 				ImVec2( 220.f, -1.f ) );
 		}
 
 		ImGui::Checkbox( "discord rpc", &GET_VARIABLE( g_variables.m_discord_rpc, bool ) );
 		if ( GET_VARIABLE( g_variables.m_discord_rpc, bool ) ) {
 			ImGui::OptionPopup(
-				"discord rpc configuration",
+				"discord rpc settings",
 				[]( ) {
 					image_path_input( "image url##discord rpc", "https://i.imgur.com/KDUzwZf.png", GET_VARIABLE( g_variables.m_discord_rpc_image, std::string ),
 					                  true );
 				},
-				ImVec2( 200.f, -1.f ) );
+				ImVec2( 220.f, -1.f ) );
 		}
 
 #ifdef _DEBUG
@@ -2216,14 +2216,14 @@ void n_menu::impl_t::tab_settings( )
 		safe_checkbox( "botox network", &GET_VARIABLE( g_variables.m_botox_network, bool ) );
 		if ( GET_VARIABLE( g_variables.m_botox_network, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) ) {
 			ImGui::OptionPopup(
-				"botox network configuration",
+				"botox network settings",
 				[]( ) {
 					ImGui::Checkbox( "share esp", &GET_VARIABLE( g_variables.m_botox_network_esp, bool ) );
 					ImGui::Checkbox( "share skins", &GET_VARIABLE( g_variables.m_botox_network_skins, bool ) );
 					ImGui::Checkbox( "share web screen", &GET_VARIABLE( g_variables.m_botox_network_web, bool ) );
 					ImGui::Text( "botox users here: %d", g_botox_net.m_users.load( std::memory_order_relaxed ) );
 				},
-				ImVec2( 240.f, -1.f ) );
+				ImVec2( 220.f, -1.f ) );
 		}
 	}
 	menu_group_end( );
@@ -2258,14 +2258,14 @@ void n_menu::impl_t::tab_settings( )
 		ImGui::Checkbox( "background blur", &GET_VARIABLE( g_variables.m_menu_blur, bool ) );
 		if ( GET_VARIABLE( g_variables.m_menu_blur, bool ) ) {
 			ImGui::OptionPopup(
-				"blur settings##menu blur settings",
+				"background blur settings##menu blur settings",
 				[ & ]( ) {
 					ImGui::SliderFloat( "max blur##menu blur", &GET_VARIABLE( g_variables.m_menu_blur_amount, float ), 0.f, 100.f, "%.0f%%",
 				                        ImGuiSliderFlags_AlwaysClamp );
 					ImGui::SliderFloat( "darken##menu blur", &GET_VARIABLE( g_variables.m_menu_blur_darken, float ), 0.f, 100.f, "%.0f%%",
 				                        ImGuiSliderFlags_AlwaysClamp );
 				},
-				ImVec2( 200.f, -1 ) );
+				ImVec2( 220.f, -1.f ) );
 		}
 
 		ImGui::Label( "menu key" );

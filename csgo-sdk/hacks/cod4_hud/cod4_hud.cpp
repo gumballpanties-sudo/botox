@@ -2157,7 +2157,7 @@ void n_cod4_hud::draw_options( )
 		ImGui::TextDisabled( "cod4: %s", s_cod4_dir.c_str( ) );
 	else if ( state == 3 ) {
 		ImGui::TextDisabled( "cod4: install not found" );
-		if ( ImGui::Button( "retry##cod4" ) )
+		if ( ImGui::Button( "retry##cod4", ImVec2( -1.f, 15.f ) ) )
 			s_load_state = 0;
 	}
 	else

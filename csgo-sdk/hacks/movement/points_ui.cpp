@@ -797,7 +797,7 @@ void render_point_settings_window( )
 
 		ImGui::SetCursorPosY( 30.f );
 
-		if ( ImGui::Button( e.active ? ( "make inactive" ) : ( "make active" ), ImVec2( -1.f, 20.f ) ) ) {
+		if ( ImGui::Button( e.active ? ( "make inactive" ) : ( "make active" ), ImVec2( -1.f, 15.f ) ) ) {
 			e.active = !e.active;
 			changed  = true;
 		}

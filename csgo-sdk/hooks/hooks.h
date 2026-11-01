@@ -88,6 +88,7 @@ namespace n_hooks
 
 		c_detour_hook m_loose_files_allowed{ };
 		c_detour_hook m_check_for_pure_server_whitelist{ };
+		c_detour_hook m_aaa_bypass{ };
 
 		c_detour_hook m_lock_cursor{ };
 		c_detour_hook m_reset{ };
@@ -175,6 +176,7 @@ namespace n_detoured_functions
 	/* 128 = 0-arg thiscall bool getter; whitelist check = free function, no args */
 	bool __fastcall loose_files_allowed( void* ecx, void* edx );
 	void __cdecl check_for_pure_server_whitelist( );
+	char __stdcall aaa_bypass( );
 
 	void __fastcall view_draw_fade( void* ecx, void* edx, unsigned char* color, c_material* material, bool map_full_texture_to_screen );
 
