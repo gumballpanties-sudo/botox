@@ -564,6 +564,34 @@ float n_menu::impl_t::fade_draw_lists( ImVector< ImDrawList* >& out, ImVector< f
 	return menu_fade;
 }
 
+/* boot screen blur on the background list, fades at the menu's speed. samples the backbuffer when its callback replays,
+   so only what the list drew before this call blurs: game, cod4 + mc hud, esp. cheat panels after it stay sharp.
+   once per imgui frame: the queued call (draw_cached_data) wins, on_end_scene's call is the fallback */
+void n_menu::impl_t::draw_background_blur( )
+{
+	static int drawn_frame = -1;
+	if ( std::exchange( drawn_frame, ImGui::GetFrameCount( ) ) == ImGui::GetFrameCount( ) )
+		return;
+
+	static float fade = 0.f;
+
+	const float step = ImMin( ImGui::GetIO( ).DeltaTime, 1.f / 30.f ) / menu_anim_duration;
+	const bool want  = this->m_opened && GET_VARIABLE( g_variables.m_menu_blur, bool );
+	fade             = g_ctx.m_eject_requested ? 0.f : ImClamp( fade + ( want ? step : -step ), 0.f, 1.f );
+
+	if ( fade <= 0.f )
+		return;
+
+	ImDrawList* const list = ImGui::GetBackgroundDrawList( );
+	const float amount     = ImClamp( GET_VARIABLE( g_variables.m_menu_blur_amount, float ), 0.f, 100.f ) / 100.f;
+	const float darken     = ImClamp( GET_VARIABLE( g_variables.m_menu_blur_darken, float ), 0.f, 100.f ) / 100.f;
+
+	screen_blur_fullscreen_smooth( list, IM_COL32( 255, 255, 255, static_cast< int >( fade * 255.f + 0.5f ) ), amount );
+	if ( darken > 0.f )
+		list->AddRectFilled( ImVec2( 0.f, 0.f ), ImVec2( g_ctx.m_width, g_ctx.m_height ),
+		                     IM_COL32( 0, 0, 0, static_cast< int >( darken * fade * 255.f + 0.5f ) ) );
+}
+
 void n_menu::impl_t::on_end_scene( )
 {
 	ImGui::GetStyle( ).Colors[ ImGuiCol_::ImGuiCol_Accent ] = GET_VARIABLE( g_variables.m_accent, c_color ).get_vec4( );
@@ -580,25 +608,8 @@ void n_menu::impl_t::on_end_scene( )
 		this->m_anim_progress = ImClamp( this->m_anim_progress + ( this->m_opened ? step : -step ), 0.f, 1.f );
 	}
 
-	/* boot screen blur on the background list: game + esp blur, menu + panels stay sharp. fades at the menu's speed */
-	{
-		static float fade = 0.f;
-
-		const float step = ImMin( ImGui::GetIO( ).DeltaTime, 1.f / 30.f ) / menu_anim_duration;
-		const bool want  = this->m_opened && GET_VARIABLE( g_variables.m_menu_blur, bool );
-		fade             = g_ctx.m_eject_requested ? 0.f : ImClamp( fade + ( want ? step : -step ), 0.f, 1.f );
-
-		if ( fade > 0.f ) {
-			ImDrawList* const list = ImGui::GetBackgroundDrawList( );
-			const float amount     = ImClamp( GET_VARIABLE( g_variables.m_menu_blur_amount, float ), 0.f, 100.f ) / 100.f;
-			const float darken     = ImClamp( GET_VARIABLE( g_variables.m_menu_blur_darken, float ), 0.f, 100.f ) / 100.f;
-
-			screen_blur_fullscreen_smooth( list, IM_COL32( 255, 255, 255, static_cast< int >( fade * 255.f + 0.5f ) ), amount );
-			if ( darken > 0.f )
-				list->AddRectFilled( ImVec2( 0.f, 0.f ), ImVec2( g_ctx.m_width, g_ctx.m_height ),
-				                     IM_COL32( 0, 0, 0, static_cast< int >( darken * fade * 255.f + 0.5f ) ) );
-		}
-	}
+	/* fallback: paint_traverse queues the blur under the cheat panels; no queue replay this frame -> draw it here */
+	this->draw_background_blur( );
 
 	if ( !this->m_opened && this->m_anim_progress <= 0.f )
 		return;

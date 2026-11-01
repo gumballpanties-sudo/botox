@@ -10,6 +10,7 @@
 #include "../../hacks/indicators/indicators.h"
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
+#include "../../hacks/menu/menu.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/movement/movement_recorder.h"
@@ -88,6 +89,28 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 			g_ctx.m_low_fps = static_cast< int >( ImGui::GetIO( ).Framerate + 0.5f ) <
 			                  static_cast< int >( 1.f / g_interfaces.m_global_vars_base->m_interval_per_tick );
 
+			/* world esp first: the menu blur queued right after it blurs game + huds + esp, every cheat panel below stays sharp */
+			if ( g_ctx.m_local ) {
+				{
+					PERF_ZONE( zone_paint_edicts );
+					g_edicts.on_paint_traverse( );
+				}
+				{
+					PERF_ZONE( zone_paint_grenade );
+					g_grenade_path.on_paint_traverse( );
+					g_grenade_aim.on_paint_traverse( );
+				}
+				g_bullets.on_paint_traverse( );
+
+				{
+					PERF_ZONE( zone_paint_players );
+					g_players.on_paint_traverse( );
+				}
+			}
+
+			const auto blur = []( ImDrawList* ) { g_menu.draw_background_blur( ); };
+			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_callback, std::make_any< callback_draw_object_t >( callback_draw_object_t{ blur } ) );
+
 			{
 				PERF_ZONE( zone_paint_misc );
 				g_misc.on_paint_traverse( );
@@ -129,25 +152,8 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 			g_indicators.net_graph( );
 
 			if ( g_ctx.m_local ) {
-				{
-					PERF_ZONE( zone_paint_indicators );
-					g_indicators.on_paint_traverse( );
-				}
-				{
-					PERF_ZONE( zone_paint_edicts );
-					g_edicts.on_paint_traverse( );
-				}
-				{
-					PERF_ZONE( zone_paint_grenade );
-					g_grenade_path.on_paint_traverse( );
-					g_grenade_aim.on_paint_traverse( );
-				}
-				g_bullets.on_paint_traverse( );
-
-				{
-					PERF_ZONE( zone_paint_players );
-					g_players.on_paint_traverse( );
-				}
+				PERF_ZONE( zone_paint_indicators );
+				g_indicators.on_paint_traverse( );
 			} else
 				g_indicators.m_indicator_data.reset( );
 		}

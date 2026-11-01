@@ -6,6 +6,7 @@ namespace n_menu
 {
 	struct impl_t {
 		void on_end_scene( );
+		void draw_background_blur( );
 
 		void tab_visuals( );
 		void tab_movement( );
