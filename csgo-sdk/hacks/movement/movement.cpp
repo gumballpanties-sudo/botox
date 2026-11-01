@@ -364,6 +364,8 @@ void n_movement::impl_t::on_create_move_pre( )
 	if ( GET_VARIABLE( g_variables.m_no_crouch_cooldown, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) )
 		g_ctx.m_cmd->m_buttons |= e_command_buttons::in_bullrush;
 
+	/* before any early return: key up must give back sv_jump_impulse / -jetpack */
+	poop_ladder_jump( g_ctx.m_cmd );
 	this->pixel_finder( g_ctx.m_cmd );
 	gnd_wish_check( "pixel_finder" );
 	this->ladder_freelook_climb( g_ctx.m_cmd );
@@ -376,7 +378,6 @@ void n_movement::impl_t::on_create_move_pre( )
 	if ( m_auto_one_hop_data.m_phase != auto_one_hop_data_t::phase_idle )
 		return;
 
-	poop_ladder_jump( g_ctx.m_cmd );
 	const auto move_type = g_ctx.m_local->get_move_type( );
 	if ( move_type == e_move_types::move_type_ladder || move_type == e_move_types::move_type_noclip || move_type == e_move_types::move_type_fly ||
 	     move_type == e_move_types::move_type_observer ) {
@@ -442,13 +443,13 @@ void n_movement::impl_t::on_create_move_pre( )
 					if ( aa_calls )
 						botox_dbg_log(
 						    "AA: calls=%lld avg=%lldus worst=%lldus total=%lldus/s sims=%lld simavg=%.1f simworst=%lld gate=%d reach=%d fail=%d ipt=%.5f "
-						    "nowall=%d noface=%d away=%d angle=%d pin=%d touch=%d miss=%d fine=%d park=%d unstick=%d keep=%d tb=%d stomp=%d poff=%d slant=%d lip=%d",
+						    "nowall=%d noface=%d away=%d angle=%d pin=%d touch=%d miss=%d fine=%d park=%d unstick=%d keep=%d tb=%d stomp=%d poff=%d slant=%d lip=%d pj=%d",
 						    aa_calls, aa_total / aa_calls, aa_worst, aa_total, aa_sim_total,
 						    static_cast< float >( aa_sim_total ) / static_cast< float >( aa_calls ), aa_sim_worst, aa_gate_skips, aa_reach_skips,
 						    aa_fail_skips, n_tick::interval( ), aa_outs[ aa_out_near ], aa_outs[ aa_out_face ], aa_outs[ aa_out_away ],
 						    aa_outs[ aa_out_angle ], aa_outs[ aa_out_pin ], aa_outs[ aa_out_touch ], aa_outs[ aa_out_miss ], aa_outs[ aa_out_fine ],
 						    aa_outs[ aa_out_park ], aa_outs[ aa_out_unstick ], aa_outs[ aa_out_keep ], aa_outs[ aa_out_tb ], aa_outs[ aa_out_stomp ], aa_outs[ aa_out_park_off ],
-							    aa_outs[ aa_out_slant ], aa_outs[ aa_out_lip ] );
+							    aa_outs[ aa_out_slant ], aa_outs[ aa_out_lip ], aa_outs[ aa_out_pj ] );
 					aa_total = aa_calls = aa_worst = aa_sim_total = aa_sim_worst = 0ll;
 					aa_gate_skips = aa_reach_skips = aa_fail_skips = 0;
 					std::fill( std::begin( aa_outs ), std::end( aa_outs ), 0 );
@@ -3764,20 +3765,92 @@ bool tung_surf_apply( c_base_entity* player, c_move_data* mv )
 	return true;
 }
 
-namespace
+void poop_ladder_jump( c_user_cmd* )
 {
-	/* listen server only: fake jetpack impulse rides one cmd through client + server gamemovement, so demo / server see it */
-	struct poop_slot_t {
-		int cmd       = -1;
-		int tick_base = 0;
-		c_vector from{ }, vel{ };
-		unsigned long long at = 0ull;
-		bool sv_done          = false;
-	} s_poop[ 16 ];
+	/* higher jumps under bind. local = host sv_jump_impulse * strength ( replicated, CheckJumpButton reads it in client + server
+	   gamemovement, so jumpbugs get it too ). online = +jetpack from jump until rise >= height, vz <= 0, ground or key up */
+	static auto impulse         = g_interfaces.m_convar->find_var( "sv_jump_impulse" );
+	static float stored_impulse = -1.f, jet_z = 0.f;
+	static bool jet_active = false, was_rising = false;
+	const auto release_jetpack = [ & ]( ) {
+		if ( !jet_active )
+			return;
+		g_interfaces.m_engine_client->execute_client_cmd( "-jetpack" );
+		botox_dbg_log( "POOP: -jetpack rise %.1f", g_ctx.m_local ? g_ctx.m_local->get_origin( ).m_z - jet_z : 0.f );
+		jet_active = false;
+	};
+	const auto restore_impulse = [ & ]( ) {
+		if ( impulse && stored_impulse >= 0.f )
+			impulse->set_value( stored_impulse );
+		stored_impulse = -1.f;
+	};
+
+	auto local = g_ctx.m_local;
+	if ( !GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) || !g_input.check_input( &GET_VARIABLE( g_variables.m_poop_ladder_jump_key, key_bind_t ) ) ||
+	     !local || !g_interfaces.m_engine_client->is_in_game( ) || !local->is_alive( ) ) {
+		release_jetpack( );
+		restore_impulse( );
+		was_rising = false;
+		return;
+	}
+
+	const auto nci = g_interfaces.m_engine_client->get_net_channel_info( );
+	if ( !nci || nci->is_loopback( ) ) {
+		release_jetpack( );
+		if ( !impulse )
+			return;
+		if ( stored_impulse < 0.f )
+			stored_impulse = impulse->get_float( );
+		const float target = stored_impulse * GET_VARIABLE( g_variables.m_poop_ladder_jump_strength, float ) / 100.f;
+		if ( impulse->get_float( ) != target ) {
+			impulse->set_value( target );
+			botox_dbg_log( "POOP: sv_jump_impulse %.1f -> %.1f", stored_impulse, target );
+		}
+		return;
+	}
+	restore_impulse( );
+
+	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
+	const float vz    = local->get_velocity( ).m_z;
+	const bool rising = !( local->get_flags( ) & 1 ) && vz > 0.f && local->get_move_type( ) == move_type_walk;
+	if ( jet_active ) {
+		if ( !rising || local->get_origin( ).m_z - jet_z >= GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ) )
+			release_jetpack( );
+	} else if ( rising && !was_rising && vz > 200.f ) {
+		/* fresh jump or jumpbug = vz flips from <= 0 to jump speed */
+		jet_z      = local->get_origin( ).m_z;
+		jet_active = true;
+		g_interfaces.m_engine_client->execute_client_cmd( "+jetpack" );
+		botox_dbg_log( "POOP: jump vz %.1f +jetpack height %.0f", vz, GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ) );
+	}
+	was_rising = rising;
 }
 
-/* pre ProcessMovement = plugin TeleportEntity velocity landing between ticks */
-void poop_jet_apply_sv( c_move_data* mv )
+bool botox_is_ladder_trace( const trace_t& tr );
+
+namespace
+{
+	/* edge surf = CS2 style pixelsurf along a ledge edge, faked ( CS:GO feet never glide on an edge, lab edge_probe ). listen server
+	   only: each cmd starts at the hold z with vz +g*dt/2 -> StartGravity 0, no z move, FinishGravity -g*dt/2 = a real surf's end */
+	struct esurf_slot_t {
+		int cmd       = -1;
+		int tick_base = -1;
+		c_vector from{ };
+		float z = 0.f, vz = 0.f;
+		unsigned long long at = 0ull;
+		bool sv_done          = false;
+	} s_esurf[ 128 ];
+}
+
+bool g_edge_surf_active = false;
+
+bool edge_surf_local( )
+{
+	const auto nci = g_interfaces.m_engine_client->get_net_channel_info( );
+	return !nci || nci->is_loopback( );
+}
+
+void edge_surf_apply_sv( c_move_data* mv )
 {
 	if ( !mv || !g_interfaces.m_engine_client )
 		return;
@@ -3785,143 +3858,139 @@ void poop_jet_apply_sv( c_move_data* mv )
 	if ( local <= 0 || static_cast< int >( mv->m_player_handle & 0xFFFF ) != local )
 		return;
 	const unsigned long long now = GetTickCount64( );
-	for ( auto& s : s_poop ) {
+	for ( auto& s : s_esurf ) {
 		if ( s.cmd < 0 || s.sv_done || now - s.at >= 1000ull || ( mv->m_abs_origin - s.from ).length( ) >= 0.05f )
 			continue;
-		mv->m_velocity = s.vel;
-		s.sv_done      = true;
-		botox_dbg_log( "POOP: server jetpack cmd=%d v=%.1f %.1f %.1f", s.cmd, s.vel.m_x, s.vel.m_y, s.vel.m_z );
+		mv->m_abs_origin.m_z         = s.z;
+		mv->m_velocity.m_z           = s.vz;
+		mv->m_game_code_moved_player = true;
+		s.sv_done                    = true;
 		return;
 	}
 }
 
-void poop_jet_apply( c_base_entity* player, c_move_data* mv )
+void edge_surf_apply( c_base_entity* player, c_move_data* mv )
 {
 	if ( !player || player != g_ctx.m_local || !mv )
 		return;
 	const c_user_cmd* cur = *player->get_current_command( );
 	if ( !cur )
 		return;
-	const auto& s = s_poop[ cur->m_command_number & 15 ];
-	if ( s.cmd != cur->m_command_number || ( g_prediction.m_in_begin && player->get_tick_base( ) != s.tick_base ) )
+	const auto& s = s_esurf[ cur->m_command_number & 127 ];
+	if ( s.cmd != cur->m_command_number ||
+	     ( g_prediction.m_in_begin ? player->get_tick_base( ) != s.tick_base : ( mv->m_abs_origin - s.from ).length( ) > 8.f ) )
 		return;
-	mv->m_velocity = s.vel;
+	mv->m_abs_origin.m_z         = s.z;
+	mv->m_velocity.m_z           = s.vz;
+	mv->m_game_code_moved_player = true;
 }
 
-void poop_ladder_jump( c_user_cmd* cmd )
+/* catch: falling, hull within reach of a vertical face, the brush top behind it crossed this tick -> hold feet k_sink under the top
+   ( the face blocks a press into it, no landing ). hold ends on face lost, edge ends / steps, z moved ( duck, server ), ground, key up */
+void edge_surf( c_user_cmd* cmd )
 {
-	/* jetpack held from bounce until rise >= jetpack height, ground, ladder or key up.
-	   local = shanapu jetpack.sp mimic: 0.1 s timer sets vel = eye dir pitched up jetpack_angle * jetpack_boost,
-	   host sv_gravity dropped while it runs */
-	static bool jet_active = false, jet_local = false;
-	static int jet_ticks   = 0;
-	static float jet_z = 0.f, stored_gravity = -1.f;
-	static auto gravity     = g_interfaces.m_convar->find_var( "sv_gravity" );
-	const auto set_gravity  = [ & ]( float v ) {
-		/* FCVAR_NOTIFY ( 1 << 8 ) off for the set = no "server cvar changed" chat line */
-		c_cconvar* const base = gravity->m_parent ? gravity->m_parent : gravity;
-		const int flags       = base->m_flags;
-		base->m_flags &= ~( 1 << 8 );
-		gravity->set_value( v );
-		base->m_flags = flags;
+	constexpr float k_sink = 1.f;
+	static bool s_on = false;
+	static c_vector s_n{ };
+	static float s_z = 0.f, s_top = 0.f;
+	static int s_ticks = 0;
+	const auto drop = [ & ]( const char* why ) {
+		if ( s_on )
+			botox_dbg_log( "ESURF: drop %s z=%.3f ticks=%d", why, s_z, s_ticks );
+		s_on = false;
 	};
-	const auto release_jetpack = [ & ]( ) {
-		if ( jet_active ) {
-			if ( !jet_local )
-				g_interfaces.m_engine_client->execute_client_cmd( "-jetpack" );
-			botox_dbg_log( "POOP: -jetpack after %d ticks rise %.1f", jet_ticks, g_ctx.m_local ? g_ctx.m_local->get_origin( ).m_z - jet_z : 0.f );
-			jet_active = false;
-		}
-		if ( gravity && stored_gravity >= 0.f )
-			set_gravity( stored_gravity );
-		stored_gravity = -1.f;
+	g_edge_surf_active         = false;
+	c_base_entity* const local = g_ctx.m_local;
+	if ( !cmd || !local || !local->is_alive( ) || !local->get_collideable( ) || !GET_VARIABLE( g_variables.m_edge_surf, bool ) ||
+	     !g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) || !edge_surf_local( ) )
+		return drop( "off" );
+
+	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
+	auto& slot = s_esurf[ cmd->m_command_number & 127 ];
+	slot.cmd   = -1;
+	if ( ( local->get_flags( ) & fl_onground ) || local->get_move_type( ) != e_move_types::move_type_walk )
+		return drop( "ground" );
+	const c_vector org = local->get_origin( ), vel = local->get_velocity( );
+	const c_vector mins = local->get_collideable( )->get_obb_mins( ), maxs = local->get_collideable( )->get_obb_maxs( );
+	const float ipt     = g_interfaces.m_global_vars_base->m_interval_per_tick;
+	const float half    = -g_prediction.get_engine_target_predict_z_velocity( );
+	const float reach   = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.1f, 32.f );
+	const c_vector zero( 0.f, 0.f, 0.f );
+	c_trace_filter filter( local );
+	const auto trace = [ & ]( const c_vector& a, const c_vector& b, const c_vector& mn, const c_vector& mx ) {
+		trace_t tr{ };
+		ray_t ray( a, b, mn, mx );
+		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
+		return tr;
 	};
-	const float strength = GET_VARIABLE( g_variables.m_poop_ladder_jump_strength, float ) / 100.f;
-
-	/* ladder bug = ridobebra ladder_bug 1:1 ( its movement.cpp:4807 ), autohop given back on key up */
-	static bool held          = false;
-	static int stored_autohop = -1;
-	static auto cvar          = g_interfaces.m_convar->find_var( "sv_autobunnyhopping" );
-
-	if ( !GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) || !g_input.check_input( &GET_VARIABLE( g_variables.m_poop_ladder_jump_key, key_bind_t ) ) ||
-	     !g_ctx.m_local || !g_interfaces.m_engine_client->is_in_game( ) || !g_ctx.m_local->is_alive( ) ) {
-		release_jetpack( );
-		if ( held && cvar && stored_autohop >= 0 )
-			cvar->set_value( stored_autohop );
-		held           = false;
-		stored_autohop = -1;
-		return;
-	}
-	if ( !cvar )
-		return;
-	if ( !held ) {
-		stored_autohop = cvar->get_int( );
-		held           = true;
-	}
-	if ( cvar->get_int( ) == 0 )
-		cvar->set_value( 1 );
-
-	auto local = g_ctx.m_local;
-	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-	if ( jet_active ) {
-		/* first ticks skipped: predicted frame can still hold the ladder / bounce state */
-		++jet_ticks;
-		if ( local->get_origin( ).m_z - jet_z >= GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ) ||
-		     ( jet_ticks > 2 && ( local->get_move_type( ) == move_type_ladder || ( local->get_flags( ) & 1 ) ) ) ) {
-			release_jetpack( );
-			return;
+	/* nearest vertical face along 8 world yaws, gap = hull to plane along the normal */
+	const auto face = [ & ]( const c_vector& from, const float max_gap, c_vector& n, float& gap ) {
+		gap = FLT_MAX;
+		for ( int i = 0; i < 8; ++i ) {
+			const float a = deg2rad( 45.f * static_cast< float >( i ) );
+			const c_vector dir( std::cosf( a ), std::sinf( a ), 0.f );
+			const trace_t tr = trace( from, from + dir * ( max_gap + 0.05f ), mins, maxs );
+			const c_vector& tn = tr.m_plane.m_normal;
+			if ( tr.m_start_solid || tr.m_fraction >= 1.f || std::fabsf( tn.m_z ) > 0.05f || botox_is_ladder_trace( tr ) )
+				continue;
+			const float g = -tr.m_fraction * ( max_gap + 0.05f ) * ( dir.m_x * tn.m_x + dir.m_y * tn.m_y );
+			if ( g < gap ) {
+				gap = g;
+				n   = tn;
+			}
 		}
-		const float dt  = g_interfaces.m_global_vars_base->m_interval_per_tick;
-		const int every = std::max( 1, static_cast< int >( std::ceilf( 0.1f / ( dt > 0.f ? dt : 0.015625f ) - 0.001f ) ) );
-		if ( !jet_local || jet_ticks % every )
+		return gap <= max_gap;
+	};
+	/* brush top behind the face: line down 0.5u inside the wall. start solid = the wall goes on above = no edge here */
+	const auto top_at = [ & ]( const c_vector& n, const float gap, const float z_a, const float z_b, float& top ) {
+		const float off = gap + std::fabsf( n.m_x ) * maxs.m_x + std::fabsf( n.m_y ) * maxs.m_y + 0.5f;
+		const float qx = org.m_x - n.m_x * off, qy = org.m_y - n.m_y * off;
+		const trace_t tr = trace( c_vector( qx, qy, z_a ), c_vector( qx, qy, z_b ), zero, zero );
+		if ( tr.m_start_solid || tr.m_fraction >= 1.f || tr.m_plane.m_normal.m_z < 0.7f )
+			return false;
+		top = tr.m_end.m_z;
+		return true;
+	};
+
+	c_vector n{ };
+	float gap = 0.f, top = 0.f;
+	if ( s_on ) {
+		if ( std::fabsf( org.m_z - s_z ) > 0.05f || std::fabsf( vel.m_z + half ) > 0.01f )
+			return drop( "moved" );
+		if ( !face( org, reach + 1.f, n, gap ) || n.m_x * s_n.m_x + n.m_y * s_n.m_y < 0.9f )
+			return drop( "face" );
+		if ( !top_at( n, gap, s_top + 1.f, s_z - 0.5f, top ) || std::fabsf( top - s_top ) > 0.25f )
+			return drop( "edge" );
+		++s_ticks;
+	} else {
+		if ( vel.m_z >= 0.f )
 			return;
-		constexpr float k_rad = 3.14159265f / 180.f;
-		const float pitch     = -GET_VARIABLE( g_variables.m_poop_ladder_jump_angle, float ) * k_rad;
-		const float yaw       = cmd->m_view_point.m_y * k_rad;
-		const float boost     = GET_VARIABLE( g_variables.m_poop_ladder_jump_boost, float ) * strength;
-		auto& s               = s_poop[ cmd->m_command_number & 15 ];
-		s.cmd                 = cmd->m_command_number;
-		s.tick_base           = local->get_tick_base( );
-		s.from                = local->get_abs_origin( );
-		s.vel                 = c_vector( std::cosf( pitch ) * std::cosf( yaw ), std::cosf( pitch ) * std::sinf( yaw ), -std::sinf( pitch ) ) * boost;
-		s.at                  = GetTickCount64( );
-		s.sv_done             = false;
-		botox_dbg_log( "POOP: local jetpack cmd=%d tick %d v=%.1f %.1f %.1f", s.cmd, jet_ticks, s.vel.m_x, s.vel.m_y, s.vel.m_z );
-		return;
+		/* free fall end of this tick: hold plane top - k_sink must lie in [z_nat, start z]. face read at z_nat: the start feet are
+		   still above the top, a start hull never meets it */
+		const float z_nat = org.m_z + ( vel.m_z - half ) * ipt;
+		if ( !face( c_vector( org.m_x, org.m_y, z_nat ), reach, n, gap ) || !top_at( n, gap, org.m_z + k_sink, z_nat + k_sink, top ) )
+			return;
+		const c_vector at( org.m_x, org.m_y, top - k_sink );
+		if ( trace( at, at, mins, maxs ).m_start_solid )
+			return;
+		s_on    = true;
+		s_n     = n;
+		s_top   = top;
+		s_z     = top - k_sink;
+		s_ticks = 0;
+		botox_dbg_log( "ESURF: catch top=%.3f z %.3f -> %.3f gap=%.3f n=%.2f,%.2f vz=%.1f xy=%.1f", top, org.m_z, s_z, gap, n.m_x, n.m_y, vel.m_z,
+		               vel.length_2d( ) );
 	}
-
-	if ( local->get_move_type( ) != move_type_ladder && !( local->get_flags( ) & 1 ) ) {
-		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-		if ( local->get_move_type( ) == move_type_ladder ) {
-			cmd->m_up_move = 450.f;
-			cmd->m_buttons |= in_jump;
-		}
-	}
-
-	/* +jetpack on the cmd that leaves the ladder with jump held */
-	if ( local->get_move_type( ) != move_type_ladder || !( cmd->m_buttons & in_jump ) )
-		return;
-	g_prediction.begin( local, cmd );
-	g_prediction.end( local );
-	const bool bounced = local->get_move_type( ) != move_type_ladder;
-	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-	if ( !bounced )
-		return;
-
-	const auto nci = g_interfaces.m_engine_client->get_net_channel_info( );
-	jet_local      = !nci || nci->is_loopback( );
-	jet_z          = local->get_origin( ).m_z;
-	jet_ticks      = 0;
-	jet_active     = true;
-	if ( !jet_local )
-		g_interfaces.m_engine_client->execute_client_cmd( "+jetpack" );
-	else if ( gravity && stored_gravity < 0.f ) {
-		/* listen host owns sv_gravity, replicated to both client + server gamemovement */
-		stored_gravity = gravity->get_float( );
-		set_gravity( GET_VARIABLE( g_variables.m_poop_ladder_jump_gravity, float ) );
-	}
-	botox_dbg_log( "POOP: bounce cmd=%d %s +jetpack height %.0f grav %.0f", cmd->m_command_number, jet_local ? "local" : "server",
-	               GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ), gravity ? gravity->get_float( ) : -1.f );
+	slot.cmd           = cmd->m_command_number;
+	slot.tick_base     = local->get_tick_base( );
+	slot.from          = org;
+	slot.z             = s_z;
+	slot.vz            = half;
+	slot.at            = GetTickCount64( );
+	slot.sv_done       = false;
+	g_edge_surf_active = true;
+	/* our z wins: a tung snap on the same cmd would pull xy off the edge */
+	s_tung[ cmd->m_command_number & 127 ].cmd = -1;
 }
 
 void n_movement::impl_t::tung_surf( c_user_cmd* cmd )

@@ -199,6 +199,16 @@ public:
 		return g_virtual.call< void >( this, 79, r, g, b, a );
 	}
 
+	void override_depth_enable( bool enable, bool depth_write, bool depth_test = true )
+	{
+		return g_virtual.call< void >( this, 80, enable, depth_write, depth_test );
+	}
+
+	void override_color_write_enable( bool override_enable, bool color_write )
+	{
+		return g_virtual.call< void >( this, 202, override_enable, color_write );
+	}
+
 	// the no-argument overload: saves the current target + viewport so pop puts them back
 	void push_render_target_and_viewport( )
 	{

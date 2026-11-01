@@ -669,7 +669,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 	const float user_fwd = m_user_forward_move;
 	const float user_side = m_user_side_move;
 	const int user_buttons = m_user_buttons;
-	static int last_variant = 0, last_fam = 0;
+	static int last_variant = 0, last_fam = 0, last_st = 3, last_bug_duck = -1;
 	static float last_bend = 0.f;
 	/* mouse steer re-plan: turned >= 1 deg since the plan latched, ticks(2)+ before its bug tick ( never swap a bug
 	   that close ). runs write m_run_cmds, so no find keeps the old plan in m_predicted_cmds */
@@ -763,6 +763,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		bool allow_stand     = eb_types.size( ) > 1 && eb_types[ 1 ];
 		if ( !allow_duck && !allow_stand )
 			allow_duck = allow_stand = true;
+		/* bug ticks the stance refused ( `srej=` ) */
+		int stance_rej = 0;
 		/* last pass's first ground tick, -1 = never; contact_z = origin z there ( refine tells lip vs lower floor ). */
 		int contact_tick = -1;
 		float contact_z  = 0.f;
@@ -874,11 +876,12 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			   one tick and sim the NEXT one: still airborne + falling = real, grounded / rising = not. */
 			int pending = -1;
 			c_vector pending_pos{ };
-			float pending_vz = 0.f;
+			float pending_vz   = 0.f;
+			bool pending_duck  = false;
 			/* end_pos taken at candidate time: a held candidate may latch ticks later. */
 			/* same variant landing within 4u of a kept plan = same path, not an alternative */
 			bool run_found = false;
-			auto latch = [ & ]( const int tick_index, const c_vector& end_pos ) {
+			auto latch = [ & ]( const int tick_index, const c_vector& end_pos, const bool duck ) {
 				run_found = true;
 				for ( int p = 0; p < m_plan_count; p++ )
 					if ( m_plans[ p ].variant == v && m_plans[ p ].end_pos.dist_to( end_pos ) < 4.f )
@@ -891,6 +894,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				pl.variant = v;
 				pl.bend    = bend;
 				pl.fam     = fam_now;
+				pl.duck    = duck;
 				pl.end_pos = end_pos;
 			};
 			/* a candidate on the trimmed window's last tick still gets its confirm tick ( buffer allows max_ticks ). */
@@ -1042,7 +1046,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 					}
 					else if ( const float vz_now = g_ctx.m_local->get_velocity( ).m_z;
 					          vz_now <= 0.f && ( detection_mode != 2 || roundf( vz_now ) == roundf( pending_vz - 2.f * grav_tick ) ) )
-						latch( pending, pending_pos ); /* mode 2: ebanat's exact free step after the slowdown */
+						latch( pending, pending_pos, pending_duck ); /* mode 2: ebanat's exact free step after the slowdown */
 					pending = -1;
 					break;
 				}
@@ -1054,15 +1058,20 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				ctx.was_falling = search_vel_backup.m_z < -6.f * vz_scale;
 				ctx.on_ground = ( g_ctx.m_local->get_flags( ) & 1 ) != 0;
 				ctx.mode = detection_mode;
-				if ( EdgeBugCheck( ctx ) && ( ( g_ctx.m_local->get_flags( ) & fl_ducking ) ? allow_duck : allow_stand ) ) {
+				const bool bug_tick = EdgeBugCheck( ctx );
+				const bool bug_duck = ( g_ctx.m_local->get_flags( ) & fl_ducking ) != 0;
+				if ( bug_tick && !( bug_duck ? allow_duck : allow_stand ) )
+					stance_rej++;
+				if ( bug_tick && ( bug_duck ? allow_duck : allow_stand ) ) {
 					/* no buffer left to confirm: take it. */
 					if ( i + 1 >= max_ticks ) {
-						latch( i, g_ctx.m_local->get_origin( ) );
+						latch( i, g_ctx.m_local->get_origin( ), bug_duck );
 						break;
 					}
-					pending     = i;
-					pending_pos = g_ctx.m_local->get_origin( );
-					pending_vz  = g_ctx.m_local->get_velocity( ).m_z;
+					pending      = i;
+					pending_pos  = g_ctx.m_local->get_origin( );
+					pending_vz   = g_ctx.m_local->get_velocity( ).m_z;
+					pending_duck = bug_duck;
 				}
 				search_vel_backup = g_ctx.m_local->get_velocity( );
 				/* tail probe: past reach tick, no pending candidate, ticks left worth saving. */
@@ -1075,7 +1084,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			}
 			/* window / budget ran out before the confirm tick: take it unconfirmed. */
 			if ( !run_found && pending >= 0 )
-				latch( pending, pending_pos );
+				latch( pending, pending_pos, pending_duck );
 			if ( save )
 				std::memcpy( s_eb_snap_cmds[ v ], m_run_cmds, sizeof( predicted_cmd_t ) * written );
 			cmd->m_view_point = orig_viewangle;
@@ -1351,6 +1360,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			m_follow_end       = pl.end_pos;
 			last_bend          = pl.bend;
 			last_fam           = pl.fam;
+			last_bug_duck      = pl.duck ? 1 : 0;
+			last_st            = ( allow_duck ? 1 : 0 ) | ( allow_stand ? 2 : 0 );
 			m_viz_count        = 0;
 			m_viz_alts         = 0;
 			m_viz_base         = now_tick;
@@ -1378,13 +1389,13 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		   found, base = distinct variants run, sw / rel = press / release runs, sims = spent / ceiling,
 		   us = spent / share, tick = tick the bug is due. rf / wd = refine / full-window runs, snp = runs resumed off a
 		   snapshot, fam = picked plan's family ( 0 base 1 press 2 release 3 bend 4 ebanat 5 refine 6 / 7 wide press / release ). */
-		botox_dbg_log( "EB: mode=%d win=%d run=%d reach=%d edge=%d vars=%d base=%d sw=%d rel=%d sims=%d/%d cut=%d us=%lld/%lld con=%d ipt=%.5f vz=%.2f found=%d var=%d at=%d tick=%d pth=%d/%d bd=%d bnd=%.2f ebv=%d rf=%d wd=%d snp=%d fam=%d st=%d\n",
+		botox_dbg_log( "EB: mode=%d win=%d run=%d reach=%d edge=%d vars=%d base=%d sw=%d rel=%d sims=%d/%d cut=%d us=%lld/%lld con=%d ipt=%.5f vz=%.2f found=%d var=%d at=%d tick=%d pth=%d/%d bd=%d bnd=%.2f ebv=%d rf=%d wd=%d snp=%d fam=%d st=%d srej=%d bst=%d\n",
 		               detection_mode, max_ticks, run_ticks, reach_tick, m_edge_target_valid ? 1 : 0,
 		               search_count, base_runs, sweep_runs, release_runs, total_predictions, MAX_PREDICTIONS, tail_cut_ticks,
 		               budget.used_us( ), static_cast< long long >( n_tick::interval( ) * 1000000.f * budget_share ),
 		               best_contact, n_tick::interval( ), m_backup_velocity.m_z, m_found ? 1 : 0, last_variant,
 		               m_found ? m_prediction_ticks : -1, m_found ? m_found_tick : 0, m_plan_count, want_paths, bend_runs, last_bend, eb_runs, refine_runs, wide_runs, snap_runs, last_fam,
-		               ( allow_duck ? 1 : 0 ) | ( allow_stand ? 2 : 0 ) );
+		               ( allow_duck ? 1 : 0 ) | ( allow_stand ? 2 : 0 ), stance_rej, m_found ? last_bug_duck : -1 );
 	} while ( false );
 	if ( m_found ) {
 		ReStorePrediction( );
@@ -1392,8 +1403,10 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		const float dist = spent ? 0.f : g_ctx.m_local->get_origin( ).dist_to( m_predicted_cmds[m_replay_hits].origin );
 		if ( spent || dist > 1.f ) {
 			/* dist = plan vs world disagree: the REPLAY diverged ( another cmd writer or a server correction ). */
+			/* m_backup_flags = start of this cmd = end of the bug cmd: real stance vs the sim's */
 			if ( spent )
-				botox_dbg_log( "EB: drop why=spent at %d/%d\n", m_replay_hits, m_prediction_ticks );
+				botox_dbg_log( "EB: drop why=spent at %d/%d duck=%d sim=%d st=%d vz=%.2f\n", m_replay_hits, m_prediction_ticks,
+				               ( m_backup_flags & fl_ducking ) ? 1 : 0, last_bug_duck, last_st, m_backup_velocity.m_z );
 			else
 				botox_dbg_log( "EB: replay drop at %d/%d dist=%.3f\n", m_replay_hits, m_prediction_ticks, dist );
 			m_replay_hits = 0;

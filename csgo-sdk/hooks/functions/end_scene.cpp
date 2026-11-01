@@ -6,6 +6,7 @@
 #include "../../hacks/entity_cache/entity_cache.h"
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
+#include "../../hacks/urt_hud/urt_hud.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/misc/scaleform/image_cache.h"
 #include "../../hacks/movement/movement.h"
@@ -28,6 +29,7 @@ void n_detoured_functions::draw_overlay_frame( IDirect3DDevice9* device )
 		/* custom huds under the cached esp + menu blur: they blur with the game, cheat panels don't */
 		[ ]( ) {
 			g_cod4_hud.on_end_scene( );
+			g_urt_hud.on_end_scene( );
 			g_mc_hud.on_end_scene( );
 		},
 		[ & ]( ) {

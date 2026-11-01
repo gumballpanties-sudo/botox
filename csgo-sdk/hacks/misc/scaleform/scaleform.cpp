@@ -402,6 +402,12 @@ void n_scaleform::impl_t::hud_removal( )
 		        1 << hud_element_radar | 1 << hud_element_money | 1 << hud_element_timer | 1 << hud_element_winpanel | 1 << hud_element_alerts |
 		        k_rm_crosshair;
 
+	// urt hud draws health / weapon / select, kill log + chat, minimap, timer + scores, crosshair
+	if ( GET_VARIABLE( g_variables.m_urt_hud, bool ) )
+		mask |= 1 << hud_element_health | 1 << hud_element_ammo | 1 << hud_element_weapon_select | 1 << hud_element_killfeed |
+		        1 << hud_element_radar | 1 << hud_element_money | 1 << hud_element_timer | 1 << hud_element_chat | 1 << hud_element_winpanel |
+		        1 << hud_element_alerts | k_rm_crosshair;
+
 	if ( !mask && !s_hud_rm_mask )
 		return;
 

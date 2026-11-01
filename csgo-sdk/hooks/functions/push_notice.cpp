@@ -8,6 +8,7 @@
 #include "../../hacks/chud_hud/chud_hud.h"
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
+#include "../../hacks/urt_hud/urt_hud.h"
 #include "../hooks.h"
 
 static const char* k_tag_eb = R"js(
@@ -155,7 +156,8 @@ void __fastcall n_detoured_functions::push_notice( void* ecx, void* edx, const c
 		// botox lines pass their html as raw; stock = ( szColorNotice, clientId, bAlreadyFormatted )
 		const bool botox = raw == line;
 		g_cod4_hud.on_chat( line, botox ? 0 : len, botox || ( reinterpret_cast< uintptr_t >( raw ) & 0xFF ) != 0 );
-		if ( !n_mc_hud::enabled( ) && !n_cod4_hud::enabled( ) )
+		g_urt_hud.on_chat( line, botox ? 0 : len, botox || ( reinterpret_cast< uintptr_t >( raw ) & 0xFF ) != 0 );
+		if ( !n_mc_hud::enabled( ) && !n_cod4_hud::enabled( ) && !n_urt_hud::enabled( ) )
 			original( ecx, edx, line, len, raw );
 	};
 

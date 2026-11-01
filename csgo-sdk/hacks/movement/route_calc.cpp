@@ -761,8 +761,6 @@ float n_route::floor_nz( )
 void n_movement::impl_t::route_pj_creep( c_user_cmd* cmd )
 {
 	constexpr int k_creep_ticks   = 10;
-	constexpr float k_creep_done  = n_route::k_creep_gap;
-	constexpr float k_creep_share = 0.75f;
 	constexpr float k_catch       = 1.96875f;
 
 	auto* local = g_ctx.m_local;
@@ -828,6 +826,20 @@ void n_movement::impl_t::route_pj_creep( c_user_cmd* cmd )
 	                support - gap ) > 1.f )
 		return;
 
+	const float v_in = -( v.m_x * n.m_x + v.m_y * n.m_y );
+	const float w    = n_route::creep_wish( cmd, n, gap );
+	botox_dbg_log( "[rc creep] marker %d | catch in %d | gap %.5f v_in %.3f -> w %.3f\n", idx + 1, ticks, gap, v_in, w );
+}
+
+/* pure wall-normal wish: one AirAccelerate takes into-wall speed to 3/4 of the gap per tick, so the move never reaches the face
+   ( no hit = no 0.03125 park ) and the hull ends inside a tight lip. auto align's pixel jump creep shares it */
+float n_route::creep_wish( c_user_cmd* cmd, const c_vector& n, float gap )
+{
+	constexpr float k_creep_done  = n_route::k_creep_gap;
+	constexpr float k_creep_share = 0.75f;
+
+	const c_vector v   = g_ctx.m_local->get_velocity( );
+	const float dt     = n_tick::engine_interval( ), half_g = gravity_per_tick( ) * 0.5f;
 	const c_vector into( -n.m_x, -n.m_y, 0.f );
 	const float v_in = v.m_x * into.m_x + v.m_y * into.m_y;
 	const float want = gap > k_creep_done ? gap * k_creep_share / dt : 0.f;
@@ -857,9 +869,7 @@ void n_movement::impl_t::route_pj_creep( c_user_cmd* cmd )
 	const float yaw     = cmd->m_view_point.m_y * ( 3.14159265f / 180.f );
 	cmd->m_forward_move = wish.m_x * std::cos( yaw ) + wish.m_y * std::sin( yaw );
 	cmd->m_side_move    = wish.m_x * std::sin( yaw ) - wish.m_y * std::cos( yaw );
-
-	botox_dbg_log( "[rc creep] marker %d | catch in %d | gap %.5f v_in %.3f -> want %.3f ( %s w %.3f )\n", idx + 1, ticks, gap, v_in, want,
-	               push ? "in" : "out", w );
+	return push ? w : -w;
 }
 
 namespace
@@ -920,10 +930,14 @@ namespace
 
 	/* the solved arc hung between the markers: feet z per tick is the sim's, the horizontal is spread over the airborne
 	   ticks of each leg ( grounded ticks move nobody ). the duck's +-9 teleport is taken out per tick and the leg's net
-	   shift put back linearly, so a minijump reads as one curve that still ends on its marker */
-	std::vector< c_vector > arc_path( const std::vector< c_vector >& anchors, const std::vector< std::vector< n_route::arc_tick_t > >& arc )
+	   shift put back linearly, so a minijump reads as one curve that still ends on its marker. a marker well over the
+	   leg's last feet z is a head contact ( headbounce / headbang / head tb ): the arc stays on the feet and a dashed
+	   line goes up to the marker instead of a spike */
+	std::vector< c_vector > arc_path( const std::vector< c_vector >& anchors, const std::vector< std::vector< n_route::arc_tick_t > >& arc,
+	                                  std::vector< std::pair< c_vector, c_vector > >& dash )
 	{
 		std::vector< c_vector > path;
+		dash.clear( );
 		if ( arc.empty( ) || arc.size( ) + 1 != anchors.size( ) )
 			return path;
 		path.push_back( anchors.front( ) );
@@ -947,7 +961,11 @@ namespace
 				const float f = n_air ? static_cast< float >( moved ) / static_cast< float >( n_air ) : 1.f;
 				path.emplace_back( a.m_x + ( b.m_x - a.m_x ) * f, a.m_y + ( b.m_y - a.m_y ) * f, t.z - dz + net_dz * f );
 			}
-			path.push_back( b );
+			const float feet_z = path.back( ).m_z;
+			if ( b.m_z - feet_z > 16.f )
+				dash.emplace_back( c_vector( b.m_x, b.m_y, feet_z ), b );
+			else
+				path.push_back( b );
 		}
 		return path;
 	}
@@ -962,7 +980,7 @@ namespace
 		/* popup clock restarts on the answer, not the press */
 		data.popup_started   = GetTickCount64( ) / 1000.f;
 		data.solutions       = result.routes;
-		data.path            = arc_path( job.anchors, result.arc );
+		data.path            = arc_path( job.anchors, result.arc, data.path_dash );
 		data.total_solutions = result.total;
 		data.total_approx    = result.total_approx;
 		data.total_floor     = result.trimmed;
@@ -1572,6 +1590,22 @@ void n_movement::impl_t::route_calc_render( )
 				                                   std::make_any< line_draw_object_t >( line_draw_object_t{ prev, screen, line_color, thick } ) );
 			prev      = screen;
 			have_prev = true;
+		}
+		/* head contacts: 4u dash, 3u gap, world space so it shrinks with distance */
+		if ( arc ) {
+			for ( const auto& [ from, to ] : data.path_dash ) {
+				const c_vector d  = to - from;
+				const float len   = d.length( );
+				if ( len < 1.f )
+					continue;
+				for ( float s = 0.f; s < len; s += 7.f ) {
+					c_vector_2d s0, s1;
+					if ( g_render.world_to_screen( from + d * ( s / len ), s0 ) &&
+					     g_render.world_to_screen( from + d * ( ( std::min )( s + 4.f, len ) / len ), s1 ) )
+						g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line,
+						                                   std::make_any< line_draw_object_t >( line_draw_object_t{ s0, s1, line_color, thick } ) );
+				}
+			}
 		}
 	}
 

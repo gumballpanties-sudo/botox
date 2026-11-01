@@ -69,7 +69,7 @@ namespace n_chud
 		float m_style_settle_time = 0.f;
 		unsigned int m_old_colors = 0u;
 		std::string m_old_weapons{ };
-		int m_old_active_row = -1;
+		std::string m_old_active_row{ };
 		std::string m_old_timer{ };
 		std::string m_old_spectators{ };
 		int m_old_killfeed_top                    = -1;

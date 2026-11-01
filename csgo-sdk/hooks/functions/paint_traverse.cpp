@@ -10,6 +10,7 @@
 #include "../../hacks/indicators/indicators.h"
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
+#include "../../hacks/urt_hud/urt_hud.h"
 #include "../../hacks/menu/menu.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/movement/movement.h"
@@ -40,7 +41,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 
 	/* retail CHudScope panel name, 2019 source says "HudScope" */
 	if ( panel_hash == HASH_BT( "HudZoom" ) ) {
-		if ( n_cod4_hud::hides_scope( ) )
+		if ( n_cod4_hud::hides_scope( ) || n_urt_hud::hides_scope( ) )
 			return;
 		g_ctx.m_is_scope_being_drawn = true;
 		original( ecx, edx, panel, force_repaint, force );
@@ -50,7 +51,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 
 	// classic crosshair (styles 2-4), the panorama one is hud_removal's
 	if ( panel_hash == HASH_BT( "HudWeapon" ) ) {
-		if ( n_cod4_hud::enabled( ) )
+		if ( n_cod4_hud::enabled( ) || n_urt_hud::enabled( ) )
 			return;
 		g_ctx.m_is_hud_weapon_being_drawn = true;
 		g_ctx.m_crosshair_outline_next    = true;
@@ -138,6 +139,12 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 			{
 				PERF_ZONE( zone_paint_mc_hud );
 				g_cod4_hud.on_paint_traverse( );
+			}
+
+			// every frame, on or off: off drops an open chat line
+			{
+				PERF_ZONE( zone_paint_mc_hud );
+				g_urt_hud.on_paint_traverse( );
 			}
 
 			{

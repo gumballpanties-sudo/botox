@@ -20,6 +20,7 @@ extern void CorrectMovement( c_user_cmd* cmd, c_angle wish_angle, c_angle old_an
 extern void botox_dbg_log( const char* fmt, ... );
 extern bool botox_is_ladder_trace( const trace_t& tr );
 extern bool g_air_stuck_owned_prev_tick;
+bool edge_surf_local( );
 
 /* head bounce: a bounce must keep this share of entry xy */
 constexpr float k_xy_creep_frac = 0.5f;
@@ -371,7 +372,9 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	m_hit = m_hs_hit = m_owns_cmd = false;
 
 	c_base_entity* const local = g_ctx.m_local;
-	const bool edge_on         = GET_VARIABLE( g_variables.m_edge_surf, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
+	/* listen server: edge surf is the fake glide ( movement.cpp edge_surf ), online it leads tb */
+	const bool edge_on         = GET_VARIABLE( g_variables.m_edge_surf, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) &&
+	                     !edge_surf_local( );
 	const bool armed           = ( ( GET_VARIABLE( g_variables.m_texture_bug, bool ) &&
 	                       g_input.check_input( &GET_VARIABLE( g_variables.m_texture_bug_key, key_bind_t ) ) ) || edge_on ) &&
 	                   local && local->is_alive( );
@@ -477,6 +480,11 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	bool allow_stand       = tb_types.size( ) > 1 && tb_types[ 1 ];
 	if ( !allow_duck && !allow_stand )
 		allow_duck = allow_stand = true;
+	/* auto duck off: tb never crouches you, only keeps your own crouch */
+	if ( !GET_VARIABLE( g_variables.m_texture_bug_auto_duck, bool ) && !user_duck ) {
+		allow_duck  = false;
+		allow_stand = true;
+	}
 	const auto allowed    = [ & ]( const int duck ) { return duck ? allow_duck : allow_stand; };
 	/* rising = a bounce: your stance, never a flip, never kept for the fall */
 	int stance            = rising ? held : allowed( held ) ? held : !held;

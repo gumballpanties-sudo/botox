@@ -20,6 +20,7 @@
 
 extern bool HITGODA;
 extern bool HITGODA2;
+extern bool g_edge_surf_active;
 
 extern void botox_dbg_log( const char* fmt, ... );
 
@@ -1746,7 +1747,7 @@ void n_indicators::impl_t::keybind_indicators( )
 
 	if ( GET_VARIABLE( g_variables.m_edge_surf, bool ) && key_indicators.size( ) > e_keybind_indicators::key_esurf &&
 	     key_indicators[ e_keybind_indicators::key_esurf ] )
-		add_hit( label_esurf, trick_states.m_texture_bug_now, g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) );
+		add_hit( label_esurf, trick_states.m_texture_bug_now || g_edge_surf_active, g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) );
 
 	if ( GET_VARIABLE( g_variables.m_edgebug_edge_skip, bool ) && key_indicators.size( ) > e_keybind_indicators::key_es &&
 	     key_indicators[ e_keybind_indicators::key_es ] )

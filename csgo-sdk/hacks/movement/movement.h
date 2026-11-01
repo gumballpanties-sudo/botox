@@ -296,6 +296,8 @@ namespace n_route
 	float target_z( const route_point_t& point );
 	int lip_kind( const c_vector& at, float pz, float& gap_out );
 	float floor_nz( );
+	/* route_pj_creep's soft wall-normal wish into cmd, returns w ( < 0 = out ) */
+	float creep_wish( c_user_cmd* cmd, const c_vector& n, float gap );
 	std::string route_line( const solution_t& s );
 	std::string route_text( const std::vector< std::string >& elements );
 
@@ -759,6 +761,8 @@ namespace n_movement
 			std::vector< route_point_t > points{ };
 			std::vector< n_route::solution_t > solutions{ };
 			std::vector< c_vector > path{ };
+			/* head contact markers: feet arc point under the marker -> marker, drawn dashed */
+			std::vector< std::pair< c_vector, c_vector > > path_dash{ };
 			long long total_solutions = 0;
 			bool total_approx         = false;
 			bool total_floor          = false; /* solve_output_t::trimmed */
@@ -783,6 +787,7 @@ namespace n_movement
 				++gen;
 				solutions.clear( );
 				path.clear( );
+				path_dash.clear( );
 				total_solutions = 0;
 				total_approx    = false;
 				total_floor     = false;

@@ -1,5 +1,6 @@
 #include "movement_internal.h"
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include "texturebug_common.h"
 
@@ -260,12 +261,81 @@ namespace
 			return false;
 		}
 	};
+
+	/* pixel jump ( route_pj_creep without a marker ): a floor top under a hull k_creep_gap off the face, caught falling within
+	   k_pj_ticks, that a hull 0.03125 off ( where every hard push parks it ) misses = a lip only a hull INSIDE it lands ( vertical
+	   categorize trace, cmodel both-ends-outside = no hit ). skin lips ( vphysics near miss ) never hit a long sweep: not seen */
+	constexpr int k_pj_ticks   = 10;
+	constexpr float k_pj_catch = 1.96875f;
+	bool s_pj_armed            = false;
+	float s_pj_top             = 0.f;
+
+	bool aa_pj_lip( const trace_t& wall, const c_vector& o, const c_vector& mins, const c_vector& maxs, float& gap, float& top, int& ticks )
+	{
+		const c_vector& n = wall.m_plane.m_normal;
+		const float dt    = n_tick::engine_interval( );
+		gap = o.m_x * n.m_x + o.m_y * n.m_y - n_tb::hull_plane_dist( wall, mins, maxs ) - ( std::fabsf( n.m_x ) * maxs.m_x + std::fabsf( n.m_y ) * maxs.m_y );
+		if ( gap < -0.01f || gap > 1.f || dt <= 0.f )
+			return false;
+		/* slanted wall: sim vs server hull split ~0.001 ( 10-07 23:40 log ) > the creep's 0.0005 = server stuck ( xy + vz zeroed ).
+		   ponytail: axial only, a slant creep stop at ~0.002 would need its own lip floor */
+		if ( std::fminf( std::fabsf( n.m_x ), std::fabsf( n.m_y ) ) > 1e-3f )
+			return false;
+		const float half_g = g_convars.float_or( HASH_BT( "sv_gravity" ), 800.f ) * dt * 0.5f;
+		const c_vector v   = g_ctx.m_local->get_velocity( );
+		/* engine order like route_pj_creep's ticks_to: half gravity, move, half gravity; lands only at vz <= 140 */
+		float z_lo          = o.m_z;
+		const auto ticks_to = [ & ]( float at ) {
+			float z = o.m_z, vz = v.m_z;
+			int hit = -1;
+			for ( int i = 1; i <= k_pj_ticks; ++i ) {
+				vz -= half_g;
+				z += vz * dt;
+				z_lo = std::min( z_lo, z );
+				if ( hit < 0 && vz <= 140.f && z <= at )
+					hit = i;
+				vz -= half_g;
+			}
+			return hit;
+		};
+		ticks_to( -FLT_MAX ); /* fills z_lo: lowest feet in the window */
+		const c_vector down( 0.f, 0.f, std::min( z_lo - o.m_z, 0.f ) - k_pj_catch );
+		c_trace_filter flt( g_ctx.m_local );
+		const auto sweep = [ & ]( float off, trace_t& t ) {
+			const c_vector p = o - n * ( gap - off );
+			ray_t r( p, p + down, mins, maxs );
+			g_interfaces.m_engine_trace->trace_ray( r, mask_playersolid, &flt, &t );
+			return !t.m_start_solid && t.m_fraction < 1.f && t.m_plane.m_normal.m_z >= 0.7f;
+		};
+		trace_t in, out;
+		/* k_creep_gap = the creep's worst stop ( 3/4 steps end in 0.000125 .. 0.0005 ): a lip under that is never landed */
+		if ( !sweep( n_route::k_creep_gap, in ) )
+			return false;
+		top = in.m_end.m_z;
+		/* a floor the parked hull also lands = plain ledge, the old pushes take it */
+		if ( sweep( 0.03125f, out ) && out.m_end.m_z > top - 0.05f )
+			return false;
+		if ( out.m_start_solid )
+			return false;
+		ticks = ticks_to( top + k_pj_catch );
+		return ticks > 0;
+	}
 }
 
 /* end of create_move: a later feature ( fireman / wc ... ) rewrote our park = no server verdict, never grow the margin off it.
    10-07 20:18 log: every repeat refusal sat on a WC STOMP@fire_man, margin 2 -> 32 = park dead on that wall */
 void n_movement::impl_t::auto_align_sent( const c_user_cmd* cmd )
 {
+	/* pj verdict for the log: grounded on the top = caught, fell 2.5u past it = missed */
+	if ( s_pj_armed && g_ctx.m_local ) {
+		const bool gnd = ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) != 0;
+		const float z  = g_ctx.m_local->get_origin( ).m_z;
+		if ( gnd || z < s_pj_top - 2.5f || !g_ctx.m_local->is_alive( ) ) {
+			if ( GET_VARIABLE( g_variables.m_debug_log, bool ) )
+				botox_dbg_log( "AA: pj %s top=%.4f z=%.4f", gnd && std::fabsf( z - s_pj_top ) < 0.5f ? "landed" : "missed", s_pj_top, z );
+			s_pj_armed = false;
+		}
+	}
 	if ( g_ctx.m_local && ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) )
 		s_park_off = false;
 	if ( !cmd || s_park_cmd != cmd->m_command_number )
@@ -461,6 +531,25 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 
 	static int fail_tick = -1;
 	static c_vector fail_normal{ };
+
+	/* pixel jump ahead: creep inside the lip ( no hit = no 0.03125 park ), no pin hunt: the seam surf over its top is the miss.
+	   already riding a pixelsurf = yours */
+	if ( GET_VARIABLE( g_variables.m_auto_align_pixel_jump, bool ) && !g_prediction.is_target_predict_z_velocity( g_prediction.backup_data.m_velocity.m_z ) ) {
+		float pj_gap = 0.f, pj_top = 0.f;
+		int pj_ticks = -1;
+		if ( aa_pj_lip( trace, start_pos, mins, maxs, pj_gap, pj_top, pj_ticks ) ) {
+			const float w = n_route::creep_wish( cmd, trace.m_plane.m_normal, std::max( pj_gap, 0.f ) );
+			if ( GET_VARIABLE( g_variables.m_debug_log, bool ) && ( !s_pj_armed || std::fabsf( pj_top - s_pj_top ) > 0.01f ) )
+				botox_dbg_log( "AA: pj top=%.4f gap=%.5f catch in %d w=%.3f n=%.2f %.2f", pj_top, pj_gap, pj_ticks, w, trace.m_plane.m_normal.m_x,
+				               trace.m_plane.m_normal.m_y );
+			s_pj_armed = true;
+			s_pj_top   = pj_top;
+			warm_tick = fail_tick = -1;
+			aa_flush_drop( );
+			aa_outs[ aa_out_pj ]++;
+			return;
+		}
+	}
 
 	aa_flush_t flush;
 	const bool flush_on = flush.init( cmd, trace.m_plane.m_normal, n_tb::hull_plane_dist( trace, mins, maxs ), maxs, aa_budget );

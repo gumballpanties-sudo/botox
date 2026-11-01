@@ -3,6 +3,7 @@
 #include "../../hacks/indicators/indicators.h"
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
+#include "../../hacks/urt_hud/urt_hud.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/visuals/screen/ambient_occlusion.h"
 #include "../../hacks/visuals/screen/bloom.h"
@@ -57,6 +58,7 @@ long __stdcall n_detoured_functions::reset( IDirect3DDevice9* device, D3DPRESENT
 	g_indicators.release_textures( );
 	g_mc_hud.release_textures( );
 	g_cod4_hud.release_textures( );
+	g_urt_hud.release_textures( );
 	kill_effects_release_textures( );
 	Web_InvalidateTexture( );
 

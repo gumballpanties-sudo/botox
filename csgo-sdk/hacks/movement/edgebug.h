@@ -91,6 +91,7 @@ namespace n_edgebug
 		struct plan_t {
 			predicted_cmd_t cmds[k_predicted_cmd_max];
 			int ticks = 0, variant = 0, fam = 0;
+			bool duck = false; /* FL_DUCKING on the sim's bug tick */
 			float bend = 0.f;
 			c_vector end_pos{ };
 		};

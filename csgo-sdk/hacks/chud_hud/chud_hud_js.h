@@ -1007,35 +1007,55 @@ try {
         /* reconcile rather than RemoveAndDeleteChildren — wiping the list made
            picking up one weapon re-animate every row. keyed by slot. */
         var wanted = {};
-        for (var w = 0; w < rows.length; w++) wanted['ChudWeapSlot' + rows[w].slot] = true;
+        for (var w = 0; w < rows.length; w++) wanted[rows[w].id] = true;
 
+        /* a weapon missing for one tick (pickup swap, entity not networked yet)
+           used to DeleteAsync its row. the next tick found the DYING row by id,
+           rebuilt into the corpse, then the delete landed -> blank slot until the
+           next weapon change. now: fade + token, delete only if still unwanted,
+           and a wanted row with a token gets revived instead. */
         for (var c = host.GetChildCount() - 1; c >= 0; c--) {
             var child = host.GetChild(c);
             if (!child) continue;
             if (!wanted[child.id]) {
                 (function(dying) {
                     try {
+                        if (dying.GetAttributeString('chuddie', '') !== '') return;
+                        var tok = String(Math.random());
+                        dying.SetAttributeString('chuddie', tok);
                         dying.style.opacity = '0.0';
                         dying.style.height = '0px';
                         /* margin snaps — do it after the collapse, row is gone by then */
-                        $.Schedule(0.24, function() { try { dying.style.marginTop = '0px'; } catch(e) {} });
-                        dying.DeleteAsync(0.28);
+                        $.Schedule(0.24, function() { try { if (dying.GetAttributeString('chuddie', '') === tok) dying.style.marginTop = '0px'; } catch(e) {} });
+                        // ponytail: 1 frame window between this and the real delete where a revive could still hit the corpse
+                        $.Schedule(0.28, function() { try { if (dying.GetAttributeString('chuddie', '') === tok) { dying.SetAttributeString('chuddie', 'dead'); dying.DeleteAsync(0.0); } } catch(e) {} });
                     } catch(e) {}
                 })(child);
             }
         }
 
         for (var i = 0; i < rows.length; i++) {
-            var rowId = 'ChudWeapSlot' + rows[i].slot;
+            var rowId = rows[i].id;
             var rowKey = rows[i].icons.join('|') + '#' + rows[i].name;
             var icons = rows[i].icons;
 
             var row = cp.FindChildTraverse(rowId);
             var isNew = false;
 
+            if (row) {
+                var die = '';
+                try { die = row.GetAttributeString('chuddie', ''); } catch(e) {}
+                if (die === 'dead') row = null;
+                else if (die !== '') {
+                    try { row.SetAttributeString('chuddie', ''); } catch(e) {}
+                    isNew = true; // re-run the grow-in, keep the panel
+                }
+            }
+
             if (!row) {
                 isNew = true;
-                $.CreatePanel('Panel', host, rowId, {
+                // keep the returned panel: a 'dead' corpse with the same id may still be in the tree
+                row = $.CreatePanel('Panel', host, rowId, {
                     hittest: false,
                     style: '${panelBg}' +
                            'width: 240px; height: 0px; margin-top: 0px;' +
@@ -1044,7 +1064,6 @@ try {
                            'transition-duration: 0.24s;' +
                            'transition-timing-function: cubic-bezier(0.16, 1.00, 0.30, 1.00);'
                 });
-                row = cp.FindChildTraverse(rowId);
                 try { chudBlur(row); } catch(e) {}
             }
 
@@ -1148,8 +1167,8 @@ try {
         /* reconcile APPENDS, so a freshly picked up awp landed at the bottom.
            re-sort into slot order after the pass */
         for (var o = 1; o < rows.length; o++) {
-            var prev = cp.FindChildTraverse('ChudWeapSlot' + rows[o - 1].slot);
-            var curr = cp.FindChildTraverse('ChudWeapSlot' + rows[o].slot);
+            var prev = cp.FindChildTraverse(rows[o - 1].id);
+            var curr = cp.FindChildTraverse(rows[o].id);
             if (!prev || !curr) continue;
             try { host.MoveChildAfter(curr, prev); } catch(e) {}
         }
@@ -1162,10 +1181,12 @@ try {
     var cp = $.GetContextPanel();
     var host = cp.FindChildTraverse('ChudWeapons');
     if (host) {
-        var wantId = 'ChudWeapSlot${activeRow}';
+        var wantId = '${activeRow}';
         for (var i = 0; i < host.GetChildCount(); i++) {
             var row = host.GetChild(i);
             if (!row) continue;
+            // dying rows stay faded, or a weapon switch un-fades a row about to vanish
+            try { if (row.GetAttributeString('chuddie', '') !== '') continue; } catch(e) {}
             row.style.opacity = (row.id === wantId) ? '1.0' : '0.38';
         }
     }

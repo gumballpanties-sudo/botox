@@ -257,9 +257,15 @@ namespace
 
 	constexpr int weapon_slot_grenade = 3;
 
-	const std::pair< const char*, const char* >* knife_look( short def )
+	// weapon data name = item class, shared by these defs ( usp -> hkp2000, m4a1_s -> m4a1, ... )
+	const std::pair< const char*, const char* >* shared_class_look( short def )
 	{
 		static const std::vector< std::pair< short, std::pair< const char*, const char* > > > table = {
+			{ weapon_usp_silencer,          { "usp_silencer",         "usp-s" } },
+			{ weapon_m4a1_silencer,         { "m4a1_silencer",        "m4a1-s" } },
+			{ weapon_cz75a,                 { "cz75a",                "cz75-auto" } },
+			{ weapon_revolver,              { "revolver",             "r8 revolver" } },
+			{ weapon_mp5sd,                 { "mp5sd",                "mp5-sd" } },
 			{ weapon_knife,                 { "knife",                "knife" } },
 			{ weapon_knife_t,               { "knife_t",              "knife" } },
 			{ weapon_knife_gg,              { "knife",                "golden knife" } },
@@ -803,7 +809,7 @@ void n_chud::impl_t::install( )
 	m_old_max_clip = -1;
 	m_old_weapons.clear( );
 	m_old_timer.clear( );
-	m_old_active_row = -1;
+	m_old_active_row.clear( );
 	m_old_spectators.clear( );
 	m_old_killfeed_top = -1;
 
@@ -937,7 +943,7 @@ void n_chud::impl_t::tick( )
 			if ( !name.empty( ) && name[ 0 ] == '#' )
 				name = icon;
 
-			if ( const auto look = knife_look( definition_index ) ) {
+			if ( const auto look = shared_class_look( definition_index ) ) {
 				icon = look->first;
 				name = look->second;
 			}
@@ -956,8 +962,9 @@ void n_chud::impl_t::tick( )
 		std::string rows     = "[";
 		std::string rows_key = "[";
 
-		int active_row     = -1;
+		std::string active_row{ };
 		int built_row_index = 0;
+		int last_slot = -1, slot_dup = 0;
 
 		for ( size_t i = 0; i < entries.size( ); ) {
 			const auto& entry     = entries[ i ];
@@ -984,10 +991,18 @@ void n_chud::impl_t::tick( )
 			if ( rows.length( ) > 1 )
 				rows += ",";
 
-			if ( active )
-				active_row = entry.m_slot + 1;
+			// knife + zeus share slot 3 -> one row id fought over by both. suffix dupes
+			slot_dup  = ( entry.m_slot == last_slot ) ? slot_dup + 1 : 0;
+			last_slot = entry.m_slot;
 
-			const std::string body = "icons:" + icons + ",name:'" + escape_js( name ) + "',slot:'" + std::to_string( entry.m_slot + 1 ) + "'";
+			std::string row_id = "ChudWeapSlot" + std::to_string( entry.m_slot + 1 );
+			if ( slot_dup )
+				row_id += "_" + std::to_string( slot_dup );
+
+			if ( active )
+				active_row = row_id;
+
+			const std::string body = "id:'" + row_id + "',icons:" + icons + ",name:'" + escape_js( name ) + "',slot:'" + std::to_string( entry.m_slot + 1 ) + "'";
 
 			rows += "{" + body + ",active:" + ( active ? "true" : "false" ) + "}";
 
@@ -1021,7 +1036,7 @@ void n_chud::impl_t::tick( )
 		}
 		else if ( active_row != m_old_active_row ) {
 			std::string js = k_set_active_weapon;
-			replace_all( js, "${activeRow}", std::to_string( active_row ) );
+			replace_all( js, "${activeRow}", active_row );
 			run( js );
 
 			m_old_active_row = active_row;
@@ -1447,7 +1462,7 @@ void n_chud::impl_t::on_level_init( )
 	m_old_colors     = 0u;
 	m_old_weapons.clear( );
 	m_old_timer.clear( );
-	m_old_active_row = -1;
+	m_old_active_row.clear( );
 	m_old_spectators.clear( );
 	m_old_killfeed_top = -1;
 

@@ -5,6 +5,7 @@
 #include "../../hacks/chud_hud/chud_hud.h"
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
+#include "../../hacks/urt_hud/urt_hud.h"
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/web/websurface.h"
@@ -26,10 +27,12 @@ long __stdcall n_detoured_functions::wndproc( HWND window, unsigned int message,
 		return pass_to_game( );
 
 	n_cod4_hud::on_key( message, wide_param );
+	n_urt_hud::on_key( message, wide_param );
 
 	const bool chat_input = g_mc_hud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) ) ||
 	                        g_chud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) ) ||
-	                        g_cod4_hud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) );
+	                        g_cod4_hud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) ) ||
+	                        g_urt_hud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) );
 
 	if ( !chat_input )
 		g_input.on_wndproc( message, wide_param, long_param );

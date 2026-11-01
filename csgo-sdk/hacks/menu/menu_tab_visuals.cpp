@@ -1,6 +1,7 @@
 #include "menu_internal.h"
 #include "../misc/misc.h"
 #include "../cod4_hud/cod4_hud.h"
+#include "../urt_hud/urt_hud.h"
 #include "../web/websurf_math.h"
 #include "../web/websurface.h"
 #include "../visuals/screen/depth_source.h"
@@ -2132,6 +2133,20 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::Keybind( "hardpoint key##cod4", &GET_VARIABLE( g_variables.m_cod4_hud_hardpoint_key, key_bind_t ), false );
 
 						n_cod4_hud::draw_options( );
+					},
+					ImVec2( 320.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "urban terror hud", &GET_VARIABLE( g_variables.m_urt_hud, bool ) );
+
+			if ( GET_VARIABLE( g_variables.m_urt_hud, bool ) ) {
+				ImGui::OptionPopup(
+					"urban terror hud settings",
+					[ & ]( ) {
+						ImGui::Label( "minimap toggle key" );
+						ImGui::Keybind( "minimap toggle key##urt", &GET_VARIABLE( g_variables.m_urt_hud_map_key, key_bind_t ), false );
+
+						n_urt_hud::draw_options( );
 					},
 					ImVec2( 320.f, -1.f ) );
 			}

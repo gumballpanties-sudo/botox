@@ -348,11 +348,8 @@ void n_menu::impl_t::tab_movement( )
 					[ & ]( ) {
 						ImGui::Label( "poop joomp keybind" );
 						ImGui::Keybind( "poop joomp key", &GET_VARIABLE( g_variables.m_poop_ladder_jump_key, key_bind_t ) );
-						ImGui::SliderFloat( "strength", &GET_VARIABLE( g_variables.m_poop_ladder_jump_strength, float ), 0.f, 500.f, "%.0f%%" );
-						ImGui::SliderFloat( "jetpack boost (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_boost, float ), 0.f, 1000.f, "%.0f" );
-						ImGui::SliderFloat( "jetpack angle (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_angle, float ), 0.f, 90.f, "%.0f deg" );
-						ImGui::SliderFloat( "jetpack height", &GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ), 10.f, 2000.f, "%.0f u" );
-						ImGui::SliderFloat( "sv_gravity (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_gravity, float ), 50.f, 800.f, "%.0f" );
+						ImGui::SliderFloat( "jump strength (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_strength, float ), 100.f, 500.f, "%.0f%%" );
+						ImGui::SliderFloat( "jetpack height (online)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ), 10.f, 2000.f, "%.0f u" );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
@@ -619,6 +616,7 @@ void n_menu::impl_t::tab_movement( )
 						/* stance tb pins in: an unticked one is swapped for the other, never tried */
 						ImGui::MultiCombo( "types allowed##tbtypes", GET_VARIABLE( g_variables.m_texture_bug_types, std::vector< bool > ),
 						                   { "ducking", "standing" }, GET_VARIABLE( g_variables.m_texture_bug_types, std::vector< bool > ).size( ) );
+						ImGui::Checkbox( "auto crouch##tbautoduck", &GET_VARIABLE( g_variables.m_texture_bug_auto_duck, bool ) );
 						ImGui::Checkbox( "wallstrafe##tbws", &GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool ) );
 
 						ImGui::Combo( "detection sound##tbsound", &GET_VARIABLE( g_variables.m_texture_bug_sound, int ),
@@ -641,6 +639,7 @@ void n_menu::impl_t::tab_movement( )
 					[ & ]( ) {
 						ImGui::Label( "edge surf keybind" );
 						ImGui::Keybind( "edge surf key", &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
+						ImGui::SliderFloat( "catch reach (local)##esurfreach", &GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.1f, 32.f, "%.1f u" );
 						ImGui::SliderFloat( "lead range##esurfrange", &GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f, "%.0f u" );
 					},
 					ImVec2( 220.f, -1.f ) );
@@ -737,6 +736,12 @@ void n_menu::impl_t::tab_movement( )
 			ImGui::Checkbox( "pixel surf fix", &GET_VARIABLE( g_variables.m_pixel_surf_fix, bool ) );
 
 			ImGui::Checkbox( "auto align", &GET_VARIABLE( g_variables.m_auto_align, bool ) );
+			if ( GET_VARIABLE( g_variables.m_auto_align, bool ) ) {
+				ImGui::OptionPopup(
+					"auto align settings",
+					[ & ]( ) { ImGui::Checkbox( "pixel jumps over pixelsurfs", &GET_VARIABLE( g_variables.m_auto_align_pixel_jump, bool ) ); },
+					ImVec2( 220.f, -1.f ) );
+			}
 
 			ImGui::Checkbox( "nulls", &GET_VARIABLE( g_variables.m_nulls, bool ) );
 

@@ -401,11 +401,21 @@ namespace n_chams
 			g_interfaces.m_render_view->set_blend( 1.f );
 		}
 
+		/* prepass_context: translucent layers lay their own depth first (colour off), so parts drawn later
+		   (arms after weapon, far fingers) can't show through. same material = same depth, LESSEQUAL passes */
 		template< typename t_draw_pass >
 		void draw_layers( const std::vector< int >& slots, const std::vector< c_color >& colors, const std::vector< c_color >& dark_colors,
-		                  const bool ignorez, const float alpha_scale, t_draw_pass draw_pass )
+		                  const bool ignorez, const float alpha_scale, t_draw_pass draw_pass, c_material_render_context* prepass_context = nullptr )
 		{
 			PERF_ZONE( zone_draw_model );
+
+			const auto depth_prepass = [ & ]( ) {
+				prepass_context->override_color_write_enable( true, false );
+				prepass_context->override_depth_enable( true, true, true );
+				draw_pass( );
+				prepass_context->override_depth_enable( false, true, true );
+				prepass_context->override_color_write_enable( false, true );
+			};
 
 			for ( std::size_t i = 0U; i < slots.size( ); i++ ) {
 				const int index = slots[ i ];
@@ -448,8 +458,14 @@ namespace n_chams
 
 					g_interfaces.m_model_render->forced_material_override( nullptr );
 
-					if ( layer_color.base< e_color_type::color_type_a >( ) * alpha_scale > 0.f )
+					const float original_alpha = layer_color.base< e_color_type::color_type_a >( ) * alpha_scale;
+
+					if ( original_alpha > 0.f ) {
+						if ( prepass_context && !ignorez && original_alpha < 1.f )
+							depth_prepass( );
+
 						draw_pass( );
+					}
 
 					reset_original_color( );
 
@@ -470,6 +486,11 @@ namespace n_chams
 				}
 
 				g_interfaces.m_model_render->forced_material_override( material );
+
+				// lsd swaps the vs in dip: depth would not match its colour pass
+				if ( prepass_context && !ignorez && index != chams_material_lsd &&
+				     ( layer_color.base< e_color_type::color_type_a >( ) * alpha_scale < 1.f || material->is_translucent( ) ) )
+					depth_prepass( );
 
 				if ( index == chams_material_lsd ) {
 					g_lsd_chams.begin( layer_color.base< e_color_type::color_type_a >( ) * alpha_scale );
