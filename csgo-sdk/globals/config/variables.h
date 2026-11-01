@@ -594,14 +594,21 @@ namespace n_variables
 
 		ADD_VARIABLE_VECTOR( int, chams_max_layers, m_chams_visible_layers, -1 );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_visible_colors, c_color( 114, 0, 221, 153 ) );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_visible_dark_colors, c_color( 20, 0, 60, 255 ) );
 
 		ADD_VARIABLE_VECTOR( int, chams_max_layers, m_chams_occluded_layers, -1 );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_occluded_colors, c_color( 0, 200, 221, 153 ) );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_occluded_dark_colors, c_color( 0, 40, 60, 153 ) );
+
+		/* two tone slot: gamma lighting level of the light/dark cut, edge = softness */
+		ADD_VARIABLE( float, m_chams_two_tone_threshold, 0.5f );
+		ADD_VARIABLE( float, m_chams_two_tone_edge, 0.f );
 
 		ADD_VARIABLE( bool, m_chams_ragdolls, false );
 
 		ADD_VARIABLE_VECTOR( int, chams_max_layers, m_chams_backtrack_layers, -1 );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_backtrack_colors, c_color( 114, 155, 221, 153 ) );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_backtrack_dark_colors, c_color( 20, 30, 60, 153 ) );
 		ADD_VARIABLE( bool, m_chams_backtrack_xqz, false );
 		ADD_VARIABLE( int, m_chams_backtrack_type, 0 );
 		ADD_VARIABLE( bool, m_chams_backtrack_gradient, false );
@@ -613,17 +620,21 @@ namespace n_variables
 
 		ADD_VARIABLE_VECTOR( int, chams_max_layers, m_chams_sound_layers, -1 );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_sound_colors, c_color( 255, 160, 0, 153 ) );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_sound_dark_colors, c_color( 60, 30, 0, 153 ) );
 		ADD_VARIABLE( float, m_chams_sound_duration, 1.f );
 		ADD_VARIABLE( bool, m_chams_sound_fade, true );
 
 		ADD_VARIABLE_VECTOR( int, chams_max_layers, m_chams_arms_layers, -1 );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_arms_colors, c_color( 114, 0, 221, 153 ) );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_arms_dark_colors, c_color( 20, 0, 60, 255 ) );
 
 		ADD_VARIABLE_VECTOR( int, chams_max_layers, m_chams_sleeve_layers, -1 );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_sleeve_colors, c_color( 0, 200, 221, 153 ) );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_sleeve_dark_colors, c_color( 0, 40, 60, 255 ) );
 
 		ADD_VARIABLE_VECTOR( int, chams_max_layers, m_chams_weapon_layers, -1 );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_weapon_colors, c_color( 114, 155, 221, 153 ) );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_weapon_dark_colors, c_color( 20, 30, 60, 255 ) );
 
 		ADD_VARIABLE( bool, m_dropped_weapons, false );
 		ADD_VARIABLE( bool, m_dropped_weapons_box, false );
@@ -996,8 +1007,6 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_true_motion_blur_viewmodel, true );
 		ADD_VARIABLE( float, m_true_motion_blur_viewmodel_strength, 1.f );
 		ADD_VARIABLE( float, m_true_motion_blur_viewmodel_sway, 0.f );
-		ADD_VARIABLE( bool, m_true_motion_blur_animation, false );
-		ADD_VARIABLE( float, m_true_motion_blur_animation_trail, 2.f );
 
 		ADD_VARIABLE( bool, m_bloom, false );
 		ADD_VARIABLE( float, m_bloom_intensity, 1.2f );

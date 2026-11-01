@@ -647,14 +647,18 @@ void n_menu::impl_t::tab_visuals( )
 
 			ImGui::BeginDisabled( !GET_VARIABLE( g_variables.m_chams_enable, bool ) );
 
-			chams_dropdown( "visible material", g_variables.m_chams_visible_layers, g_variables.m_chams_visible_colors );
-			chams_dropdown( "occluded material", g_variables.m_chams_occluded_layers, g_variables.m_chams_occluded_colors );
+			chams_dropdown( "visible material", g_variables.m_chams_visible_layers, g_variables.m_chams_visible_colors,
+			                g_variables.m_chams_visible_dark_colors );
+			chams_dropdown( "occluded material", g_variables.m_chams_occluded_layers, g_variables.m_chams_occluded_colors,
+			                g_variables.m_chams_occluded_dark_colors );
 
 			ImGui::Checkbox( "ragdolls##chams ragdolls", &GET_VARIABLE( g_variables.m_chams_ragdolls, bool ) );
 
-			chams_dropdown( "backtrack material", g_variables.m_chams_backtrack_layers, g_variables.m_chams_backtrack_colors );
+			chams_dropdown( "backtrack material", g_variables.m_chams_backtrack_layers, g_variables.m_chams_backtrack_colors,
+			                g_variables.m_chams_backtrack_dark_colors );
 
-			chams_dropdown( "sound material", g_variables.m_chams_sound_layers, g_variables.m_chams_sound_colors );
+			chams_dropdown( "sound material", g_variables.m_chams_sound_layers, g_variables.m_chams_sound_colors,
+			                g_variables.m_chams_sound_dark_colors );
 
 			if ( n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_sound_layers, std::vector< int > ) ) ) {
 				ImGui::SliderFloat( "sound duration", &GET_VARIABLE( g_variables.m_chams_sound_duration, float ), 0.2f, 5.f, "%.1f s" );
@@ -681,11 +685,27 @@ void n_menu::impl_t::tab_visuals( )
 
 			ImGui::BeginDisabled( !GET_VARIABLE( g_variables.m_chams_local_enable, bool ) );
 
-			chams_dropdown( "weapon material", g_variables.m_chams_weapon_layers, g_variables.m_chams_weapon_colors );
-			chams_dropdown( "gloves material", g_variables.m_chams_arms_layers, g_variables.m_chams_arms_colors );
-			chams_dropdown( "sleeve material", g_variables.m_chams_sleeve_layers, g_variables.m_chams_sleeve_colors );
+			chams_dropdown( "weapon material", g_variables.m_chams_weapon_layers, g_variables.m_chams_weapon_colors,
+			                g_variables.m_chams_weapon_dark_colors );
+			chams_dropdown( "gloves material", g_variables.m_chams_arms_layers, g_variables.m_chams_arms_colors, g_variables.m_chams_arms_dark_colors );
+			chams_dropdown( "sleeve material", g_variables.m_chams_sleeve_layers, g_variables.m_chams_sleeve_colors,
+			                g_variables.m_chams_sleeve_dark_colors );
 
 			ImGui::EndDisabled( );
+
+			bool two_tone_used = false;
+			for ( const std::uint32_t layers : { g_variables.m_chams_visible_layers, g_variables.m_chams_occluded_layers, g_variables.m_chams_backtrack_layers,
+			                                     g_variables.m_chams_sound_layers, g_variables.m_chams_weapon_layers, g_variables.m_chams_arms_layers,
+			                                     g_variables.m_chams_sleeve_layers } )
+				for ( const int slot : GET_VARIABLE( layers, std::vector< int > ) )
+					two_tone_used |= slot == n_chams::chams_material_two_tone;
+
+			if ( two_tone_used ) {
+				ImGui::SliderFloat( "two tone threshold", &GET_VARIABLE( g_variables.m_chams_two_tone_threshold, float ), 0.f, 1.5f, "%.2f",
+				                    ImGuiSliderFlags_AlwaysClamp );
+				ImGui::SliderFloat( "two tone edge", &GET_VARIABLE( g_variables.m_chams_two_tone_edge, float ), 0.f, 0.5f, "%.2f",
+				                    ImGuiSliderFlags_AlwaysClamp );
+			}
 		}
 		menu_group_end( );
 
@@ -1800,15 +1820,6 @@ void n_menu::impl_t::tab_visuals( )
 
 							ImGui::SliderFloat( "viewmodel sway##true motion blur",
 							                    &GET_VARIABLE( g_variables.m_true_motion_blur_viewmodel_sway, float ), 0.f, 8.f, "%.2f",
-							                    ImGuiSliderFlags_AlwaysClamp );
-						}
-
-						ImGui::Checkbox( "animation trail (old)##true motion blur",
-						                 &GET_VARIABLE( g_variables.m_true_motion_blur_animation, bool ) );
-
-						if ( GET_VARIABLE( g_variables.m_true_motion_blur_animation, bool ) ) {
-							ImGui::SliderFloat( "animation trail##true motion blur",
-							                    &GET_VARIABLE( g_variables.m_true_motion_blur_animation_trail, float ), 0.f, 12.f, "%.2f",
 							                    ImGuiSliderFlags_AlwaysClamp );
 						}
 

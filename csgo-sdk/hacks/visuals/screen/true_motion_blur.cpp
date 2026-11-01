@@ -1051,11 +1051,7 @@ void n_true_motion_blur::impl_t::on_post_screen_space_effects( c_view_setup* set
 
 		frame.m_blend = trail > 0.f ? std::clamp( std::exp( -elapsed / trail ), 0.f, 0.9f ) : 0.f;
 
-		const float gun_trail = GET_VARIABLE( g_variables.m_true_motion_blur_animation, bool )
-		                          ? shutter * std::max( GET_VARIABLE( g_variables.m_true_motion_blur_animation_trail, float ), 0.f )
-		                          : 0.f;
-
-		frame.m_viewmodel_blend = gun_trail > 0.f ? std::clamp( std::exp( -elapsed / gun_trail ), 0.f, 0.9f ) : 0.f;
+		frame.m_viewmodel_blend = 0.f;
 
 		frame.m_viewmodel_valid = have_viewmodel && this->m_have_previous_viewmodel && frame.m_viewmodel_znear > 0.f &&
 		                          frame.m_viewmodel_zfar > frame.m_viewmodel_znear && frame.m_viewmodel_fov > 1.f;

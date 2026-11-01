@@ -9,6 +9,7 @@
 #include "../../globals/interfaces/interfaces.h"
 #include "../../utilities/perf/perf_watch.h"
 #include "../visuals/lsd_chams.h"
+#include "../visuals/two_tone_chams.h"
 
 namespace n_chams
 {
@@ -26,11 +27,12 @@ namespace n_chams
 		chams_material_crystal,
 		chams_material_wet,
 		chams_material_lsd,
+		chams_material_two_tone, /* no material: model's own materials, DIP swaps in the two tone shader */
 		chams_material_max
 	};
 
-	inline const char* material_names[ chams_material_max ] = { "original", "flat",     "shaded",      "wireframe", "glow",     "metallic",
-		                                                        "pearlescent", "ambient", "gold",      "damascus",  "crystal", "wet",      "lsd" };
+	inline const char* material_names[ chams_material_max ] = { "original", "flat",     "shaded",      "wireframe", "glow",     "metallic", "pearlescent",
+		                                                        "ambient",  "gold",     "damascus",    "crystal",   "wet",      "lsd",      "two tone" };
 
 	constexpr float gold_envmap_tint[ 3 ] = { 0.55f, 0.3f, 0.05f };
 	constexpr float gold_phong_tint[ 3 ]  = { 0.6f, 0.35f, 0.08f };
@@ -255,7 +257,8 @@ namespace n_chams
 				break;
 			}
 
-			if ( ++this->m_build_index >= chams_material_max - 1 )
+			/* case 11 (lsd carrier) is the last built slot */
+			if ( ++this->m_build_index >= chams_material_lsd )
 				this->m_created = true;
 		}
 
@@ -399,8 +402,8 @@ namespace n_chams
 		}
 
 		template< typename t_draw_pass >
-		void draw_layers( const std::vector< int >& slots, const std::vector< c_color >& colors, const bool ignorez, const float alpha_scale,
-		                  t_draw_pass draw_pass )
+		void draw_layers( const std::vector< int >& slots, const std::vector< c_color >& colors, const std::vector< c_color >& dark_colors,
+		                  const bool ignorez, const float alpha_scale, t_draw_pass draw_pass )
 		{
 			PERF_ZONE( zone_draw_model );
 
@@ -409,9 +412,33 @@ namespace n_chams
 				if ( index < 0 || index >= chams_material_max )
 					continue;
 
-				c_material* material = this->get( index, ignorez );
-
 				const c_color layer_color = i < colors.size( ) ? colors[ i ] : c_color( 255, 255, 255, 255 );
+
+				if ( index == chams_material_two_tone ) {
+					const c_color dark_color = i < dark_colors.size( ) ? dark_colors[ i ] : c_color( 0, 0, 0, 255 );
+
+					const float light[ 4 ] = { layer_color.base< e_color_type::color_type_r >( ), layer_color.base< e_color_type::color_type_g >( ),
+						                       layer_color.base< e_color_type::color_type_b >( ), layer_color.base< e_color_type::color_type_a >( ) * alpha_scale };
+					const float dark[ 4 ]  = { dark_color.base< e_color_type::color_type_r >( ), dark_color.base< e_color_type::color_type_g >( ),
+						                       dark_color.base< e_color_type::color_type_b >( ), dark_color.base< e_color_type::color_type_a >( ) * alpha_scale };
+
+					const float alpha = light[ 3 ] > dark[ 3 ] ? light[ 3 ] : dark[ 3 ];
+					if ( alpha <= 0.f )
+						continue;
+
+					/* own materials keep the model's normal maps + lighting constants bound; blend < 1 = engine draws translucent */
+					g_interfaces.m_model_render->forced_material_override( nullptr );
+					apply_original_color( c_color( 255, 255, 255, 255 ), alpha );
+
+					g_two_tone_chams.begin( light, dark, ignorez );
+					draw_pass( );
+					g_two_tone_chams.end( );
+
+					reset_original_color( );
+					continue;
+				}
+
+				c_material* material = this->get( index, ignorez );
 
 				if ( index == chams_material_original ) {
 					apply_original_color( layer_color, alpha_scale );

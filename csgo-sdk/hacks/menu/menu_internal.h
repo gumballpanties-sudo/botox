@@ -34,7 +34,7 @@ void modulation_row( const char* label, const std::uint32_t enable_variable, con
                      const std::uint32_t brightness_variable );
 void draw_color_correction_curves( );
 void reset_color_correction( );
-void chams_dropdown( const char* label, const std::uint32_t layers_variable, const std::uint32_t colors_variable );
+void chams_dropdown( const char* label, const std::uint32_t layers_variable, const std::uint32_t colors_variable, const std::uint32_t dark_colors_variable );
 void save_popup( const char* str_id, bool& open, const ImVec2& window_size, const std::function< void( ) >& fn );
 /* render thread, every frame: lands a finished image box pick even when its box is hidden */
 void image_pick_apply( );

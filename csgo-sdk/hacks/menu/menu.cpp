@@ -234,12 +234,13 @@ void reset_color_correction( )
 	GET_VARIABLE( g_variables.m_color_correction_curve_blue_points, std::vector< float > ).assign( n_color_curve::config_size, -1.f );
 }
 
-void chams_dropdown( const char* label, const std::uint32_t layers_variable, const std::uint32_t colors_variable )
+void chams_dropdown( const char* label, const std::uint32_t layers_variable, const std::uint32_t colors_variable, const std::uint32_t dark_colors_variable )
 {
 	auto& slots  = GET_VARIABLE( layers_variable, std::vector< int > );
 	auto& colors = GET_VARIABLE( colors_variable, std::vector< c_color > );
+	auto& darks  = GET_VARIABLE( dark_colors_variable, std::vector< c_color > );
 
-	const int max_slots = static_cast< int >( slots.size( ) < colors.size( ) ? slots.size( ) : colors.size( ) );
+	const int max_slots = static_cast< int >( std::min( { slots.size( ), colors.size( ), darks.size( ) } ) );
 
 	int used = 0;
 	for ( int i = 0; i < max_slots; i++ ) {
@@ -296,7 +297,19 @@ void chams_dropdown( const char* label, const std::uint32_t layers_variable, con
 			char color_id[ 96 ] = { };
 			std::snprintf( color_id, sizeof( color_id ), "##chams color%s%s", label, n_chams::material_names[ material ] );
 
-			ImGui::ColorEdit4( color_id, &colors[ slot ], color_picker_alpha_flags );
+			// two tone: lit side swatch left (slot 1), shadow side right (slot 0)
+			const bool two_tone = material == n_chams::chams_material_two_tone;
+
+			ImGui::ColorEdit4( color_id, &colors[ slot ], color_picker_alpha_flags, two_tone ? 1 : 0 );
+
+			if ( two_tone ) {
+				ImGui::SameLine( );
+
+				char dark_id[ 96 ] = { };
+				std::snprintf( dark_id, sizeof( dark_id ), "##chams dark color%s%s", label, n_chams::material_names[ material ] );
+
+				ImGui::ColorEdit4( dark_id, &darks[ slot ], color_picker_alpha_flags, 0 );
+			}
 
 			ImGui::SetCursorPos( next_position );
 		}
@@ -306,12 +319,14 @@ void chams_dropdown( const char* label, const std::uint32_t layers_variable, con
 				for ( int i = slot; i < max_slots - 1; i++ ) {
 					slots[ i ]  = slots[ i + 1 ];
 					colors[ i ] = colors[ i + 1 ];
+					darks[ i ]  = darks[ i + 1 ];
 				}
 
 				slots[ max_slots - 1 ] = -1;
 			} else if ( used < max_slots ) {
 				slots[ used ]  = material;
 				colors[ used ] = c_color( 255, 255, 255, 255 );
+				darks[ used ]  = c_color( 0, 0, 0, 255 );
 			}
 
 			ImGui::EndCombo( );

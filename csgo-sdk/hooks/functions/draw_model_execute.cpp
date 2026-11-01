@@ -161,22 +161,26 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 
 		std::uint32_t layers_variable = g_variables.m_chams_weapon_layers;
 		std::uint32_t colors_variable = g_variables.m_chams_weapon_colors;
+		std::uint32_t darks_variable  = g_variables.m_chams_weapon_dark_colors;
 
 		if ( part == viewmodel_part_arms ) {
 			layers_variable = g_variables.m_chams_arms_layers;
 			colors_variable = g_variables.m_chams_arms_colors;
+			darks_variable  = g_variables.m_chams_arms_dark_colors;
 		} else if ( part == viewmodel_part_sleeve ) {
 			layers_variable = g_variables.m_chams_sleeve_layers;
 			colors_variable = g_variables.m_chams_sleeve_colors;
+			darks_variable  = g_variables.m_chams_sleeve_dark_colors;
 		}
 
 		const auto& layers = GET_VARIABLE( layers_variable, std::vector< int > );
 		const auto& colors = GET_VARIABLE( colors_variable, std::vector< c_color > );
+		const auto& darks  = GET_VARIABLE( darks_variable, std::vector< c_color > );
 
 		if ( !n_chams::impl_t::has_layers( layers ) )
 			return original( ecx, edx, context, state, info, custom_bone_to_world );
 
-		g_chams.draw_layers( layers, colors, false, 1.f, [ & ]( ) {
+		g_chams.draw_layers( layers, colors, darks, false, 1.f, [ & ]( ) {
 			original( ecx, edx, context, state, info, custom_bone_to_world );
 		} );
 
@@ -191,12 +195,16 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 
 	const auto& visible_layers   = GET_VARIABLE( g_variables.m_chams_visible_layers, std::vector< int > );
 	const auto& visible_colors   = GET_VARIABLE( g_variables.m_chams_visible_colors, std::vector< c_color > );
+	const auto& visible_darks    = GET_VARIABLE( g_variables.m_chams_visible_dark_colors, std::vector< c_color > );
 	const auto& occluded_layers  = GET_VARIABLE( g_variables.m_chams_occluded_layers, std::vector< int > );
 	const auto& occluded_colors  = GET_VARIABLE( g_variables.m_chams_occluded_colors, std::vector< c_color > );
+	const auto& occluded_darks   = GET_VARIABLE( g_variables.m_chams_occluded_dark_colors, std::vector< c_color > );
 	const auto& backtrack_layers = GET_VARIABLE( g_variables.m_chams_backtrack_layers, std::vector< int > );
 	const auto& backtrack_colors = GET_VARIABLE( g_variables.m_chams_backtrack_colors, std::vector< c_color > );
+	const auto& backtrack_darks  = GET_VARIABLE( g_variables.m_chams_backtrack_dark_colors, std::vector< c_color > );
 	const auto& sound_layers     = GET_VARIABLE( g_variables.m_chams_sound_layers, std::vector< int > );
 	const auto& sound_colors     = GET_VARIABLE( g_variables.m_chams_sound_colors, std::vector< c_color > );
+	const auto& sound_darks      = GET_VARIABLE( g_variables.m_chams_sound_dark_colors, std::vector< c_color > );
 
 	const bool draw_visible   = n_chams::impl_t::has_layers( visible_layers );
 	const bool draw_occluded  = n_chams::impl_t::has_layers( occluded_layers );
@@ -221,7 +229,7 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 		                                             GET_VARIABLE( g_variables.m_chams_sound_fade, bool ) );
 
 		if ( sound_alpha > 0.f )
-			g_chams.draw_layers( sound_layers, sound_colors, true, sound_alpha, draw_live );
+			g_chams.draw_layers( sound_layers, sound_colors, sound_darks, true, sound_alpha, draw_live );
 	}
 
 	if ( draw_backtrack ) {
@@ -243,7 +251,7 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 			if ( !record_matrix || alpha_scale <= 0.f )
 				return;
 
-			g_chams.draw_layers( backtrack_layers, backtrack_colors, xqz, alpha_scale, [ & ]( ) {
+			g_chams.draw_layers( backtrack_layers, backtrack_colors, backtrack_darks, xqz, alpha_scale, [ & ]( ) {
 				original( ecx, edx, context, state, info, record_matrix );
 			} );
 		};
@@ -327,10 +335,10 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 	}
 
 	if ( draw_occluded && esp_gate > 0.f )
-		g_chams.draw_layers( occluded_layers, occluded_colors, true, esp_gate, draw_live );
+		g_chams.draw_layers( occluded_layers, occluded_colors, occluded_darks, true, esp_gate, draw_live );
 
 	if ( draw_visible && esp_gate > 0.f )
-		g_chams.draw_layers( visible_layers, visible_colors, false, 1.f, draw_live );
+		g_chams.draw_layers( visible_layers, visible_colors, visible_darks, false, 1.f, draw_live );
 	else
 		draw_live( );
 
