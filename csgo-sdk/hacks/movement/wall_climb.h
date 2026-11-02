@@ -53,6 +53,18 @@ namespace n_wall_climb
 			int score[ 33 ]{ };
 		} m_spot{ };
 
+		/* air ( "steer to seam" ): along wall velocity targets replayed from the first air tick, sliced over k_steer_delay ticks in the
+		   spot slots ( spot is ground only ), the first that lands where your path does not gets steered to */
+		struct steer_job_t {
+			bool valid = false, rolling = false, done = false, decided = false, steer = false;
+			int start_cmd = 0, cand = -1, count = 0, tick = 0, left = 0, steer_left = 0, sims = 0, base = -1, best = -1;
+			float order[ 5 ]{ }, target = 0.f, cur = 0.f;
+			c_vector t{ };
+			float fwd = 0.f, side = 0.f, yaw = 0.f;
+			int buttons = 0;
+		} m_steer{ };
+		int m_ground_cmd = -1000;
+
 		/* last wall tick, written in create move, read in paint ( same thread ) */
 		struct viz_t {
 			bool valid = false, ground = false, lands = false;

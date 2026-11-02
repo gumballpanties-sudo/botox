@@ -575,7 +575,7 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 		for ( auto& point : points )
 			point.open_settings = false;
 	}
-	if ( GET_VARIABLE( g_variables.m_bouncee_assist, bool ) ) {
+	if ( GET_VARIABLE( g_variables.m_bouncee_assist, bool ) || GET_VARIABLE( g_variables.m_pixel_jump_assist, bool ) ) {
 		for ( size_t i = 0; i < m_bounce_points_check.size( ); ++i ) {
 			points_check_t& point = m_bounce_points_check[ i ];
 			/* same stale-flag rule as the pixelsurf loop above */
@@ -621,6 +621,9 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 			if ( point.is_free_point ) {
 				int outlineA = static_cast< int >( 255.0f * alphaMultiplier );
 				outlineColor = c_color( 250, 120, 120, outlineA ).get_u32( );
+			} else if ( point.point_type == 2 && point.active ) {
+				/* pixeljump assist point: the finder's yellow */
+				outlineColor = c_color( 255, 220, 0, static_cast< int >( 255.0f * alphaMultiplier ) ).get_u32( );
 			} else if ( !point.active ) {
 				int outlineA = static_cast< int >( 255.0f * alphaMultiplier );
 				outlineColor = c_color( 150, 150, 150, outlineA ).get_u32( );
@@ -929,9 +932,10 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 	if ( ImGui::GetCurrentContext( ) == nullptr )
 		return;
 
-	static bool ps_key_was_down = false, hb_key_was_down = false;
+	static bool ps_key_was_down = false, hb_key_was_down = false, pj_key_was_down = false;
 	const bool place_surf   = consume_key_edge( GET_VARIABLE( g_variables.m_pixel_surf_assist_point_key, key_bind_t ), ps_key_was_down );
 	const bool place_bounce = consume_key_edge( GET_VARIABLE( g_variables.m_bounce_assist_point_key, key_bind_t ), hb_key_was_down );
+	const bool place_pj     = consume_key_edge( GET_VARIABLE( g_variables.m_pixel_jump_assist_point_key, key_bind_t ), pj_key_was_down );
 
 	const float dt = ImGui::GetIO( ).DeltaTime;
 	pf_fade( animated_points, surf, dt );
@@ -939,7 +943,7 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 	pf_fade( animated_points3, tb, dt );
 	pf_fade( animated_points4, pj, dt );
 
-	constexpr int k_hb = 0, k_ps = 2;
+	constexpr int k_hb = 0, k_pj = 1, k_ps = 2;
 	std::vector< AnimatedPoint >* const lists[ k_pf_types ] = { &animated_points2, &animated_points4, &animated_points, &animated_points3 };
 	constexpr int k_rgb[ k_pf_types ][ 3 ]                  = { { 255, 0, 0 }, { 255, 220, 0 }, { 0, 255, 0 }, { 0, 200, 255 } };
 
@@ -979,7 +983,7 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 			hovered_sq = d_sq;
 			hovered    = i;
 		}
-		for ( const int t : { k_ps, k_hb } ) {
+		for ( const int t : { k_ps, k_hb, k_pj } ) {
 			if ( g.dot[ t ] && !g.dot[ t ]->is_removing && d_sq < pick_sq[ t ] ) {
 				pick_sq[ t ] = d_sq;
 				pick[ t ]    = i;
@@ -1019,6 +1023,13 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 		bounce_set_point = true;
 		save_points_file( bounce_points_file( ), m_bounce_points_check );
 		botox_dbg_log( "[pf place] bounce assist point z %.4f\n", p.m_z );
+	}
+	/* pixeljump assist point = the yellow dot as is ( dot z = the lip top = landing origin z ), kept in the bounce list as type 2 */
+	if ( place_pj && pick[ k_pj ] >= 0 ) {
+		const c_vector& p = groups[ pick[ k_pj ] ].dot[ k_pj ]->position;
+		m_bounce_points_check.emplace_back( p, g_interfaces.m_engine_client->get_level_name_short( ) ).point_type = 2;
+		save_points_file( bounce_points_file( ), m_bounce_points_check );
+		botox_dbg_log( "[pf place] pixeljump assist point z %.4f\n", p.m_z );
 	}
 
 	struct arc_t {

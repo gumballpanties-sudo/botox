@@ -678,6 +678,7 @@ namespace n_movement
 			float m_last_speed = 0.f;
 			bool m_jump_owed = false;
 			int m_refused    = 0;
+			float m_lumi_hold_until = 0.f; /* lumi mode: dead stop over the face -> hands off till this curtime */
 			static constexpr int k_viz_max = 300;
 			c_vector m_viz[ k_viz_max ]{ };
 			int m_viz_n = 0;
@@ -708,6 +709,7 @@ namespace n_movement
 				m_last_vz    = 0.f;
 				m_last_speed = 0.f;
 				m_jump_owed  = false;
+				m_lumi_hold_until = 0.f;
 			}
 		} m_auto_bounce_data;
 
@@ -887,6 +889,7 @@ namespace n_movement
 		void strafe_to_yaw( c_user_cmd* cmd, c_angle& angle, const float yaw );
 		void movement_fix( const c_angle& old_view_point );
 		void autobounce_assist( c_user_cmd* cmd );
+		void pixeljump_assist( c_user_cmd* cmd );
 		void auto_bounce( c_user_cmd* cmd, bool yield = false );
 		void auto_bounce_render( );
 		void pixelsurf_assist( c_user_cmd* cmd );

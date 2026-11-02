@@ -412,6 +412,8 @@ void n_movement::impl_t::on_create_move_pre( )
 			gnd_wish_check( "ps_ground_help" );
 			this->autobounce_assist( g_ctx.m_cmd );
 			gnd_wish_check( "bounce_assist" );
+			this->pixeljump_assist( g_ctx.m_cmd );
+			gnd_wish_check( "pj_assist" );
 
 			if ( m_pixelsurf_data.should_pixel_surf )
 				g_ctx.m_cmd->m_buttons |= in_duck;
@@ -1934,6 +1936,7 @@ void n_movement::impl_t::jump_bug_crouch( c_user_cmd* cmd )
 }
 
 extern bool HITGODA2;
+extern bool HITGODA3;
 
 /* jb height assist: jb only fires when the standing feet sit 0..2u over the floor at the unduck tick ( CanUnduck 9u hull trace, then
    CategorizePosition 2u ). air z can't be steered, xy can: on slopes / disp / ledge edges a small air wish moves the landing floor into
@@ -1956,7 +1959,7 @@ void n_movement::impl_t::jump_bug_assist( c_user_cmd* cmd )
 	if ( !cmd || !local || !GET_VARIABLE( g_variables.m_jump_bug_assist, bool ) || !GET_VARIABLE( g_variables.m_jump_bug, bool ) ||
 	     !g_input.check_input( &GET_VARIABLE( g_variables.m_jump_bug_key, key_bind_t ) ) )
 		return;
-	if ( ( cmd->m_buttons & in_duck ) || g_air_stuck_holding || HITGODA2 || g_wall_climb.active( cmd ) || g_texturebug.m_owns_cmd ||
+	if ( ( cmd->m_buttons & in_duck ) || g_air_stuck_holding || HITGODA2 || HITGODA3 || g_wall_climb.active( cmd ) || g_texturebug.m_owns_cmd ||
 	     g_texturebug.m_hit || g_texturebug.m_hs_hit || m_pixelsurf_data.should_pixel_surf || m_edgebug_data.m_will_edgebug )
 		return;
 	auto* col       = local->get_collideable( );

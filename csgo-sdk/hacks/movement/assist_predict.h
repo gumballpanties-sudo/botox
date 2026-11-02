@@ -75,14 +75,28 @@ namespace n_assist
 
 	inline int settle_air( const program_t& p, const int lj_hold ) { return p.launch == launch_longjump ? lj_hold : 2; }
 
-	enum e_arrival : int { arrival_surf = 0, arrival_bang };
+	/* land = lumi "pixel climb" FUN_100f6220: a sim tick that LANDS ( air -> ground ) within radius of the point, full sims only */
+	enum e_arrival : int { arrival_surf = 0, arrival_bang, arrival_land };
 
 	struct target_t {
 		float z     = 0.f;
 		float plane = 0.f;
 		bool grid   = false;
 		int point   = -1;
+		float x = 0.f, y = 0.f, radius = 0.f;
 	};
+
+	inline target_t make_land_target( const c_vector& pos, const float radius, const int point )
+	{
+		target_t t;
+		t.z      = pos.m_z;
+		t.x      = pos.m_x;
+		t.y      = pos.m_y;
+		t.radius = radius;
+		t.point  = point;
+		t.plane  = std::floor( pos.m_z );
+		return t;
+	}
 
 	inline target_t make_target( const float z, const int point )
 	{
@@ -100,7 +114,21 @@ namespace n_assist
 		float hull_in = 72.f, hull = 72.f;
 		bool ground  = false;
 		bool clipped = false;
+		bool ground_in = false;
+		float x = 0.f, y = 0.f;
 	};
+
+	inline float land_dist( const target_t& t, const sample_t& s )
+	{
+		const float dx = s.x - t.x, dy = s.y - t.y;
+		return std::sqrt( dx * dx + dy * dy );
+	}
+
+	/* landing tick on the point's top: z within 0.5 ( origin = top ), xy inside the radius */
+	inline bool lands( const target_t& t, const sample_t& s )
+	{
+		return s.ground && !s.ground_in && std::fabs( static_cast< float >( s.z ) - t.z ) <= 0.5f && land_dist( t, s ) <= t.radius;
+	}
 
 	inline bool in_window( const target_t& t, const float z )
 	{
@@ -109,6 +137,8 @@ namespace n_assist
 
 	inline bool arrives( const e_arrival kind, const target_t& t, const sample_t& s, const double half_g )
 	{
+		if ( kind == arrival_land )
+			return lands( t, s );
 		if ( s.ground )
 			return false;
 		if ( kind == arrival_surf ) {
@@ -125,6 +155,8 @@ namespace n_assist
 
 	inline float near_gap( const e_arrival kind, const target_t& t, const sample_t& s, const double half_g )
 	{
+		if ( kind == arrival_land )
+			return s.ground && !s.ground_in && std::fabs( static_cast< float >( s.z ) - t.z ) <= 0.5f ? land_dist( t, s ) - t.radius : 1e9f;
 		if ( s.ground )
 			return 1e9f;
 		if ( kind == arrival_surf )
@@ -134,7 +166,7 @@ namespace n_assist
 
 	inline bool past( const e_arrival kind, const double lowest, const sample_t& s )
 	{
-		return kind == arrival_surf ? s.vz < 0.0 && s.z < lowest - 1.0 : s.vz < 0.0;
+		return kind != arrival_bang ? s.vz < 0.0 && s.z < lowest - 1.0 : s.vz < 0.0;
 	}
 
 	struct ctx_t {
@@ -306,10 +338,13 @@ namespace n_assist
 			g_prediction.end( local );
 			++c.sims;
 
-			s.z      = local->get_origin( ).m_z;
-			s.vz     = local->get_velocity( ).m_z;
-			s.hull   = col->get_obb_maxs( ).m_z;
-			s.ground = ( local->get_flags( ) & fl_onground ) != 0;
+			s.z         = local->get_origin( ).m_z;
+			s.x         = local->get_origin( ).m_x;
+			s.y         = local->get_origin( ).m_y;
+			s.vz        = local->get_velocity( ).m_z;
+			s.hull      = col->get_obb_maxs( ).m_z;
+			s.ground    = ( local->get_flags( ) & fl_onground ) != 0;
+			s.ground_in = ground_in;
 
 			if ( air < 0 ) {
 				if ( !s.ground && s.vz > 0.0 && s.vz > s.vz_in + 100.0 ) {
@@ -320,7 +355,7 @@ namespace n_assist
 						r.landing = i;
 					if ( s.ground && ground_in )
 						break;
-					if ( c.kind == arrival_surf && !s.ground && s.vz < 0.0 && s.z < c.lowest - c.prune_below )
+					if ( c.kind != arrival_bang && !s.ground && s.vz < 0.0 && s.z < c.lowest - c.prune_below )
 						break;
 					continue;
 				}
@@ -356,7 +391,8 @@ namespace n_assist
 			}
 			if ( s.ground || past( c.kind, c.lowest, s ) )
 				break;
-			if ( full )
+			/* land: the float step has no xy, the engine flies the whole arc */
+			if ( full || c.kind == arrival_land )
 				continue;
 
 			const double dv      = s.vz_in - s.vz;

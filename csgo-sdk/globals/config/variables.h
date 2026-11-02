@@ -155,6 +155,7 @@ enum e_keybind_labels {
 	label_zb,
 	label_az,
 	label_esurf,
+	label_pjast,
 	label_max
 };
 
@@ -166,7 +167,7 @@ inline constexpr const char* k_keybind_labels[ label_max ][ 2 ] = {
 	{ "ps assist", "ast" },    { "bounce assist", "bast" },   { "ladder bug", "lb" },     { "ladder glide", "lg" },
 	{ "freelook climb", "lfc" }, { "fast ladder", "fl" },     { "one hop", "oh" },        { "auto crouch", "ac" },
 	{ "auto bounce", "ab" },   { "tung surf", "tung" },       { "edge skip", "es" },      { "half sideways", "hsw" },
-	{ "zeus bug", "zb" },      { "air freeze", "az" },        { "edge surf", "esurf" },
+	{ "zeus bug", "zb" },      { "air freeze", "az" },        { "edge surf", "esurf" },   { "pj assist", "pjast" },
 };
 
 enum e_indicator_style {
@@ -1100,6 +1101,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_wall_climb_prevent_slow, true );
 		ADD_VARIABLE( bool, m_wall_climb_duck, true );
 		ADD_VARIABLE( int, m_wall_climb_spot_reach, 16 );
+		ADD_VARIABLE( bool, m_wall_climb_seam_steer, false );
 		ADD_VARIABLE( bool, m_wall_climb_visualize, false );
 		ADD_VARIABLE( c_color, m_wall_climb_visualize_color, c_color( 255, 190, 90, 255 ) );
 		ADD_VARIABLE( bool, m_show_wall_slope, false );
@@ -1258,11 +1260,24 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_auto_bounce_align, false );
 		ADD_VARIABLE( bool, m_auto_bounce_visualize, false );
 		ADD_VARIABLE( c_color, m_auto_bounce_visualize_color, c_color( 120, 200, 255, 255 ) );
+		ADD_VARIABLE( int, m_auto_bounce_lumi_rays, 16 );
+		ADD_VARIABLE( float, m_auto_bounce_lumi_radius, 20.f );
+		ADD_VARIABLE( float, m_auto_bounce_lumi_depth, 1024.f );
+		ADD_VARIABLE( float, m_auto_bounce_lumi_min_angle, 10.f );
+		ADD_VARIABLE( float, m_auto_bounce_lumi_max_angle, 60.f );
+		ADD_VARIABLE( float, m_auto_bounce_lumi_smooth, 0.5f );
 
 		ADD_VARIABLE( bool, m_bouncee_assist, false );
 		ADD_VARIABLE( key_bind_t, m_bounce_assist_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_bouncee_assist_brokehop, false );
 		ADD_VARIABLE( bool, m_bouncee_assist_render, false );
+		/* pixeljump assist ( lumi pixel climb ): points = bounce list point_type 2 */
+		ADD_VARIABLE( bool, m_pixel_jump_assist, false );
+		ADD_VARIABLE( key_bind_t, m_pixel_jump_assist_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( key_bind_t, m_pixel_jump_assist_point_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( int, m_pixel_jump_assist_ticks, 12 );
+		ADD_VARIABLE( float, m_pixel_jump_assist_radius, 6.f );
+		ADD_VARIABLE( bool, m_pixel_jump_assist_render, false );
 		/* one key per point list, so bounce candidates don't steal ps
 		   presses. migrated from the bounce key on load */
 		ADD_VARIABLE( key_bind_t, m_pixel_surf_assist_point_key, key_bind_t( 0, 1 ) );

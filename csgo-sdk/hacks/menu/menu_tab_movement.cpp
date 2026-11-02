@@ -584,6 +584,26 @@ void n_menu::impl_t::tab_movement( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			ImGui::Checkbox( "pixeljump assist", &GET_VARIABLE( g_variables.m_pixel_jump_assist, bool ) );
+			if ( GET_VARIABLE( g_variables.m_pixel_jump_assist, bool ) ) {
+				ImGui::OptionPopup(
+					"pixeljump assist settings",
+					[ & ]( ) {
+						ImGui::Label( "assist keybind" );
+						ImGui::Keybind( "pixeljump assist key", &GET_VARIABLE( g_variables.m_pixel_jump_assist_key, key_bind_t ) );
+
+						ImGui::Label( "set pixeljump point key" );
+						ImGui::Keybind( "set pixeljump point key", &GET_VARIABLE( g_variables.m_pixel_jump_assist_point_key, key_bind_t ) );
+
+						ImGui::SliderInt( "assist ticks##pjticks", &GET_VARIABLE( g_variables.m_pixel_jump_assist_ticks, int ), 0, 128, "%d",
+						                  ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "landing radius##pjradius", &GET_VARIABLE( g_variables.m_pixel_jump_assist_radius, float ), 1.f, 48.f, "%.0f u",
+						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::Checkbox( "render##pjrender", &GET_VARIABLE( g_variables.m_pixel_jump_assist_render, bool ) );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
 			ImGui::Checkbox( "auto bounce", &GET_VARIABLE( g_variables.m_auto_bounce, bool ) );
 			if ( GET_VARIABLE( g_variables.m_auto_bounce, bool ) ) {
 				ImGui::OptionPopup(
@@ -592,7 +612,18 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Label( "auto bounce keybind" );
 						ImGui::Keybind( "auto bounce key", &GET_VARIABLE( g_variables.m_auto_bounce_key, key_bind_t ) );
 
-						ImGui::Combo( "mode##abmode", &GET_VARIABLE( g_variables.m_auto_bounce_mode, int ), "drop in\0keep speed\0stop\0" );
+						ImGui::Combo( "mode##abmode", &GET_VARIABLE( g_variables.m_auto_bounce_mode, int ), "drop in\0keep speed\0stop\0lumi\0" );
+						if ( GET_VARIABLE( g_variables.m_auto_bounce_mode, int ) == 3 ) {
+							ImGui::SliderInt( "rays##ablrays", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_rays, int ), 4, 64 );
+							ImGui::SliderFloat( "radius##ablradius", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_radius, float ), 5.f, 100.f, "%.0f u" );
+							ImGui::SliderFloat( "depth##abldepth", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_depth, float ), 50.f, 4096.f, "%.0f u",
+							                    ImGuiSliderFlags_Logarithmic );
+							ImGui::SliderFloat( "min angle##ablmin", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_min_angle, float ), 5.f, 60.f, "%.0f deg" );
+							ImGui::SliderFloat( "max angle##ablmax", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_max_angle, float ), 20.f, 90.f, "%.0f deg" );
+							ImGui::SliderFloat( "smoothing##ablsmooth", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_smooth, float ), 0.f, 1.f, "%.2f" );
+							ImGui::Checkbox( "auto jump", &GET_VARIABLE( g_variables.m_auto_bounce_jump, bool ) );
+							ImGui::Checkbox( "crouch near face##abcrouch", &GET_VARIABLE( g_variables.m_auto_bounce_crouch, bool ) );
+						} else {
 						ImGui::SliderFloat( "min speed gain", &GET_VARIABLE( g_variables.m_auto_bounce_min_gain, float ), 0.f, 500.f, "%.0f" );
 						ImGui::SliderFloat( "max sim reach##abreach", &GET_VARIABLE( g_variables.m_auto_bounce_reach, float ), 16.f, 512.f, "%.0f u" );
 						ImGui::Checkbox( "auto jump", &GET_VARIABLE( g_variables.m_auto_bounce_jump, bool ) );
@@ -601,6 +632,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "visualize##abviz", &GET_VARIABLE( g_variables.m_auto_bounce_visualize, bool ) );
 						ImGui::ColorEdit4( "visualize color##abvizcolor", &GET_VARIABLE( g_variables.m_auto_bounce_visualize_color, c_color ),
 						                   color_picker_alpha_flags );
+						}
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
@@ -671,6 +703,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "prevent slow", &GET_VARIABLE( g_variables.m_wall_climb_prevent_slow, bool ) );
 						ImGui::Checkbox( "crouch catches", &GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) );
 						ImGui::SliderInt( "spot reach", &GET_VARIABLE( g_variables.m_wall_climb_spot_reach, int ), 0, 32, "%d u" );
+						ImGui::Checkbox( "steer to seam", &GET_VARIABLE( g_variables.m_wall_climb_seam_steer, bool ) );
 						ImGui::Checkbox( "visualize##wcviz", &GET_VARIABLE( g_variables.m_wall_climb_visualize, bool ) );
 						ImGui::ColorEdit4( "visualize color##wcvizcolor", &GET_VARIABLE( g_variables.m_wall_climb_visualize_color, c_color ),
 						                   color_picker_alpha_flags );

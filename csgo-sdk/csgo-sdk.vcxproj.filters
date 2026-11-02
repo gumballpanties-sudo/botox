@@ -70,6 +70,7 @@
     <ClCompile Include="hacks\movement\route_engine.cpp" />
     <ClCompile Include="hacks\movement\pixelsurf_assist.cpp" />
     <ClCompile Include="hacks\movement\bounce_assist.cpp" />
+    <ClCompile Include="hacks\movement\pixeljump_assist.cpp" />
     <ClCompile Include="hacks\movement\auto_bounce.cpp" />
     <ClCompile Include="globals\math\math.cpp" />
     <ClCompile Include="game\sdk\classes\c_angle.cpp" />

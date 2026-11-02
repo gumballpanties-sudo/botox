@@ -65,8 +65,10 @@ void n_movement::impl_t::autobounce_assist( c_user_cmd* cmd )
 			cand_dist[ slot ] = d;
 		}
 	};
-	for ( int i = 0; i < static_cast< int >( m_bounce_points_check.size( ) ); i++ )
-		consider( m_bounce_points_check[ i ] );
+	for ( int i = 0; i < static_cast< int >( m_bounce_points_check.size( ) ); i++ ) {
+		if ( m_bounce_points_check[ i ].point_type != 2 ) /* 2 = pixeljump assist's */
+			consider( m_bounce_points_check[ i ] );
+	}
 	for ( int i = 0; i < static_cast< int >( m_points_check.size( ) ); i++ ) {
 		if ( m_points_check[ i ].is_free_point && m_points_check[ i ].point_type == 1 )
 			consider( m_points_check[ i ] );

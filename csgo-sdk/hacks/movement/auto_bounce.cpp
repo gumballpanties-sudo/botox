@@ -702,6 +702,104 @@ namespace
 		}
 	}
 
+	/* lumi FUN_1014a700 ( tools/decompiled/lumi_dll.c ), 1:1: ring of down rays, closest slope in the angle window = target,
+	   steer 450 at it blended with a brake by `smooth`, <= 30 u/s = zero input + 1 s hands off ( straight drop ), duck < 32 u over it.
+	   no gain gate, no flight. skipped: wall-edge probe, hit averaging, tick predict ( duck timing only ) */
+	constexpr float k_lumi_stop_speed = 30.f;
+	constexpr float k_lumi_hold_time  = 1.f;
+	constexpr float k_lumi_duck_over  = 32.f;
+
+	void ab_lumi( c_user_cmd* cmd, n_movement::impl_t::auto_bounce_data_t& data, const c_vector& origin, const c_vector& velocity,
+	              const bool crouch, const bool debug )
+	{
+		const float now = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_current_time : 0.f;
+		if ( data.m_lumi_hold_until > 0.f ) {
+			if ( now < data.m_lumi_hold_until )
+				return;
+			data.m_lumi_hold_until = 0.f;
+		}
+
+		const int rays        = std::clamp( GET_VARIABLE( g_variables.m_auto_bounce_lumi_rays, int ), 1, 64 );
+		const float radius    = GET_VARIABLE( g_variables.m_auto_bounce_lumi_radius, float );
+		const float depth     = GET_VARIABLE( g_variables.m_auto_bounce_lumi_depth, float );
+		const float min_angle = GET_VARIABLE( g_variables.m_auto_bounce_lumi_min_angle, float );
+		const float max_angle = GET_VARIABLE( g_variables.m_auto_bounce_lumi_max_angle, float );
+		const float smooth    = std::clamp( GET_VARIABLE( g_variables.m_auto_bounce_lumi_smooth, float ), 0.f, 1.f );
+
+		c_trace_filter filter( g_ctx.m_local );
+		float best_frac = 1.f;
+		ab_hit_t best{ };
+		bool found = false;
+		for ( int i = 0; i < rays; ++i ) {
+			const float a = static_cast< float >( i ) / static_cast< float >( rays ) * 6.2831855f;
+			const c_vector start( origin.m_x + std::cos( a ) * radius, origin.m_y + std::sin( a ) * radius, origin.m_z + 2.f );
+			ray_t ray( start, c_vector( start.m_x, start.m_y, start.m_z - depth ) );
+			trace_t tr{ };
+			g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid_brushonly, &filter, &tr );
+			if ( tr.m_fraction <= 0.f || tr.m_fraction >= 1.f )
+				continue;
+			const float angle = rad2deg( std::acos( std::clamp( tr.m_plane.m_normal.m_z, -1.f, 1.f ) ) );
+			if ( angle < min_angle || angle > max_angle || tr.m_fraction >= best_frac )
+				continue;
+			best_frac = tr.m_fraction;
+			best      = ab_make_hit( tr );
+			found     = true;
+		}
+
+		if ( !found )
+			return;
+
+		data.m_found     = true;
+		data.m_owns_cmd  = true;
+		data.m_jump_owed = true;
+		data.m_target    = best.m_pos;
+		data.m_normal    = best.m_normal;
+		data.m_angle     = best.m_angle;
+		data.m_viz_n      = 0; /* visualize: ring on the face, no path */
+		data.m_viz_land   = best.m_pos;
+		data.m_viz_normal = best.m_normal;
+
+		const float speed = velocity.length_2d( );
+		if ( speed <= k_lumi_stop_speed ) {
+			data.m_lumi_hold_until = now + k_lumi_hold_time;
+			cmd->m_forward_move    = 0.f;
+			cmd->m_side_move       = 0.f;
+			cmd->m_up_move         = 0.f;
+			if ( debug )
+				botox_dbg_log( "[ab] LUMI STOP ang=%.1f drop=%.1f spd=%.0f\n", best.m_angle, origin.m_z - best.m_pos.m_z, speed );
+			return;
+		}
+
+		const float view_yaw = cmd->m_view_point.m_y;
+		float brake_f = 0.f, brake_s = 0.f;
+		if ( speed > 1.f ) {
+			const float db = deg2rad( c_vector( velocity.m_x, velocity.m_y, 0.f ).to_angle( ).m_y - view_yaw );
+			brake_f        = -std::cos( db );
+			brake_s        = std::sin( db );
+		}
+
+		const c_vector to( best.m_pos.m_x - origin.m_x, best.m_pos.m_y - origin.m_y, 0.f );
+		const float dist = to.length_2d( );
+		cmd->m_buttons &= ~( in_forward | in_back | in_moveleft | in_moveright );
+		if ( dist <= 1.f ) {
+			cmd->m_forward_move = brake_f * 450.f;
+			cmd->m_side_move    = brake_s * 450.f;
+		} else {
+			const float d       = deg2rad( to.to_angle( ).m_y - view_yaw );
+			const float f2      = smooth * smooth;
+			cmd->m_forward_move = std::cos( d ) * 450.f * f2 + brake_f * 450.f * ( 1.f - smooth );
+			cmd->m_side_move    = -std::sin( d ) * 450.f * f2 + brake_s * 450.f * ( 1.f - smooth );
+		}
+
+		const float over = origin.m_z - best.m_pos.m_z;
+		if ( crouch && over > 0.f && over < k_lumi_duck_over )
+			cmd->m_buttons |= in_duck;
+
+		if ( debug )
+			botox_dbg_log( "[ab] LUMI ang=%.1f drop=%.1f dist=%.1f spd=%.0f vz=%.0f fwd=%.0f side=%.0f%s\n", best.m_angle, over, dist, speed, velocity.m_z,
+			               cmd->m_forward_move, cmd->m_side_move, ( cmd->m_buttons & in_duck ) ? " duck" : "" );
+	}
+
 	c_vector ab_stop_want( const c_vector& origin, const c_vector& velocity, const c_vector& target, const c_vector& normal, const bool drop_in,
 	                       const n_air::world_t& world, float* out_dist = nullptr, float* out_want = nullptr )
 	{
@@ -891,7 +989,8 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 		cmd->m_buttons &= ~in_jump;
 	/* air duck = feet up 9 at once: 9u more fall onto the face, more vz to turn into speed. arm to ground only
 	   ( a held key with no bounce must not crop air strafe to 0.34 ) */
-	if ( crouch && data.m_jump_owed )
+	const bool lumi = GET_VARIABLE( g_variables.m_auto_bounce_mode, int ) == 3;
+	if ( crouch && data.m_jump_owed && !lumi )
 		cmd->m_buttons |= in_duck;
 
 	if ( ground_live )
@@ -905,6 +1004,10 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 
 	c_vector origin         = g_prediction.backup_data.m_origin;
 	const c_vector velocity = g_prediction.backup_data.m_velocity;
+	if ( lumi ) {
+		ab_lumi( cmd, data, origin, velocity, crouch, GET_VARIABLE( g_variables.m_debug_log, bool ) );
+		return;
+	}
 	/* the duck lands inside the arming cmd's tick, before the move: plan from the ducked hull already */
 	if ( crouch && !( g_prediction.backup_data.m_flags & e_flags::fl_ducking ) ) {
 		origin.m_z += k_duck_lift;
