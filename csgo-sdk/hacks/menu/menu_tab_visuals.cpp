@@ -1122,6 +1122,9 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "width##weapon sheen", &GET_VARIABLE( g_variables.m_weapon_sheen_width, float ), 0.1f, 1.f, "%.2f",
 						                    ImGuiSliderFlags_AlwaysClamp );
 						ImGui::Checkbox( "normal blend##weapon sheen", &GET_VARIABLE( g_variables.m_weapon_sheen_normal, bool ) );
+						if ( GET_VARIABLE( g_variables.m_weapon_sheen_normal, bool ) )
+							ImGui::SliderFloat( "env strength##weapon sheen", &GET_VARIABLE( g_variables.m_weapon_sheen_env, float ), 0.f, 10.f, "%.2f",
+							                    ImGuiSliderFlags_AlwaysClamp );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}

@@ -420,14 +420,16 @@ void save_popup( const char* str_id, bool& open, const ImVec2& window_size, cons
 void menu_columns_begin( )
 {
 	const float width = ImFloor( ( ImGui::GetContentRegionAvail( ).x - ImGui::GetStyle( ).ItemSpacing.x ) / 2.f );
-	ImGui::BeginChild( "left column", ImVec2( width, ImGui::GetContentRegionAvail( ).y - menu_bottom_band_height ), false, 0, false );
+	ImGui::BeginChild( "left column", ImVec2( width, ImGui::GetContentRegionAvail( ).y - menu_bottom_band_height ), false, ImGuiWindowFlags_NoBackground,
+	                   false );
 }
 
 void menu_columns_next( )
 {
 	ImGui::EndChild( );
 	ImGui::SameLine( );
-	ImGui::BeginChild( "right column", ImVec2( 0.f, ImGui::GetContentRegionAvail( ).y - menu_bottom_band_height ), false, 0, false );
+	ImGui::BeginChild( "right column", ImVec2( 0.f, ImGui::GetContentRegionAvail( ).y - menu_bottom_band_height ), false, ImGuiWindowFlags_NoBackground,
+	                   false );
 }
 
 void menu_columns_end( )

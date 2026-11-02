@@ -1032,6 +1032,7 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_weapon_sheen_color, c_color( 200, 20, 15, 255 ) );
 		ADD_VARIABLE( float, m_weapon_sheen_delay, 5.f );
 		ADD_VARIABLE( bool, m_weapon_sheen_normal, false );
+		ADD_VARIABLE( float, m_weapon_sheen_env, 3.f );
 		ADD_VARIABLE( float, m_weapon_sheen_width, 0.4f );
 		ADD_VARIABLE( bool, m_viewmodel_bob, false );
 		ADD_VARIABLE( float, m_viewmodel_bob_cycle, 0.98f );

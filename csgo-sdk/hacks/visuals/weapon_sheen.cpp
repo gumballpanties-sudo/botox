@@ -126,19 +126,20 @@ struct PS_INPUT {
 
 float4 main( PS_INPUT i ) : COLOR
 {
-	float4 vPos            = float4( i.vModelSpacePos, 1.0f );
-	float u                = g_vSheenBand.x + ( dot( vPos, g_vSheenU ) - g_vSheenBand.x ) * g_vSheenBand.y;
-	float4 envmapMaskTexel = tex2D( EnvmapMaskSampler, float2( u, 1.0f - dot( vPos, g_vSheenV ) ) );
-
-	// normal blend: flat tint, mask = alpha, no envmap
-	if ( g_vSheenBand.z > 0.5f )
-		return float4( g_cCloakColorTint.xyz, envmapMaskTexel.x * g_cCloakColorTint.w );
-
 	float3 vEyeDir          = -normalize( i.vWorldViewVector );
 	float3 worldSpaceNormal = normalize( i.vWorldNormal );
 	float3 vReflect         = 2 * worldSpaceNormal * dot( worldSpaceNormal, vEyeDir ) - vEyeDir;
 
 	float3 envMapColor = cLightScale.z * texCUBE( EnvmapSampler, vReflect ).xyz * g_cCloakColorTint.xyz;
+
+	float4 vPos            = float4( i.vModelSpacePos, 1.0f );
+	float u                = g_vSheenBand.x + ( dot( vPos, g_vSheenU ) - g_vSheenBand.x ) * g_vSheenBand.y;
+	float4 envmapMaskTexel = tex2D( EnvmapMaskSampler, float2( u, 1.0f - dot( vPos, g_vSheenV ) ) );
+
+	// normal blend: tinted envmap at band.w strength (stock = 10), mask alone = alpha
+	if ( g_vSheenBand.z > 0.5f )
+		return float4( saturate( envMapColor * g_vSheenBand.w ), envmapMaskTexel.x * g_cCloakColorTint.w );
+
 	envMapColor *= 10.0f;
 
 	float alpha = max( max( envMapColor.x, envMapColor.y ), envMapColor.z );
@@ -604,6 +605,7 @@ bool n_weapon_sheen::impl_t::begin( const char* model_name )
 	params.m_band[ 0 ] = k_mask_core[ ( std::min )( params.m_frame, 59 ) ];
 	params.m_band[ 1 ] = 1.f / std::clamp( GET_VARIABLE( g_variables.m_weapon_sheen_width, float ), 0.1f, 1.f );
 	params.m_band[ 2 ] = GET_VARIABLE( g_variables.m_weapon_sheen_normal, bool ) ? 1.f : 0.f;
+	params.m_band[ 3 ] = std::clamp( GET_VARIABLE( g_variables.m_weapon_sheen_env, float ), 0.f, 10.f );
 
 	const c_color& color = GET_VARIABLE( g_variables.m_weapon_sheen_color, c_color );
 	for ( int i = 0; i < 4; i++ )
@@ -658,10 +660,8 @@ long n_weapon_sheen::impl_t::draw( const draw_indexed_primitive_t original, IDir
 	static constexpr D3DRENDERSTATETYPE states[] = { D3DRS_ALPHABLENDENABLE,   D3DRS_SRCBLEND,         D3DRS_DESTBLEND,      D3DRS_BLENDOP,
 	                                                 D3DRS_SEPARATEALPHABLENDENABLE, D3DRS_ALPHATESTENABLE, D3DRS_ZWRITEENABLE, D3DRS_COLORWRITEENABLE,
 	                                                 D3DRS_SRGBWRITEENABLE, D3DRS_FOGENABLE };
-	// normal blend writes the picked color as is: no linear -> srgb on write
-	const DWORD srgb_write                       = params.m_band[ 2 ] > 0.5f ? FALSE : TRUE;
 	const DWORD state_values[]                   = { TRUE,  D3DBLEND_SRCALPHA, D3DBLEND_INVSRCALPHA, D3DBLENDOP_ADD, FALSE, FALSE, TRUE,
-	                                                 D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE, srgb_write, FALSE };
+	                                                 D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE, TRUE, FALSE };
 
 	static constexpr D3DSAMPLERSTATETYPE samplers[] = { D3DSAMP_ADDRESSU,  D3DSAMP_ADDRESSV,    D3DSAMP_ADDRESSW,      D3DSAMP_MAGFILTER,   D3DSAMP_MINFILTER,
 	                                                    D3DSAMP_MIPFILTER, D3DSAMP_SRGBTEXTURE, D3DSAMP_MIPMAPLODBIAS, D3DSAMP_MAXMIPLEVEL, D3DSAMP_BORDERCOLOR };
