@@ -370,6 +370,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 
 	n_chat_extras::on_create_move( );
 
+	g_misc.auto_buy( );
+
 	g_aimbot.run_nospread( );
 
 	[ & ]( ) {

@@ -1960,6 +1960,27 @@ void n_menu::impl_t::tab_misc( )
 				ImVec2( 220.f, -1.f ) );
 		}
 
+		ImGui::Checkbox( "auto buy", &GET_VARIABLE( g_variables.m_auto_buy, bool ) );
+		if ( GET_VARIABLE( g_variables.m_auto_buy, bool ) ) {
+			ImGui::OptionPopup(
+				"auto buy settings",
+				[]( ) {
+					/* order = auto_buy_primary / _secondary in misc.cpp, 0 = none */
+					ImGui::Combo( "primary##autobuy", &GET_VARIABLE( g_variables.m_auto_buy_primary, int ),
+					              "none\0ak47 / m4\0awp\0ssg08\0sg553 / aug\0galil / famas\0auto sniper\0mac10 / mp9\0mp7\0ump45\0p90\0"
+					              "bizon\0nova\0xm1014\0sawed off / mag7\0m249\0negev\0" );
+					ImGui::Combo( "secondary##autobuy", &GET_VARIABLE( g_variables.m_auto_buy_secondary, int ),
+					              "none\0p250\0deagle\0tec9 / five-seven\0dual berettas\0" );
+					ImGui::Combo( "armor##autobuy", &GET_VARIABLE( g_variables.m_auto_buy_armor, int ), "none\0kevlar\0kevlar + helmet\0" );
+					ImGui::MultiCombo( "grenades##autobuy", GET_VARIABLE( g_variables.m_auto_buy_grenades, std::vector< bool > ),
+					                   { "he grenade", "one flash", "two flashes", "smoke", "molotov", "decoy" },
+					                   GET_VARIABLE( g_variables.m_auto_buy_grenades, std::vector< bool > ).size( ) );
+					ImGui::MultiCombo( "extras##autobuy", GET_VARIABLE( g_variables.m_auto_buy_extras, std::vector< bool > ),
+					                   { "defuser", "zeus" }, GET_VARIABLE( g_variables.m_auto_buy_extras, std::vector< bool > ).size( ) );
+				},
+				ImVec2( 220.f, -1.f ) );
+		}
+
 		ImGui::Checkbox( "deagle spinner", &GET_VARIABLE( g_variables.m_deagle_spinner, bool ) );
 		ImGui::Keybind( "deagle spinner key", &GET_VARIABLE( g_variables.m_deagle_spinner_key, key_bind_t ) );
 

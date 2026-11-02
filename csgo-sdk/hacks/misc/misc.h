@@ -129,6 +129,10 @@ namespace n_misc
 
 		void force_lagpush( );
 
+		/* every cmd, dead too (resets its tries) */
+		void auto_buy( );
+		int m_auto_buy_tries = 0;
+
 	private:
 		void draw_watermark( );
 		void draw_watermark_kamibebra( );

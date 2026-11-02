@@ -80,6 +80,7 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 			break;
 		case HASH_BT( "round_prestart" ):
 			g_movement_recorder.set_round_frozen( true );
+			g_misc.m_auto_buy_tries = 0;
 			break;
 		case HASH_BT( "round_freeze_end" ):
 			g_movement_recorder.set_round_frozen( false );

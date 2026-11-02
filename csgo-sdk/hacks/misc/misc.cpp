@@ -43,6 +43,191 @@ void n_misc::impl_t::on_create_move_pre( )
 
 }
 
+namespace
+{
+	/* index = m_auto_buy_primary / _secondary - 1, { t, ct } buy names; loadout swaps variants ( m4a1 -> m4a1_silencer ) */
+	constexpr const char* auto_buy_primary[][ 2 ] = {
+		{ "ak47", "m4a1" },  { "awp", "awp" },       { "ssg08", "ssg08" },   { "sg556", "aug" },   { "galilar", "famas" }, { "g3sg1", "scar20" },
+		{ "mac10", "mp9" },  { "mp7", "mp7" },       { "ump45", "ump45" },   { "p90", "p90" },     { "bizon", "bizon" },   { "nova", "nova" },
+		{ "xm1014", "xm1014" }, { "sawedoff", "mag7" }, { "m249", "m249" }, { "negev", "negev" },
+	};
+	constexpr const char* auto_buy_secondary[][ 2 ] = {
+		{ "p250", "p250" }, { "deagle", "deagle" }, { "tec9", "fiveseven" }, { "elite", "elite" },
+	};
+	constexpr short auto_buy_grenade_ids[][ 2 ] = {
+		{ weapon_hegrenade, weapon_hegrenade },     { weapon_flashbang, weapon_flashbang }, { weapon_smokegrenade, weapon_smokegrenade },
+		{ weapon_molotov, weapon_incgrenade },      { weapon_decoy, weapon_decoy },
+	};
+	constexpr const char* auto_buy_grenade_names[][ 2 ] = {
+		{ "hegrenade", "hegrenade" }, { "flashbang", "flashbang" }, { "smokegrenade", "smokegrenade" }, { "molotov", "incgrenade" }, { "decoy", "decoy" },
+	};
+
+	/* CCSPlayer::CanPlayerBuy minus zone ( Kisak cs_player_shared.cpp:889 + cs_gamerules.cpp:15465 IsBuyTimeElapsed ),
+	   rules unreadable = true ( tries cap still stops the spam ) */
+	bool auto_buy_time_open( c_base_entity* local, int team )
+	{
+		static const auto site = g_modules[ CLIENT_DLL ].find_pattern( "8B 4D 04 E8 ? ? ? ? 8B 0D ? ? ? ? 8B 01 FF 90 98 04 00 00 C6 45 FC 00" );
+		static const unsigned int warmup_ofs   = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_bWarmupPeriod" ) ].m_offset;
+		static const unsigned int warmup_start = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_fWarmupPeriodStart" ) ].m_offset;
+		static const unsigned int start_ofs    = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_fRoundStartTime" ) ].m_offset;
+		static const unsigned int ct_cant_ofs  = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_bCTCantBuy" ) ].m_offset;
+		static const unsigned int t_cant_ofs   = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_bTCantBuy" ) ].m_offset;
+		static const unsigned int immunity_ofs = g_netvars[ HASH_BT( "CCSPlayer->m_bGunGameImmunity" ) ].m_offset;
+
+		const std::uintptr_t rules = site ? reinterpret_cast< std::uintptr_t >( **reinterpret_cast< void*** >( site + 10 ) ) : 0;
+		if ( !rules || !start_ofs )
+			return true;
+
+		const float now          = g_interfaces.m_global_vars_base->m_current_time;
+		const bool warmup        = warmup_ofs && *reinterpret_cast< bool* >( rules + warmup_ofs );
+		const float warmup_end   = ( warmup_start ? *reinterpret_cast< float* >( rules + warmup_start ) : 0.f ) +
+		                           g_convars.float_or( HASH_BT( "mp_warmuptime" ), 30.f );
+
+		/* warmup last 3 s */
+		if ( warmup && warmup_end - 3.f < now )
+			return false;
+
+		if ( ( team == 3 && ct_cant_ofs && *reinterpret_cast< bool* >( rules + ct_cant_ofs ) ) ||
+		     ( team == 2 && t_cant_ofs && *reinterpret_cast< bool* >( rules + t_cant_ofs ) ) )
+			return false;
+
+		/* buy period = spawn immunity ( deathmatch ); out of it csgo still sells with the buy menu open, we don't */
+		const int immunity = g_convars.int_or( HASH_BT( "mp_buy_during_immunity" ), 0 );
+		if ( immunity == 1 || immunity == team )
+			return immunity_ofs && *reinterpret_cast< bool* >( reinterpret_cast< std::uintptr_t >( local ) + immunity_ofs );
+
+		if ( warmup && g_convars.int_or( HASH_BT( "mp_warmup_pausetimer" ), 0 ) )
+			return true;
+
+		/* GetBuyTimeLength: compares the length against an absolute time, 1:1 */
+		float length = g_convars.float_or( HASH_BT( "mp_buytime" ), 90.f );
+		if ( warmup && length < warmup_end )
+			length = warmup_end;
+
+		/* GetRoundElapsedTime = curtime - m_fRoundStartTime ( freeze end ), floor 0 */
+		return ( std::max )( now - *reinterpret_cast< float* >( rules + start_ofs ), 0.f ) <= length;
+	}
+} // namespace
+
+void n_misc::impl_t::auto_buy( )
+{
+	c_base_entity* const local = g_ctx.m_local;
+	if ( !local || !local->is_alive( ) ) {
+		m_auto_buy_tries = 0;
+		return;
+	}
+
+	/* 3 tries 0.5 s apart per life / round: no money = server says no, stop asking */
+	static float next = 0.f;
+	const float now   = g_interfaces.m_global_vars_base->m_real_time;
+	if ( !GET_VARIABLE( g_variables.m_auto_buy, bool ) || !local->in_buy_zone( ) || m_auto_buy_tries >= 3 || now < next )
+		return;
+
+	const int team = local->get_team( );
+	if ( ( team != 2 && team != 3 ) || !auto_buy_time_open( local, team ) )
+		return;
+	const int side = team == 3;
+
+	static const unsigned int ammo_offset = g_netvars[ HASH_BT( "CBasePlayer->m_iAmmo" ) ].m_offset;
+	static const unsigned int type_offset = g_netvars[ HASH_BT( "CBaseCombatWeapon->m_iPrimaryAmmoType" ) ].m_offset;
+
+	/* filled slot = have it: never drop a picked up gun for the selected one */
+	bool has_primary = false, has_secondary = false, has_taser = false;
+	int has_grenade[ std::size( auto_buy_grenade_ids ) ]{ };
+
+	if ( const auto weapons = local->get_weapons_handle( ) ) {
+		for ( int i = 0; i < 64; i++ ) {
+			const unsigned int handle = weapons[ i ];
+			if ( !handle || handle == 0xFFFFFFFF )
+				continue;
+
+			auto* const weapon = g_interfaces.m_client_entity_list->get< c_base_entity >( handle );
+			if ( !weapon )
+				continue;
+
+			const short id                  = weapon->get_item_definition_index( );
+			const c_weapon_data* const data = g_interfaces.m_weapon_system->get_weapon_data( id );
+			if ( !data )
+				continue;
+
+			/* taser type = 8 ( "placeholder" in e_weapon_type ) */
+			if ( id == weapon_taser )
+				has_taser = true;
+
+			switch ( data->m_weapon_type ) {
+			case weapontype_submachinegun:
+			case weapontype_rifle:
+			case weapontype_shotgun:
+			case weapontype_sniper:
+			case weapontype_machinegun:
+				has_primary = true;
+				break;
+			case weapontype_pistol:
+				if ( id != weapon_taser && id != weapon_glock && id != weapon_hkp2000 && id != weapon_usp_silencer )
+					has_secondary = true;
+				break;
+			case weapontype_grenade: {
+				/* one entity per type, count = m_iAmmo[ ammo type ] ( 2 flashes ) */
+				int count = 1;
+				if ( ammo_offset && type_offset ) {
+					const int type = *reinterpret_cast< int* >( reinterpret_cast< std::uintptr_t >( weapon ) + type_offset );
+					if ( type >= 0 && type < 32 )
+						count = ( std::max )( 1, *reinterpret_cast< int* >( reinterpret_cast< std::uintptr_t >( local ) + ammo_offset + type * 4 ) );
+				}
+				for ( std::size_t g = 0; g < std::size( auto_buy_grenade_ids ); g++ )
+					if ( id == auto_buy_grenade_ids[ g ][ 0 ] || id == auto_buy_grenade_ids[ g ][ 1 ] )
+						has_grenade[ g ] += count;
+				break;
+			}
+			default:
+				break;
+			}
+		}
+	}
+
+	std::string cmd;
+	const auto add = [ &cmd ]( const char* item ) {
+		cmd += "buy ";
+		cmd += item;
+		cmd += "; ";
+	};
+
+	const int primary = GET_VARIABLE( g_variables.m_auto_buy_primary, int ) - 1;
+	if ( !has_primary && primary >= 0 && primary < static_cast< int >( std::size( auto_buy_primary ) ) )
+		add( auto_buy_primary[ primary ][ side ] );
+
+	const int armor = GET_VARIABLE( g_variables.m_auto_buy_armor, int );
+	if ( armor == 1 && local->get_armor( ) < 100 )
+		add( "vest" );
+	else if ( armor == 2 && ( local->get_armor( ) < 100 || !local->has_helmet( ) ) )
+		add( "vesthelm" );
+
+	const int secondary = GET_VARIABLE( g_variables.m_auto_buy_secondary, int ) - 1;
+	if ( !has_secondary && secondary >= 0 && secondary < static_cast< int >( std::size( auto_buy_secondary ) ) )
+		add( auto_buy_secondary[ secondary ][ side ] );
+
+	/* menu order: he, one flash, two flashes, smoke, molotov, decoy */
+	const auto& grenades = GET_VARIABLE( g_variables.m_auto_buy_grenades, std::vector< bool > );
+	const auto picked    = [ &grenades ]( std::size_t i ) { return i < grenades.size( ) && grenades[ i ]; };
+	const int want[ std::size( auto_buy_grenade_ids ) ] = { picked( 0 ), picked( 2 ) ? 2 : picked( 1 ), picked( 3 ), picked( 4 ), picked( 5 ) };
+	for ( std::size_t g = 0; g < std::size( auto_buy_grenade_names ); g++ )
+		for ( int n = has_grenade[ g ]; n < want[ g ]; n++ )
+			add( auto_buy_grenade_names[ g ][ side ] );
+
+	const auto& extras = GET_VARIABLE( g_variables.m_auto_buy_extras, std::vector< bool > );
+	if ( extras.size( ) > 0 && extras[ 0 ] && side == 1 && !local->has_defuser( ) )
+		add( "defuser" );
+	if ( extras.size( ) > 1 && extras[ 1 ] && !has_taser )
+		add( "taser" );
+
+	if ( cmd.empty( ) )
+		return;
+
+	g_interfaces.m_engine_client->execute_client_cmd( cmd.c_str( ) );
+	m_auto_buy_tries++;
+	next = now + 0.5f;
+}
+
 void n_misc::impl_t::on_paint_traverse( )
 {
 	this->update_clantag( );

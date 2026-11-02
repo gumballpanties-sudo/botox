@@ -4,6 +4,7 @@
 #include "audio_bands.h"
 #include "kopuz.h"
 #include "media_file.h"
+#include "../../utilities/console/console.h"
 #include "../../dependencies/json/json.hpp"
 #include <audioclient.h>
 #include <audioclientactivationparams.h>
@@ -269,8 +270,54 @@ namespace
 		return out;
 	}
 
+	/* steam overlay browser: steamwebhelper, no SMTC, no visible window ( overlay draws in the game, client sits in tray ).
+	   page title from any of its windows, hidden too, past steam's own ui. none = fixed name so the player still shows */
+	std::wstring steam_title( const std::wstring& path )
+	{
+		struct search_t {
+			const std::wstring* m_path;
+			std::vector< std::wstring > m_titles;
+		} search{ &path, { } };
+
+		EnumWindows(
+			[ ]( HWND window, LPARAM param ) -> BOOL {
+				auto& search = *reinterpret_cast< search_t* >( param );
+
+				DWORD pid = 0;
+				GetWindowThreadProcessId( window, &pid );
+				wchar_t text[ 512 ]{ };
+				if ( pid == GetCurrentProcessId( ) || !GetWindowTextW( window, text, 512 ) || process_path( pid ) != *search.m_path )
+					return TRUE;
+
+				static constexpr const wchar_t* k_ui[ ]{ L"menu", L"default ime", L"msctfime ui", L"temp window", L"friends list" };
+				const auto low = lower( text );
+				if ( !low.starts_with( L"steam" ) && std::find( std::begin( k_ui ), std::end( k_ui ), low ) == std::end( k_ui ) )
+					search.m_titles.emplace_back( text );
+				return TRUE;
+			},
+			reinterpret_cast< LPARAM >( &search ) );
+
+		// media thread only. tells which window holds the page title if the pick is wrong
+		static std::wstring s_logged{ };
+		std::wstring all{ };
+		for ( const auto& title : search.m_titles )
+			all += title + L" | ";
+		if ( all != s_logged ) {
+			s_logged = all;
+			g_console.print( ( "MEDIA: steam titles " + to_utf8( all ) ).c_str( ) );
+		}
+
+		const auto song = std::find_if( search.m_titles.begin( ), search.m_titles.end( ), [ ]( const std::wstring& t ) { return t.find( L" - " ) != std::wstring::npos; } );
+		if ( song != search.m_titles.end( ) )
+			return *song;
+		return search.m_titles.empty( ) ? L"Steam overlay browser" : search.m_titles.front( );
+	}
+
 	std::wstring window_title( const std::wstring& path )
 	{
+		if ( exe_stem( path ) == L"steamwebhelper" )
+			return steam_title( path );
+
 		struct search_t {
 			const std::wstring* m_path;
 			std::wstring m_title;
@@ -298,15 +345,22 @@ namespace
 		return search.m_title;
 	}
 
-	// "12. Artist - Title.mp3 - VLC media player" / "Artist - Title [foobar2000]" -> "Artist", "Title"
+	// "12. Artist - Title.mp3 - VLC media player" / "Artist - Title [foobar2000]" / "(3) Artist - Title - YouTube" -> "Artist", "Title"
 	void split_title( std::wstring text, const std::wstring& stem, std::wstring& artist, std::wstring& title )
 	{
 		std::size_t last = 0;
 		for ( const wchar_t* cut : { L" - ", L" [", L" | " } )
 			if ( const auto at = text.rfind( cut ); at != std::wstring::npos )
 				last = ( std::max )( last, at );
-		if ( last && lower( text.substr( last ) ).find( stem ) != std::wstring::npos )
+		if ( const auto tail = lower( text.substr( last ) );
+		     last && ( tail.find( stem ) != std::wstring::npos || tail.find( L"youtube" ) != std::wstring::npos || tail.find( L"soundcloud" ) != std::wstring::npos ) )
 			text.resize( last );
+
+		// youtube's unread count "(3) ", not a year "(1990) "
+		if ( text.starts_with( L"(" ) )
+			if ( const auto close = text.find( L") " ); close != std::wstring::npos && close > 1 && close <= 3 &&
+			                                            std::all_of( text.begin( ) + 1, text.begin( ) + close, [ ]( wchar_t c ) { return std::iswdigit( c ); } ) )
+				text.erase( 0, close + 2 );
 
 		std::size_t digits = 0;
 		while ( digits < text.size( ) && std::iswdigit( text[ digits ] ) )

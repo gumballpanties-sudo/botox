@@ -1586,6 +1586,13 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_auto_revive, false );
 		ADD_VARIABLE( int, m_auto_revive_mode, 1 );
 
+		ADD_VARIABLE( bool, m_auto_buy, false );
+		ADD_VARIABLE( int, m_auto_buy_primary, 0 );
+		ADD_VARIABLE( int, m_auto_buy_secondary, 0 );
+		ADD_VARIABLE( int, m_auto_buy_armor, 0 );
+		ADD_VARIABLE_VECTOR( bool, 6, m_auto_buy_grenades, false );
+		ADD_VARIABLE_VECTOR( bool, 2, m_auto_buy_extras, false );
+
 		ADD_VARIABLE( bool, m_bot_names, false );
 		ADD_VARIABLE( int, m_bot_names_mode, 3 );
 		ADD_VARIABLE( std::string, m_bot_names_same, "botox" );
