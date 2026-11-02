@@ -21,6 +21,11 @@ namespace n_true_motion_blur
 			float m_fov      = 90.f;
 			float m_prev_fov = 90.f;
 
+			// shutter open -> now: what the info pass streaks. m_reprojection = last frame -> now, pass 6 history only
+			float m_window_reprojection[ 3 ][ 4 ]{ };
+			float m_window_fov  = 90.f;
+			float m_window_span = 0.f;
+
 			float m_reprojection[ 3 ][ 4 ]{ };
 
 			/* the gun's own reprojection: the viewmodel is bolted to the camera so the one above says it never
@@ -59,18 +64,24 @@ namespace n_true_motion_blur
 			int m_frame = 0;
 		};
 
-		// main thread. player boxes, their reprojections and the view to world rows. always stores this
-		// frame's poses, even on a frame it builds nothing, next frame measures against them.
-		void collect_players( frame_t& frame, const float basis[ 3 ][ 3 ], const float origin[ 3 ] );
+		/* main thread. player boxes, their reprojections and the view to world rows. always stores this
+		   frame's poses, even on a frame it builds nothing, next frame measures against them. then_* = the
+		   camera at shutter open, travel_scale = shutter span / this frame's elapsed. */
+		void collect_players( frame_t& frame, const float basis[ 3 ][ 3 ], const float origin[ 3 ], const float then_basis[ 3 ][ 3 ],
+		                      const float then_origin[ 3 ], float travel_scale );
 
-		// main thread. one view angle sample a frame, which is the history the three below read
-		void sway_sample( const float angles[ 3 ], float time );
+		// main thread. one camera sample a frame ( angles, origin, fov ), the history sway + shutter window read
+		void sway_sample( const float angles[ 3 ], const float origin[ 3 ], float fov, double time );
 
-		bool sway_angles_at( float time, float out[ 3 ] ) const;
+		bool sway_angles_at( double time, float out[ 3 ] ) const;
 
-		bool sway_at( float time, float out[ 3 ] );
+		bool sway_at( double time, float out[ 3 ] );
 
-		bool sway_velocity( float time, float out[ 3 ] );
+		bool sway_velocity( double time, float out[ 3 ] );
+
+		/* camera at `time` ( shutter open ), lerped between ring samples. clamps to the oldest sample and never
+		   lerps across a gap > 1/15 s. returns the time actually reached, < 0 = no history. */
+		double camera_at( double time, float angles[ 3 ], float origin[ 3 ], float& fov ) const;
 
 		// the drawing half. render thread when queued, the calling thread when not.
 		void execute( frame_t frame );
@@ -125,8 +136,8 @@ namespace n_true_motion_blur
 		bool m_active = false;
 
 		// main thread only. the camera as it was last frame, and when that was.
-		bool m_have_previous  = false;
-		float m_previous_time = 0.f;
+		bool m_have_previous   = false;
+		double m_previous_time = 0.0;
 		float m_previous_fov  = 90.f;
 		float m_previous_origin[ 3 ]{ };
 		float m_previous_basis[ 3 ][ 3 ]{ };
@@ -146,8 +157,10 @@ namespace n_true_motion_blur
 		int m_sway_filled = 0;
 		int m_sway_frame  = -1;
 
-		float m_sway_time[ sway_samples ]{ };
+		double m_sway_time[ sway_samples ]{ };
 		float m_sway_angles[ sway_samples ][ 3 ]{ };
+		float m_sway_origin[ sway_samples ][ 3 ]{ };
+		float m_sway_fov[ sway_samples ]{ };
 
 		// main thread only. the viewmodel's world pose last frame
 		bool m_have_previous_viewmodel  = false;

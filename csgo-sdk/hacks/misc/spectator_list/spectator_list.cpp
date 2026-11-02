@@ -6474,6 +6474,133 @@ void n_misc::impl_t::draw_spectator_list_gamesense( )
 	g_render.end_stretch_block( block );
 }
 
+namespace {
+	/* millionware v1 paint_traverse: one anim_time 0 -> 1 -> 0 at 0.69 / s, color::blend( white, 200 grey, t ) int truncates */
+	ImU32 millionware_pulse( )
+	{
+		const float t = 1.f - std::abs( std::fmod( static_cast< float >( ImGui::GetTime( ) ) * 0.69f, 2.f ) - 1.f );
+		const int v   = 255 + static_cast< int >( t * -55.f );
+		return IM_COL32( v, v, v, 255 );
+	}
+
+	/* font_dropshadow: black at +1 +1, alpha a - 40 */
+	void millionware_text( ImDrawList* list, ImFont* font, const ImVec2 pos, const ImU32 color, const char* text )
+	{
+		list->AddText( font, font->FontSize, ImVec2( pos.x + 1.f, pos.y + 1.f ), IM_COL32( 0, 0, 0, 215 ), text );
+		list->AddText( font, font->FontSize, pos, color, text );
+	}
+
+	/* two 1 px rows under the text: pulse, then black 220 */
+	void millionware_underline( ImDrawList* list, const float x, const float y, const float w, const ImU32 pulse )
+	{
+		list->AddRectFilled( ImVec2( x, y ), ImVec2( x + w, y + 1.f ), pulse );
+		list->AddRectFilled( ImVec2( x, y + 1.f ), ImVec2( x + w, y + 2.f ), IM_COL32( 0, 0, 0, 220 ) );
+	}
+}
+
+/* millionware-v1-main paint_traverse.cpp: tahoma11 at 5,5, "millionware | user | lifetime" */
+void n_misc::impl_t::draw_watermark_millionware_v1( )
+{
+	const auto font = g_render.m_fonts[ e_font_names::font_name_millionware_tahoma_11 ];
+
+	if ( !font )
+		return;
+
+	const auto globals = g_interfaces.m_global_vars_base;
+
+	std::string text = watermark_brand( );
+
+	if ( GET_VARIABLE( g_variables.m_watermark_user, bool ) )
+		text += " | " + GET_VARIABLE( g_variables.m_watermark_clarity_user, std::string );
+
+	text += " | lifetime";
+
+	if ( GET_VARIABLE( g_variables.m_watermark_tickrate, bool ) && g_interfaces.m_engine_client->is_in_game( ) && globals && globals->m_interval_per_tick > 0.f )
+		text += std::format( " | {} tick", static_cast< int >( 1.f / globals->m_interval_per_tick + 0.5f ) );
+
+	if ( GET_VARIABLE( g_variables.m_watermark_fps, bool ) )
+		text += std::format( " | {} fps", g_utilities.get_average_fps( ImGui::GetIO( ) ) );
+
+	if ( GET_VARIABLE( g_variables.m_watermark_time, bool ) ) {
+		const std::time_t raw = std::time( nullptr );
+		std::tm local{ };
+		localtime_s( &local, &raw );
+		text += std::format( " | {:02}:{:02}", local.tm_hour, local.tm_min );
+	}
+
+	const ImVec2 size = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, text.c_str( ) );
+	const ImU32 pulse = millionware_pulse( );
+
+	g_watermark_box = ImVec4( 5.f, 5.f, 5.f + size.x, 5.f + size.y + 2.f );
+
+	const auto draw_list = ImGui::GetForegroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	millionware_text( draw_list, font, ImVec2( 5.f, 5.f ), pulse, text.c_str( ) );
+	millionware_underline( draw_list, 5.f, 5.f + size.y, size.x, pulse );
+
+	g_render.end_stretch_block( block );
+}
+
+/* millionware-v1-main misc::spectators: bare rows at x 5 under the watermark, 13 px apart.
+   alive = our watchers, dead = watchers of our target, never us */
+void n_misc::impl_t::draw_spectator_list_millionware_v1( )
+{
+	if ( !g_ctx.m_local || !g_interfaces.m_engine_client->is_in_game( ) )
+		return;
+
+	const auto font = g_render.m_fonts[ e_font_names::font_name_millionware_tahoma_11 ];
+
+	if ( !font )
+		return;
+
+	const bool show_target = GET_VARIABLE( g_variables.m_spectators_list_show_target, bool );
+	const bool local_alive = g_ctx.m_local->is_alive( );
+	const int local_index  = g_ctx.m_local->get_index( );
+
+	int local_target = 0;
+
+	if ( !local_alive ) {
+		if ( const auto target = reinterpret_cast< c_base_entity* >(
+				 g_interfaces.m_client_entity_list->get_client_entity_from_handle( g_ctx.m_local->get_observer_target_handle( ) ) ) )
+			local_target = target->get_index( );
+		else if ( !show_target )
+			return;
+	}
+
+	std::vector< spectator_entry_t > entries{ };
+	collect_spectators( entries, true );
+	std::erase_if( entries, [ & ]( const spectator_entry_t& entry ) {
+		if ( entry.m_index == local_index )
+			return true;
+
+		return !show_target && ( local_alive ? !entry.m_watching_local : entry.m_target_index != local_target );
+	} );
+
+	if ( entries.empty( ) )
+		return;
+
+	std::sort( entries.begin( ), entries.end( ), []( const spectator_entry_t& a, const spectator_entry_t& b ) { return a.m_index < b.m_index; } );
+
+	const auto shorten = [ ]( const std::string& name ) { return name.size( ) > 15 ? g_utilities.truncate_utf8( name, 15 ) + "..." : name; };
+
+	const float top   = GET_VARIABLE( g_variables.m_watermark, bool ) && GET_VARIABLE( g_variables.m_watermark_style, int ) == 22 ? 18.f : 5.f;
+	const ImU32 pulse = millionware_pulse( );
+
+	const auto draw_list = ImGui::GetBackgroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	for ( std::size_t i = 0; i < entries.size( ); ++i ) {
+		std::string row = shorten( entries[ i ].m_name );
+		if ( show_target )
+			row += " -> " + shorten( entries[ i ].m_target_name );
+
+		millionware_text( draw_list, font, ImVec2( 5.f, top + 13.f * static_cast< float >( i ) ), pulse, row.c_str( ) );
+	}
+
+	g_render.end_stretch_block( block );
+}
+
 bool n_misc::media_player_donor_look( const int style, media_look_t& look )
 {
 	const ImVec4 accent = ImGui::GetStyleColorVec4( ImGuiCol_::ImGuiCol_Accent );
@@ -6496,6 +6623,7 @@ bool n_misc::media_player_donor_look( const int style, media_look_t& look )
 	case 21:
 		look = { true, GET_VARIABLE( g_variables.m_watermark_gamesense_sense_color, c_color ).get_u32( ), IM_COL32( 255, 255, 255, 230 ), 0 };
 		return true;
+	case 22: look = { true, millionware_pulse( ), millionware_pulse( ), 1 }; return true;
 	default: return false;
 	}
 }
@@ -6599,6 +6727,7 @@ void n_misc::media_player_donor_frame( ImDrawList* list, const ImVec2 min, const
 		if ( GET_VARIABLE( g_variables.m_watermark_gamesense_bar, bool ) )
 			gamesense_bar( list, ImVec2( min.x + 3.f, min.y + 3.f ), ImVec2( max.x - 3.f, max.y - 3.f ) );
 		break;
+	case 22: millionware_underline( list, min.x, max.y - 2.f, max.x - min.x, millionware_pulse( ) ); break;
 	default: break;
 	}
 }

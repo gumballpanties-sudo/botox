@@ -361,13 +361,13 @@ inline void Compose(const Scene& s, unsigned int* out)
             if (s.cull)
             {
                 const float bx0 = (float)(ox * ss), bx1 = bx0 + ss, by0 = (float)(oy * ss), by1 = by0 + ss;
-                bool near = false;
-                for (int k = 0; k < s.ncull && !near; ++k)
+                bool hit = false;
+                for (int k = 0; k < s.ncull && !hit; ++k)
                 {
                     const float* b = s.cull + 4 * k;
-                    near = b[0] < bx1 && b[2] > bx0 && b[1] < by1 && b[3] > by0;
+                    hit = b[0] < bx1 && b[2] > bx0 && b[1] < by1 && b[3] > by0;
                 }
-                if (!near) { out[oy * ow + ox] = 0; continue; }
+                if (!hit) { out[oy * ow + ox] = 0; continue; }
                 ni = 0;
                 for (int k = 0; k < nc; ++k)
                 {

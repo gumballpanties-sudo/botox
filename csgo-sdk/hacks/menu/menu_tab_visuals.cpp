@@ -1832,7 +1832,7 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::SliderFloat( "max streak##true motion blur", &GET_VARIABLE( g_variables.m_true_motion_blur_max, float ), 0.005f,
 						                    0.1f, "%.3f", ImGuiSliderFlags_AlwaysClamp );
 
-						/* 2 = old look. higher = bright streaks stay bright (f0e blur gamma) */
+						/* 1 = blur/smoothie frame blend, 2.2 = bright blend (linear light). higher = brights win */
 						ImGui::SliderFloat( "blur gamma##true motion blur", &GET_VARIABLE( g_variables.m_true_motion_blur_gamma, float ), 1.f,
 						                    10.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
 

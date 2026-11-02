@@ -624,7 +624,12 @@ void n_media_player::impl_t::update_texture( IDirect3DDevice9* device )
 	if ( thumbnail.empty( ) )
 		return;
 
-	if ( FAILED( D3DXCreateTextureFromFileInMemory( device, thumbnail.data( ), static_cast< UINT >( thumbnail.size( ) ), &this->m_image ) ) )
+	// csgo runs d3d9ex: MANAGED is refused there, DEFAULT + DYNAMIC instead ( freed before Reset, reset.cpp ). 128 px is plenty for a 30 px cell
+	const auto load = [ & ]( const DWORD usage, const D3DPOOL pool ) {
+		return D3DXCreateTextureFromFileInMemoryEx( device, thumbnail.data( ), static_cast< UINT >( thumbnail.size( ) ), 128, 128, 1, usage, D3DFMT_A8R8G8B8,
+		                                            pool, D3DX_FILTER_TRIANGLE, D3DX_FILTER_NONE, 0, nullptr, nullptr, &this->m_image );
+	};
+	if ( FAILED( load( 0, D3DPOOL_MANAGED ) ) && FAILED( load( D3DUSAGE_DYNAMIC, D3DPOOL_DEFAULT ) ) )
 		this->m_image = nullptr;
 }
 
@@ -634,6 +639,10 @@ void n_media_player::impl_t::on_release( )
 		this->m_image->Release( );
 		this->m_image = nullptr;
 	}
+
+	// rebuilt from the kept bytes on the next draw after a Reset
+	std::lock_guard< std::mutex > lock( this->m_mutex );
+	this->m_thumbnail_dirty = !this->m_thumbnail.empty( );
 }
 
 std::string n_media_player::impl_t::get_title( )

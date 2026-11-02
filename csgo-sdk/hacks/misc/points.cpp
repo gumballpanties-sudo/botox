@@ -51,6 +51,7 @@ namespace
 				font = g_render.m_fonts[ e_font_names::font_name_gamesense_sf_bold_15 ];
 				size = 13.f;
 				break;
+			case 22: font = g_render.m_fonts[ e_font_names::font_name_millionware_tahoma_11 ]; break;
 			default: break;
 			}
 		}
@@ -232,7 +233,7 @@ void points_draw( )
 		box.z = ( std::max )( box.z, gif.z );
 	}
 	const int style     = GET_VARIABLE( g_variables.m_watermark_style, int );
-	const bool right_of = has_box && ( style == 11 || style == 19 || style == 20 );
+	const bool right_of = has_box && ( style == 11 || style == 19 || style == 20 || style == 22 );
 	const bool screen   = !has_box || style == 5;
 
 	float x = screen ? g_ctx.m_width - 8.f - size.x : right_of ? box.z + k_gap : box.x - k_gap - size.x;

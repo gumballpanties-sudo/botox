@@ -1003,7 +1003,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_true_motion_blur_object, 0.f );
 		ADD_VARIABLE( int, m_true_motion_blur_samples, 32 );
 		ADD_VARIABLE( float, m_true_motion_blur_max, 0.06f );
-		ADD_VARIABLE( float, m_true_motion_blur_gamma, 2.f );
+		ADD_VARIABLE( float, m_true_motion_blur_gamma, 1.f );
 		ADD_VARIABLE( bool, m_true_motion_blur_viewmodel, true );
 		ADD_VARIABLE( float, m_true_motion_blur_viewmodel_strength, 1.f );
 		ADD_VARIABLE( float, m_true_motion_blur_viewmodel_sway, 0.f );

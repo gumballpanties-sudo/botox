@@ -61,6 +61,7 @@ long __stdcall n_detoured_functions::reset( IDirect3DDevice9* device, D3DPRESENT
 	g_urt_hud.release_textures( );
 	kill_effects_release_textures( );
 	Web_InvalidateTexture( );
+	g_media_player.on_release( );
 
 	if ( !g_render.m_initialised )
 		return original( device, presentation_parameters );

@@ -106,8 +106,10 @@ static const char k_info_body[] =
 	"}"
 	"float l=length(vel);"
 	"float h=l*0.5;"
+	// streak = speed up to 75% of the cap ( real footage is linear ), then an exp knee ( value + slope continuous )
 	"float mx=max(c2.y,1e-3);"
-	"float n=(h<0.5*mx)?h:(mx-0.25*mx*mx/max(h,1e-3));"
+	"float h0=0.75*mx;"
+	"float n=(h<h0)?h:(mx-(mx-h0)*exp(-(h-h0)/(mx-h0)));"
 	"n*=saturate((l-0.5)*2.0);"
 	"float2 m=vel*(n/max(1e-15,l));"
 	"return float4(n,min(z,60000.0),m/max(1e-15,n));"
@@ -196,9 +198,11 @@ static const char k_neighbour_body[] =
 	"}";
 
 static const char k_gather_body[] =
-	// f0e/blur average_bright: x^gamma, average, x^(1/gamma). c8.w = gamma, c15.x = 1/gamma
-	"float3 in_color(float3 c){c=pow(saturate(c),c8.w);return c*1.0/(1.5-max(c.r,max(c.g,c.b)));}"
-	"float3 out_color(float3 c){return pow(saturate((1.5*c)*1.0/(1.0+max(c.r,max(c.g,c.b)))),c15.x);}"
+	/* f0e/blur average_bright: x^gamma, plain average, x^(1/gamma). c8.w = gamma, c15.x = 1/gamma. 1 = blur /
+	   smoothie default ( average the frames as stored ), 2.2 = their bright blend ( linear light ). no tonemap:
+	   frame blending never boosts highlights, it averages. */
+	"float3 in_color(float3 c){return pow(saturate(c),c8.w);}"
+	"float3 out_color(float3 c){return pow(saturate(c),c15.x);}"
 	"float ign(float2 p){return frac(52.9829189*frac(dot(p+5.588238*c2.w,float2(0.06711056,0.00583715))));}"
 	// tile read jittered up to 1/8 tile to hide seams, never diagonally ( halo )
 	"float2 tile_offs(float2 p){"
@@ -698,7 +702,8 @@ static constexpr float player_box_floor = 2.f;
 
 static constexpr float player_teleport = 256.f;
 
-void n_true_motion_blur::impl_t::collect_players( frame_t& frame, const float basis[ 3 ][ 3 ], const float origin[ 3 ] )
+void n_true_motion_blur::impl_t::collect_players( frame_t& frame, const float basis[ 3 ][ 3 ], const float origin[ 3 ],
+                                                  const float then_basis[ 3 ][ 3 ], const float then_origin[ 3 ], const float travel_scale )
 {
 	for ( int row = 0; row < 3; ++row ) {
 		frame.m_view_to_world[ row ][ 0 ] = basis[ 0 ][ row ];
@@ -754,17 +759,16 @@ void n_true_motion_blur::impl_t::collect_players( frame_t& frame, const float ba
 
 		entry_t& entry = entries[ total++ ];
 
-		const float shift[ 3 ] = { origin[ 0 ] - this->m_previous_origin[ 0 ] - travel[ 0 ], origin[ 1 ] - this->m_previous_origin[ 1 ] - travel[ 1 ],
-			                       origin[ 2 ] - this->m_previous_origin[ 2 ] - travel[ 2 ] };
+		// players are interpolated = smooth, so one frame of travel stretched to the shutter span is their path
+		const float shift[ 3 ] = { origin[ 0 ] - then_origin[ 0 ] - travel[ 0 ] * travel_scale, origin[ 1 ] - then_origin[ 1 ] - travel[ 1 ] * travel_scale,
+			                       origin[ 2 ] - then_origin[ 2 ] - travel[ 2 ] * travel_scale };
 
 		for ( int row = 0; row < 3; ++row ) {
 			for ( int column = 0; column < 3; ++column )
-				entry.m_rows[ row ][ column ] = this->m_previous_basis[ row ][ 0 ] * basis[ column ][ 0 ] +
-				                                this->m_previous_basis[ row ][ 1 ] * basis[ column ][ 1 ] +
-				                                this->m_previous_basis[ row ][ 2 ] * basis[ column ][ 2 ];
+				entry.m_rows[ row ][ column ] =
+					then_basis[ row ][ 0 ] * basis[ column ][ 0 ] + then_basis[ row ][ 1 ] * basis[ column ][ 1 ] + then_basis[ row ][ 2 ] * basis[ column ][ 2 ];
 
-			entry.m_rows[ row ][ 3 ] = this->m_previous_basis[ row ][ 0 ] * shift[ 0 ] + this->m_previous_basis[ row ][ 1 ] * shift[ 1 ] +
-			                           this->m_previous_basis[ row ][ 2 ] * shift[ 2 ];
+			entry.m_rows[ row ][ 3 ] = then_basis[ row ][ 0 ] * shift[ 0 ] + then_basis[ row ][ 1 ] * shift[ 1 ] + then_basis[ row ][ 2 ] * shift[ 2 ];
 		}
 
 		float mins[ 3 ] = { -16.f, -16.f, 0.f };
@@ -816,7 +820,7 @@ void n_true_motion_blur::impl_t::collect_players( frame_t& frame, const float ba
 	frame.m_player_count = kept;
 }
 
-void n_true_motion_blur::impl_t::sway_sample( const float angles[ 3 ], const float time )
+void n_true_motion_blur::impl_t::sway_sample( const float angles[ 3 ], const float origin[ 3 ], const float fov, const double time )
 {
 	const int frame = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_frame_count : 0;
 
@@ -825,12 +829,26 @@ void n_true_motion_blur::impl_t::sway_sample( const float angles[ 3 ], const flo
 
 	this->m_sway_frame = frame;
 
+	// teleport / respawn: the shutter window must never streak across it
+	if ( this->m_sway_filled > 0 ) {
+		const int newest = ( this->m_sway_head - 1 + sway_samples ) % sway_samples;
+
+		const float step[ 3 ] = { origin[ 0 ] - this->m_sway_origin[ newest ][ 0 ], origin[ 1 ] - this->m_sway_origin[ newest ][ 1 ],
+			                      origin[ 2 ] - this->m_sway_origin[ newest ][ 2 ] };
+
+		if ( step[ 0 ] * step[ 0 ] + step[ 1 ] * step[ 1 ] + step[ 2 ] * step[ 2 ] > 128.f * 128.f )
+			this->m_sway_filled = 0;
+	}
+
 	const int slot = this->m_sway_head;
 
 	this->m_sway_time[ slot ] = time;
+	this->m_sway_fov[ slot ]  = fov;
 
-	for ( int axis = 0; axis < 3; ++axis )
+	for ( int axis = 0; axis < 3; ++axis ) {
 		this->m_sway_angles[ slot ][ axis ] = angles[ axis ];
+		this->m_sway_origin[ slot ][ axis ] = origin[ axis ];
+	}
 
 	this->m_sway_head = ( slot + 1 ) % sway_samples;
 
@@ -838,7 +856,7 @@ void n_true_motion_blur::impl_t::sway_sample( const float angles[ 3 ], const flo
 		++this->m_sway_filled;
 }
 
-bool n_true_motion_blur::impl_t::sway_angles_at( const float time, float out[ 3 ] ) const
+bool n_true_motion_blur::impl_t::sway_angles_at( const double time, float out[ 3 ] ) const
 {
 	if ( this->m_sway_filled < 2 )
 		return false;
@@ -862,8 +880,8 @@ bool n_true_motion_blur::impl_t::sway_angles_at( const float time, float out[ 3 
 			continue;
 		}
 
-		const float span     = this->m_sway_time[ newer ] - this->m_sway_time[ older ];
-		const float fraction = span > 1e-6f ? std::clamp( ( time - this->m_sway_time[ older ] ) / span, 0.f, 1.f ) : 0.f;
+		const double span    = this->m_sway_time[ newer ] - this->m_sway_time[ older ];
+		const float fraction = span > 1e-6 ? static_cast< float >( std::clamp( ( time - this->m_sway_time[ older ] ) / span, 0.0, 1.0 ) ) : 0.f;
 
 		for ( int axis = 0; axis < 3; ++axis )
 			out[ axis ] = this->m_sway_angles[ older ][ axis ] +
@@ -875,7 +893,7 @@ bool n_true_motion_blur::impl_t::sway_angles_at( const float time, float out[ 3 
 	return false;
 }
 
-bool n_true_motion_blur::impl_t::sway_at( const float time, float out[ 3 ] )
+bool n_true_motion_blur::impl_t::sway_at( const double time, float out[ 3 ] )
 {
 	out[ 0 ] = out[ 1 ] = out[ 2 ] = 0.f;
 
@@ -924,7 +942,7 @@ bool n_true_motion_blur::impl_t::sway_at( const float time, float out[ 3 ] )
 	return true;
 }
 
-bool n_true_motion_blur::impl_t::sway_velocity( const float time, float out[ 3 ] )
+bool n_true_motion_blur::impl_t::sway_velocity( const double time, float out[ 3 ] )
 {
 	out[ 0 ] = out[ 1 ] = out[ 2 ] = 0.f;
 
@@ -940,6 +958,56 @@ bool n_true_motion_blur::impl_t::sway_velocity( const float time, float out[ 3 ]
 		out[ axis ] = ( held[ axis ] - before[ axis ] ) / window;
 
 	return true;
+}
+
+double n_true_motion_blur::impl_t::camera_at( const double time, float angles[ 3 ], float origin[ 3 ], float& fov ) const
+{
+	if ( this->m_sway_filled < 1 )
+		return -1.0;
+
+	const auto copy = [ & ]( const int slot ) {
+		for ( int axis = 0; axis < 3; ++axis ) {
+			angles[ axis ] = this->m_sway_angles[ slot ][ axis ];
+			origin[ axis ] = this->m_sway_origin[ slot ][ axis ];
+		}
+
+		fov = this->m_sway_fov[ slot ];
+		return this->m_sway_time[ slot ];
+	};
+
+	int newer = ( this->m_sway_head - 1 + sway_samples ) % sway_samples;
+
+	if ( time >= this->m_sway_time[ newer ] )
+		return copy( newer );
+
+	for ( int step = 1; step < this->m_sway_filled; ++step ) {
+		const int older = ( newer - 1 + sway_samples ) % sway_samples;
+
+		const double span = this->m_sway_time[ newer ] - this->m_sway_time[ older ];
+
+		// missed frames ( sim clock adds 1 s ): stop at the near side
+		if ( span <= 0.0 || span > 1.0 / 15.0 )
+			return copy( newer );
+
+		if ( this->m_sway_time[ older ] > time ) {
+			newer = older;
+			continue;
+		}
+
+		const float fraction = static_cast< float >( std::clamp( ( time - this->m_sway_time[ older ] ) / span, 0.0, 1.0 ) );
+
+		for ( int axis = 0; axis < 3; ++axis ) {
+			angles[ axis ] = this->m_sway_angles[ older ][ axis ] +
+			                 g_math.normalize_angle( this->m_sway_angles[ newer ][ axis ] - this->m_sway_angles[ older ][ axis ] ) * fraction;
+			origin[ axis ] = this->m_sway_origin[ older ][ axis ] + ( this->m_sway_origin[ newer ][ axis ] - this->m_sway_origin[ older ][ axis ] ) * fraction;
+		}
+
+		fov = this->m_sway_fov[ older ] + ( this->m_sway_fov[ newer ] - this->m_sway_fov[ older ] ) * fraction;
+		return time;
+	}
+
+	// ring shorter than the shutter: oldest we have
+	return copy( newer );
 }
 
 void n_true_motion_blur::impl_t::on_post_screen_space_effects( c_view_setup* setup )
@@ -969,16 +1037,23 @@ void n_true_motion_blur::impl_t::on_post_screen_space_effects( c_view_setup* set
 	frame.m_viewmodel_zfar  = setup->m_zfar_viewmodel;
 	frame.m_viewmodel_fov   = setup->m_fov_viewmodel;
 
-	const float now = n_sim_clock::now( g_interfaces.m_global_vars_base );
+	const double clock = n_sim_clock::now_precise( g_interfaces.m_global_vars_base );
+	const float now    = static_cast< float >( clock );
 
-	matrix3x4_t basis_matrix{ };
-	g_math.angle_matrix( setup->m_angles, basis_matrix );
+	// rows = view right / up / forward in world, the shader's view space
+	const auto view_basis = []( const c_angle& angles, float out[ 3 ][ 3 ] ) {
+		matrix3x4_t matrix{ };
+		g_math.angle_matrix( angles, matrix );
 
-	const float basis[ 3 ][ 3 ] = {
-		{ -basis_matrix[ 0 ][ 1 ], -basis_matrix[ 1 ][ 1 ], -basis_matrix[ 2 ][ 1 ] },
-		{ basis_matrix[ 0 ][ 2 ], basis_matrix[ 1 ][ 2 ], basis_matrix[ 2 ][ 2 ] },
-		{ basis_matrix[ 0 ][ 0 ], basis_matrix[ 1 ][ 0 ], basis_matrix[ 2 ][ 0 ] }
+		for ( int axis = 0; axis < 3; ++axis ) {
+			out[ 0 ][ axis ] = -matrix[ axis ][ 1 ];
+			out[ 1 ][ axis ] = matrix[ axis ][ 2 ];
+			out[ 2 ][ axis ] = matrix[ axis ][ 0 ];
+		}
 	};
+
+	float basis[ 3 ][ 3 ]{ };
+	view_basis( setup->m_angles, basis );
 
 	const float origin[ 3 ] = { setup->m_origin.m_x, setup->m_origin.m_y, setup->m_origin.m_z };
 
@@ -1011,13 +1086,37 @@ void n_true_motion_blur::impl_t::on_post_screen_space_effects( c_view_setup* set
 
 	const float sway_angles[ 3 ] = { setup->m_angles.m_x, setup->m_angles.m_y, setup->m_angles.m_z };
 
-	this->sway_sample( sway_angles, now );
+	this->sway_sample( sway_angles, origin, setup->m_fov, clock );
 
 	float sway_speed[ 3 ]{ };
 
-	const bool swaying = this->sway_velocity( now, sway_speed );
+	const bool swaying = this->sway_velocity( clock, sway_speed );
 
-	const float elapsed = now - this->m_previous_time;
+	const float elapsed = static_cast< float >( clock - this->m_previous_time );
+
+	const float shutter = std::clamp( GET_VARIABLE( g_variables.m_true_motion_blur_shutter, float ), 0.f, 60.f ) * 0.001f;
+
+	/* frame blending ( f0e blur / smoothie ) averages the REAL frames inside the shutter. so the streak runs from
+	   the camera at shutter open to now, read off the ring: not last frame's step x shutter/elapsed, which
+	   extrapolates one noisy mouse delta and pops with every frametime swing. */
+	float then_basis[ 3 ][ 3 ]{ };
+	float then_origin[ 3 ] = { origin[ 0 ], origin[ 1 ], origin[ 2 ] };
+	float then_fov         = setup->m_fov;
+
+	std::memcpy( then_basis, basis, sizeof( basis ) );
+
+	float window_span = 0.f;
+
+	{
+		float then_angles[ 3 ]{ };
+
+		const double reached = this->camera_at( clock - shutter, then_angles, then_origin, then_fov );
+
+		if ( reached >= 0.0 ) {
+			window_span = static_cast< float >( std::max( clock - reached, 0.0 ) );
+			view_basis( c_angle( then_angles[ 0 ], then_angles[ 1 ], then_angles[ 2 ] ), then_basis );
+		}
+	}
 
 	const float step[ 3 ] = { origin[ 0 ] - this->m_previous_origin[ 0 ], origin[ 1 ] - this->m_previous_origin[ 1 ],
 		                      origin[ 2 ] - this->m_previous_origin[ 2 ] };
@@ -1026,24 +1125,37 @@ void n_true_motion_blur::impl_t::on_post_screen_space_effects( c_view_setup* set
 
 	frame.m_valid = this->m_have_previous && elapsed > 0.f && elapsed < ( 1.f / 15.f ) && travelled < 128.f;
 
-	this->collect_players( frame, basis, origin );
+	const float travel_scale = elapsed > 0.f ? std::min( window_span / elapsed, 8.f ) : 0.f;
+
+	this->collect_players( frame, basis, origin, then_basis, then_origin, travel_scale );
 
 	if ( frame.m_valid ) {
 		frame.m_prev_fov = this->m_previous_fov;
 
+		frame.m_window_fov  = then_fov;
+		frame.m_window_span = window_span;
+
+		const float window_step[ 3 ] = { origin[ 0 ] - then_origin[ 0 ], origin[ 1 ] - then_origin[ 1 ], origin[ 2 ] - then_origin[ 2 ] };
+
 		for ( int row = 0; row < 3; ++row ) {
-			for ( int column = 0; column < 3; ++column )
+			for ( int column = 0; column < 3; ++column ) {
 				frame.m_reprojection[ row ][ column ] = this->m_previous_basis[ row ][ 0 ] * basis[ column ][ 0 ] +
 				                                        this->m_previous_basis[ row ][ 1 ] * basis[ column ][ 1 ] +
 				                                        this->m_previous_basis[ row ][ 2 ] * basis[ column ][ 2 ];
 
+				frame.m_window_reprojection[ row ][ column ] =
+					then_basis[ row ][ 0 ] * basis[ column ][ 0 ] + then_basis[ row ][ 1 ] * basis[ column ][ 1 ] + then_basis[ row ][ 2 ] * basis[ column ][ 2 ];
+			}
+
 			frame.m_reprojection[ row ][ 3 ] = this->m_previous_basis[ row ][ 0 ] * step[ 0 ] + this->m_previous_basis[ row ][ 1 ] * step[ 1 ] +
 			                                   this->m_previous_basis[ row ][ 2 ] * step[ 2 ];
+
+			frame.m_window_reprojection[ row ][ 3 ] =
+				then_basis[ row ][ 0 ] * window_step[ 0 ] + then_basis[ row ][ 1 ] * window_step[ 1 ] + then_basis[ row ][ 2 ] * window_step[ 2 ];
 		}
 
-		const float shutter = std::clamp( GET_VARIABLE( g_variables.m_true_motion_blur_shutter, float ), 0.f, 60.f ) * 0.001f;
-
-		frame.m_exposure = std::max( GET_VARIABLE( g_variables.m_true_motion_blur_camera, float ), 0.f ) * std::min( shutter / elapsed, 8.f );
+		// the window already spans the shutter: strength is a plain gain, 1 = what a real shutter saw
+		frame.m_exposure = std::max( GET_VARIABLE( g_variables.m_true_motion_blur_camera, float ), 0.f );
 
 		const float gun_exposure = std::clamp( shutter / elapsed, 0.f, 8.f );
 
@@ -1374,15 +1486,17 @@ void n_true_motion_blur::impl_t::on_post_screen_space_effects( c_view_setup* set
 
 			const float span_ms = bone_set.m_span * 1000.f;
 
+			const float cam_ms = frame.m_window_span * 1000.f;
+
 			const float sway_step =
 				std::sqrt( sway_speed[ 0 ] * sway_speed[ 0 ] + sway_speed[ 1 ] * sway_speed[ 1 ] + sway_speed[ 2 ] * sway_speed[ 2 ] );
 
 			g_console.print( std::vformat( "true motion blur: gun found {:d} valid {:d} bones {:d} gun {:d} age {:d} flat {:d} raw {:.2f}px "
 			                               "probe {:.2f}px bone {:.2f}px worst {:d} z {:.2f} ang {:.2f} step {:.3f} x{:.1f} = "
-			                               "{:.2f}px span {:.2f}ms frames {:.2f} exposure {:.2f} anim {:.2f} players {:d} sway {:d} slide {:.4f}",
+			                               "{:.2f}px span {:.2f}ms cam {:.2f}ms frames {:.2f} strength {:.2f} anim {:.2f} players {:d} sway {:d} slide {:.4f}",
 			                               std::make_format_args( found, valid, bones, weapon_bones, bone_age, flattened, streak, probe_streak,
 			                                                      bone_streak, worst, worst_z, worst_turn, worst_step, amount, pushed,
-			                                                      span_ms, gun_exposure, frame.m_exposure, frame.m_viewmodel_blend, players,
+			                                                      span_ms, cam_ms, gun_exposure, frame.m_exposure, frame.m_viewmodel_blend, players,
 			                                                      sway_on, sway_step ) )
 			                     .c_str( ) );
 		}
@@ -1396,7 +1510,7 @@ void n_true_motion_blur::impl_t::on_post_screen_space_effects( c_view_setup* set
 	std::memcpy( this->m_previous_viewmodel_basis, viewmodel_basis, sizeof( viewmodel_basis ) );
 
 	this->m_have_previous        = true;
-	this->m_previous_time        = now;
+	this->m_previous_time        = clock;
 	this->m_previous_fov         = setup->m_fov;
 	this->m_previous_origin[ 0 ] = origin[ 0 ];
 	this->m_previous_origin[ 1 ] = origin[ 1 ];
@@ -1621,14 +1735,19 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 	const float prev_tan_x = std::tan( std::clamp( frame.m_prev_fov, 1.f, 170.f ) * 0.5f * 3.14159265f / 180.f );
 	const float prev_tan_y = prev_tan_x / aspect;
 
+	const float window_tan_x = std::tan( std::clamp( frame.m_window_fov, 1.f, 170.f ) * 0.5f * 3.14159265f / 180.f );
+	const float window_tan_y = window_tan_x / aspect;
+
 	const float viewmodel_cutoff = 0.1f;
 
 	const float streak_ceiling = static_cast< float >( this->m_tile_size * 2 );
 
 	const int taps = std::clamp( GET_VARIABLE( g_variables.m_true_motion_blur_samples, int ), 4, 64 );
 
+	/* taps x2 = at most 2 px between jittered taps. the old cap ( taps ) flattened every flick to the same
+	   32 px at default samples, real footage keeps streak length proportional to speed */
 	const float max_length =
-		std::clamp( GET_VARIABLE( g_variables.m_true_motion_blur_max, float ) * height, 4.f, std::min( streak_ceiling, static_cast< float >( taps ) ) );
+		std::clamp( GET_VARIABLE( g_variables.m_true_motion_blur_max, float ) * height, 4.f, std::min( streak_ceiling, static_cast< float >( taps * 2 ) ) );
 
 	float block[ constant_registers ][ 4 ]{ };
 
@@ -1637,8 +1756,9 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 	block[ 0 ][ 2 ] = tan_half_x;
 	block[ 0 ][ 3 ] = tan_half_y;
 
-	block[ 1 ][ 0 ] = prev_tan_x;
-	block[ 1 ][ 1 ] = prev_tan_y;
+	// info pass: shutter window. swapped to last frame before pass 6, which reads one frame of history
+	block[ 1 ][ 0 ] = window_tan_x;
+	block[ 1 ][ 1 ] = window_tan_y;
 	block[ 1 ][ 2 ] = viewmodel_cutoff;
 	block[ 1 ][ 3 ] = frame.m_exposure;
 
@@ -1649,7 +1769,7 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 	block[ 2 ][ 3 ] = 0.f;
 
 	for ( int row = 0; row < 3; ++row )
-		std::memcpy( block[ 3 + row ], frame.m_reprojection[ row ], sizeof( float ) * 4 );
+		std::memcpy( block[ 3 + row ], frame.m_window_reprojection[ row ], sizeof( float ) * 4 );
 
 	block[ 6 ][ 0 ] = width;
 	block[ 6 ][ 1 ] = height;
@@ -1846,6 +1966,12 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 		device->SetSamplerState( 0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR );
 		device->SetSamplerState( 1, D3DSAMP_MINFILTER, D3DTEXF_LINEAR );
 		device->SetSamplerState( 1, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR );
+
+		block[ 1 ][ 0 ] = prev_tan_x;
+		block[ 1 ][ 1 ] = prev_tan_y;
+
+		for ( int row = 0; row < 3; ++row )
+			std::memcpy( block[ 3 + row ], frame.m_reprojection[ row ], sizeof( float ) * 4 );
 
 		device->SetTexture( 0, current );
 		device->SetTexture( 1, this->m_history_texture[ this->m_history_index ] );

@@ -762,6 +762,11 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 		add_donor_font( sf_pro_display_bold, sizeof( sf_pro_display_bold ), 15.f, ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap, false );
 	merge_extended_glyphs( atlas, 15.f, ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap, e_glyph_tier::glyph_tier_basic );
 
+	/* millionware v1 tahoma11: vgui tall 11 = gdi cell 11, non-aa */
+	fonts[ e_font_names::font_name_millionware_tahoma_11 ] =
+		atlas->AddFontFromMemoryCompressedTTF( tahoma_compressed_data, tahoma_compressed_size, 11.f, &tahoma_font_config );
+	merge_extended_glyphs( atlas, 11.f, tahoma_font_config.FontBuilderFlags, e_glyph_tier::glyph_tier_basic );
+
 	fonts[ e_font_names::font_name_points_montserrat_italic_18 ] = add_donor_font(
 		montserrat_medium_italic, sizeof( montserrat_medium_italic ), 18.f, ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap, false );
 

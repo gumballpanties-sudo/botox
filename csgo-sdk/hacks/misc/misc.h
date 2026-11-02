@@ -152,6 +152,7 @@ namespace n_misc
 		void draw_watermark_cucumber( );
 		void draw_watermark_howeweware( );
 		void draw_watermark_gamesense( );
+		void draw_watermark_millionware_v1( );
 		void draw_watermark_gif( );
 		void draw_media_player( );
 		void update_clantag( );
@@ -216,6 +217,7 @@ namespace n_misc
 		void draw_spectator_list_cucumber( );
 		void draw_spectator_list_howeweware( );
 		void draw_spectator_list_gamesense( );
+		void draw_spectator_list_millionware_v1( );
 
 	public:
 		/* gifs + gdi+ + eyes art, render thread only. textures_only = Reset hook (decoded gifs stay), full = unload */

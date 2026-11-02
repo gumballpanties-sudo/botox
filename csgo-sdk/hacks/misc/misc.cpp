@@ -292,6 +292,8 @@ void n_misc::impl_t::draw_watermark( )
 		return this->draw_watermark_howeweware( );
 	case 21:
 		return this->draw_watermark_gamesense( );
+	case 22:
+		return this->draw_watermark_millionware_v1( );
 	default:
 		break;
 	}
@@ -827,6 +829,7 @@ static std::tuple< ImFont*, ImFont*, float > media_player_fonts( )
 			pick( e_font_names::font_name_gamesense_sf_bold_15, e_font_names::font_name_gamesense_sf_bold_15 );
 			size = 13.f;
 			break;
+		case 22: pick( e_font_names::font_name_millionware_tahoma_11, e_font_names::font_name_millionware_tahoma_11 ); break;
 		default: break;
 		}
 	}
@@ -1865,6 +1868,9 @@ void n_misc::impl_t::on_end_scene( )
 			break;
 		case 32:
 			draw_spectator_list_kamidere( );
+			break;
+		case 33:
+			draw_spectator_list_millionware_v1( );
 			break;
 		default:
 			break;

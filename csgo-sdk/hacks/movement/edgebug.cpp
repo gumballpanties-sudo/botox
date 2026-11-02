@@ -222,6 +222,20 @@ namespace {
 		}
 		return false;
 	}
+
+	/* hull 2u down from the sim'd origin: a steep face ( 0 < nz < 0.7 ) under the feet = the fall slid on a ramp, not a lip */
+	bool eb_on_slant( )
+	{
+		const auto col = g_ctx.m_local->get_collideable( );
+		if ( !col )
+			return false;
+		const c_vector o = g_ctx.m_local->get_origin( );
+		c_trace_filter filter( g_ctx.m_local );
+		ray_t ray( o, c_vector( o.m_x, o.m_y, o.m_z - 2.f ), col->get_obb_mins( ), col->get_obb_maxs( ) );
+		trace_t tr;
+		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
+		return !tr.m_start_solid && tr.m_fraction < 1.f && tr.m_plane.m_normal.m_z > 0.f && tr.m_plane.m_normal.m_z < 0.7f;
+	}
 }
 
 void n_edgebug::impl_t::log_lock( const bool on )
@@ -369,23 +383,28 @@ bool n_edgebug::impl_t::EdgeBugCheck( const edge_context_t& raw_ctx )
 	}
 	const float vel_change = fabsf( vz - vz0 );
 	const float vel_ratio  = vz0 != 0.f ? fabsf( vz / vz0 ) : 0.f;
-	if ( eb_any( k_enhanced_grav, vz0, vz, g, s ) ||
-	     eb_any( k_enhanced_abs, vz0, vz, s ) ||
-	     eb_any( k_enhanced_chg, vz0, vz, vel_change, s ) ||
-	     eb_any( k_enhanced_ratio, vz0, vel_ratio ) )
-		return true;
-	/* bands before IsNearEdge( ): its traces run per SIM tick. */
-	if ( ( eb_any( k_edge_grav, vz0, vz, g, s ) || eb_any( k_edge_abs, vz0, vz, s ) ) && raw_ctx.trace_edge && IsNearEdge( ) )
-		return true;
-	for ( const auto& b : k_enhanced_rise )
-		if ( vz0 < -b.fall && vz > vz0 + b.tol * s )
+	const bool bands = [ & ] {
+		if ( eb_any( k_enhanced_grav, vz0, vz, g, s ) ||
+		     eb_any( k_enhanced_abs, vz0, vz, s ) ||
+		     eb_any( k_enhanced_chg, vz0, vz, vel_change, s ) ||
+		     eb_any( k_enhanced_ratio, vz0, vel_ratio ) )
 			return true;
-	if ( vz0 < -g * 0.9f && roundf( vz ) == -roundf( g ) )
-		return true;
-	/* fall taken away: unchanged vz, or vz parked around zero. */
-	if ( vz0 < -12.f && fabsf( vz - vz0 ) < 1.8f * s )
-		return true;
-	return vz0 < -15.f && vz > -2.f * s && vz < 2.f * s;
+		/* bands before IsNearEdge( ): its traces run per SIM tick. */
+		if ( ( eb_any( k_edge_grav, vz0, vz, g, s ) || eb_any( k_edge_abs, vz0, vz, s ) ) && raw_ctx.trace_edge && IsNearEdge( ) )
+			return true;
+		for ( const auto& b : k_enhanced_rise )
+			if ( vz0 < -b.fall && vz > vz0 + b.tol * s )
+				return true;
+		if ( vz0 < -g * 0.9f && roundf( vz ) == -roundf( g ) )
+			return true;
+		/* fall taken away: unchanged vz, or vz parked around zero. */
+		if ( vz0 < -12.f && fabsf( vz - vz0 ) < 1.8f * s )
+			return true;
+		return vz0 < -15.f && vz > -2.f * s && vz < 2.f * s;
+	}( );
+	/* loose bands also fire when a ramp clip slows the fall: reject a steep face under the feet ( after the bands, trace per candidate only ).
+	   trace_edge false = route_engine workers, no traces there. */
+	return bands && ( !raw_ctx.trace_edge || !eb_on_slant( ) );
 }
 /* same context the live search builds, from just the two velocities. */
 bool n_edgebug::impl_t::IsEdgeBugTick( float backup_vel_z, float current_vel_z, bool on_ground, bool trace_edge )

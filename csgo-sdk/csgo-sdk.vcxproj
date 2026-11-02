@@ -550,6 +550,8 @@
     <ProjectGuid>{d9a25aed-3ae3-4db5-95b5-160dc9d36baa}</ProjectGuid>
     <RootNamespace>csgosdk</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <!-- 64 bit cl/link (still builds x86): LTCG no longer capped by a 32 bit process -->
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
