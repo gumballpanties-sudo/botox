@@ -1363,6 +1363,97 @@ void n_menu::impl_t::tab_visuals( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			ImGui::Checkbox( "reflections", &GET_VARIABLE( g_variables.m_reflections, bool ) );
+			if ( GET_VARIABLE( g_variables.m_reflections, bool ) ) {
+				ImGui::OptionPopup(
+					"reflections settings",
+					[ & ]( ) {
+						ImGui::SliderFloat( "intensity##reflections", &GET_VARIABLE( g_variables.m_reflections_intensity, float ), 0.f, 1.f,
+						                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "distance##reflections", &GET_VARIABLE( g_variables.m_reflections_distance, float ), 0.05f, 1.f,
+						                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "blur##reflections", &GET_VARIABLE( g_variables.m_reflections_blur, float ), 0.f, 5.f, "%.1f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "angle falloff##reflections", &GET_VARIABLE( g_variables.m_reflections_falloff, float ), 0.f, 1.f,
+						                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
+
+						ImGui::Label( "performance" );
+
+						ImGui::SliderFloat( "render size##reflections", &GET_VARIABLE( g_variables.m_reflections_scale, float ), 0.25f, 1.f,
+						                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
+						ImGui::Combo( "ray quality##reflections", &GET_VARIABLE( g_variables.m_reflections_quality, int ),
+						              "low\0" "medium\0" "high\0" );
+						ImGui::Checkbox( "smooth normals##reflections", &GET_VARIABLE( g_variables.m_reflections_smooth_normals, bool ) );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "emphasize", &GET_VARIABLE( g_variables.m_emphasize, bool ) );
+			if ( GET_VARIABLE( g_variables.m_emphasize, bool ) ) {
+				ImGui::OptionPopup(
+					"emphasize settings",
+					[ & ]( ) {
+						ImGui::SliderFloat( "focus depth##emphasize", &GET_VARIABLE( g_variables.m_emphasize_focus_depth, float ), 0.f, 1.f, "%.3f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "focus range##emphasize", &GET_VARIABLE( g_variables.m_emphasize_focus_range, float ), 0.f, 1.f, "%.3f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "focus edge##emphasize", &GET_VARIABLE( g_variables.m_emphasize_focus_edge, float ), 0.f, 1.f, "%.3f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+
+						ImGui::Checkbox( "spherical##emphasize", &GET_VARIABLE( g_variables.m_emphasize_spherical, bool ) );
+						if ( GET_VARIABLE( g_variables.m_emphasize_spherical, bool ) ) {
+							ImGui::SliderInt( "sphere fov##emphasize", &GET_VARIABLE( g_variables.m_emphasize_sphere_fov, int ), 1, 180, "%d deg",
+							                  ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "focus x##emphasize", &GET_VARIABLE( g_variables.m_emphasize_sphere_x, float ), 0.f, 1.f, "%.3f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "focus y##emphasize", &GET_VARIABLE( g_variables.m_emphasize_sphere_y, float ), 0.f, 1.f, "%.3f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+						}
+
+						ImGui::ColorEdit4( "blend color##emphasize", &GET_VARIABLE( g_variables.m_emphasize_blend_color, c_color ),
+						                   color_picker_no_alpha_flags );
+						ImGui::SliderFloat( "blend factor##emphasize", &GET_VARIABLE( g_variables.m_emphasize_blend_factor, float ), 0.f, 1.f,
+						                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "effect factor##emphasize", &GET_VARIABLE( g_variables.m_emphasize_effect_factor, float ), 0.f, 1.f,
+						                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "show depth", &GET_VARIABLE( g_variables.m_show_depth, bool ) );
+			if ( GET_VARIABLE( g_variables.m_show_depth, bool ) ) {
+				ImGui::OptionPopup(
+					"show depth settings",
+					[ & ]( ) {
+						ImGui::Combo( "present type##show depth", &GET_VARIABLE( g_variables.m_show_depth_present_type, int ),
+						              "depth map\0" "normal map\0" "show both\0" );
+						ImGui::Checkbox( "blend into image##show depth", &GET_VARIABLE( g_variables.m_show_depth_blend, bool ) );
+
+						ImGui::Checkbox( "live preview##show depth", &GET_VARIABLE( g_variables.m_show_depth_live_preview, bool ) );
+						if ( GET_VARIABLE( g_variables.m_show_depth_live_preview, bool ) ) {
+							ImGui::Checkbox( "upside down##show depth", &GET_VARIABLE( g_variables.m_show_depth_upside_down, bool ) );
+							ImGui::Checkbox( "reversed##show depth", &GET_VARIABLE( g_variables.m_show_depth_reversed, bool ) );
+							ImGui::Checkbox( "logarithmic##show depth", &GET_VARIABLE( g_variables.m_show_depth_logarithmic, bool ) );
+							ImGui::SliderFloat( "scale x##show depth", &GET_VARIABLE( g_variables.m_show_depth_scale_x, float ), 0.f, 2.f, "%.3f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "scale y##show depth", &GET_VARIABLE( g_variables.m_show_depth_scale_y, float ), 0.f, 2.f, "%.3f",
+							                    ImGuiSliderFlags_AlwaysClamp );
+
+							const ImVec2 screen = ImVec2( g_ctx.m_width, g_ctx.m_height );
+							ImGui::SliderInt( "offset x##show depth", &GET_VARIABLE( g_variables.m_show_depth_offset_x, int ),
+							                  -static_cast< int >( screen.x ), static_cast< int >( screen.x ), "%d px" );
+							ImGui::SliderInt( "offset y##show depth", &GET_VARIABLE( g_variables.m_show_depth_offset_y, int ),
+							                  -static_cast< int >( screen.y ), static_cast< int >( screen.y ), "%d px" );
+
+							ImGui::SliderFloat( "far plane##show depth", &GET_VARIABLE( g_variables.m_show_depth_far_plane, float ), 0.f, 1000.f,
+							                    "%.1f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "multiplier##show depth", &GET_VARIABLE( g_variables.m_show_depth_multiplier, float ), 0.f, 1000.f,
+							                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+						}
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
 			ImGui::Checkbox( "channel shift", &GET_VARIABLE( g_variables.m_channel_shift, bool ) );
 			if ( GET_VARIABLE( g_variables.m_channel_shift, bool ) ) {
 				ImGui::OptionPopup(
@@ -1556,97 +1647,6 @@ void n_menu::impl_t::tab_visuals( )
 						}
 					},
 					ImVec2( 230.f, -1.f ) );
-			}
-
-			ImGui::Checkbox( "reflections", &GET_VARIABLE( g_variables.m_reflections, bool ) );
-			if ( GET_VARIABLE( g_variables.m_reflections, bool ) ) {
-				ImGui::OptionPopup(
-					"reflections settings",
-					[ & ]( ) {
-						ImGui::SliderFloat( "intensity##reflections", &GET_VARIABLE( g_variables.m_reflections_intensity, float ), 0.f, 1.f,
-						                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
-						ImGui::SliderFloat( "distance##reflections", &GET_VARIABLE( g_variables.m_reflections_distance, float ), 0.05f, 1.f,
-						                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
-						ImGui::SliderFloat( "blur##reflections", &GET_VARIABLE( g_variables.m_reflections_blur, float ), 0.f, 5.f, "%.1f",
-						                    ImGuiSliderFlags_AlwaysClamp );
-						ImGui::SliderFloat( "angle falloff##reflections", &GET_VARIABLE( g_variables.m_reflections_falloff, float ), 0.f, 1.f,
-						                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
-
-						ImGui::Label( "performance" );
-
-						ImGui::SliderFloat( "render size##reflections", &GET_VARIABLE( g_variables.m_reflections_scale, float ), 0.25f, 1.f,
-						                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
-						ImGui::Combo( "ray quality##reflections", &GET_VARIABLE( g_variables.m_reflections_quality, int ),
-						              "low\0" "medium\0" "high\0" );
-						ImGui::Checkbox( "smooth normals##reflections", &GET_VARIABLE( g_variables.m_reflections_smooth_normals, bool ) );
-					},
-					ImVec2( 220.f, -1.f ) );
-			}
-
-			ImGui::Checkbox( "emphasize", &GET_VARIABLE( g_variables.m_emphasize, bool ) );
-			if ( GET_VARIABLE( g_variables.m_emphasize, bool ) ) {
-				ImGui::OptionPopup(
-					"emphasize settings",
-					[ & ]( ) {
-						ImGui::SliderFloat( "focus depth##emphasize", &GET_VARIABLE( g_variables.m_emphasize_focus_depth, float ), 0.f, 1.f, "%.3f",
-						                    ImGuiSliderFlags_AlwaysClamp );
-						ImGui::SliderFloat( "focus range##emphasize", &GET_VARIABLE( g_variables.m_emphasize_focus_range, float ), 0.f, 1.f, "%.3f",
-						                    ImGuiSliderFlags_AlwaysClamp );
-						ImGui::SliderFloat( "focus edge##emphasize", &GET_VARIABLE( g_variables.m_emphasize_focus_edge, float ), 0.f, 1.f, "%.3f",
-						                    ImGuiSliderFlags_AlwaysClamp );
-
-						ImGui::Checkbox( "spherical##emphasize", &GET_VARIABLE( g_variables.m_emphasize_spherical, bool ) );
-						if ( GET_VARIABLE( g_variables.m_emphasize_spherical, bool ) ) {
-							ImGui::SliderInt( "sphere fov##emphasize", &GET_VARIABLE( g_variables.m_emphasize_sphere_fov, int ), 1, 180, "%d deg",
-							                  ImGuiSliderFlags_AlwaysClamp );
-							ImGui::SliderFloat( "focus x##emphasize", &GET_VARIABLE( g_variables.m_emphasize_sphere_x, float ), 0.f, 1.f, "%.3f",
-							                    ImGuiSliderFlags_AlwaysClamp );
-							ImGui::SliderFloat( "focus y##emphasize", &GET_VARIABLE( g_variables.m_emphasize_sphere_y, float ), 0.f, 1.f, "%.3f",
-							                    ImGuiSliderFlags_AlwaysClamp );
-						}
-
-						ImGui::ColorEdit4( "blend color##emphasize", &GET_VARIABLE( g_variables.m_emphasize_blend_color, c_color ),
-						                   color_picker_no_alpha_flags );
-						ImGui::SliderFloat( "blend factor##emphasize", &GET_VARIABLE( g_variables.m_emphasize_blend_factor, float ), 0.f, 1.f,
-						                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
-						ImGui::SliderFloat( "effect factor##emphasize", &GET_VARIABLE( g_variables.m_emphasize_effect_factor, float ), 0.f, 1.f,
-						                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
-					},
-					ImVec2( 220.f, -1.f ) );
-			}
-
-			ImGui::Checkbox( "show depth", &GET_VARIABLE( g_variables.m_show_depth, bool ) );
-			if ( GET_VARIABLE( g_variables.m_show_depth, bool ) ) {
-				ImGui::OptionPopup(
-					"show depth settings",
-					[ & ]( ) {
-						ImGui::Combo( "present type##show depth", &GET_VARIABLE( g_variables.m_show_depth_present_type, int ),
-						              "depth map\0" "normal map\0" "show both\0" );
-						ImGui::Checkbox( "blend into image##show depth", &GET_VARIABLE( g_variables.m_show_depth_blend, bool ) );
-
-						ImGui::Checkbox( "live preview##show depth", &GET_VARIABLE( g_variables.m_show_depth_live_preview, bool ) );
-						if ( GET_VARIABLE( g_variables.m_show_depth_live_preview, bool ) ) {
-							ImGui::Checkbox( "upside down##show depth", &GET_VARIABLE( g_variables.m_show_depth_upside_down, bool ) );
-							ImGui::Checkbox( "reversed##show depth", &GET_VARIABLE( g_variables.m_show_depth_reversed, bool ) );
-							ImGui::Checkbox( "logarithmic##show depth", &GET_VARIABLE( g_variables.m_show_depth_logarithmic, bool ) );
-							ImGui::SliderFloat( "scale x##show depth", &GET_VARIABLE( g_variables.m_show_depth_scale_x, float ), 0.f, 2.f, "%.3f",
-							                    ImGuiSliderFlags_AlwaysClamp );
-							ImGui::SliderFloat( "scale y##show depth", &GET_VARIABLE( g_variables.m_show_depth_scale_y, float ), 0.f, 2.f, "%.3f",
-							                    ImGuiSliderFlags_AlwaysClamp );
-
-							const ImVec2 screen = ImVec2( g_ctx.m_width, g_ctx.m_height );
-							ImGui::SliderInt( "offset x##show depth", &GET_VARIABLE( g_variables.m_show_depth_offset_x, int ),
-							                  -static_cast< int >( screen.x ), static_cast< int >( screen.x ), "%d px" );
-							ImGui::SliderInt( "offset y##show depth", &GET_VARIABLE( g_variables.m_show_depth_offset_y, int ),
-							                  -static_cast< int >( screen.y ), static_cast< int >( screen.y ), "%d px" );
-
-							ImGui::SliderFloat( "far plane##show depth", &GET_VARIABLE( g_variables.m_show_depth_far_plane, float ), 0.f, 1000.f,
-							                    "%.1f", ImGuiSliderFlags_AlwaysClamp );
-							ImGui::SliderFloat( "multiplier##show depth", &GET_VARIABLE( g_variables.m_show_depth_multiplier, float ), 0.f, 1000.f,
-							                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
-						}
-					},
-					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "depth of field", &GET_VARIABLE( g_variables.m_depth_of_field, bool ) );

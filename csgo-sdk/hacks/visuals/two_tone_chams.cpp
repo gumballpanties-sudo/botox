@@ -139,7 +139,9 @@ float4 main( PS_INPUT i ) : COLOR
 #endif
 
 	// fwidth floor = 1 px anti aliased line at edge 0
+	// ^1.5 = more dark: threshold 0.5 cuts at 51 deg off view (was 60)
 	float level = saturate( dot( n, normalize( i.vView ) ) );
+	level *= sqrt( level );
 	float width = max( max( cParams.y, fwidth( level ) ), 0.0001f );
 	return lerp( cDarkColor, cLightColor, smoothstep( cParams.x - width, cParams.x + width, level ) );
 }

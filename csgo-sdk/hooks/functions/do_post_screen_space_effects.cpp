@@ -41,6 +41,9 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 
 		g_ambient_occlusion.on_post_screen_space_effects( setup );
 
+		// before dof so the blur lands on the distorted frame
+		g_depth_warp.on_post_screen_space_effects( setup );
+
 		g_depth_of_field.on_post_screen_space_effects( setup );
 	}
 
@@ -48,8 +51,6 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 
 	if ( passes ) {
 		g_true_motion_blur.on_post_screen_space_effects( setup );
-
-		g_depth_warp.on_post_screen_space_effects( setup );
 
 		g_bloom.on_post_screen_space_effects( setup );
 	}

@@ -62,51 +62,15 @@ namespace
 		{ "hegrenade", "hegrenade" }, { "flashbang", "flashbang" }, { "smokegrenade", "smokegrenade" }, { "molotov", "incgrenade" }, { "decoy", "decoy" },
 	};
 
-	/* CCSPlayer::CanPlayerBuy minus zone ( Kisak cs_player_shared.cpp:889 + cs_gamerules.cpp:15465 IsBuyTimeElapsed ),
-	   rules unreadable = true ( tries cap still stops the spam ) */
-	bool auto_buy_time_open( c_base_entity* local, int team )
+	/* AB: one line per gate change = which gate blocks */
+	const char* ab_last = nullptr;
+	void ab_gate( const char* why, float a = 0.f, float b = 0.f )
 	{
-		static const auto site = g_modules[ CLIENT_DLL ].find_pattern( "8B 4D 04 E8 ? ? ? ? 8B 0D ? ? ? ? 8B 01 FF 90 98 04 00 00 C6 45 FC 00" );
-		static const unsigned int warmup_ofs   = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_bWarmupPeriod" ) ].m_offset;
-		static const unsigned int warmup_start = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_fWarmupPeriodStart" ) ].m_offset;
-		static const unsigned int start_ofs    = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_fRoundStartTime" ) ].m_offset;
-		static const unsigned int ct_cant_ofs  = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_bCTCantBuy" ) ].m_offset;
-		static const unsigned int t_cant_ofs   = g_netvars[ HASH_BT( "CCSGameRulesProxy->m_bTCantBuy" ) ].m_offset;
-		static const unsigned int immunity_ofs = g_netvars[ HASH_BT( "CCSPlayer->m_bGunGameImmunity" ) ].m_offset;
-
-		const std::uintptr_t rules = site ? reinterpret_cast< std::uintptr_t >( **reinterpret_cast< void*** >( site + 10 ) ) : 0;
-		if ( !rules || !start_ofs )
-			return true;
-
-		const float now          = g_interfaces.m_global_vars_base->m_current_time;
-		const bool warmup        = warmup_ofs && *reinterpret_cast< bool* >( rules + warmup_ofs );
-		const float warmup_end   = ( warmup_start ? *reinterpret_cast< float* >( rules + warmup_start ) : 0.f ) +
-		                           g_convars.float_or( HASH_BT( "mp_warmuptime" ), 30.f );
-
-		/* warmup last 3 s */
-		if ( warmup && warmup_end - 3.f < now )
-			return false;
-
-		if ( ( team == 3 && ct_cant_ofs && *reinterpret_cast< bool* >( rules + ct_cant_ofs ) ) ||
-		     ( team == 2 && t_cant_ofs && *reinterpret_cast< bool* >( rules + t_cant_ofs ) ) )
-			return false;
-
-		/* buy period = spawn immunity ( deathmatch ); out of it csgo still sells with the buy menu open, we don't */
-		const int immunity = g_convars.int_or( HASH_BT( "mp_buy_during_immunity" ), 0 );
-		if ( immunity == 1 || immunity == team )
-			return immunity_ofs && *reinterpret_cast< bool* >( reinterpret_cast< std::uintptr_t >( local ) + immunity_ofs );
-
-		if ( warmup && g_convars.int_or( HASH_BT( "mp_warmup_pausetimer" ), 0 ) )
-			return true;
-
-		/* GetBuyTimeLength: compares the length against an absolute time, 1:1 */
-		float length = g_convars.float_or( HASH_BT( "mp_buytime" ), 90.f );
-		if ( warmup && length < warmup_end )
-			length = warmup_end;
-
-		/* GetRoundElapsedTime = curtime - m_fRoundStartTime ( freeze end ), floor 0 */
-		return ( std::max )( now - *reinterpret_cast< float* >( rules + start_ofs ), 0.f ) <= length;
+		if ( why != ab_last )
+			botox_dbg_log( "AB: %s %.1f %.1f", why, a, b );
+		ab_last = why;
 	}
+
 } // namespace
 
 void n_misc::impl_t::auto_buy( )
@@ -117,15 +81,20 @@ void n_misc::impl_t::auto_buy( )
 		return;
 	}
 
-	/* 3 tries 0.5 s apart per life / round: no money = server says no, stop asking */
+	/* buy time = server's call ( community warmup / infinite buy breaks a client copy ),
+	   3 tries 0.5 s apart per life / round: server says no, stop asking */
 	static float next = 0.f;
 	const float now   = g_interfaces.m_global_vars_base->m_real_time;
-	if ( !GET_VARIABLE( g_variables.m_auto_buy, bool ) || !local->in_buy_zone( ) || m_auto_buy_tries >= 3 || now < next )
+	if ( !GET_VARIABLE( g_variables.m_auto_buy, bool ) || now < next )
 		return;
+	if ( !local->in_buy_zone( ) )
+		return ab_gate( "not in buy zone" );
+	if ( m_auto_buy_tries >= 3 )
+		return ab_gate( "3 tries used", static_cast< float >( local->get_money( ) ) );
 
 	const int team = local->get_team( );
-	if ( ( team != 2 && team != 3 ) || !auto_buy_time_open( local, team ) )
-		return;
+	if ( team != 2 && team != 3 )
+		return ab_gate( "no team", static_cast< float >( team ) );
 	const int side = team == 3;
 
 	static const unsigned int ammo_offset = g_netvars[ HASH_BT( "CBasePlayer->m_iAmmo" ) ].m_offset;
@@ -221,11 +190,13 @@ void n_misc::impl_t::auto_buy( )
 		add( "taser" );
 
 	if ( cmd.empty( ) )
-		return;
+		return ab_gate( "have all", static_cast< float >( has_primary ), static_cast< float >( has_secondary ) );
 
 	g_interfaces.m_engine_client->execute_client_cmd( cmd.c_str( ) );
 	m_auto_buy_tries++;
 	next = now + 0.5f;
+	botox_dbg_log( "AB: send try=%d money=%d '%s'", m_auto_buy_tries, local->get_money( ), cmd.c_str( ) );
+	ab_last = nullptr;
 }
 
 void n_misc::impl_t::on_paint_traverse( )
