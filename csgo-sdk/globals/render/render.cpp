@@ -767,6 +767,19 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 		atlas->AddFontFromMemoryCompressedTTF( tahoma_compressed_data, tahoma_compressed_size, 11.f, &tahoma_font_config );
 	merge_extended_glyphs( atlas, 11.f, tahoma_font_config.FontBuilderFlags, e_glyph_tier::glyph_tier_basic );
 
+	{
+		ImFontConfig lobotomy_v1_config     = { };
+		lobotomy_v1_config.PixelSnapH       = true;
+		lobotomy_v1_config.FontBuilderFlags = ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Monochrome |
+		                                      ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_MonoHinting |
+		                                      ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap;
+
+		fonts[ e_font_names::font_name_menu_tahoma_9 ] =
+			atlas->AddFontFromMemoryCompressedTTF( tahoma_compressed_data, tahoma_compressed_size, 9.f, &lobotomy_v1_config, atlas->GetGlyphRangesCyrillic( ) );
+		fonts[ e_font_names::font_name_menu_tahoma_bd_9 ] = atlas->AddFontFromMemoryCompressedTTF(
+			tahoma_bold_compressed_data, tahoma_bold_compressed_size, 9.f, &lobotomy_v1_config, atlas->GetGlyphRangesCyrillic( ) );
+	}
+
 	fonts[ e_font_names::font_name_points_montserrat_italic_18 ] = add_donor_font(
 		montserrat_medium_italic, sizeof( montserrat_medium_italic ), 18.f, ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap, false );
 

@@ -277,6 +277,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_menu_blur, false );
 		ADD_VARIABLE( float, m_menu_blur_amount, 100.f );
 		ADD_VARIABLE( float, m_menu_blur_darken, 18.f );
+		ADD_VARIABLE( int, m_menu_style, 0 );
 		ADD_VARIABLE( key_bind_t, m_menu_key, key_bind_t( 0x2D /* VK_INSERT */, 1 ) );
 		ADD_VARIABLE( bool, m_console_color_enable, false );
 		ADD_VARIABLE( c_color, m_console_color, c_color( 102, 111, 102, 255 ) );

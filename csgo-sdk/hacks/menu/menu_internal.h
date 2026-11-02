@@ -65,6 +65,17 @@ inline void safe_checkbox( const char* label, bool* v )
 		ImGui::SetTooltip( "safe mode enabled" );
 }
 
+struct menu_style_t {
+	const char* m_name;
+	ImU32 m_window, m_band, m_child, m_frame, m_outline, m_window_outline, m_popup, m_text, m_text_dim;
+	float m_window_rounding, m_frame_rounding, m_popup_rounding;
+	int m_font, m_font_bold;
+	c_color m_accent;
+};
+
+extern const menu_style_t k_menu_styles[ ];
+extern const int k_menu_style_count;
+
 /* page = two scrolling columns of groups; group = header child sized to last frame's content */
 void menu_columns_begin( );
 void menu_columns_next( );

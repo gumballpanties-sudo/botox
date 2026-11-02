@@ -2126,6 +2126,10 @@ enum ImGuiCol_ {
 	ImGuiCol_NavWindowingDimBg,     // Darken/colorize entire screen behind the CTRL+TAB window list, when active
 	ImGuiCol_ModalWindowDimBg,      // Darken/colorize entire screen behind a modal window, when one is active
 	ImGuiCol_Accent,
+	ImGuiCol_MenuBand,
+	ImGuiCol_MenuFrame,
+	ImGuiCol_MenuOutline,
+	ImGuiCol_MenuWindowOutline,
 	ImGuiCol_COUNT
 };
 

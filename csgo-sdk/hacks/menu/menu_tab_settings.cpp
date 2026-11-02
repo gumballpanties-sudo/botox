@@ -2266,6 +2266,17 @@ void n_menu::impl_t::tab_settings( )
 	menu_group_end( );
 
 	if ( menu_group_begin( "menu" ) ) {
+		int& menu_style = GET_VARIABLE( g_variables.m_menu_style, int );
+		menu_style      = ImClamp( menu_style, 0, k_menu_style_count - 1 );
+
+		const auto style_name = []( void*, const int index, const char** out ) {
+			*out = k_menu_styles[ index ].m_name;
+			return true;
+		};
+
+		if ( ImGui::Combo( "style", &menu_style, style_name, nullptr, k_menu_style_count ) && k_menu_styles[ menu_style ].m_accent[ 3 ] > 0 )
+			GET_VARIABLE( g_variables.m_accent, c_color ) = k_menu_styles[ menu_style ].m_accent;
+
 		ImGui::ColorEdit4( "accent color##accent color", &GET_VARIABLE( g_variables.m_accent, c_color ), color_picker_no_alpha_flags );
 
 		{

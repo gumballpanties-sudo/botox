@@ -76,6 +76,8 @@ enum e_font_names {
 	font_name_millionware_tahoma_11,
 	font_name_points_montserrat_italic_18,
 	font_name_cod4_weapon_icon_48, // csgo weapon icon font big enough for the cod4 hud's killfeed / offhand icons
+	font_name_menu_tahoma_9,
+	font_name_menu_tahoma_bd_9,
 	font_name_max
 };
 
@@ -315,6 +317,15 @@ namespace n_render
 		std::shared_mutex m_font_mutex = { };
 
 		ImFont *m_fonts[ e_font_names::font_name_max ]{ }, *m_custom_fonts[ e_custom_font_names::custom_font_name_max ]{ };
+
+		/* menu style fonts: set only while the menu window draws, verdana pair otherwise */
+		int m_menu_font_slots[ 2 ] = { e_font_names::font_name_verdana_11, e_font_names::font_name_verdana_bd_11 };
+
+		ImFont* menu_font( const bool bold ) const
+		{
+			ImFont* const font = this->m_fonts[ this->m_menu_font_slots[ bold ] ];
+			return font ? font : this->m_fonts[ bold ? e_font_names::font_name_verdana_bd_11 : e_font_names::font_name_verdana_11 ];
+		}
 
 		std::atomic< font_set_t* > m_pending_fonts{ nullptr };
 		std::atomic< bool > m_font_build_running{ false };

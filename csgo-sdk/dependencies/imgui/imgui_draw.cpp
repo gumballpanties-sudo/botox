@@ -229,6 +229,10 @@ void ImGui::StyleColorsDark(ImGuiStyle* dst)
     colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
+    colors[ImGuiCol_MenuBand] = ImVec4(25 / 255.f, 25 / 255.f, 25 / 255.f, 1.f);
+    colors[ImGuiCol_MenuFrame] = ImVec4(25 / 255.f, 25 / 255.f, 25 / 255.f, 1.f);
+    colors[ImGuiCol_MenuOutline] = ImVec4(50 / 255.f, 50 / 255.f, 50 / 255.f, 100 / 255.f);
+    colors[ImGuiCol_MenuWindowOutline] = ImVec4(50 / 255.f, 50 / 255.f, 50 / 255.f, 1.f);
 }
 
 void ImGui::StyleColorsClassic(ImGuiStyle* dst)

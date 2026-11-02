@@ -3400,6 +3400,14 @@ const char* ImGui::GetStyleColorName( ImGuiCol idx )
 		return "ModalWindowDimBg";
 	case ImGuiCol_Accent:
 		return "Accent";
+	case ImGuiCol_MenuBand:
+		return "MenuBand";
+	case ImGuiCol_MenuFrame:
+		return "MenuFrame";
+	case ImGuiCol_MenuOutline:
+		return "MenuOutline";
+	case ImGuiCol_MenuWindowOutline:
+		return "MenuWindowOutline";
 	}
 	IM_ASSERT( 0 );
 	return "Unknown";
@@ -5765,7 +5773,7 @@ static void RenderChildBorder( ImGuiWindow* parent_window, ImGuiWindow* child_wi
 			draw_list->AddRectFilled( child_window->Pos, bot_right, ImGui::GetColorU32( ImGuiCol_ChildBg ), rounding, ImDrawFlags_RoundCornersBottom );
 	}
 
-	draw_list->AddRect( top_left, bot_right, ImColor( 50, 50, 50, 100 ), rounding, show_text ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersTop );
+	draw_list->AddRect( top_left, bot_right, ImGui::GetColorU32( ImGuiCol_MenuOutline ), rounding, show_text ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersTop );
 
 	if ( show_text )
 		draw_list->PopClipRect( );
@@ -5835,12 +5843,12 @@ bool ImGui::BeginChildEx( const char* name, ImGuiID id, const ImVec2& size_arg, 
 
 	if ( show_text ) {
 		parent_window->DrawList->AddRectFilled(
-			draw_position, draw_position + ImVec2( child_window->Size.x, 20.f ), ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f ),
+			draw_position, draw_position + ImVec2( child_window->Size.x, 20.f ), ImGui::GetColorU32( ImGuiCol_MenuBand ),
 			g.Style.WindowRounding - 2.f /* NOTE ~ float ~ liga, if u see this baby , ,, . . . Am very Sorry X D */,
 			ImDrawFlags_::ImDrawFlags_RoundCornersTop );
 
-		const auto text_size = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->CalcTextSizeA(
-			g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->FontSize, FLT_MAX, 0.f, name );
+		const auto text_size = g_render.menu_font( true )->CalcTextSizeA(
+			g_render.menu_font( true )->FontSize, FLT_MAX, 0.f, name );
 
 		auto text_animation = ImAnimationHelper( id, ImGui::GetIO( ).DeltaTime );
 
@@ -5856,7 +5864,7 @@ bool ImGui::BeginChildEx( const char* name, ImGuiID id, const ImVec2& size_arg, 
 		const ImColor text_color = GetColorU32( ImGuiCol_Text );
 
 		parent_window->DrawList->AddText(
-			g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ], g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->FontSize,
+			g_render.menu_font( true ), g_render.menu_font( true )->FontSize,
 			draw_position + ImVec2( ( child_window->Size.x - text_size.x ) / 2.f, ( 20.f - text_size.y ) / 2.f ),
 			ImColor( text_color.Value.x, text_color.Value.y, text_color.Value.z, text_color.Value.w * text_animation.AnimationData->second ), name );
 
@@ -5933,12 +5941,12 @@ bool ImGui::BeginChildEx( const char* name, ImGuiID id, const ImVec2& size_arg, 
 
 	if ( show_text ) {
 		parent_window->DrawList->AddRectFilled(
-			draw_position, draw_position + ImVec2( child_window->Size.x, 20.f ), ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f ),
+			draw_position, draw_position + ImVec2( child_window->Size.x, 20.f ), ImGui::GetColorU32( ImGuiCol_MenuBand ),
 			g.Style.WindowRounding - 2.f /* NOTE ~ float ~ liga, if u see this baby , ,, . . . Am very Sorry X D */,
 			ImDrawFlags_::ImDrawFlags_RoundCornersTop );
 
-		const auto text_size = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->CalcTextSizeA(
-			g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->FontSize, FLT_MAX, 0.f, name );
+		const auto text_size = g_render.menu_font( true )->CalcTextSizeA(
+			g_render.menu_font( true )->FontSize, FLT_MAX, 0.f, name );
 
 		auto text_animation = ImAnimationHelper( id, ImGui::GetIO( ).DeltaTime );
 
@@ -5954,7 +5962,7 @@ bool ImGui::BeginChildEx( const char* name, ImGuiID id, const ImVec2& size_arg, 
 		const ImColor text_color = GetColorU32( ImGuiCol_Text );
 
 		parent_window->DrawList->AddText(
-			g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ], g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->FontSize,
+			g_render.menu_font( true ), g_render.menu_font( true )->FontSize,
 			draw_position + ImVec2( ( child_window->Size.x - text_size.x ) / 2.f, ( 20.f - text_size.y ) / 2.f ),
 			ImColor( text_color.Value.x, text_color.Value.y, text_color.Value.z, text_color.Value.w * text_animation.AnimationData->second ), name );
 	}
@@ -5982,8 +5990,8 @@ bool ImGui::BeginChildEx( const char* name, ImGuiID id, const ImVec2& size_arg, 
 
 			const auto hashed_tab_name = ImHashStr( tab_name );
 
-			const auto text_size = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->CalcTextSizeA(
-				g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->FontSize, FLT_MAX, 0.f, tab_name );
+			const auto text_size = g_render.menu_font( true )->CalcTextSizeA(
+				g_render.menu_font( true )->FontSize, FLT_MAX, 0.f, tab_name );
 
 			const int tab_width    = ( child_window->Size.x / static_cast< int >( subtab_vector_size ) );
 			const int tab_center_x = ( tab_width * iterator ) + ( tab_width / 2 );

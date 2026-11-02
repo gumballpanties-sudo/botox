@@ -348,8 +348,8 @@ void save_popup( const char* str_id, bool& open, const ImVec2& window_size, cons
 	const auto window = g.CurrentWindow;
 
 	const auto hashed_str_id = ImHashStr( str_id );
-	const auto text_size     = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->CalcTextSizeA(
-        g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->FontSize, FLT_MAX, 0.f, str_id );
+	const auto text_size     = g_render.menu_font( true )->CalcTextSizeA(
+        g_render.menu_font( true )->FontSize, FLT_MAX, 0.f, str_id );
 
 	const ImColor accent_color = ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent );
 
@@ -380,13 +380,13 @@ void save_popup( const char* str_id, bool& open, const ImVec2& window_size, cons
 
 		ImGui::PushClipRect( ImVec2( position ), ImVec2( position.x + size.x, position.y + 20.f ), false );
 
-		draw_list->AddRectFilled( ImVec2( position ), ImVec2( position.x + size.x, position.y + 20.f ), ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f ),
+		draw_list->AddRectFilled( ImVec2( position ), ImVec2( position.x + size.x, position.y + 20.f ), ImGui::GetColorU32( ImGuiCol_MenuBand ),
 		                          g.Style.WindowRounding - 2.f, ImDrawFlags_RoundCornersTop );
 
 		ImGui::PopClipRect( );
 
 		ImGui::PushClipRect( position, ImVec2( position.x + size.x, position.y + size.y ), false );
-		draw_list->AddRect( position, ImVec2( position.x + size.x, position.y + size.y ), ImColor( 50, 50, 50, 100 ), g.Style.WindowRounding - 2.f );
+		draw_list->AddRect( position, ImVec2( position.x + size.x, position.y + size.y ), ImGui::GetColorU32( ImGuiCol_MenuOutline ), g.Style.WindowRounding - 2.f );
 
 		text_animation.Update( ImGui::IsMouseHoveringRect( position, ImVec2( position.x + size.x, position.y + size.y ) ) ? 3.f : -2.f, 1.f, 0.5f,
 		                       1.f );
@@ -396,7 +396,7 @@ void save_popup( const char* str_id, bool& open, const ImVec2& window_size, cons
 		const ImColor text_color = ImGui::GetColorU32( ImGuiCol_Text );
 
 		draw_list->AddText(
-			g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ], g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ]->FontSize,
+			g_render.menu_font( true ), g_render.menu_font( true )->FontSize,
 			ImVec2( position.x + ( size.x - text_size.x ) / 2.f, position.y + ( 20.f - text_size.y ) / 2.f ),
 			ImColor( text_color.Value.x, text_color.Value.y, text_color.Value.z, text_color.Value.w * text_animation.AnimationData->second ),
 			str_id );
@@ -594,6 +594,70 @@ void n_menu::impl_t::draw_background_blur( )
 		                     IM_COL32( 0, 0, 0, static_cast< int >( darken * fade * 255.f + 0.5f ) ) );
 }
 
+const menu_style_t k_menu_styles[ ] = {
+	{ "default", IM_COL32( 10, 10, 10, 255 ), IM_COL32( 25, 25, 25, 255 ), IM_COL32( 15, 15, 15, 255 ), IM_COL32( 25, 25, 25, 255 ),
+	  IM_COL32( 50, 50, 50, 100 ), IM_COL32( 50, 50, 50, 255 ), IM_COL32( 20, 20, 20, 255 ), IM_COL32( 255, 255, 255, 255 ),
+	  IM_COL32( 128, 128, 128, 255 ), 5.f, 2.f, 3.f, e_font_names::font_name_verdana_11, e_font_names::font_name_verdana_bd_11,
+	  c_color( 129, 99, 251, 255 ) },
+	{ "delusional", IM_COL32( 13, 13, 13, 255 ), IM_COL32( 13, 13, 13, 255 ), IM_COL32( 20, 20, 20, 153 ), IM_COL32( 13, 13, 13, 255 ),
+	  IM_COL32( 26, 26, 26, 178 ), IM_COL32( 26, 26, 26, 178 ), IM_COL32( 20, 20, 20, 255 ), IM_COL32( 255, 255, 255, 255 ),
+	  IM_COL32( 77, 77, 77, 217 ), 4.f, 2.f, 4.f, e_font_names::font_name_tahoma_12, e_font_names::font_name_tahoma_bd_12,
+	  c_color( 245, 40, 40, 255 ) },
+	{ "kamibebra", IM_COL32( 13, 13, 13, 255 ), IM_COL32( 16, 16, 16, 255 ), IM_COL32( 13, 13, 13, 255 ), IM_COL32( 16, 16, 16, 255 ),
+	  IM_COL32( 33, 33, 33, 255 ), IM_COL32( 11, 11, 11, 255 ), IM_COL32( 13, 13, 13, 255 ), IM_COL32( 200, 200, 200, 255 ),
+	  IM_COL32( 150, 150, 150, 255 ), 6.f, 4.f, 6.f, e_font_names::font_name_kamibebra_13, e_font_names::font_name_kamibebra_bold_13,
+	  c_color( 252, 194, 255, 255 ) },
+	{ "clarity v1", IM_COL32( 40, 40, 40, 235 ), IM_COL32( 45, 45, 45, 255 ), IM_COL32( 40, 40, 40, 255 ), IM_COL32( 35, 35, 35, 255 ),
+	  IM_COL32( 65, 65, 65, 255 ), IM_COL32( 25, 25, 25, 255 ), IM_COL32( 45, 45, 45, 255 ), IM_COL32( 181, 181, 181, 255 ),
+	  IM_COL32( 120, 120, 120, 255 ), 0.f, 0.f, 0.f, e_font_names::font_name_millionware_tahoma_11, e_font_names::font_name_airplane_rows,
+	  c_color( 208, 128, 255, 255 ) },
+	/* accent alpha 0 = keep the user's accent */
+	{ "clarity v2", IM_COL32( 23, 23, 23, 255 ), IM_COL32( 28, 28, 28, 255 ), IM_COL32( 23, 23, 23, 255 ), IM_COL32( 28, 28, 28, 255 ),
+	  IM_COL32( 55, 55, 55, 255 ), IM_COL32( 7, 7, 7, 255 ), IM_COL32( 23, 23, 23, 255 ), IM_COL32( 255, 255, 255, 255 ),
+	  IM_COL32( 100, 100, 100, 255 ), 5.f, 5.f, 5.f, e_font_names::font_name_clarity_inter_semibold_14,
+	  e_font_names::font_name_clarity_inter_bold_15, c_color( 0, 0, 0, 0 ) },
+	{ "lobotomy v1", IM_COL32( 15, 15, 15, 255 ), IM_COL32( 13, 13, 13, 255 ), IM_COL32( 15, 15, 15, 255 ), IM_COL32( 13, 13, 13, 255 ),
+	  IM_COL32( 30, 30, 30, 255 ), IM_COL32( 30, 30, 30, 255 ), IM_COL32( 15, 15, 15, 255 ), IM_COL32( 255, 255, 255, 255 ),
+	  IM_COL32( 200, 200, 200, 255 ), 0.f, 0.f, 0.f, e_font_names::font_name_menu_tahoma_9, e_font_names::font_name_menu_tahoma_bd_9,
+	  c_color( 87, 87, 87, 255 ) },
+	{ "lobotomy v2", IM_COL32( 7, 7, 7, 255 ), IM_COL32( 10, 10, 10, 255 ), IM_COL32( 10, 10, 10, 255 ), IM_COL32( 25, 25, 25, 255 ),
+	  IM_COL32( 25, 25, 25, 255 ), IM_COL32( 25, 25, 25, 255 ), IM_COL32( 7, 7, 7, 255 ), IM_COL32( 255, 255, 255, 255 ),
+	  IM_COL32( 180, 180, 180, 255 ), 6.f, 2.f, 4.f, e_font_names::font_name_lobotomy_13, e_font_names::font_name_lobotomy_bold_13,
+	  c_color( 129, 99, 251, 255 ) },
+	{ "dna", IM_COL32( 9, 9, 9, 240 ), IM_COL32( 9, 9, 9, 240 ), IM_COL32( 20, 20, 20, 153 ), IM_COL32( 13, 13, 13, 255 ),
+	  IM_COL32( 26, 26, 26, 178 ), IM_COL32( 255, 255, 255, 8 ), IM_COL32( 20, 20, 20, 255 ), IM_COL32( 242, 242, 242, 255 ),
+	  IM_COL32( 77, 77, 77, 217 ), 4.f, 2.f, 4.f, e_font_names::font_name_dna_montserrat_15, e_font_names::font_name_dna_pt_root_bold_15,
+	  c_color( 255, 165, 255, 255 ) },
+	{ "interwebz", IM_COL32( 50, 50, 50, 255 ), IM_COL32( 35, 35, 35, 255 ), IM_COL32( 50, 50, 50, 255 ), IM_COL32( 60, 60, 60, 255 ),
+	  IM_COL32( 0, 0, 0, 255 ), IM_COL32( 0, 0, 0, 255 ), IM_COL32( 35, 35, 35, 255 ), IM_COL32( 255, 255, 255, 255 ),
+	  IM_COL32( 140, 140, 140, 255 ), 0.f, 0.f, 0.f, e_font_names::font_name_interwebz_calibri, e_font_names::font_name_interwebz_calibri,
+	  c_color( 140, 0, 0, 255 ) },
+};
+
+const int k_menu_style_count = static_cast< int >( IM_ARRAYSIZE( k_menu_styles ) );
+
+static void menu_style_apply( ImGuiStyle& style, const menu_style_t& s )
+{
+	const auto set = [ & ]( const ImGuiCol slot, const ImU32 color ) { style.Colors[ slot ] = ImGui::ColorConvertU32ToFloat4( color ); };
+
+	set( ImGuiCol_WindowBg, s.m_window );
+	set( ImGuiCol_ChildBg, s.m_child );
+	set( ImGuiCol_PopupBg, s.m_popup );
+	set( ImGuiCol_Text, s.m_text );
+	set( ImGuiCol_TextDisabled, s.m_text_dim );
+	set( ImGuiCol_MenuBand, s.m_band );
+	set( ImGuiCol_MenuFrame, s.m_frame );
+	set( ImGuiCol_MenuOutline, s.m_outline );
+	set( ImGuiCol_MenuWindowOutline, s.m_window_outline );
+
+	style.WindowRounding = s.m_window_rounding;
+	style.FrameRounding  = s.m_frame_rounding;
+	style.PopupRounding  = s.m_popup_rounding;
+
+	g_render.m_menu_font_slots[ 0 ] = s.m_font;
+	g_render.m_menu_font_slots[ 1 ] = s.m_font_bold;
+}
+
 void n_menu::impl_t::on_end_scene( )
 {
 	ImGui::GetStyle( ).Colors[ ImGuiCol_::ImGuiCol_Accent ] = GET_VARIABLE( g_variables.m_accent, c_color ).get_vec4( );
@@ -615,6 +679,24 @@ void n_menu::impl_t::on_end_scene( )
 
 	if ( !this->m_opened && this->m_anim_progress <= 0.f )
 		return;
+
+	/* style is global: hud panels read rounding/colours, so restore it once the menu window is built */
+	struct style_scope_t {
+		ImGuiStyle m_saved = ImGui::GetStyle( );
+		style_scope_t( )
+		{
+			menu_style_apply( ImGui::GetStyle( ),
+			                  k_menu_styles[ ImClamp( GET_VARIABLE( g_variables.m_menu_style, int ), 0, k_menu_style_count - 1 ) ] );
+			ImGui::PushFont( g_render.menu_font( false ) );
+		}
+		~style_scope_t( )
+		{
+			ImGui::PopFont( );
+			ImGui::GetStyle( )              = this->m_saved;
+			g_render.m_menu_font_slots[ 0 ] = e_font_names::font_name_verdana_11;
+			g_render.m_menu_font_slots[ 1 ] = e_font_names::font_name_verdana_bd_11;
+		}
+	} style_scope;
 
 	constexpr auto background_height = menu_band_height;
 	constexpr float bottom_band_height = menu_bottom_band_height;
@@ -639,20 +721,20 @@ void n_menu::impl_t::on_end_scene( )
 		[ & ]( ) {
 			ImGui::PushClipRect( ImVec2( position.x, position.y ), ImVec2( position.x + size.x, position.y + background_height ), false );
 			draw_list->AddRectFilled( ImVec2( position.x, position.y ), ImVec2( position.x + size.x, position.y + background_height ),
-			                          ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f, 1.f ), ImGui::GetStyle( ).WindowRounding,
+			                          ImGui::GetColorU32( ImGuiCol_MenuBand ), ImGui::GetStyle( ).WindowRounding,
 			                          ImDrawFlags_RoundCornersTop );
 			ImGui::PopClipRect( );
 
 			ImGui::PushClipRect( ImVec2( position.x, position.y ), ImVec2( position.x + size.x, position.y + size.y ), false );
 			draw_list->AddRect( ImVec2( position.x, position.y ), ImVec2( position.x + size.x, position.y + size.y ),
-			                    ImColor( 50, 50, 50, 255 ), ImGui::GetStyle( ).WindowRounding );
+			                    ImGui::GetColorU32( ImGuiCol_MenuWindowOutline ), ImGui::GetStyle( ).WindowRounding );
 			ImGui::PopClipRect( );
 
 			RenderFadedGradientLine( draw_list, ImVec2( position.x, position.y + background_height - 1.f ), ImVec2( size.x, 1.f ),
 			                         ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ) );
 
-			ImFont* const title_font = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ];
-			ImFont* const date_font  = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
+			ImFont* const title_font = g_render.menu_font( true );
+			ImFont* const date_font  = g_render.menu_font( false );
 
 			const auto title_text      = ( "botox" );
 			const std::string date_text = " | " + build_date_text( );
@@ -664,7 +746,7 @@ void n_menu::impl_t::on_end_scene( )
 
 			const float date_y = title_y;
 
-			draw_list->AddText( title_font, title_font->FontSize, ImVec2( title_x, title_y ), ImColor( 1.f, 1.f, 1.f ), title_text );
+			draw_list->AddText( title_font, title_font->FontSize, ImVec2( title_x, title_y ), ImGui::GetColorU32( ImGuiCol_Text ), title_text );
 			draw_list->AddText( date_font, date_font->FontSize, ImVec2( title_x + title_text_size.x, date_y ),
 			                    ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ), date_text.c_str( ) );
 		}( );
@@ -672,7 +754,7 @@ void n_menu::impl_t::on_end_scene( )
 		ImGui::PushClipRect( ImVec2( position.x, position.y + size.y - bottom_band_height ), ImVec2( position.x + size.x, position.y + size.y ),
 		                     false );
 		draw_list->AddRectFilled( ImVec2( position.x, position.y + size.y - bottom_band_height ), ImVec2( position.x + size.x, position.y + size.y ),
-		                          ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f ), ImGui::GetStyle( ).WindowRounding, ImDrawFlags_RoundCornersBottom );
+		                          ImGui::GetColorU32( ImGuiCol_MenuBand ), ImGui::GetStyle( ).WindowRounding, ImDrawFlags_RoundCornersBottom );
 		ImGui::PopClipRect( );
 
 		RenderFadedGradientLine( draw_list, ImVec2( position.x, position.y + size.y - bottom_band_height ), ImVec2( size.x, 1.f ),
@@ -705,8 +787,8 @@ void n_menu::impl_t::on_end_scene( )
 		const float tab_x = window->DC.CursorPos.x;
 		float tab_y       = window->DC.CursorPos.y + background_height;
 
-		ImFont* const tab_font  = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ];
-		ImFont* const page_font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
+		ImFont* const tab_font  = g_render.menu_font( true );
+		ImFont* const page_font = g_render.menu_font( false );
 		const ImU32 accent      = ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent );
 		const ImColor accent_color( accent );
 		const bool can_click    = ImGui::IsWindowHovered( );
@@ -728,8 +810,8 @@ void n_menu::impl_t::on_end_scene( )
 
 			const float lit = selected_animation.AnimationData->second;
 
-			draw_list->AddRectFilled( tab_min, tab_max, ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f ), rounding );
-			draw_list->AddRect( tab_min, tab_max, ImColor( 50, 50, 50, 100 ), rounding );
+			draw_list->AddRectFilled( tab_min, tab_max, ImGui::GetColorU32( ImGuiCol_MenuBand ), rounding );
+			draw_list->AddRect( tab_min, tab_max, ImGui::GetColorU32( ImGuiCol_MenuOutline ), rounding );
 
 			RenderFadedGradientLine( draw_list, ImVec2( tab_min.x, tab_max.y - 1.f ), ImVec2( tab_width, 1.f ),
 			                         ImColor( accent_color.Value.x, accent_color.Value.y, accent_color.Value.z, lit ) );
@@ -738,7 +820,7 @@ void n_menu::impl_t::on_end_scene( )
 
 			draw_list->AddText( tab_font, tab_font->FontSize,
 			                    ImVec2( ImFloor( tab_min.x + ( tab_width - text_size.x ) / 2.f ), ImFloor( tab_min.y + ( tab_height - text_size.y ) / 2.f ) ),
-			                    ImColor::Blend( ImColor( 1.f, 1.f, 1.f, hovered_text_animation.AnimationData->second ), accent, lit ), name );
+			                    ImColor::Blend( ImGui::GetColorU32( ImGuiCol_Text, hovered_text_animation.AnimationData->second ), accent, lit ), name );
 
 			tab_y = tab_max.y + tab_gap;
 
@@ -786,7 +868,7 @@ void n_menu::impl_t::on_end_scene( )
 
 				const auto page_text_size = page_font->CalcTextSizeA( page_font->FontSize, FLT_MAX, 0.f, page_name );
 
-				ImColor page_color = ImColor::Blend( ImColor( 1.f, 1.f, 1.f, page_hover_animation.AnimationData->second ), accent,
+				ImColor page_color = ImColor::Blend( ImGui::GetColorU32( ImGuiCol_Text, page_hover_animation.AnimationData->second ), accent,
 				                                     page_selected_animation.AnimationData->second );
 				page_color.Value.w *= open;
 
