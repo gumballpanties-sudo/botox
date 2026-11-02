@@ -13,6 +13,7 @@ extern bool HITGODA2;
 // wc2 ( tools/wc_engine/fl_lab.cpp P57 ): a disp lip lands only from the first 1-2 float positions off the face, so the hull is
 // parked flush every air tick ( tb style press ladder ) and caught by the same ladder, or by a pin just over the lip.
 // 10-31 back from the 10-10 ebanat port: lab 5016 hops 64t, first catches ebanat 21, keys alone 186, this 2915, beam oracle 3633
+// 11-02 = lab P71 ( P68 + seam + pin catch other stance ), FL_NOISE 1: first 2304 -> 2359, rows 3006 -> 3066, seam snags wallA 128 -> 27
 namespace
 {
 	constexpr float k_contact      = 0.05f;
@@ -48,6 +49,8 @@ namespace
 	constexpr float k_leave_cos    = 0.5f;
 	constexpr int k_robust_parks   = 3; /* lab P62 */
 	constexpr float k_robust_vel   = 0.002f;
+	constexpr float k_snag_along   = 2.f;   /* lab P69: along wall speed a seam snag is judged on */
+	constexpr float k_snag_keep    = 0.25f; /* a sim that ends under this share of it snagged */
 	constexpr float k_spot_step    = 2.f;
 	constexpr float k_spot_rise    = 10.f;
 	constexpr int k_spot_ticks     = 64;
@@ -61,7 +64,7 @@ namespace
 	enum e_wc_count {
 		wc_land, wc_flip, wc_pin_catch, wc_hold, wc_park, wc_keys, wc_along, wc_own, wc_leave, wc_aa_leave, wc_exit, wc_exit_none, wc_far, wc_rise,
 		wc_scan_cut, wc_cut, wc_div, wc_div_stomp, wc_stomp, wc_yield, wc_ramp, wc_skip, wc_jump_back, wc_jump_strip, wc_as_take, wc_pin_miss, wc_no_park,
-		wc_park_keep, wc_away, wc_robust, wc_spot, wc_spot_sims, wc_hold_land, wc_low, wc_leave_hang, wc_ticks, wc_sims, wc_max
+		wc_park_keep, wc_away, wc_robust, wc_spot, wc_spot_sims, wc_hold_land, wc_low, wc_leave_hang, wc_seam, wc_seam_park, wc_pin_flip, wc_ticks, wc_sims, wc_max
 	};
 	int s_count[ wc_max ]{ };
 	long long s_us = 0ll, s_us_worst = 0ll;
@@ -186,11 +189,11 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	if ( const unsigned long long now = GetTickCount64( ); now >= s_log_next ) {
 		s_log_next = now + 1000ull;
 		if ( s_count[ wc_ticks ] || s_count[ wc_yield ] || s_count[ wc_ramp ] || s_count[ wc_skip ] )
-			botox_dbg_log( "WC: land=%d flip=%d pinc=%d hold=%d park=%d keys=%d along=%d own=%d leave=%d aa=%d exit=%d/%d far=%d rise=%d scut=%d cut=%d div=%d/%d stomp=%d yield=%d ramp=%d skip=%d jump back=%d strip=%d as=%d miss=%d np=%d pk=%d away=%d robust=%d spot=%d/%d hland=%d low=%d lhang=%d ticks=%d sims=%d us=%lld worst=%lld",
+			botox_dbg_log( "WC: land=%d flip=%d pinc=%d hold=%d park=%d keys=%d along=%d own=%d leave=%d aa=%d exit=%d/%d far=%d rise=%d scut=%d cut=%d div=%d/%d stomp=%d yield=%d ramp=%d skip=%d jump back=%d strip=%d as=%d miss=%d np=%d pk=%d away=%d robust=%d spot=%d/%d hland=%d low=%d lhang=%d seam=%d/%d pflip=%d ticks=%d sims=%d us=%lld worst=%lld",
 			               s_count[ wc_land ], s_count[ wc_flip ], s_count[ wc_pin_catch ], s_count[ wc_hold ], s_count[ wc_park ], s_count[ wc_keys ],
 			               s_count[ wc_along ], s_count[ wc_own ], s_count[ wc_leave ], s_count[ wc_aa_leave ], s_count[ wc_exit ], s_count[ wc_exit_none ], s_count[ wc_far ],
 			               s_count[ wc_rise ], s_count[ wc_scan_cut ], s_count[ wc_cut ], s_count[ wc_div ], s_count[ wc_div_stomp ], s_count[ wc_stomp ], s_count[ wc_yield ], s_count[ wc_ramp ], s_count[ wc_skip ],
-			               s_count[ wc_jump_back ], s_count[ wc_jump_strip ], s_count[ wc_as_take ], s_count[ wc_pin_miss ], s_count[ wc_no_park ], s_count[ wc_park_keep ], s_count[ wc_away ], s_count[ wc_robust ], s_count[ wc_spot ], s_count[ wc_spot_sims ], s_count[ wc_hold_land ], s_count[ wc_low ], s_count[ wc_leave_hang ], s_count[ wc_ticks ], s_count[ wc_sims ], s_us,
+			               s_count[ wc_jump_back ], s_count[ wc_jump_strip ], s_count[ wc_as_take ], s_count[ wc_pin_miss ], s_count[ wc_no_park ], s_count[ wc_park_keep ], s_count[ wc_away ], s_count[ wc_robust ], s_count[ wc_spot ], s_count[ wc_spot_sims ], s_count[ wc_hold_land ], s_count[ wc_low ], s_count[ wc_leave_hang ], s_count[ wc_seam ], s_count[ wc_seam_park ], s_count[ wc_pin_flip ], s_count[ wc_ticks ], s_count[ wc_sims ], s_us,
 			               s_us_worst );
 		for ( int& c : s_count )
 			c = 0;
@@ -619,14 +622,23 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 			bool live[ 2 ] = { true, GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) };
 			float best_d   = FLT_MAX, best_xy = 0.f;
 			c_user_cmd best_c{ };
-			bool have_park = false;
+			bool have_park = false, best_snag = false;
 			int pin_tries  = 0;
 			sim_out_t last{ };
 			struct park_t {
 				float d, xy;
 				c_user_cmd c;
+				bool snag;
 			};
 			std::vector< park_t > parks;
+			// lab P69: a flush park sits 1e-4..3e-3 off the face, inside both DIST_EPSILONs, so a disp patch 0.0024 proud across a vertical
+			// seam stops it dead ( keys rest 1/32 out and slide past ). moving along, a sim that keeps under k_snag_keep of it snagged
+			const c_vector ft( wall_n.m_y, -wall_n.m_x, 0.f );
+			const float along0 = start_vel.m_x * ft.m_x + start_vel.m_y * ft.m_y;
+			const bool seam_on = std::fabsf( along0 ) > k_snag_along;
+			const auto snags   = [ & ]( const c_vector& v ) {
+				return seam_on && ( v.m_x * ft.m_x + v.m_y * ft.m_y ) * ( along0 < 0.f ? -1.f : 1.f ) < k_snag_keep * std::fabsf( along0 );
+			};
 			// 1 caught, 0 go on, -1 out of clock
 			const auto test = [ & ]( const c_user_cmd& c, const bool flip, const bool park ) {
 				if ( !sim( c, last ) )
@@ -655,13 +667,21 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				if ( pinned( last.m_vel ) ) {
 					if ( pin_tries < k_pin_tries && !you_leave ) {
 						++pin_tries;
-						if ( hold_lands( with( wall_yaw, 0.f, ( c.m_buttons & in_duck ) != 0 ) ) ) {
+						const bool cd = ( c.m_buttons & in_duck ) != 0;
+						bool hd = cd, lands = hold_lands( with( wall_yaw, 0.f, cd ) );
+						// lab P71: a zero hold in the other stance that lands counts too ( first +1.3%, rows +1% ), the hold follows in it
+						if ( !lands && GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) && sim( c, last ) && pinned( last.m_vel ) ) {
+							hd    = !cd;
+							lands = hold_lands( with( wall_yaw, 0.f, hd ) );
+							s_count[ wc_pin_flip ] += lands;
+						}
+						if ( lands ) {
 							send( c );
 							landed = held = m_holding = true;
-							m_hold_buttons            = c.m_buttons;
+							m_hold_buttons            = hd ? ( c.m_buttons | in_duck ) : ( c.m_buttons & ~in_duck );
 							++s_count[ wc_pin_catch ];
 							branch = "pin_catch";
-							botox_dbg_log( "WC PIN CATCH: duck=%d fwd=%.5f z=%.3f vz=%.2f n=%.3f,%.3f disp=%d", ( c.m_buttons & in_duck ) != 0, c.m_forward_move, origin.m_z,
+							botox_dbg_log( "WC PIN CATCH: duck=%d hold duck=%d fwd=%.5f z=%.3f vz=%.2f n=%.3f,%.3f disp=%d", cd, hd, c.m_forward_move, origin.m_z,
 							               start_vel.m_z, wall_n.m_x, wall_n.m_y, disp_wall ? 1 : 0 );
 							return 1;
 						}
@@ -670,7 +690,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				}
 				if ( park && !flip && !slowed( last.m_vel ) ) {
 					const float d = face_d( last.m_origin, wall_n );
-					parks.push_back( { d, last.m_vel.length_2d( ), c } );
+					parks.push_back( { d, last.m_vel.length_2d( ), c, snags( last.m_vel ) } );
 					if ( d < best_d )
 						best_d = d, best_c = c, best_xy = last.m_vel.length_2d( ), have_park = true;
 				}
@@ -732,13 +752,14 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 						s_count[ wc_along ] += r > 0;
 					}
 			if ( r <= 0 ) {
-				// a clock cut mid ladder must still compare your keys and exit a pin ( lab: 3 sims past the cap )
+				// a clock cut mid ladder must still compare your keys and exit a pin ( lab: 3 sims past the cap ), + the seam away rungs
 				cut        = false;
-				commit_end = sims + k_commit_sims + 3 * k_robust_parks;
+				commit_end = sims + k_commit_sims + 3 * k_robust_parks + static_cast< int >( std::size( k_coarse ) );
 				// 10-31 09:57 log: 21 parks the server pinned that wc simmed free ( 14 rising = jump killed ). START drifts z 1 ulp + 1e-3 u/s a
-				// tick ( lab FL_NOISE 1 ): the park must stay free from START nudged into the face, lab P62 pinned ticks -53%, catches same
+				// tick ( lab FL_NOISE 1 ): the park must stay free from START nudged into the face, lab P62 pinned ticks -53%, catches same.
+				// parks that keep their along speed go first ( seam )
 				if ( have_park ) {
-					std::sort( parks.begin( ), parks.end( ), [ ]( const park_t& a, const park_t& b ) { return a.d < b.d; } );
+					std::sort( parks.begin( ), parks.end( ), [ ]( const park_t& a, const park_t& b ) { return a.snag != b.snag ? b.snag : a.d < b.d; } );
 					have_park = false;
 					for ( int p = 0; p < static_cast< int >( parks.size( ) ) && p < k_robust_parks && !have_park; ++p ) {
 						bool ok = true;
@@ -763,13 +784,31 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 							ok = chain( parks[ p ].c, q ) && !pinned( q.m_vel );
 						}
 						if ( ok )
-							best_d = parks[ p ].d, best_c = parks[ p ].c, best_xy = parks[ p ].xy, have_park = true;
+							best_d = parks[ p ].d, best_c = parks[ p ].c, best_xy = parks[ p ].xy, best_snag = parks[ p ].snag, have_park = true;
 					}
 					s_count[ wc_robust ] += !have_park;
+					s_count[ wc_seam_park ] += have_park && !best_snag && std::any_of( parks.begin( ), parks.end( ), [ & ]( const park_t& p ) { return p.snag && p.d < best_d; } );
 				}
 				sim_out_t k{ };
 				const bool kok = sim( keys, k );
 				const bool kpin = kok && !( k.m_flags & fl_onground ) && pinned( k.m_vel );
+				const bool ksnag = kok && !kpin && !( k.m_flags & fl_onground ) && snags( k.m_vel );
+				// lab P69: every park snags ( or none is robust ) and your keys snag too = away rungs, one step out of DIST_EPSILON for the
+				// crossing tick ( 0.2 F = 1/160u clears a 0.0024 seam ). wallA seam snags 128 -> 27, first + rows +1%
+				bool seam_away = false;
+				if ( ksnag && !you_leave && ( !have_park || best_snag ) )
+					for ( const float m : k_coarse ) {
+						const c_user_cmd c = with( wall_yaw, -m * F / ( user_duck ? 0.34f : 1.f ), user_duck );
+						sim_out_t o{ };
+						if ( !sim( c, o ) )
+							break;
+						if ( !( o.m_flags & fl_onground ) && !pinned( o.m_vel ) && !snags( o.m_vel ) ) {
+							best_d = face_d( o.m_origin, wall_n ), best_c = c, best_xy = o.m_vel.length_2d( ), best_snag = false;
+							have_park = seam_away = true;
+							++s_count[ wc_seam ];
+							break;
+						}
+					}
 				s_count[ wc_aa_leave ] += !you_leave && wish_leaves_wall( keys, wall_n );
 				if ( you_leave ) {
 					++s_count[ wc_leave ];
@@ -777,7 +816,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 					if ( kpin )
 						exit_pin( );
 				} else if ( have_park && ( kpin || !m_park_off ) ) {
-					if ( kok && !kpin && !( k.m_flags & fl_onground ) && face_d( k.m_origin, wall_n ) <= best_d + k_keys_ulp ) {
+					if ( kok && !kpin && !( k.m_flags & fl_onground ) && face_d( k.m_origin, wall_n ) <= best_d + k_keys_ulp && !( ksnag && !best_snag ) ) {
 						++s_count[ wc_keys ];
 						branch = "keys";
 					} else if ( kok && !kpin && !( k.m_flags & fl_onground ) && best_xy < k.m_vel.length_2d( ) - k_park_keep && !wish_leaves_wall( keys, wall_n ) ) {
@@ -788,7 +827,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 					} else {
 						send( best_c );
 						++s_count[ wc_park ];
-						branch = "park";
+						branch = seam_away ? "seam" : "park";
 					}
 					free_sent = true;
 				} else if ( kpin ) {

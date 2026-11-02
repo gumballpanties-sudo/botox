@@ -175,11 +175,11 @@ namespace
 		return *reinterpret_cast< const T* >( reinterpret_cast< std::uintptr_t >( base ) + ofs );
 	}
 
+	// CCSGameRules* = RecvProxy_CSGameRules target (cs_gamerules_data lands here), null while loading
 	std::uintptr_t game_rules( )
 	{
-		static const auto site =
-			g_modules[ CLIENT_DLL ].find_pattern( "8B 4D 04 E8 ? ? ? ? 8B 0D ? ? ? ? 8B 01 FF 90 98 04 00 00 C6 45 FC 00" );
-		return site ? reinterpret_cast< std::uintptr_t >( **reinterpret_cast< void*** >( site + 10 ) ) : 0;
+		static const auto site = g_modules[ CLIENT_DLL ].find_pattern( "A1 ? ? ? ? 85 C0 0F 84 ? ? ? ? 80 B8 ? ? ? ? ? 74 7A" );
+		return site ? reinterpret_cast< std::uintptr_t >( **reinterpret_cast< void*** >( site + 1 ) ) : 0;
 	}
 
 	/* ---- events: game thread writes, render thread drains (both under g_urt_hud.m_lock) ---- */
@@ -1451,17 +1451,18 @@ void n_urt_hud::impl_t::on_paint_traverse( )
 	}
 
 	// players + resource
-	static const unsigned int res_kills  = net_offset( HASH_BT( "CCSPlayerResource->m_iKills" ) );
-	static const unsigned int res_deaths = net_offset( HASH_BT( "CCSPlayerResource->m_iDeaths" ) );
+	// netvars skip baseclass: inherited props only exist under the base class name (CPlayerResource, CTeam)
+	static const unsigned int res_kills  = net_offset( HASH_BT( "CPlayerResource->m_iKills" ) );
+	static const unsigned int res_deaths = net_offset( HASH_BT( "CPlayerResource->m_iDeaths" ) );
 	static const unsigned int res_score  = net_offset( HASH_BT( "CCSPlayerResource->m_iScore" ) );
 	static const unsigned int res_site_a = net_offset( HASH_BT( "CCSPlayerResource->m_bombsiteCenterA" ) );
 	static const unsigned int res_site_b = net_offset( HASH_BT( "CCSPlayerResource->m_bombsiteCenterB" ) );
-	static const unsigned int team_num   = net_offset( HASH_BT( "CCSTeam->m_iTeamNum" ) );
-	static const unsigned int team_score = net_offset( HASH_BT( "CCSTeam->m_scoreTotal" ) );
+	static const unsigned int team_num   = net_offset( HASH_BT( "CTeam->m_iTeamNum" ) );
+	static const unsigned int team_score = net_offset( HASH_BT( "CTeam->m_scoreTotal" ) );
 	static const unsigned int bomb_zone  = net_offset( HASH_BT( "CCSPlayer->m_bInBombZone" ) );
 	const void* resource = nullptr;
 	const int highest    = std::min( g_interfaces.m_client_entity_list->get_highest_entity_index( ), 2048 );
-	for ( int i = 65; i <= highest; ++i ) {
+	for ( int i = 1; i <= highest; ++i ) { // non-player ents start at maxclients + 1, not 65
 		auto* const e = g_interfaces.m_client_entity_list->get< c_base_entity >( i );
 		if ( !e )
 			continue;

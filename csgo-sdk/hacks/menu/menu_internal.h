@@ -70,7 +70,6 @@ struct menu_style_t {
 	ImU32 m_window, m_band, m_child, m_frame, m_outline, m_window_outline, m_popup, m_text, m_text_dim;
 	float m_window_rounding, m_frame_rounding, m_popup_rounding;
 	int m_font, m_font_bold;
-	c_color m_accent;
 };
 
 extern const menu_style_t k_menu_styles[ ];

@@ -2274,8 +2274,7 @@ void n_menu::impl_t::tab_settings( )
 			return true;
 		};
 
-		if ( ImGui::Combo( "style", &menu_style, style_name, nullptr, k_menu_style_count ) && k_menu_styles[ menu_style ].m_accent[ 3 ] > 0 )
-			GET_VARIABLE( g_variables.m_accent, c_color ) = k_menu_styles[ menu_style ].m_accent;
+		ImGui::Combo( "theme", &menu_style, style_name, nullptr, k_menu_style_count );
 
 		ImGui::ColorEdit4( "accent color##accent color", &GET_VARIABLE( g_variables.m_accent, c_color ), color_picker_no_alpha_flags );
 

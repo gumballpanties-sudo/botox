@@ -84,12 +84,11 @@ namespace
 	} s_listener{ };
 	bool s_listening = false;
 
-	// CCSGameRules*, null while loading (same site as skins_internal.h game_rules_up)
+	// CCSGameRules* = RecvProxy_CSGameRules target (cs_gamerules_data lands here), null while loading
 	std::uintptr_t game_rules( )
 	{
-		static const auto site =
-			g_modules[ CLIENT_DLL ].find_pattern( "8B 4D 04 E8 ? ? ? ? 8B 0D ? ? ? ? 8B 01 FF 90 98 04 00 00 C6 45 FC 00" );
-		return site ? reinterpret_cast< std::uintptr_t >( **reinterpret_cast< void*** >( site + 10 ) ) : 0;
+		static const auto site = g_modules[ CLIENT_DLL ].find_pattern( "A1 ? ? ? ? 85 C0 0F 84 ? ? ? ? 80 B8 ? ? ? ? ? 74 7A" );
+		return site ? reinterpret_cast< std::uintptr_t >( **reinterpret_cast< void*** >( site + 1 ) ) : 0;
 	}
 
 	/* ---- render thread state ---- */
@@ -1643,12 +1642,12 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 		}
 
 		// team scores (CCSTeam), player scores (CCSPlayerResource)
-		static const unsigned int team_num   = g_netvars[ HASH_BT( "CCSTeam->m_iTeamNum" ) ].m_offset;
-		static const unsigned int team_score = g_netvars[ HASH_BT( "CCSTeam->m_scoreTotal" ) ].m_offset;
+		static const unsigned int team_num   = g_netvars[ HASH_BT( "CTeam->m_iTeamNum" ) ].m_offset;
+		static const unsigned int team_score = g_netvars[ HASH_BT( "CTeam->m_scoreTotal" ) ].m_offset;
 		static const unsigned int res_score  = g_netvars[ HASH_BT( "CCSPlayerResource->m_iScore" ) ].m_offset;
 		const int highest = std::min( g_interfaces.m_client_entity_list->get_highest_entity_index( ), 2048 );
 		std::vector< int > scores{ };
-		for ( int i = 65; i <= highest && team_num && team_score; ++i ) {
+		for ( int i = 1; i <= highest && team_num && team_score; ++i ) {
 			auto* const e = g_interfaces.m_client_entity_list->get< c_base_entity >( i );
 			if ( !e )
 				continue;

@@ -2628,9 +2628,8 @@ namespace
 	/* CCSGameRules*, null while loading (same site as cod4_hud game_rules) */
 	std::uintptr_t net_graph_game_rules( )
 	{
-		static const auto site =
-			g_modules[ CLIENT_DLL ].find_pattern( "8B 4D 04 E8 ? ? ? ? 8B 0D ? ? ? ? 8B 01 FF 90 98 04 00 00 C6 45 FC 00" );
-		return site ? reinterpret_cast< std::uintptr_t >( **reinterpret_cast< void*** >( site + 10 ) ) : 0;
+		static const auto site = g_modules[ CLIENT_DLL ].find_pattern( "A1 ? ? ? ? 85 C0 0F 84 ? ? ? ? 80 B8 ? ? ? ? ? 74 7A" );
+		return site ? reinterpret_cast< std::uintptr_t >( **reinterpret_cast< void*** >( site + 1 ) ) : 0;
 	}
 
 	/* CNetGraphPanel::DrawServerType */
