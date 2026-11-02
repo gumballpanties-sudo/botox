@@ -20,6 +20,9 @@ namespace n_flip_world
 		// IVEngineClient::WorldToScreenMatrix (37)
 		const view_matrix_t& on_world_to_screen_matrix( const view_matrix_t& matrix );
 
+		// any thread: frame image mirrored (hud overlays drawn after it mirror themselves)
+		bool mirroring( ) const { return this->m_mirroring.load( std::memory_order_relaxed ); }
+
 		void on_mouse_input( float* x );
 		void on_create_move( c_user_cmd* cmd );
 

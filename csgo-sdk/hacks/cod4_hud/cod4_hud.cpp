@@ -8,6 +8,7 @@
 #include "../menu/menu.h"
 #include "../misc/misc.h"
 #include "../misc/scaleform/image_cache.h"
+#include "../visuals/screen/flip_world.h"
 
 #include <algorithm>
 #include <atomic>
@@ -382,6 +383,18 @@ namespace
 		{
 			if ( m_on )
 				s_list->AddCallback( ImDrawCallback_ResetRenderState, nullptr );
+		}
+	};
+
+	// flip world mirrors the frame before this hud draws: world tied pieces (compass, damage arrows) mirror their own verts about cx
+	struct mirror_scope_t {
+		float m_cx;
+		int m_from;
+		mirror_scope_t( float cx, bool on ) : m_cx( cx ), m_from( on && g_flip_world.mirroring( ) ? s_list->VtxBuffer.Size : -1 ) { }
+		~mirror_scope_t( )
+		{
+			for ( int v = m_from; m_from >= 0 && v < s_list->VtxBuffer.Size; ++v )
+				s_list->VtxBuffer[ v ].pos.x = 2.f * m_cx - s_list->VtxBuffer[ v ].pos.x;
 		}
 	};
 
@@ -798,7 +811,8 @@ namespace
 		const texture_t* t = texture( o.m_material );
 		if ( !t )
 			return;
-		const float rot = -( s.m_yaw - k_north_yaw ), half = s_dv.f( "compassTickertapeStretch" ) * 0.5f;
+		// flip world: heading of the mirrored world = 180 - yaw, letters stay readable (tape not vert mirrored)
+		const float rot = ( g_flip_world.mirroring( ) ? 1.f : -1.f ) * ( s.m_yaw - k_north_yaw ), half = s_dv.f( "compassTickertapeStretch" ) * 0.5f;
 		const float u0 = rot / 360.f - half, u1 = rot / 360.f + half;
 		s_list->AddCallback( cb_address, reinterpret_cast< void* >( static_cast< std::uintptr_t >( D3DTADDRESS_WRAP ) ) );
 		s_list->AddImage( reinterpret_cast< ImTextureID >( t->m_texture ), ImVec2( r[ 0 ], r[ 1 ] ), ImVec2( r[ 0 ] + r[ 2 ], r[ 1 ] + r[ 3 ] ), ImVec2( u0, 0.f ),
@@ -1154,6 +1168,12 @@ namespace
 
 	void ownerdraw( int id, const od_t& o, const n_cod4_hud::snapshot_t& s, int now )
 	{
+		const bool world = id == 150 || id == 152 || id == 158 || id == 159 || id == 170;
+		float cr[ 4 ]{ };
+		if ( world )
+			compass_rect( o, cr );
+		mirror_scope_t mirror( cr[ 0 ] + cr[ 2 ] * 0.5f, world );
+
 		switch ( id ) {
 		case 71: return od_hold_breath( o, s );
 		case 81: return od_weapon_name( o, s, now );
@@ -1339,6 +1359,7 @@ namespace
 		if ( !t )
 			return;
 		const float cx = s_scr.m_w * 0.5f, cy = s_scr.m_h * 0.5f;
+		mirror_scope_t mirror( cx, true );
 		for ( const damage_slot_t& d : s_damage ) {
 			const int t0 = now - d.m_time;
 			if ( t0 <= 0 || t0 >= d.m_duration )
