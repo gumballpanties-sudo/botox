@@ -2083,7 +2083,8 @@ void n_misc::impl_t::disable_post_processing( )
 	if ( !post_process )
 		return;
 
-	const bool want = !GET_VARIABLE( g_variables.m_disable_post_processing, bool ) || GET_VARIABLE( g_variables.m_safe_mode, bool );
+	const bool want = !GET_VARIABLE( g_variables.m_disable_post_processing, bool ) || GET_VARIABLE( g_variables.m_safe_mode, bool ) ||
+	                  g_ctx.m_eject_restoring;
 
 	if ( post_process->get_bool( ) != want )
 		post_process->set_value( want );
@@ -2095,7 +2096,7 @@ void n_misc::impl_t::remove_panorama_blur( )
 	if ( !disable_blur )
 		return;
 
-	const bool want = GET_VARIABLE( g_variables.m_remove_panorama_blur, bool );
+	const bool want = GET_VARIABLE( g_variables.m_remove_panorama_blur, bool ) && !g_ctx.m_eject_restoring;
 
 	if ( disable_blur->get_bool( ) != want )
 		disable_blur->set_value( want );
@@ -2125,7 +2126,7 @@ void n_misc::impl_t::remove_smoke( )
 		material->set_material_var_flag( flag, value );
 	};
 
-	if ( !GET_VARIABLE( g_variables.m_remove_smoke, bool ) ) {
+	if ( !GET_VARIABLE( g_variables.m_remove_smoke, bool ) || g_ctx.m_eject_restoring ) {
 		if ( set ) {
 			for ( const auto name : vistasmoke_wireframe ) {
 				flag_material( name, material_var_wireframe, false );
@@ -2167,13 +2168,20 @@ void n_misc::impl_t::remove_smoke( )
 
 void n_misc::impl_t::remove_flash( )
 {
-	if ( !GET_VARIABLE( g_variables.m_remove_flash, bool ) )
+	// netvar only resent when the server's value changes: a lowered local copy outlives the toggle
+	static bool lowered = false;
+
+	const bool enabled = GET_VARIABLE( g_variables.m_remove_flash, bool ) && !g_ctx.m_eject_restoring;
+
+	if ( !enabled && !lowered )
 		return;
 
 	if ( !g_ctx.m_local )
 		return;
 
-	const float max_alpha = 255.f * std::clamp( GET_VARIABLE( g_variables.m_remove_flash_opacity, float ), 0.f, 100.f ) * 0.01f;
+	lowered = enabled;
+
+	const float max_alpha = enabled ? 255.f * std::clamp( GET_VARIABLE( g_variables.m_remove_flash_opacity, float ), 0.f, 100.f ) * 0.01f : 255.f;
 
 	g_ctx.m_local->get_flash_max_alpha( ) = max_alpha;
 
@@ -3580,6 +3588,19 @@ void n_misc::impl_t::on_level_shutdown( )
 	world_decal_was_on = false;
 }
 
+void n_misc::impl_t::on_eject( )
+{
+	// each reads g_ctx.m_eject_restoring as off: smoke materials, mat_postprocess_enable, @panorama_disable_blur,
+	// weapon_debug_spread_show, sv_lagpushticks, gpGlobals remote client
+	remove_smoke( );
+	remove_flash( );
+	disable_post_processing( );
+	remove_panorama_blur( );
+	force_crosshair( );
+	force_lagpush( );
+	force_host_lagcomp( );
+}
+
 void n_misc::impl_t::force_maxunlag( )
 {
 	static auto sv_maxunlag = g_convars[ HASH_BT( "sv_maxunlag" ) ];
@@ -3604,12 +3625,27 @@ void n_misc::impl_t::force_host_lagcomp( )
 	if ( net_fakelag && net_fakelag->get_float( ) != 0.f )
 		net_fakelag->set_value( 0.f );
 
-	const auto nci = g_interfaces.m_engine_client->get_net_channel_info( );
-	if ( !g_interfaces.m_engine_client->is_connected_safe( ) || !nci || !nci->is_loopback( ) )
+	// listen server's gpGlobals starts false; only undo what we flipped
+	static bool forced_remote = false;
+
+	const auto nci     = g_interfaces.m_engine_client->get_net_channel_info( );
+	const bool hosting = g_interfaces.m_engine_client->is_connected_safe( ) && nci && nci->is_loopback( );
+
+	if ( g_ctx.m_eject_restoring ) {
+		if ( forced_remote && hosting && g_interfaces.m_global_vars_base )
+			g_interfaces.m_global_vars_base->m_remote_client = false;
+
+		forced_remote = false;
+		return;
+	}
+
+	if ( !hosting )
 		return;
 
-	if ( g_interfaces.m_global_vars_base && !g_interfaces.m_global_vars_base->m_remote_client )
+	if ( g_interfaces.m_global_vars_base && !g_interfaces.m_global_vars_base->m_remote_client ) {
 		g_interfaces.m_global_vars_base->m_remote_client = true;
+		forced_remote                                    = true;
+	}
 
 	if ( const auto sv_unlag = g_convars[ HASH_BT( "sv_unlag" ) ]; sv_unlag && !sv_unlag->get_bool( ) )
 		sv_unlag->set_value( 1.f );
@@ -3684,11 +3720,22 @@ static void player_list_load( )
 	if ( _wfopen_s( &file, player_list_path( ).c_str( ), L"r" ) || !file )
 		return;
 
-	unsigned long long xuid = 0;
-	int revive = 0, ignore = 0, only = 0;
-	while ( fscanf_s( file, "%llu %d %d %d", &xuid, &revive, &ignore, &only ) == 4 ) {
-		if ( xuid )
-			g_player_list_saved[ xuid ] = player_list_entry_t{ 0, revive != 0, ignore != 0, only != 0 };
+	/* "xuid revive ignore only[ custom name]": the name is the rest of the line (spaces allowed),
+	   old 4-field files still load */
+	char line[ 256 ];
+	while ( fgets( line, sizeof( line ), file ) ) {
+		unsigned long long xuid = 0;
+		int revive = 0, ignore = 0, only = 0, used = 0;
+		if ( sscanf_s( line, "%llu %d %d %d%n", &xuid, &revive, &ignore, &only, &used ) != 4 || !xuid )
+			continue;
+
+		player_list_entry_t entry{ 0, revive != 0, ignore != 0, only != 0 };
+		const char* name = line + used;
+		if ( *name == ' ' )
+			++name;
+		strncpy_s( entry.m_name, name, _TRUNCATE );
+		entry.m_name[ strcspn( entry.m_name, "\r\n" ) ] = '\0';
+		g_player_list_saved[ xuid ] = entry;
 	}
 	fclose( file );
 }
@@ -3720,7 +3767,7 @@ void player_list_save( const int index, const player_info_t& info )
 	player_list_load( );
 
 	const auto& entry = g_player_list[ index ];
-	if ( entry.m_revive || entry.m_ignore || entry.m_only )
+	if ( entry.m_revive || entry.m_ignore || entry.m_only || entry.m_name[ 0 ] )
 		g_player_list_saved[ xuid ] = entry;
 	else
 		g_player_list_saved.erase( xuid );
@@ -3729,7 +3776,7 @@ void player_list_save( const int index, const player_info_t& info )
 	if ( _wfopen_s( &file, player_list_path( ).c_str( ), L"w" ) || !file )
 		return;
 	for ( const auto& [ id, picks ] : g_player_list_saved )
-		fprintf( file, "%llu %d %d %d\n", id, picks.m_revive ? 1 : 0, picks.m_ignore ? 1 : 0, picks.m_only ? 1 : 0 );
+		fprintf( file, "%llu %d %d %d %s\n", id, picks.m_revive ? 1 : 0, picks.m_ignore ? 1 : 0, picks.m_only ? 1 : 0, picks.m_name );
 	fclose( file );
 }
 
@@ -3815,8 +3862,10 @@ void n_misc::impl_t::force_lagpush( )
 			return;
 	}
 
-	const int push   = g_lagcomp.push_ticks( );
-	const int wanted = -push;
+	const int push = g_lagcomp.push_ticks( );
+
+	// eject: dev-only convar, default 0 ( player_lagcompensation.cpp:44 )
+	const int wanted = g_ctx.m_eject_restoring ? 0 : -push;
 
 	if ( sv_lagpushticks->get_int( ) != wanted ) {
 		sv_lagpushticks->set_value( wanted );
@@ -3833,8 +3882,8 @@ void n_misc::impl_t::force_crosshair( )
 	if ( !weapon_debug_spread_show )
 		return;
 
-	const bool should_draw = GET_VARIABLE( g_variables.m_force_crosshair, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) && g_ctx.m_local && g_ctx.m_local->is_alive( ) &&
-	                         !g_ctx.m_local->is_scoped( );
+	const bool should_draw = GET_VARIABLE( g_variables.m_force_crosshair, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) &&
+	                         !g_ctx.m_eject_restoring && g_ctx.m_local && g_ctx.m_local->is_alive( ) && !g_ctx.m_local->is_scoped( );
 
 	const int wanted = should_draw ? 3 : 0;
 

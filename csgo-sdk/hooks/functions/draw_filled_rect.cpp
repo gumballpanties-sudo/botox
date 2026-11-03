@@ -43,7 +43,7 @@ static void snap_span( int& low, int& high, const float grid )
 /* CHudScope::Paint draws for a square screen; widen x round centre like a real stretched res */
 static float scope_scale( )
 {
-	if ( !g_ctx.m_is_scope_being_drawn || !GET_VARIABLE( g_variables.m_aspect_ratio_hud, bool ) || g_resolution_spoof.m_screen_width <= 0 )
+	if ( !g_ctx.m_is_scope_being_drawn || !g_resolution_spoof.aspect_hud( ) || g_resolution_spoof.m_screen_width <= 0 )
 		return 1.f;
 
 	return g_resolution_spoof.aspect_scale( );
@@ -117,6 +117,10 @@ void __stdcall n_detoured_functions::draw_filled_rect( int x0, int y0, int x1, i
 	static auto original = g_hooks.m_draw_filled_rect.get_original< void( __thiscall* )( c_surface*, int, int, int, int ) >( );
 	HOOK_SCOPE_OR_BAIL( original( g_interfaces.m_surface, x0, y0, x1, y1 ) );
 
+	// res spoof redraws it in the low res target
+	if ( g_resolution_spoof.crosshair_capture( x0, y0, x1, y1 ) )
+		return;
+
 	stretch_crosshair_rect( x0, y0, x1, y1 );
 
 	original( g_interfaces.m_surface, x0, y0, x1, y1 );
@@ -126,6 +130,9 @@ void __stdcall n_detoured_functions::draw_textured_rect( int x0, int y0, int x1,
 {
 	static auto original = g_hooks.m_draw_textured_rect.get_original< void( __thiscall* )( c_surface*, int, int, int, int ) >( );
 	HOOK_SCOPE_OR_BAIL( original( g_interfaces.m_surface, x0, y0, x1, y1 ) );
+
+	if ( g_resolution_spoof.crosshair_capture( x0, y0, x1, y1 ) )
+		return;
 
 	stretch_crosshair_rect( x0, y0, x1, y1 );
 

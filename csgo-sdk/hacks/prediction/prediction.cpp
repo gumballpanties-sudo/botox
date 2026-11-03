@@ -242,7 +242,7 @@ void n_prediction::impl_t::sync_arm( const int owner, const bool on )
 	if ( !cl_pred_optimize )
 		return;
 	const int was = armed;
-	armed         = on ? ( armed | owner ) : ( armed & ~owner );
+	armed         = on && !g_ctx.m_eject_restoring ? ( armed | owner ) : ( armed & ~owner );
 	if ( !was && armed ) {
 		saved = cl_pred_optimize->get_int( );
 		cl_pred_optimize->set_value( std::min( saved, 1 ) );

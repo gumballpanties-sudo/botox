@@ -24,6 +24,9 @@ namespace n_scaleform
 		void classic_off( );
 		void restore_showloadout( );
 		void on_release( ) { restore_showloadout( ); }
+
+		// game thread, g_ctx.m_eject_restoring up: one pass of every panorama mod reads off = each restores itself
+		void on_eject( );
 		void dump_panel_tree( );
 
 		void hud_removal( );

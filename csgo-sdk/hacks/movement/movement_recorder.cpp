@@ -926,16 +926,6 @@ static unsigned int accent_u32( float alpha = 1.f )
 	return ImGui::GetColorU32( ImVec4( c.x, c.y, c.z, alpha ) );
 }
 
-static void enqueue_line( const c_vector_2d& a, const c_vector_2d& b, unsigned int col, float th )
-{
-	line_draw_object_t obj{ };
-	obj.m_start     = a;
-	obj.m_end       = b;
-	obj.m_color     = col;
-	obj.m_thickness = th;
-	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( obj ) );
-}
-
 static void enqueue_rect( const c_vector_2d& min, const c_vector_2d& max, unsigned int col )
 {
 	rect_draw_object_t obj{ };
@@ -994,6 +984,33 @@ static void enqueue_text( ImFont* font, const c_vector_2d& pos, const std::strin
 	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_text, std::make_any< text_draw_object_t >( obj ) );
 }
 
+/* frames [ begin, end ) as one draw object; strip breaks where w2s fails */
+static void enqueue_path( const std::vector< n_movement_recorder::frame_t >& frames, size_t begin, size_t end, unsigned int col, float th )
+{
+	end = std::min( end, frames.size( ) );
+	if ( begin + 1 >= end )
+		return;
+
+	std::vector< std::vector< ImVec2 > > strips( 1 );
+	for ( size_t i = begin; i < end; ++i ) {
+		c_vector_2d s{ };
+		if ( !g_render.world_to_screen( frames[ i ].position, s ) ) {
+			if ( !strips.back( ).empty( ) )
+				strips.emplace_back( );
+			continue;
+		}
+		strips.back( ).emplace_back( s.m_x, s.m_y );
+	}
+
+	callback_draw_object_t obj{ };
+	obj.m_callback = [ strips = std::move( strips ), col, th ]( ImDrawList* list ) {
+		for ( const auto& s : strips )
+			if ( s.size( ) >= 2 )
+				list->AddPolyline( s.data( ), static_cast< int >( s.size( ) ), col, ImDrawFlags_None, th );
+	};
+	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_callback, std::make_any< callback_draw_object_t >( std::move( obj ) ) );
+}
+
 void n_movement_recorder::impl_t::render_path( const std::vector< frame_t >& frames, float start_time )
 {
 	if ( !GET_VARIABLE( g_variables.m_movement_rec_show_line, bool ) )
@@ -1011,17 +1028,7 @@ void n_movement_recorder::impl_t::render_path( const std::vector< frame_t >& fra
 	const unsigned int col = rgba( static_cast< int >( r ), static_cast< int >( g ), static_cast< int >( b ), alpha );
 
 	enqueue_world_floor_disc( frames[ 0 ].position, k_start_radius * 0.45f, rgba( 0, 0, 0, 100 ), accent_u32( 0.85f ), 64, 1.5f );
-
-	c_vector_2d prev{ };
-	bool has_prev = false;
-	for ( const frame_t& f : frames ) {
-		c_vector_2d cur{ };
-		const bool on_screen = g_render.world_to_screen( f.position, cur );
-		if ( on_screen && has_prev )
-			enqueue_line( prev, cur, col, 0.5f );
-		prev     = cur;
-		has_prev = on_screen;
-	}
+	enqueue_path( frames, 0, frames.size( ), col, 0.5f );
 }
 
 void n_movement_recorder::impl_t::render_route_preview( )
@@ -1051,6 +1058,29 @@ void n_movement_recorder::impl_t::render_route_preview( )
 			return;
 		}
 
+		/* editor open: kept ticks bright, trimmed ends faint, start/end move with the sliders */
+		if ( m_editor_open && m_editor_clip_index == static_cast< int >( i ) ) {
+			const int last = static_cast< int >( route.frames.size( ) ) - 1;
+			int ts         = std::clamp( m_editor_trim_start, 0, last );
+			int te         = std::clamp( m_editor_trim_end, 0, last );
+			if ( ts > te )
+				std::swap( ts, te );
+
+			const unsigned int cut = rgba( 255, 255, 255, 40 );
+			enqueue_path( route.frames, 0, ts + 1, cut, 1.f );
+			enqueue_path( route.frames, te, route.frames.size( ), cut, 1.f );
+			enqueue_path( route.frames, ts, te + 1, accent_u32( 1.f ), 1.5f );
+			enqueue_world_floor_disc( route.frames[ ts ].position, k_start_radius * 0.45f, rgba( 0, 0, 0, 100 ), accent_u32( 0.85f ), 64, 1.5f );
+
+			c_vector_2d end_screen{ };
+			if ( g_render.world_to_screen( route.frames[ te ].position, end_screen ) ) {
+				enqueue_dot( end_screen, 4.f, rgba( 0, 0, 0, 100 ), accent_u32( 1.f ) );
+				if ( font )
+					enqueue_text( font, c_vector_2d{ end_screen.m_x + 7.f, end_screen.m_y - font->FontSize * 0.5f }, "end", rgba( 255, 255, 255, 255 ) );
+			}
+			continue;
+		}
+
 		if ( distance < k_start_radius && font ) {
 			c_vector forward{ };
 			g_math.angle_vectors( c_angle( first.view_pitch, first.view_yaw, 0.f ), &forward );
@@ -1062,17 +1092,20 @@ void n_movement_recorder::impl_t::render_route_preview( )
 			}
 		}
 
-		c_vector_2d screen{ };
-		if ( !g_render.world_to_screen( start_pos, screen ) )
-			continue;
-
-		m_point_progress[ i ] += ( 1.f - m_point_progress[ i ] ) * std::clamp( dt * 5.f, 0.f, 1.f );
-
 		float alpha_mul = 1.f;
 		if ( distance > 900.f )
 			alpha_mul = std::clamp( ( 1000.f - distance ) / 100.f, 0.f, 1.f );
 		if ( alpha_mul <= 0.f )
 			continue;
+
+		if ( GET_VARIABLE( g_variables.m_movement_rec_show_line, bool ) )
+			enqueue_path( route.frames, 0, route.frames.size( ), accent_u32( 0.55f * alpha_mul ), 1.f );
+
+		c_vector_2d screen{ };
+		if ( !g_render.world_to_screen( start_pos, screen ) )
+			continue;
+
+		m_point_progress[ i ] += ( 1.f - m_point_progress[ i ] ) * std::clamp( dt * 5.f, 0.f, 1.f );
 
 		const float effective_r = k_start_radius * 0.45f * m_point_progress[ i ];
 

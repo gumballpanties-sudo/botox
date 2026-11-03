@@ -146,8 +146,10 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 				}
 			}
 
-			if ( attacker_id == local_id && attacker_id != victim_id )
+			if ( attacker_id == local_id && attacker_id != victim_id ) {
 				on_healthshot( 0 );
+				custom_names_on_kill( );
+			}
 			on_death_particles( victim_id, attacker_id );
 
 			player_info_t attacker_info{ }, victim_info{ };

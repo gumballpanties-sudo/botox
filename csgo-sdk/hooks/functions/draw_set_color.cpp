@@ -2,10 +2,11 @@
 #include "../../globals/includes/includes.h"
 #include "../../globals/interfaces/interfaces.h"
 #include "../../utilities/console/console.h"
+#include "../../hacks/visuals/screen/resolution_spoof.h"
 #include "../hooks.h"
 
 /* DrawCrosshairRect (weapon_csbase.cpp:407): outline = DrawSetColor( 0, 0, 0, a ) right before the line's own color */
-static void classic_crosshair_color( int& r, int& g, int& b, int& a )
+static bool classic_crosshair_color( int& r, int& g, int& b, int& a )
 {
 	const bool outline_on = g_convars.int_or( HASH_BT( "cl_crosshair_drawoutline" ), 0 ) != 0;
 	const bool is_outline = outline_on && g_ctx.m_crosshair_outline_next && !r && !g && !b;
@@ -15,7 +16,7 @@ static void classic_crosshair_color( int& r, int& g, int& b, int& a )
 	const bool want = is_outline ? GET_VARIABLE( g_variables.m_classic_crosshair_outline_color, bool )
 	                             : GET_VARIABLE( g_variables.m_classic_crosshair_color, bool );
 	if ( !want )
-		return;
+		return is_outline;
 
 	const c_color color = is_outline ? GET_VARIABLE( g_variables.m_classic_crosshair_outline_color_value, c_color )
 	                                 : GET_VARIABLE( g_variables.m_classic_crosshair_color_value, c_color );
@@ -24,6 +25,8 @@ static void classic_crosshair_color( int& r, int& g, int& b, int& a )
 	g = color[ color_type_g ];
 	b = color[ color_type_b ];
 	a = a * color[ color_type_a ] / 255;
+
+	return is_outline;
 }
 
 void __stdcall n_detoured_functions::draw_set_color( int r, int g, int b, int a )
@@ -38,8 +41,10 @@ void __stdcall n_detoured_functions::draw_set_color( int r, int g, int b, int a 
 		return;
 	}
 
-	if ( g_ctx.m_is_hud_weapon_being_drawn )
-		classic_crosshair_color( r, g, b, a );
+	if ( g_ctx.m_is_hud_weapon_being_drawn ) {
+		const bool outline = classic_crosshair_color( r, g, b, a );
+		g_resolution_spoof.crosshair_color( r, g, b, a, outline );
+	}
 
 	original( g_interfaces.m_surface, r, g, b, a );
 }

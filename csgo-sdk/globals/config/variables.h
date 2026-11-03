@@ -796,7 +796,7 @@ namespace n_variables
 		ADD_VARIABLE( int, m_resolution_spoof_height, 768 );
 		ADD_VARIABLE( bool, m_resolution_spoof_dump, false );
 		ADD_VARIABLE( int, m_resolution_spoof_debug, 0 );
-		ADD_VARIABLE( bool, m_resolution_spoof_render_scale, true );
+		ADD_VARIABLE( bool, m_resolution_spoof_stretch, true );
 		/* dead end: mat_setvideomode (real mode change) CRASHES the game while injected */
 		ADD_VARIABLE( bool, m_resolution_spoof_overlay, true );
 		ADD_VARIABLE( bool, m_resolution_spoof_net_graph, true );
@@ -1102,6 +1102,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_wall_climb_duck, true );
 		ADD_VARIABLE( int, m_wall_climb_spot_reach, 16 );
 		ADD_VARIABLE( bool, m_wall_climb_seam_steer, false );
+		ADD_VARIABLE( float, m_wall_climb_steer_scale, 1.f );
 		ADD_VARIABLE( bool, m_wall_climb_visualize, false );
 		ADD_VARIABLE( c_color, m_wall_climb_visualize_color, c_color( 255, 190, 90, 255 ) );
 		ADD_VARIABLE( bool, m_show_wall_slope, false );
@@ -1121,8 +1122,44 @@ namespace n_variables
 		ADD_VARIABLE( int, m_pixel_surf_assist_ticks, 12 );
 		ADD_VARIABLE( int, m_pixel_surf_assist_type, 0 );
 		ADD_VARIABLE( bool, m_pixel_surf_assist_render, false );
-		ADD_VARIABLE( bool, m_pixel_surf_assist_show_points, true );
-		ADD_VARIABLE( float, m_pixel_surf_assist_point_dist, 1500.f );
+		ADD_VARIABLE( bool, m_points_render_ps, true );
+		ADD_VARIABLE( bool, m_points_render_bounce, true );
+		ADD_VARIABLE( bool, m_points_render_calc, true );
+		ADD_VARIABLE( bool, m_points_render_finder, true );
+		ADD_VARIABLE( float, m_points_opacity, 1.f );
+		ADD_VARIABLE( float, m_points_max_dist, 1500.f );
+		ADD_VARIABLE( bool, m_points_radius_color, false );
+		ADD_VARIABLE( c_color, m_points_radius_clr, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( bool, m_points_delete, true );
+		ADD_VARIABLE( key_bind_t, m_points_delete_key, key_bind_t( 0x08, 1 ) );
+		ADD_VARIABLE( float, m_points_size, 1.f );
+		ADD_VARIABLE( float, m_points_thickness, 1.f );
+		ADD_VARIABLE( float, m_points_fill, 0.4f );
+		ADD_VARIABLE( float, m_points_hover_scale, 1.5f );
+		ADD_VARIABLE( bool, m_points_distance_fade, true );
+		ADD_VARIABLE( bool, m_points_distance_shrink, true );
+		ADD_VARIABLE( bool, m_points_labels, false );
+		ADD_VARIABLE( int, m_point_design_type_ps, 0 );
+		ADD_VARIABLE( int, m_point_design_type_hb, 0 );
+		ADD_VARIABLE( int, m_point_design_type_pj, 0 );
+		ADD_VARIABLE( int, m_point_shape_ps, 0 );
+		ADD_VARIABLE( int, m_point_shape_hb, 0 );
+		ADD_VARIABLE( int, m_point_shape_pj, 0 );
+		ADD_VARIABLE( int, m_point_shape_calc, 0 );
+		ADD_VARIABLE( float, m_points_design_size, 0.8f );
+		ADD_VARIABLE( bool, m_points_glow, false );
+		ADD_VARIABLE( bool, m_points_pulse, false );
+		ADD_VARIABLE( c_color, m_point_clr_pf_ps, c_color( 0, 255, 0, 255 ) );
+		ADD_VARIABLE( c_color, m_point_clr_pf_hb, c_color( 255, 0, 0, 255 ) );
+		ADD_VARIABLE( c_color, m_point_clr_pf_pj, c_color( 255, 220, 0, 255 ) );
+		ADD_VARIABLE( c_color, m_point_clr_pf_tb, c_color( 0, 200, 255, 255 ) );
+		ADD_VARIABLE( int, m_point_gaps_ps, 0 );
+		ADD_VARIABLE( int, m_point_gaps_hb, 2 );
+		ADD_VARIABLE( int, m_point_gaps_pj, 2 );
+		ADD_VARIABLE( int, m_point_gaps_calc, 0 );
+		ADD_VARIABLE( bool, m_point_design_ps, true );
+		ADD_VARIABLE( bool, m_point_design_hb, true );
+		ADD_VARIABLE( bool, m_point_design_pj, true );
 		ADD_VARIABLE( bool, m_auto_align, false );
 		ADD_VARIABLE( bool, m_auto_align_pixel_jump, true );
 
@@ -1289,6 +1326,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_pixel_finder_pixelsurfs, true );
 		ADD_VARIABLE( bool, m_pixel_finder_headbounces, true );
 		ADD_VARIABLE( bool, m_pixel_finder_pixeljumps, true );
+		ADD_VARIABLE( bool, m_pixel_finder_map_lines, true );
 		ADD_VARIABLE( bool, m_pixel_surf_assist_brokehop, false );
 		ADD_VARIABLE( float, m_pixel_surf_assist_ground_angle_limit, 2.5f );
 		ADD_VARIABLE( bool, m_pixel_surf_assist_ground_help, false );
@@ -1619,6 +1657,30 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_bot_names_ping, false );
 		ADD_VARIABLE( bool, m_bot_names_profile, false );
 
+		/* custom names, fpsoverlay names tab 1:1 (misc/custom_names.cpp). streamer mode 0 off, 1 team / enemy label,
+		   2 one label (fpsoverlay 2 / 3; its class mode has no cs:go side) -- never masks you. cycle lists: 16 rows +
+		   count each. trigger 0 timer (interval s, game time), 1 on your kill. per-player names = player list page */
+		ADD_VARIABLE( int, m_streamer_mode, 0 );
+		ADD_VARIABLE( std::string, m_streamer_team_label, "teammate" );
+		ADD_VARIABLE( std::string, m_streamer_enemy_label, "enemy" );
+		ADD_VARIABLE( std::string, m_streamer_everyone_label, "player" );
+		ADD_VARIABLE( bool, m_use_custom_username, false );
+		ADD_VARIABLE( std::string, m_custom_username, "" );
+		ADD_VARIABLE( bool, m_enable_name_cycle, false );
+		ADD_VARIABLE( bool, m_enable_team_label_cycle, false );
+		ADD_VARIABLE( bool, m_enable_enemy_label_cycle, false );
+		ADD_VARIABLE( bool, m_enable_everyone_label_cycle, false );
+		ADD_VARIABLE_VECTOR( std::string, 16, m_name_cycle, "" );
+		ADD_VARIABLE_VECTOR( std::string, 16, m_team_label_cycle, "" );
+		ADD_VARIABLE_VECTOR( std::string, 16, m_enemy_label_cycle, "" );
+		ADD_VARIABLE_VECTOR( std::string, 16, m_everyone_label_cycle, "" );
+		ADD_VARIABLE( int, m_name_cycle_count, 0 );
+		ADD_VARIABLE( int, m_team_label_cycle_count, 0 );
+		ADD_VARIABLE( int, m_enemy_label_cycle_count, 0 );
+		ADD_VARIABLE( int, m_everyone_label_cycle_count, 0 );
+		ADD_VARIABLE( int, m_name_trigger, 0 );
+		ADD_VARIABLE( float, m_name_interval, 5.f );
+
 		ADD_VARIABLE( bool, m_performance, false );
 		ADD_VARIABLE( bool, m_performance_threaded_bones, true );
 		ADD_VARIABLE( bool, m_performance_force_preload, true );
@@ -1803,6 +1865,8 @@ namespace n_variables
 
 		ADD_VARIABLE( bool, m_chat_translator, false );
 		ADD_VARIABLE( int, m_chat_translator_language, 0 );
+		ADD_VARIABLE( std::string, m_chat_translator_libre_url, "" );
+		ADD_VARIABLE( std::string, m_chat_translator_libre_key, "" );
 		ADD_VARIABLE( bool, m_chat_images, false );
 
 		ADD_VARIABLE( bool, m_practice_window, false );

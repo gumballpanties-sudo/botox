@@ -707,11 +707,6 @@ void n_menu::impl_t::on_end_scene( )
 			                          ImDrawFlags_RoundCornersTop );
 			ImGui::PopClipRect( );
 
-			ImGui::PushClipRect( ImVec2( position.x, position.y ), ImVec2( position.x + size.x, position.y + size.y ), false );
-			draw_list->AddRect( ImVec2( position.x, position.y ), ImVec2( position.x + size.x, position.y + size.y ),
-			                    ImGui::GetColorU32( ImGuiCol_MenuWindowOutline ), ImGui::GetStyle( ).WindowRounding );
-			ImGui::PopClipRect( );
-
 			RenderFadedGradientLine( draw_list, ImVec2( position.x, position.y + background_height - 1.f ), ImVec2( size.x, 1.f ),
 			                         ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ) );
 
@@ -739,6 +734,12 @@ void n_menu::impl_t::on_end_scene( )
 		                          ImGui::GetColorU32( ImGuiCol_MenuBand ), ImGui::GetStyle( ).WindowRounding, ImDrawFlags_RoundCornersBottom );
 		ImGui::PopClipRect( );
 
+		/* border after both bands: bottom fill drawn over it hid the outline */
+		ImGui::PushClipRect( ImVec2( position.x, position.y ), ImVec2( position.x + size.x, position.y + size.y ), false );
+		draw_list->AddRect( ImVec2( position.x, position.y ), ImVec2( position.x + size.x, position.y + size.y ),
+		                    ImGui::GetColorU32( ImGuiCol_MenuWindowOutline ), ImGui::GetStyle( ).WindowRounding );
+		ImGui::PopClipRect( );
+
 		RenderFadedGradientLine( draw_list, ImVec2( position.x, position.y + size.y - bottom_band_height ), ImVec2( size.x, 1.f ),
 		                         ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ) );
 
@@ -754,7 +755,7 @@ void n_menu::impl_t::on_end_scene( )
 		};
 
 		static const menu_tab_t tabs[ ] = {
-			{ "aimbot", { } }, { "visuals", { "esp", "world", "screen" } }, { "movement", { "main", "indicators", "calculator", "recorder" } },
+			{ "aimbot", { } }, { "visuals", { "esp", "world", "screen" } }, { "movement", { "main", "indicators", "calculator", "recorder", "points" } },
 			{ "misc", { "main", "player list", "cvars" } },   { "inventory", { "weapons", "player" } }, { "fonts", { "indicators", "esp", "chud hud", "default hud", "net graph" } },
 			{ "settings", { } },
 		};

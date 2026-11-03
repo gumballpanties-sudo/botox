@@ -1,6 +1,7 @@
 #include "menu_internal.h"
 #include "../misc/misc.h"
 #include "../misc/chat_extras.h"
+#include "../misc/names_pure.h"
 #include "../network/botox_net.h"
 #include "../../game/sdk/includes/includes.h"
 
@@ -894,9 +895,11 @@ void n_menu::impl_t::player_list_page( )
 
 	/* negative y = sized after show_text's 20 px title shift */
 	if ( ImGui::BeginChild( "players", ImVec2( 0.f, -menu_bottom_band_height ), true, 0, true ) ) {
-		/* name gets ~36%, the 4 cells split the rest evenly, header centred in its slot */
+		/* name ~28%, 4 cells of 12% each, header centred in its slot; custom name takes the rest (last column: the
+		   custom InputText runs to the right edge by itself) */
 		const float row_width = ImGui::GetContentRegionAvail( ).x;
-		const float name_width = ImFloor( row_width * 0.36f ), slot = ( row_width - name_width ) / 4.f;
+		const float name_width = ImFloor( row_width * 0.28f ), slot = ImFloor( row_width * 0.12f );
+		const float k_custom = ImFloor( name_width + slot * 4.f + 8.f );
 		const auto slot_x = [ & ]( const int index, const char* header ) {
 			return ImFloor( name_width + slot * index + ( slot - ImGui::CalcTextSize( header ).x ) / 2.f );
 		};
@@ -917,6 +920,8 @@ void n_menu::impl_t::player_list_page( )
 		ImGui::Label( "aimbot ignore" );
 		column( k_only );
 		ImGui::Label( "only aimbot" );
+		column( k_custom );
+		ImGui::Label( "custom name" );
 
 		if ( ImGui::BeginChild( "##player list rows", ImVec2( 0.f, 0.f ), false, 0, false ) ) {
 			const float square = ImGui::GetFrameHeight( );
@@ -932,7 +937,8 @@ void n_menu::impl_t::player_list_page( )
 				const auto entity = g_interfaces.m_client_entity_list->get< c_base_entity >( i );
 				const int team    = entity ? entity->get_team( ) : 0;
 
-				std::string name = std::string( info.m_name ).substr( 0, 18 );
+				/* the real one: get_player_info hands back the custom name once one is set */
+				std::string name = std::string( player_list_real_name( i )[ 0 ] ? player_list_real_name( i ) : info.m_name ).substr( 0, 18 );
 				if ( info.m_fake_player )
 					name = "BOT " + name;
 				if ( i == local )
@@ -974,6 +980,12 @@ void n_menu::impl_t::player_list_page( )
 						player_list_save( i, info );
 				}
 
+				/* fpsoverlay alias: shown instead of their name everywhere, "" = off. bots have no xuid = not saved */
+				column( k_custom );
+				ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) - 10.f ); /* custom InputText pushes itself 10 px down */
+				if ( ImGui::InputTextWithHint( "##custom name", info.m_fake_player ? "bot (not saved)" : "custom name", entry.m_name, sizeof( entry.m_name ) ) )
+					player_list_save( i, info );
+
 				ImGui::PopID( );
 				shown++;
 			}
@@ -1007,6 +1019,54 @@ static bool icon_button( const char* id, const int icon, const float height )
 		draw->AddLine( ImVec2( cx, cy + tip ), ImVec2( cx + 3.f, cy - tip ), color );
 	}
 	return pressed;
+}
+
+/* fpsoverlay MenuEntryList 1:1 (custom names cycle lists): a box + x per row, "+ add" under them while room is
+   left. custom InputText only narrows inside a table cell (cvars_page numbers) */
+static void name_entry_list( const char* id, const std::uint32_t rows_var, const std::uint32_t count_var, const char* add_label )
+{
+	constexpr float k_frame = 17.f, k_input_lift = 10.f, k_remove = 16.f;
+	auto& rows  = GET_VARIABLE( rows_var, std::vector< std::string > );
+	int& count  = GET_VARIABLE( count_var, int );
+	count       = std::clamp( count, 0, ( std::min )( n_names::kMaxNames, static_cast< int >( rows.size( ) ) ) );
+
+	static std::unordered_map< ImGuiID, std::array< std::array< char, 64 >, n_names::kMaxNames > > s_buffers;
+	ImGui::PushID( id );
+	auto& buffers = s_buffers[ ImGui::GetID( "##buffers" ) ];
+
+	int remove = -1;
+	if ( count > 0 ) {
+		ImGui::PushStyleVar( ImGuiStyleVar_CellPadding, ImVec2( ImGui::GetStyle( ).CellPadding.x, 0.f ) );
+		const bool open = ImGui::BeginTable( "##rows", 2 );
+		ImGui::PopStyleVar( );
+		if ( open ) {
+			ImGui::TableSetupColumn( "##text", ImGuiTableColumnFlags_WidthStretch );
+			ImGui::TableSetupColumn( "##x", ImGuiTableColumnFlags_WidthFixed, k_remove + 4.f );
+			for ( int i = 0; i < count; ++i ) {
+				ImGui::PushID( i );
+				ImGui::TableNextRow( ImGuiTableRowFlags_None, k_frame + 4.f );
+				ImGui::TableNextColumn( );
+				ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) - k_input_lift );
+				text_buffer_sync( "##entry", rows[ i ], buffers[ i ].data( ), buffers[ i ].size( ) );
+				ImGui::TableNextColumn( );
+				ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) + 2.f );
+				if ( icon_button( "##delete", 2, k_frame - 4.f ) )
+					remove = i;
+				ImGui::PopID( );
+			}
+			ImGui::EndTable( );
+		}
+	}
+
+	/* buffers re-sync from rows next frame (text_buffer_sync), no shuffle needed */
+	if ( remove >= 0 ) {
+		rows.erase( rows.begin( ) + remove );
+		rows.emplace_back( );
+		--count;
+	}
+	if ( count < n_names::kMaxNames && count < static_cast< int >( rows.size( ) ) && ImGui::Button( add_label, ImVec2( -1.f, 15.f ) ) )
+		rows[ count++ ].clear( );
+	ImGui::PopID( );
 }
 
 void n_menu::impl_t::cvars_page( )
@@ -1912,6 +1972,12 @@ void n_menu::impl_t::tab_misc( )
 				[]( ) {
 					ImGui::Combo( "translate to##chat translator", &GET_VARIABLE( g_variables.m_chat_translator_language, int ),
 					              n_chat_extras::k_language_names );
+
+					static char libre_url[ 128 ] = { }, libre_key[ 128 ] = { };
+					text_buffer_sync( "libre fallback url##chat translator", GET_VARIABLE( g_variables.m_chat_translator_libre_url, std::string ), libre_url,
+					                  sizeof( libre_url ), "http://localhost:5000" );
+					text_buffer_sync( "libre api key##chat translator", GET_VARIABLE( g_variables.m_chat_translator_libre_key, std::string ), libre_key,
+					                  sizeof( libre_key ), "optional" );
 				},
 				ImVec2( 220.f, -1.f ) );
 		}
@@ -1943,6 +2009,80 @@ void n_menu::impl_t::tab_misc( )
 
 					if ( ImGui::Button( "randomize##botnames", ImVec2( -1.f, 15.f ) ) )
 						bot_names_randomize( );
+				},
+				ImVec2( 220.f, -1.f ) );
+		}
+
+		/* fpsoverlay names tab 1:1 (misc/custom_names.cpp), split over two cogs. other players' own names = misc > player
+		   list "custom name" */
+		static const auto names_cycle_rows = []( ) {
+			/* fpsoverlay CYCLE section: shown whenever any cycle is active */
+			const int mode       = GET_VARIABLE( g_variables.m_streamer_mode, int );
+			const bool any_cycle = ( GET_VARIABLE( g_variables.m_use_custom_username, bool ) && GET_VARIABLE( g_variables.m_enable_name_cycle, bool ) ) ||
+			                       ( mode == 1 && ( GET_VARIABLE( g_variables.m_enable_team_label_cycle, bool ) ||
+			                                        GET_VARIABLE( g_variables.m_enable_enemy_label_cycle, bool ) ) ) ||
+			                       ( mode == 2 && GET_VARIABLE( g_variables.m_enable_everyone_label_cycle, bool ) );
+			if ( !any_cycle )
+				return;
+			ImGui::Combo( "cycle on##names", &GET_VARIABLE( g_variables.m_name_trigger, int ), "timer\0on kill\0" );
+			if ( GET_VARIABLE( g_variables.m_name_trigger, int ) == 0 )
+				ImGui::SliderFloat( "interval##names", &GET_VARIABLE( g_variables.m_name_interval, float ), 0.1f, 60.f, "%.1f s" );
+		};
+
+		ImGui::Checkbox( "custom name", &GET_VARIABLE( g_variables.m_use_custom_username, bool ) );
+		if ( GET_VARIABLE( g_variables.m_use_custom_username, bool ) ) {
+			ImGui::OptionPopup(
+				"custom name settings",
+				[]( ) {
+					static char name_buffer[ 64 ] = { };
+					text_buffer_sync( "your name##customname", GET_VARIABLE( g_variables.m_custom_username, std::string ), name_buffer, sizeof( name_buffer ) );
+					ImGui::Checkbox( "cycle name##customname", &GET_VARIABLE( g_variables.m_enable_name_cycle, bool ) );
+					if ( GET_VARIABLE( g_variables.m_enable_name_cycle, bool ) )
+						name_entry_list( "##names", g_variables.m_name_cycle, g_variables.m_name_cycle_count, "+ add name" );
+					names_cycle_rows( );
+				},
+				ImVec2( 220.f, -1.f ) );
+		}
+
+		{
+			static int last_mode = 1; /* checkbox brings back the last mode picked */
+			int& mode            = GET_VARIABLE( g_variables.m_streamer_mode, int );
+			bool streamer        = mode != 0;
+			if ( mode != 0 )
+				last_mode = mode;
+			if ( ImGui::Checkbox( "streamer mode", &streamer ) )
+				mode = streamer ? last_mode : 0;
+		}
+		if ( GET_VARIABLE( g_variables.m_streamer_mode, int ) != 0 ) {
+			ImGui::OptionPopup(
+				"streamer mode settings",
+				[]( ) {
+					int& mode = GET_VARIABLE( g_variables.m_streamer_mode, int );
+					int shown = mode - 1;
+					if ( ImGui::Combo( "others shown as##streamer", &shown, "team labels\0one label\0" ) )
+						mode = shown + 1;
+
+					if ( mode == 1 ) {
+						static char team_buffer[ 64 ] = { }, enemy_buffer[ 64 ] = { };
+						text_buffer_sync( "teammate label##streamer", GET_VARIABLE( g_variables.m_streamer_team_label, std::string ), team_buffer,
+						                  sizeof( team_buffer ) );
+						ImGui::Checkbox( "cycle teammate label##streamer", &GET_VARIABLE( g_variables.m_enable_team_label_cycle, bool ) );
+						if ( GET_VARIABLE( g_variables.m_enable_team_label_cycle, bool ) )
+							name_entry_list( "##teamlabels", g_variables.m_team_label_cycle, g_variables.m_team_label_cycle_count, "+ add label" );
+						text_buffer_sync( "enemy label##streamer", GET_VARIABLE( g_variables.m_streamer_enemy_label, std::string ), enemy_buffer,
+						                  sizeof( enemy_buffer ) );
+						ImGui::Checkbox( "cycle enemy label##streamer", &GET_VARIABLE( g_variables.m_enable_enemy_label_cycle, bool ) );
+						if ( GET_VARIABLE( g_variables.m_enable_enemy_label_cycle, bool ) )
+							name_entry_list( "##enemylabels", g_variables.m_enemy_label_cycle, g_variables.m_enemy_label_cycle_count, "+ add label" );
+					} else if ( mode == 2 ) {
+						static char everyone_buffer[ 64 ] = { };
+						text_buffer_sync( "everyone label##streamer", GET_VARIABLE( g_variables.m_streamer_everyone_label, std::string ), everyone_buffer,
+						                  sizeof( everyone_buffer ) );
+						ImGui::Checkbox( "cycle everyone label##streamer", &GET_VARIABLE( g_variables.m_enable_everyone_label_cycle, bool ) );
+						if ( GET_VARIABLE( g_variables.m_enable_everyone_label_cycle, bool ) )
+							name_entry_list( "##evlabels", g_variables.m_everyone_label_cycle, g_variables.m_everyone_label_cycle_count, "+ add label" );
+					}
+					names_cycle_rows( );
 				},
 				ImVec2( 220.f, -1.f ) );
 		}

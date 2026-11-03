@@ -29,6 +29,9 @@ namespace n_aimbot
 
 		void nospread_frame_stage( int stage );
 
+		/* camlock glide, render_start: camera eases to the tick's aim every frame ( tick-only = steps at high fps ) */
+		void camlock_frame( int stage );
+
 		void on_level_init( );
 
 		float active_fov( );
@@ -62,6 +65,9 @@ namespace n_aimbot
 		int m_target_hitbox  = 0;
 		int m_lock_index     = 0;
 		bool m_visible_first = false;
+
+		/* camlock aim from the last tick ( rcs comp in ), stamp = real_time, 0 = no glide */
+		float m_cam_pitch = 0.f, m_cam_yaw = 0.f, m_cam_smooth = 1.f, m_cam_stamp = 0.f;
 
 		/* rcs state. m_rcs_shots = our burst counter ( m_iShotsFired resets between taps ). applied_x/y = comp baked into the camera
 		   ( visible only ), unwound as punch decays. the aim's own turn is a target move, never comp */

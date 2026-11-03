@@ -6,6 +6,8 @@
 #include "../hooks.h"
 
 #include "../../hacks/aimbot/grenade_aim.h"
+#include "../../hacks/chud_hud/chud_hud.h"
+#include "../../hacks/misc/scaleform/scaleform.h"
 #include "../../hacks/debug/debug.h"
 #include "../../hacks/indicators/indicators.h"
 #include "../../hacks/mc_hud/mc_hud.h"
@@ -20,6 +22,7 @@
 #include "../../hacks/visuals/grenade/grenade_path.h"
 #include "../../hacks/visuals/players/dormancy/dormancy.h"
 #include "../../hacks/visuals/players/players.h"
+#include "../../hacks/visuals/screen/resolution_spoof.h"
 #include "../../utilities/perf/perf_watch.h"
 
 void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsigned int panel, bool force_repaint, bool force )
@@ -71,17 +74,31 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 
 		if ( g_ctx.m_world_restore_requested.load( std::memory_order_acquire ) &&
 		     !g_ctx.m_world_restore_done.load( std::memory_order_acquire ) ) {
-			g_misc.on_level_shutdown( );
-			g_edicts.fog( true );
-			g_edicts.skybox_fog( true );
-			g_edicts.skybox( true );
-			g_edicts.fullbright( true );
-			g_ctx.m_world_restore_done = true;
+			static int frames_restoring = 0;
+
+			if ( !g_ctx.m_eject_restoring.exchange( true ) ) {
+				g_misc.on_level_shutdown( );
+				g_misc.on_eject( );
+				g_scaleform.on_eject( );
+				g_chud.on_createmove( );
+				g_edicts.fog( true );
+				g_edicts.skybox_fog( true );
+				g_edicts.skybox( true );
+				g_edicts.fullbright( true );
+			}
+
+			/* hooks stay live a little: createmove / frame stage / prediction gates read the flag as off and
+			   run their own restore ( ragdolls, nospread, cl_pred_optimize, binds ) before unload starts */
+			if ( ++frames_restoring >= 16 )
+				g_ctx.m_world_restore_done = true;
 		}
 
 		std::shared_lock< std::shared_mutex > font_lock( g_render.m_font_mutex );
 
 		g_render.clear_draw_data( );
+
+		// classic crosshair HudWeapon just painted, first so it sits under every cheat draw like the game frame
+		g_resolution_spoof.crosshair_flush( );
 
 		/* main-thread matrix copy: end_scene must not read the live (torn) one */
 		g_render.cache_view_matrix( );

@@ -29,6 +29,7 @@ extern bool g_air_stuck_owned_prev_tick;
 extern c_angle g_air_stuck_authored_view;
 extern bool g_air_stuck_authored_view_valid;
 extern bool g_air_stuck_stamp_valid;
+extern bool g_air_stuck_view_forced;
 extern float g_air_stuck_stamp_yaw;
 extern float g_air_stuck_stamp_forward;
 extern float g_air_stuck_stamp_side;

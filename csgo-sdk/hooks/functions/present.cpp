@@ -1,5 +1,6 @@
 #include "../../globals/includes/includes.h"
 #include "../../hacks/visuals/screen/depth_source.h"
+#include "../../hacks/visuals/screen/fx_compat.h"
 #include "../../hacks/visuals/screen/resolution_spoof.h"
 #include "../hooks.h"
 #include "flash_probe.h"
@@ -14,10 +15,10 @@ long __stdcall n_detoured_functions::present( IDirect3DDevice9* device, const RE
 
 	const bool overlay_pass = g_resolution_spoof.wants_overlay_pass( );
 
-	g_resolution_spoof.on_present( device, overlay_pass ? std::function< void( ) >( [ device ]( ) {
-		n_detoured_functions::draw_overlay_frame( device );
-	} )
-	                                                    : std::function< void( ) >( ) );
+	const std::function< void( ) > overlay =
+		overlay_pass ? std::function< void( ) >( [ device ]( ) { n_detoured_functions::draw_overlay_frame( device ); } ) : std::function< void( ) >( );
+
+	n_fx_compat::run( device, "res spoof", [ & ] { g_resolution_spoof.on_present( device, overlay ); } );
 
 	flash_probe_sample( device, 2 );
 

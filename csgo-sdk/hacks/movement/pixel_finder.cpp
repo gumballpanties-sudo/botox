@@ -22,6 +22,7 @@
 #include "wall_climb.h"
 #include "edgebug.h"
 #include "pixel_finder_scan.h"
+#include "pixel_finder_map.h"
 #include "../../utilities/perf/perf_watch.h"
 
 namespace
@@ -985,9 +986,408 @@ static void pf_recheck_tricks( )
 		botox_dbg_log( "[pf trick] rescan: %d of %d catch(es) in this band have a dot of their kind within %.1fu", found_n, in_band, k_pf_trick_dz );
 }
 
+constexpr float k_pm_stride      = 32.f;
+constexpr int k_pm_max_samples   = 512;
+constexpr size_t k_pm_max_tb     = 2048;
+constexpr float k_pm_tb_near     = 2048.f;
+constexpr size_t k_pm_tb_drawn   = 256;
+constexpr float k_pm_world       = 16400.f;
+
+static struct {
+	std::vector< n_pm::seam_t > seams;
+	size_t seam = 0;
+	int sample = 0, samples = 0, run_lo = -1, run_hi = -1;
+	int buttons = 0, arm_fails = 0;
+	int brushes = 0, cells = 0, no_wall = 0, voids = 0, hits = 0, arm_skips = 0, sims = 0, traces = 0;
+	long long used_us = 0, next_qpc = 0, start_qpc = 0;
+} s_pm;
+static std::vector< c_vector > s_pm_lines, s_pm_tb;
+static std::atomic< bool > s_pm_busy{ false }, s_pm_req{ false }, s_pm_stop{ false };
+static std::atomic< int > s_pm_done{ 0 }, s_pm_total{ 0 }, s_pm_line_n{ 0 }, s_pm_tb_n{ 0 };
+static int s_pm_outside_ok = -1;
+
+/* SEH frames: no unwinding locals here ( C2712 ) */
+static int pm_seh_query( const c_vector& mn, const c_vector& mx, c_brush_query& q )
+{
+	__try {
+		g_interfaces.m_engine_trace->get_brushes_in_aabb( mn, mx, q, mask_playersolid, 0 );
+		return q.m_brushes ? q.m_count : 0;
+	} __except ( EXCEPTION_EXECUTE_HANDLER ) {
+		return -1;
+	}
+}
+
+static bool pm_seh_copy( const c_brush_query& q, unsigned int* out, int n )
+{
+	__try {
+		std::memcpy( out, q.m_brushes, static_cast< size_t >( n ) * sizeof( unsigned int ) );
+		return true;
+	} __except ( EXCEPTION_EXECUTE_HANDLER ) {
+		return false;
+	}
+}
+
+static void pm_seh_release( c_brush_query& q )
+{
+	__try {
+		if ( q.m_release )
+			q.m_release( &q );
+	} __except ( EXCEPTION_EXECUTE_HANDLER ) {
+	}
+	q = { };
+}
+
+static int pm_seh_info( int brush, int& contents, brush_side_info_t* out, int cap )
+{
+	__try {
+		return g_interfaces.m_engine_trace->get_brush_info( brush, contents, out, cap );
+	} __except ( EXCEPTION_EXECUTE_HANDLER ) {
+		return 0;
+	}
+}
+
+static bool pm_seh_outside( const c_vector& p )
+{
+	__try {
+		return g_interfaces.m_engine_trace->point_outside_world( p );
+	} __except ( EXCEPTION_EXECUTE_HANDLER ) {
+		return false;
+	}
+}
+
+/* slot 19 never confirmed live: trusted only if it calls the player's own spot inside */
+static void pm_validate_outside( const c_vector& inside )
+{
+	if ( s_pm_outside_ok >= 0 )
+		return;
+	s_pm_outside_ok = pm_seh_outside( inside ) ? 0 : 1;
+	botox_dbg_log( "[pmap] PointOutsideWorld self-check at %.0f %.0f %.0f -> %s", inside.m_x, inside.m_y, inside.m_z,
+	               s_pm_outside_ok ? "ok, out of bounds gate armed" : "called the player OUTSIDE, gate off ( solid check still applies )" );
+}
+
+static bool pm_point_unusable( const c_vector& p )
+{
+	if ( g_interfaces.m_engine_trace->get_point_contents( p, mask_all, nullptr ) & contents_solid )
+		return true;
+	return s_pm_outside_ok == 1 && pm_seh_outside( p );
+}
+
+static void pm_build( )
+{
+	s_pm.seams.clear( );
+	s_pm.brushes = 0;
+	c_brush_query q{ };
+	const int n = pm_seh_query( c_vector( -k_pm_world, -k_pm_world, -k_pm_world ), c_vector( k_pm_world, k_pm_world, k_pm_world ), q );
+	const int max_sides = q.m_max_brush_sides;
+	std::vector< unsigned int > ids;
+	if ( n > 0 && n < ( 1 << 20 ) ) {
+		ids.resize( static_cast< size_t >( n ) );
+		if ( !pm_seh_copy( q, ids.data( ), n ) )
+			ids.clear( );
+	}
+	pm_seh_release( q );
+	std::vector< brush_side_info_t > sides( static_cast< size_t >( std::clamp( max_sides, 6, 1024 ) ) );
+	std::vector< n_pm::plane_t > planes;
+	for ( const unsigned int id : ids ) {
+		int contents = 0;
+		int ns       = pm_seh_info( static_cast< int >( id ), contents, sides.data( ), static_cast< int >( sides.size( ) ) );
+		if ( ns < 0 && -ns <= 4096 ) {
+			sides.resize( static_cast< size_t >( -ns ) );
+			ns = pm_seh_info( static_cast< int >( id ), contents, sides.data( ), static_cast< int >( sides.size( ) ) );
+		}
+		if ( ns <= 0 || ns > static_cast< int >( sides.size( ) ) || !( contents & mask_playersolid ) )
+			continue;
+		planes.resize( static_cast< size_t >( ns ) );
+		for ( int i = 0; i < ns; ++i )
+			planes[ i ] = { sides[ i ].m_plane.m_normal.m_x, sides[ i ].m_plane.m_normal.m_y, sides[ i ].m_plane.m_normal.m_z, sides[ i ].m_plane.m_distance };
+		++s_pm.brushes;
+		n_pm::brush_seams( planes.data( ), ns, s_pm.seams );
+		if ( s_pm.seams.size( ) > 400000 )
+			break;
+	}
+	n_pm::merge( s_pm.seams );
+	if ( n < 0 )
+		botox_dbg_log( "[pmap] GetBrushesInAABB faulted, slot / signature wrong on this build" );
+}
+
+/* a surf rides a brush top with the wall carrying on above it; startsolid = another brush in front, not this wall */
+static bool pm_wall_above( const n_pm::seam_t& s, const c_vector& at )
+{
+	const c_vector n( s.nx, s.ny, 0.f );
+	n_tb::c_trace_filter_tb_world_props flt( g_ctx.m_local );
+	for ( const float up : { 2.f, 6.f, 16.f } ) {
+		const c_vector mid = at + c_vector( 0.f, 0.f, up );
+		trace_t tr;
+		ray_t ray( mid + n * 8.f, mid - n * 8.f );
+		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &flt, &tr );
+		if ( tr.m_start_solid || tr.m_fraction >= 1.f )
+			continue;
+		if ( tr.m_plane.m_normal.m_x * s.nx + tr.m_plane.m_normal.m_y * s.ny <= 0.9f )
+			continue;
+		return true;
+	}
+	return false;
+}
+
+static void pm_tb_add( const c_vector& p )
+{
+	if ( s_pm_tb.size( ) >= k_pm_max_tb )
+		return;
+	for ( size_t i = s_pm_tb.size( ); i-- > 0; ) {
+		const c_vector& q = s_pm_tb[ i ];
+		if ( std::fabs( q.m_z - p.m_z ) < 0.5f && ( q - p ).length_2d( ) < 64.f )
+			return;
+	}
+	s_pm_tb.push_back( p );
+	s_pm_tb_n = static_cast< int >( s_pm_tb.size( ) );
+}
+
+/* one cell of the crosshair probe ( pf_spot -> pf_surf_gate -> pf_surf ), ducked then standing. 1 hit, 0 miss, -1 duck arm refused */
+template < class F >
+static int pm_probe( pf_ctx_t& c, const c_vector& at, bool tb_on, F&& ready )
+{
+	const bool seam = std::fabs( at.m_z - std::round( at.m_z ) ) < 0.001f;
+	for ( const bool duck : { true, false } ) {
+		s_pf_h = duck ? k_pf_hull : k_pf_stand_hull;
+		for ( int di = 0; di < ( seam ? 1 : 2 ); ++di ) {
+			const float z = seam ? n_pf::marker( std::round( at.m_z ) ) : at.m_z + k_pf_edge_d[ di ];
+			pf_spot_t sp;
+			if ( pf_spot( c, at, z, sp ) != pf_held || !pf_surf_gate( c, sp, true ) )
+				continue;
+			const int r = ready( duck, at + c.n * 40.f );
+			if ( r == 0 )
+				return -1;
+			if ( r < 0 )
+				break;
+			float got = 0.f, slid = 0.f;
+			if ( pf_surf( c, sp, got, slid ) != pf_held )
+				continue;
+			if ( tb_on && n_pf::is_marker( got ) && c.axial && !sp.disp )
+				pm_tb_add( pf_dot( pf_face_pt( c, sp ), std::floor( got ) ) );
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static void pm_close_run( const n_pm::seam_t& s )
+{
+	if ( s_pm.run_lo < 0 )
+		return;
+	float ax = 0.f, ay = 0.f, bx = 0.f, by = 0.f;
+	n_pm::run_segment( s, s_pm.run_lo, s_pm.run_hi, s_pm.samples, k_pm_stride, ax, ay, bx, by );
+	s_pm_lines.emplace_back( ax, ay, s.z );
+	s_pm_lines.emplace_back( bx, by, s.z );
+	s_pm_line_n = static_cast< int >( s_pm_lines.size( ) / 2 );
+	s_pm.run_lo = s_pm.run_hi = -1;
+}
+
+static void pm_abort( )
+{
+	if ( !s_pm_busy )
+		return;
+	botox_dbg_log( "[pmap] scan cancelled at seam %d/%d ( %d line(s) + %d texturebug(s) kept )", static_cast< int >( s_pm.seam ), static_cast< int >( s_pm.seams.size( ) ),
+	               s_pm_line_n.load( ), s_pm_tb_n.load( ) );
+	s_pm_busy = false;
+	s_pm.seams.clear( );
+	s_pm.seams.shrink_to_fit( );
+}
+
+static void pm_scan( c_user_cmd* cmd )
+{
+	if ( s_pm_stop.exchange( false ) )
+		pm_abort( );
+	if ( s_pm_req.exchange( false ) ) {
+		pm_abort( );
+		s_pf_scan.busy = false;
+		s_pm_lines.clear( );
+		s_pm_tb.clear( );
+		s_pm_line_n = 0;
+		s_pm_tb_n   = 0;
+		const long long t0 = n_tick::qpc_now( );
+		pm_build( );
+		const double build_ms = static_cast< double >( n_tick::qpc_now( ) - t0 ) * 1000.0 / static_cast< double >( n_tick::qpc_freq( ) );
+		auto seams            = std::move( s_pm.seams );
+		s_pm                  = { };
+		s_pm.seams            = std::move( seams );
+		s_pm.buttons          = cmd->m_buttons;
+		s_pm.start_qpc        = n_tick::qpc_now( );
+		s_pm_done             = 0;
+		s_pm_total            = static_cast< int >( s_pm.seams.size( ) );
+		s_pm_busy             = !s_pm.seams.empty( );
+		const char* const map = g_interfaces.m_engine_client->get_level_name_short( );
+		botox_dbg_log( "[pmap] %s: %d seam(s) in %.1f ms, stride %.0f", map ? map : "?", static_cast< int >( s_pm.seams.size( ) ), build_ms, k_pm_stride );
+		if ( !s_pm_busy )
+			movement_add_window( 3.f, "pixel finder: no brush walls found on this map" );
+	}
+	if ( !s_pm_busy || n_tick::qpc_now( ) < s_pm.next_qpc || !g_ctx.m_local->is_alive( ) )
+		return;
+
+	PERF_ZONE( zone_cmd_pixel_finder );
+	const int live_buttons         = cmd->m_buttons;
+	const float live_fwd           = cmd->m_forward_move;
+	const float live_side          = cmd->m_side_move;
+	const unsigned int sims_before = g_prediction.m_sim_count;
+	const bool tb_on               = GET_VARIABLE( g_variables.m_pixel_finder_texturebugs, bool );
+	pm_validate_outside( g_ctx.m_local->get_origin( ) + c_vector( 0.f, 0.f, 40.f ) );
+
+	bool armed = false, arm_ok = false, armed_duck = true;
+	const auto ready = [ & ]( bool duck, const c_vector& arm_at ) -> int {
+		if ( !armed || armed_duck != duck ) {
+			if ( !armed )
+				g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
+			armed          = true;
+			armed_duck     = duck;
+			arm_ok         = pf_arm( cmd, arm_at, s_pm.buttons, duck );
+			cmd->m_buttons = pf_buttons( s_pm.buttons, duck );
+		}
+		return arm_ok ? 1 : duck ? 0 : -1;
+	};
+
+	n_tick::c_sim_budget budget;
+	budget.start( k_pf_share, 0.f, n_tick::search_pf );
+	while ( s_pm.seam < s_pm.seams.size( ) && !budget.expired( ) ) {
+		const n_pm::seam_t& sm = s_pm.seams[ s_pm.seam ];
+		if ( s_pm.samples <= 0 ) {
+			s_pm.samples = n_pm::sample_count( sm.len( ), k_pm_stride, k_pm_max_samples );
+			s_pm.sample  = 0;
+			s_pm.run_lo = s_pm.run_hi = -1;
+		}
+		if ( s_pm.sample >= s_pm.samples ) {
+			pm_close_run( sm );
+			++s_pm.seam;
+			s_pm.samples = 0;
+			s_pm_done    = static_cast< int >( s_pm.seam );
+			continue;
+		}
+		const float t = n_pm::sample_t( s_pm.sample, s_pm.samples, sm.len( ) );
+		const c_vector at( sm.ax + ( sm.bx - sm.ax ) * t, sm.ay + ( sm.by - sm.ay ) * t, sm.z );
+		const c_vector n( sm.nx, sm.ny, 0.f );
+		int hit = 0;
+		if ( pm_point_unusable( at + n * 26.f + c_vector( 0.f, 0.f, 36.f ) ) )
+			++s_pm.voids;
+		else if ( !pm_wall_above( sm, at ) )
+			++s_pm.no_wall;
+		else {
+			pf_ctx_t c = pf_make_ctx( cmd, n );
+			hit        = pm_probe( c, at, tb_on, ready );
+			s_pm.traces += c.traces;
+			if ( hit < 0 && ++s_pm.arm_fails <= k_pf_arm_tries )
+				break;
+			if ( hit < 0 ) {
+				++s_pm.arm_skips;
+				hit = 0;
+			}
+			s_pm.arm_fails = 0;
+			++s_pm.cells;
+		}
+		++s_pm.sample;
+		if ( hit > 0 ) {
+			++s_pm.hits;
+			if ( s_pm.run_lo < 0 )
+				s_pm.run_lo = s_pm.sample - 1;
+			s_pm.run_hi = s_pm.sample - 1;
+		} else if ( s_pm.run_lo >= 0 )
+			pm_close_run( sm );
+	}
+	s_pf_h = k_pf_hull;
+
+	const long long chunk_us = budget.used_us( );
+	s_pm.used_us += chunk_us;
+	s_pm.sims += static_cast< int >( g_prediction.m_sim_count - sims_before );
+	s_pm.next_qpc       = n_tick::qpc_now( ) + 2ll * chunk_us * n_tick::qpc_freq( ) / 1000000ll;
+	cmd->m_buttons      = live_buttons;
+	cmd->m_forward_move = live_fwd;
+	cmd->m_side_move    = live_side;
+	if ( armed )
+		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
+
+	if ( s_pm.seam < s_pm.seams.size( ) )
+		return;
+	const double wall_s = static_cast< double >( n_tick::qpc_now( ) - s_pm.start_qpc ) / static_cast< double >( n_tick::qpc_freq( ) );
+	botox_dbg_log( "[pmap] done: %d brush(es) -> %d seam(s), %d cell(s) simmed, %d no wall above, %d in a brush / off the map, %d arm skip(s), %d hit -> %d line(s) + "
+	               "%d texturebug(s) | %lld us cpu over %.1f s, %d sims, %d traces",
+	               s_pm.brushes, static_cast< int >( s_pm.seams.size( ) ), s_pm.cells, s_pm.no_wall, s_pm.voids, s_pm.arm_skips, s_pm.hits, s_pm_line_n.load( ),
+	               s_pm_tb_n.load( ), s_pm.used_us, wall_s, s_pm.sims, s_pm.traces );
+	movement_add_window( 3.f, std::format( "whole map: {} pixelsurf line(s){}", s_pm_line_n.load( ),
+	                                       s_pm_tb_n > 0 ? std::format( " and {} texturebug(s)", s_pm_tb_n.load( ) ) : std::string( ) ) );
+	s_pm_busy = false;
+	s_pm.seams.clear( );
+	s_pm.seams.shrink_to_fit( );
+	s_pm_done = s_pm_total.load( );
+}
+
+/* paint ( game thread ): lines in 64u pieces so one end behind the camera keeps the rest, 48u smoothstep fade at the ends */
+static void pm_render( std::vector< c_vector >* tb )
+{
+	if ( !GET_VARIABLE( g_variables.m_pixel_finder_map_lines, bool ) )
+		return;
+	if ( tb && !s_pm_tb.empty( ) ) {
+		/* ponytail: nearest-first cap, pf_render_dots groups O(n^2); a grid if far rings must snap too */
+		const c_vector eye = g_ctx.m_local ? g_ctx.m_local->get_origin( ) : c_vector( 0.f, 0.f, 0.f );
+		size_t added       = 0;
+		for ( const c_vector& p : s_pm_tb )
+			if ( ( p - eye ).length( ) < k_pm_tb_near && added++ < k_pm_tb_drawn )
+				tb->push_back( p );
+	}
+	struct seg_t {
+		ImVec2 a, b;
+		ImU32 col;
+	};
+	std::vector< seg_t > segs;
+	for ( size_t i = 0; i + 1 < s_pm_lines.size( ); i += 2 ) {
+		const c_vector a   = s_pm_lines[ i ];
+		const c_vector dir = s_pm_lines[ i + 1 ] - a;
+		const float len    = dir.length( );
+		if ( len < 0.01f )
+			continue;
+		const float fade = ( std::min )( 48.f, len * 0.34f );
+		for ( float da = 0.f; da < len - 0.001f; ) {
+			const bool fine = ( std::min )( da, len - da ) < fade + 6.f;
+			const float db  = ( std::min )( da + ( fine ? 6.f : 64.f ), len );
+			const float mid = ( da + db ) * 0.5f;
+			const float fa  = std::clamp( ( std::min )( mid, len - mid ) / fade, 0.f, 1.f );
+			const float sm  = fa * fa * ( 3.f - 2.f * fa );
+			c_vector_2d p0, p1;
+			if ( g_render.world_to_screen( a + dir * ( da / len ), p0 ) && g_render.world_to_screen( a + dir * ( db / len ), p1 ) )
+				segs.push_back( { ImVec2( p0.m_x, p0.m_y ), ImVec2( p1.m_x, p1.m_y ), IM_COL32( 255, 255, 255, static_cast< int >( 220.f * sm ) ) } );
+			da = db;
+		}
+	}
+	if ( segs.empty( ) )
+		return;
+	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_callback, std::make_any< callback_draw_object_t >( callback_draw_object_t{ [ segs ]( ImDrawList* dl ) {
+										   for ( const seg_t& s : segs )
+											   dl->AddLine( s.a, s.b, s.col, 1.f );
+									   } } ) );
+}
+
+void pf_map_scan_toggle( )
+{
+	if ( s_pm_busy )
+		s_pm_stop = true;
+	else
+		s_pm_req = true;
+}
+
+pf_map_state_t pf_map_scan_get( )
+{
+	pf_map_state_t out;
+	out.busy  = s_pm_busy;
+	out.done  = s_pm_done;
+	out.total = s_pm_total;
+	out.lines = s_pm_line_n;
+	out.tb    = s_pm_tb_n;
+	return out;
+}
+
 void n_movement::impl_t::on_level_init( )
 {
 	StartPos = EndPos = c_vector( 0.f, 0.f, 0.f );
+	pm_abort( );
+	s_pm_lines.clear( );
+	s_pm_tb.clear( );
+	s_pm_line_n = s_pm_tb_n = s_pm_done = s_pm_total = 0;
 	s_pf_scan         = { };
 	s_pf_catch        = { };
 	s_pf_tricks.clear( );
@@ -1010,9 +1410,18 @@ void n_movement::impl_t::on_level_init( )
 void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 {
 	if ( !GET_VARIABLE( g_variables.m_pixel_finder, bool ) ) {
+		pm_abort( );
 		s_pf_scan.busy     = false;
 		s_pf_catch.pending = false;
 		s_pf_anchored      = false;
+		if ( cmd == nullptr ) {
+			std::vector< c_vector > tb;
+			pm_render( &tb );
+			if ( !tb.empty( ) || !animated_points3.empty( ) ) {
+				std::vector< c_vector > none;
+				pf_render_dots( none, none, tb, none );
+			}
+		}
 		if ( !Points.empty( ) || !Point_bounce.empty( ) || !Point_tb.empty( ) || !Point_pj.empty( ) ) {
 			Points.clear( );
 			Point_bounce.clear( );
@@ -1030,9 +1439,10 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 	}
 	if ( cmd == nullptr ) {
 		std::vector< c_vector > none;
+		std::vector< c_vector > tb = GET_VARIABLE( g_variables.m_pixel_finder_texturebugs, bool ) ? pf_tb_drawn( ) : none;
+		pm_render( &tb );
 		pf_render_dots( GET_VARIABLE( g_variables.m_pixel_finder_pixelsurfs, bool ) ? Points : none,
-		                GET_VARIABLE( g_variables.m_pixel_finder_headbounces, bool ) ? Point_bounce : none,
-		                GET_VARIABLE( g_variables.m_pixel_finder_texturebugs, bool ) ? pf_tb_drawn( ) : none,
+		                GET_VARIABLE( g_variables.m_pixel_finder_headbounces, bool ) ? Point_bounce : none, tb,
 		                GET_VARIABLE( g_variables.m_pixel_finder_pixeljumps, bool ) ? Point_pj : none );
 		if ( !s_pf_anchored || !g_input.check_input( &GET_VARIABLE( g_variables.m_pixel_finder_key, key_bind_t ) ) )
 			return;
@@ -1121,6 +1531,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 			                   std::clamp( eye.m_z + dir.m_z * t, StartPos.m_z - k_pf_max_span, StartPos.m_z + k_pf_max_span ) );
 		}
 	} else if ( !held && held_prev && s_pf_anchored ) {
+		pm_abort( );
 		s_pf_anchored = false;
 		auto& s       = s_pf_scan;
 		s             = { };
@@ -1138,6 +1549,8 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 
 	if ( s_pf_catch.pending && !s_pf_scan.busy && g_ctx.m_local->is_alive( ) )
 		pf_catch_check( cmd );
+
+	pm_scan( cmd );
 
 	if ( !s_pf_scan.busy || n_tick::qpc_now( ) < s_pf_scan.next_qpc )
 		return;

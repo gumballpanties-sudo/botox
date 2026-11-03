@@ -125,6 +125,9 @@ namespace n_misc
 
 		void on_level_shutdown( );
 
+		// game thread, g_ctx.m_eject_restoring up: convars + materials these toggles hold go back
+		void on_eject( );
+
 		void performance( bool restore = false );
 
 		void force_lagpush( );
@@ -284,6 +287,10 @@ void fake_pov_demo_angles( c_angle& angles );
 void bot_names_frame( );
 void bot_names_randomize( );
 std::string bot_names_status( );
+/* custom_names.cpp: your kill steps the name cycles (trigger = kill) */
+void custom_names_on_kill( );
+/* custom_names.cpp: slot's name as the engine had it before custom names patched it ("" = not seen yet) */
+const char* player_list_real_name( int index );
 /* steam name fetch thread alive; waited on before FreeLibrary */
 inline std::atomic< bool > g_bot_names_fetching{ false };
 
@@ -307,6 +314,8 @@ struct player_list_entry_t {
 	bool m_revive = false;
 	bool m_ignore = false;
 	bool m_only   = false;
+	/* custom names alias (fpsoverlay names tab): shown instead of their name everywhere, "" = off */
+	char m_name[ 64 ] = { };
 };
 inline player_list_entry_t g_player_list[ 65 ]{ };
 struct player_info_t;

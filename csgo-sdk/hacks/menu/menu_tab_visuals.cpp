@@ -1202,6 +1202,59 @@ void n_menu::impl_t::tab_visuals( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			/* real res untouched: finished frame (world + hud + menus + overlays) crunched to the res and scaled back up */
+			ImGui::Checkbox( "resolution spoofer", &GET_VARIABLE( g_variables.m_resolution_spoof, bool ) );
+			if ( GET_VARIABLE( g_variables.m_resolution_spoof, bool ) ) {
+				ImGui::OptionPopup(
+					"resolution spoofer settings",
+					[ & ]( ) {
+						struct res_t {
+							int m_width, m_height;
+							const char* m_aspect;
+						};
+
+						static constexpr res_t k_resolutions[] = {
+							{ 1920, 1440, "4:3" },  { 1920, 1080, "16:9" }, { 1680, 1050, "16:10" }, { 1600, 1200, "4:3" },
+							{ 1600, 900, "16:9" },  { 1440, 1080, "4:3" },  { 1440, 900, "16:10" },  { 1366, 768, "16:9" },
+							{ 1280, 1024, "5:4" },  { 1280, 960, "4:3" },   { 1280, 800, "16:10" },  { 1280, 720, "16:9" },
+							{ 1200, 900, "4:3" },   { 1152, 864, "4:3" },   { 1024, 768, "4:3" },    { 1024, 576, "16:9" },
+							{ 960, 720, "4:3" },    { 960, 540, "16:9" },   { 800, 600, "4:3" },     { 640, 480, "4:3" },
+						};
+
+						int& width  = GET_VARIABLE( g_variables.m_resolution_spoof_width, int );
+						int& height = GET_VARIABLE( g_variables.m_resolution_spoof_height, int );
+
+						// real back buffer from Present; 0 before the first frame = list everything
+						const int screen_width  = g_resolution_spoof.m_screen_width;
+						const int screen_height = g_resolution_spoof.m_screen_height;
+
+						const std::string preview = std::to_string( width ) + "x" + std::to_string( height );
+
+						if ( ImGui::BeginCombo( "resolution##res spoof", preview.c_str( ) ) ) {
+							for ( const res_t& res : k_resolutions ) {
+								if ( screen_width > 0 && ( res.m_width > screen_width || res.m_height > screen_height ||
+								                           ( res.m_width == screen_width && res.m_height == screen_height ) ) )
+									continue;
+
+								const std::string label = std::to_string( res.m_width ) + "x" + std::to_string( res.m_height ) + "  " + res.m_aspect;
+
+								if ( ImGui::Selectable( label.c_str( ), width == res.m_width && height == res.m_height ) ) {
+									width  = res.m_width;
+									height = res.m_height;
+								}
+							}
+
+							ImGui::EndCombo( );
+						}
+
+						// off: square pixels at the res's line count, world keeps the screen shape
+						ImGui::Checkbox( "stretch to fill##res spoof", &GET_VARIABLE( g_variables.m_resolution_spoof_stretch, bool ) );
+
+						ImGui::Checkbox( "scale net graph##res spoof", &GET_VARIABLE( g_variables.m_resolution_spoof_net_graph, bool ) );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
 			/* one shader pass over the finished back buffer in end_scene; menu drawn after, never graded */
 			ImGui::Checkbox( "color correction", &GET_VARIABLE( g_variables.m_color_correction, bool ) );
 			if ( GET_VARIABLE( g_variables.m_color_correction, bool ) ) {

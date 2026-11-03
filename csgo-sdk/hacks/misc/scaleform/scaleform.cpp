@@ -368,7 +368,8 @@ static bool s_c4_icon_hidden = false;
 
 void n_scaleform::impl_t::hud_removal( )
 {
-	const bool enabled = GET_VARIABLE( g_variables.m_remove_hud_elements, bool );
+	const bool ejecting = g_ctx.m_eject_restoring;
+	const bool enabled  = GET_VARIABLE( g_variables.m_remove_hud_elements, bool ) && !ejecting;
 
 	{
 		const auto& removed = GET_VARIABLE( g_variables.m_removed_hud_elements, std::vector< bool > );
@@ -408,6 +409,9 @@ void n_scaleform::impl_t::hud_removal( )
 		        1 << hud_element_radar | 1 << hud_element_money | 1 << hud_element_timer | 1 << hud_element_chat | 1 << hud_element_winpanel |
 		        1 << hud_element_alerts | k_rm_crosshair;
 
+	if ( ejecting )
+		mask = 0;
+
 	if ( !mask && !s_hud_rm_mask )
 		return;
 
@@ -425,7 +429,7 @@ void n_scaleform::impl_t::hud_removal( )
 		dirty = true;
 	}
 
-	const int chud    = GET_VARIABLE( g_variables.m_chud_hud, bool ) ? 1 : 0;
+	const int chud    = GET_VARIABLE( g_variables.m_chud_hud, bool ) && !ejecting ? 1 : 0;
 	const float now   = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_real_time : 0.f;
 	const bool change = mask != s_hud_rm_mask || chud != s_hud_rm_chud;
 
@@ -512,7 +516,7 @@ void n_scaleform::impl_t::hud_aspect( )
 {
 	static float applied = 0.f;
 
-	const bool enabled = GET_VARIABLE( g_variables.m_aspect_ratio_enable, bool ) && GET_VARIABLE( g_variables.m_aspect_ratio_hud, bool );
+	const bool enabled = g_resolution_spoof.aspect_hud( );
 
 	// off and never applied - the common case
 	if ( !enabled && applied == 0.f )
@@ -544,7 +548,7 @@ void n_scaleform::impl_t::hud_aspect( )
 			return;
 	}
 
-	const float wanted = enabled ? GET_VARIABLE( g_variables.m_aspect_ratio, float ) : 0.f;
+	const float wanted = enabled ? g_resolution_spoof.aspect_wanted( ) : 0.f;
 	if ( applied == wanted )
 		return;
 
@@ -600,8 +604,7 @@ void n_scaleform::impl_t::crosshair_aspect( )
 	static float applied      = 0.f;
 	static float last_reapply = 0.f;
 
-	const bool enabled = GET_VARIABLE( g_variables.m_aspect_ratio_enable, bool ) && GET_VARIABLE( g_variables.m_aspect_ratio_overlay, bool ) &&
-	                     !GET_VARIABLE( g_variables.m_aspect_ratio_hud, bool );
+	const bool enabled = g_resolution_spoof.aspect_crosshair( ) && !g_resolution_spoof.aspect_hud( );
 
 	if ( !enabled && applied == 0.f )
 		return;
@@ -632,8 +635,8 @@ void n_scaleform::impl_t::crosshair_aspect( )
 			return;
 	}
 
-	const float wanted = enabled ? GET_VARIABLE( g_variables.m_aspect_ratio, float ) : 0.f;
-	const float now    = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_real_time : 0.f;
+	const float wanted = enabled ? g_resolution_spoof.aspect_wanted( ) : 0.f;
+	const float now   = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_real_time : 0.f;
 
 	if ( applied == wanted && ( !enabled || now - last_reapply < 2.f ) )
 		return;
@@ -815,7 +818,7 @@ void n_scaleform::impl_t::force_crosshair_panorama( )
 
 	static int restored_state = -2;
 
-	const bool enabled = GET_VARIABLE( g_variables.m_force_crosshair, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool );
+	const bool enabled = GET_VARIABLE( g_variables.m_force_crosshair, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) && !g_ctx.m_eject_restoring;
 
 	if ( !enabled && !applied && !inline_dirty )
 		return;
@@ -1254,7 +1257,7 @@ void n_scaleform::impl_t::crosshair_color( )
 	static unsigned int applied_to = 0;
 	static float last_reapply      = 0.f;
 
-	const bool enabled = GET_VARIABLE( g_variables.m_panorama_crosshair_color, bool );
+	const bool enabled = GET_VARIABLE( g_variables.m_panorama_crosshair_color, bool ) && !g_ctx.m_eject_restoring;
 
 	// off and never applied - the common case, costs one branch
 	if ( !enabled && !applied )
@@ -1310,7 +1313,7 @@ void n_scaleform::impl_t::hud_color( )
 	static float last_reapply      = 0.f;
 	static bool applied_moi        = false;
 
-	const bool enabled = GET_VARIABLE( g_variables.m_panorama_hud_color, bool );
+	const bool enabled = GET_VARIABLE( g_variables.m_panorama_hud_color, bool ) && !g_ctx.m_eject_restoring;
 	const bool moi     = g_moi_hud.serving( );
 
 	if ( !enabled && !applied )
@@ -1345,7 +1348,8 @@ void n_scaleform::impl_t::hud_color( )
 	std::string js = k_hud_color;
 	replace_str( js, "${color}", enabled ? "'" + panorama_hex( chosen ) + "'" : "null" );
 	replace_str( js, "${bgcolor}", enabled ? "'" + panorama_hex( hsv_transform( chosen, 0.85f, 0.75f ) ) + "'" : "null" );
-	const bool classic = GET_VARIABLE( g_variables.m_scaleform, bool ) && GET_VARIABLE( g_variables.m_scaleform_style, int ) != 0;
+	const bool classic = GET_VARIABLE( g_variables.m_scaleform, bool ) && GET_VARIABLE( g_variables.m_scaleform_style, int ) != 0 &&
+	                     !g_ctx.m_eject_restoring;
 	replace_str( js, "${dashblend}", enabled ? "'normal'" : classic ? "'SRGBAdditive'" : "null" );
 	replace_str( js, "${moi}", moi ? "true" : "false" );
 
@@ -1379,7 +1383,7 @@ void n_scaleform::impl_t::ammo_pip_color( )
 	}
 
 	c_color chosen;
-	if ( GET_VARIABLE( g_variables.m_panorama_hud_color, bool ) ) {
+	if ( GET_VARIABLE( g_variables.m_panorama_hud_color, bool ) && !g_ctx.m_eject_restoring ) {
 		chosen = GET_VARIABLE( g_variables.m_panorama_hud_color_value, c_color );
 	} else {
 		c_cconvar* hud_color_convar = g_convars[ HASH_BT( "cl_hud_color" ) ];
@@ -1458,7 +1462,7 @@ void n_scaleform::impl_t::square_radar( )
 	static float last_reapply = 0.f;
 
 	const bool classic = GET_VARIABLE( g_variables.m_scaleform, bool ) && GET_VARIABLE( g_variables.m_scaleform_style, int ) != 0;
-	const bool enabled = GET_VARIABLE( g_variables.m_square_radar, bool ) && !classic;
+	const bool enabled = GET_VARIABLE( g_variables.m_square_radar, bool ) && !classic && !g_ctx.m_eject_restoring;
 
 	if ( !enabled && !applied )
 		return;
@@ -1711,7 +1715,7 @@ void n_scaleform::impl_t::keep_killfeed( )
 	const bool reset = m_killfeed_round_reset;
 	m_killfeed_round_reset = false;
 
-	if ( !GET_VARIABLE( g_variables.m_keep_killfeed, bool ) || !g_interfaces.m_global_vars_base )
+	if ( !GET_VARIABLE( g_variables.m_keep_killfeed, bool ) || g_ctx.m_eject_restoring || !g_interfaces.m_global_vars_base )
 		return;
 
 	const float now = g_interfaces.m_global_vars_base->m_real_time;
@@ -1786,7 +1790,8 @@ void n_scaleform::impl_t::on_createmove( )
 
 	square_radar( );
 
-	const bool classic = GET_VARIABLE( g_variables.m_scaleform, bool ) && GET_VARIABLE( g_variables.m_scaleform_style, int ) != 0;
+	const bool ejecting = g_ctx.m_eject_restoring;
+	const bool classic  = GET_VARIABLE( g_variables.m_scaleform, bool ) && GET_VARIABLE( g_variables.m_scaleform_style, int ) != 0 && !ejecting;
 
 	if ( m_should_force_reload ) {
 		m_should_force_reload = false;
@@ -1814,7 +1819,7 @@ void n_scaleform::impl_t::on_createmove( )
 		restore_showloadout( );
 
 	{
-		const bool moi = GET_VARIABLE( g_variables.m_scaleform, bool ) && GET_VARIABLE( g_variables.m_scaleform_style, int ) == 0;
+		const bool moi = GET_VARIABLE( g_variables.m_scaleform, bool ) && GET_VARIABLE( g_variables.m_scaleform_style, int ) == 0 && !ejecting;
 
 		if ( moi || g_moi_hud.wants_root( ) ) {
 			if ( !m_uiengine )
@@ -1828,7 +1833,7 @@ void n_scaleform::impl_t::on_createmove( )
 	}
 
 	{
-		const int icon_src = !GET_VARIABLE( g_variables.m_scaleform, bool ) ? 0 : classic ? 1 : g_moi_hud.serving( ) ? 2 : 0;
+		const int icon_src = !GET_VARIABLE( g_variables.m_scaleform, bool ) || ejecting ? 0 : classic ? 1 : g_moi_hud.serving( ) ? 2 : 0;
 		if ( icon_src != m_icon_src ) {
 			m_icon_src = icon_src;
 			g_moi_hud.reload_icons( );
@@ -1850,6 +1855,35 @@ void n_scaleform::impl_t::on_createmove( )
 	}
 
 	tick( );
+}
+
+void n_scaleform::impl_t::on_eject( )
+{
+	if ( !m_uiengine && g_interfaces.m_panorama )
+		m_uiengine = g_interfaces.m_panorama->access_ui_engine( );
+
+	if ( !m_uiengine )
+		return;
+
+	// each reads g_ctx.m_eject_restoring as its toggle off and takes its own restore branch
+	hud_removal( );
+	hud_aspect( );
+	crosshair_aspect( );
+	force_crosshair_panorama( );
+	crosshair_color( );
+	hud_color( );
+	ammo_pip_color( );
+	square_radar( );
+
+	if ( m_classic_applied )
+		classic_off( );
+
+	restore_showloadout( );
+
+	if ( !m_moi_root || !m_uiengine->is_valid_panel_ptr( m_moi_root ) )
+		m_moi_root = get_panel( HASH_BT( "CSGOHud" ) );
+
+	g_moi_hud.update( m_moi_root, false );
 }
 
 

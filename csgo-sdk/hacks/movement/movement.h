@@ -2,6 +2,7 @@
 #define WINDOWS_IGNORE_PACKING_MISMATCH
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -100,6 +101,38 @@ enum route_point_type_t : int {
 	route_pt_count,
 };
 const char* route_point_type_name( int type );
+
+/* movement > points page: one look per point kind, shared by assist / calculator / finder draws + menu preview */
+enum point_style_id_t : int {
+	point_style_ps = 0,
+	point_style_hb,
+	point_style_pj,
+	point_style_calc,
+	point_style_pf_ps,
+	point_style_pf_hb,
+	point_style_pf_pj,
+	point_style_pf_tb,
+	point_style_count,
+};
+inline constexpr const char* k_point_design_names[ ] = { "arrow", "single arrow", "line", "cross", "x", "dot",
+                                                         "inner ring", "diamond", "square", "triangle", "chevron", "burst" };
+inline constexpr const char* k_point_shape_names[ ]  = { "circle", "square", "diamond", "hexagon", "octagon", "triangle" };
+inline constexpr int k_point_design_count            = static_cast< int >( sizeof( k_point_design_names ) / sizeof( k_point_design_names[ 0 ] ) );
+inline constexpr int k_point_shape_count             = static_cast< int >( sizeof( k_point_shape_names ) / sizeof( k_point_shape_names[ 0 ] ) );
+/* no color = live accent. has_gaps = outline shape + gaps editable */
+struct point_style_t {
+	const char* name;
+	const char* label;
+	std::uint32_t color, gaps, design, design_type, shape;
+	bool has_color, has_gaps, has_design;
+};
+const point_style_t& point_style( int style );
+unsigned int point_style_u32( int style, float alpha );
+int point_style_gaps( int style );
+int point_style_design( int style );
+void point_ring_emit( int style, const c_vector_2d& centre, float radius, unsigned int color, float thickness );
+void point_design_emit( int style, const c_vector_2d& centre, float half, float dir_x, float dir_y, unsigned int color );
+void point_style_preview( int style, float x, float y, float radius );
 
 namespace n_route
 {
@@ -916,6 +949,13 @@ bool pf_dot_screen( const AnimatedPoint& ap, c_vector_2d& out );
 bool pf_tb_is_head( const c_vector& dot );
 void pf_tb_rise_seam( c_vector& dot );
 bool pf_hb_is_ceiling( const c_vector& dot );
+struct pf_map_state_t {
+	bool busy = false;
+	int done = 0, total = 0, lines = 0, tb = 0;
+};
+/* menu thread safe: atomics only */
+void pf_map_scan_toggle( );
+pf_map_state_t pf_map_scan_get( );
 float pf_head_over( );
 void pf_check_catch( const c_vector& pos, const c_vector& wall_n, float slid, bool ducked );
 void pf_check_trick( const char* kind, const c_vector& pos, bool ducked );

@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstdlib>
 #include <deque>
 #include <format>
 #include <iterator>
@@ -27,6 +29,8 @@ namespace
 		std::string m_name;
 		std::string m_text;
 		std::string m_language;
+		std::string m_libre_url; // copied on game thread, worker never reads config
+		std::string m_libre_key;
 	};
 
 	std::mutex s_lock;
@@ -120,28 +124,221 @@ namespace
 		return words <= 2;
 	}
 
-	/* translate.googleapis.com gtx: [[["out","in",...],...],null,"src",null,null,null,conf,...] */
-	bool translate( const job_t& job, std::string& out, std::string& source )
+	const char* http_hint( const unsigned long code )
+	{
+		switch ( code ) {
+		case 0: return "no code";
+		case 403: return "forbidden, region/ip block";
+		case 429: return "rate limited";
+		case 12002: return "timeout";
+		case 12007: return "dns fail, host blocked?";
+		case 12029: return "cannot connect, firewall/block?";
+		case 12030: return "connection aborted";
+		case 12157: case 12175: return "tls fail, old windows?";
+		default: return code >= 12000 ? "winhttp error" : "http status";
+		}
+	}
+
+	void log_skip( const char* why, const std::string& text )
+	{
+		g_console.print( std::format( "TRN: skip {} | '{}'", why, text.substr( 0, 48 ) ).c_str( ) );
+	}
+
+	void log_fail( const char* backend, const char* what, const unsigned long code, const std::string& body )
+	{
+		g_console.print< n_console::log_level::WARNING >(
+			std::format( "TRN: {} {} {} ({}) | '{}'", backend, what, code, http_hint( code ), body.substr( 0, 80 ) ).c_str( ) );
+	}
+
+	std::string str_at( const nlohmann::json& j, const size_t i )
+	{
+		return j.is_array( ) && j.size( ) > i && j[ i ].is_string( ) ? j[ i ].get< std::string >( ) : std::string( );
+	}
+
+	bool get_json( const char* backend, const std::string& url, nlohmann::json& root, unsigned long& code )
 	{
 		std::string body;
-		if ( !n_image_cache::http_get_text( std::format( "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={}&dt=t&q={}",
-		                                                 job.m_language, url_encode( job.m_text ) ),
-		                                    body ) )
+		if ( !n_image_cache::http_get_text( url, body, &code ) ) {
+			log_fail( backend, "http fail", code, body );
 			return false;
+		}
+		root = nlohmann::json::parse( body, nullptr, false );
+		if ( root.is_discarded( ) ) {
+			log_fail( backend, "bad json", code, body );
+			return false;
+		}
+		return true;
+	}
 
-		const nlohmann::json root = nlohmann::json::parse( body, nullptr, false );
-		if ( root.is_discarded( ) || !root.is_array( ) || root.empty( ) || !root[ 0 ].is_array( ) )
+	/* translate.googleapis.com gtx: [[["out","in",...],...],null,"src",null,null,null,conf,...] */
+	bool google( const job_t& job, std::string& out, std::string& source, double& conf, unsigned long& code )
+	{
+		nlohmann::json root;
+		if ( !get_json( "google", std::format( "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={}&dt=t&q={}", job.m_language,
+		                                       url_encode( job.m_text ) ),
+		                root, code ) )
 			return false;
+		if ( !root.is_array( ) || root.empty( ) || !root[ 0 ].is_array( ) ) {
+			log_fail( "google", "bad shape", code, root.dump( -1, ' ', false, nlohmann::json::error_handler_t::replace ) );
+			return false;
+		}
 
 		for ( const auto& segment : root[ 0 ] )
-			if ( segment.is_array( ) && !segment.empty( ) && segment[ 0 ].is_string( ) )
-				out += segment[ 0 ].get< std::string >( );
+			out += str_at( segment, 0 );
 
-		source            = root.size( ) > 2 && root[ 2 ].is_string( ) ? root[ 2 ].get< std::string >( ) : std::string( );
-		const double conf = root.size( ) > 6 && root[ 6 ].is_number( ) ? root[ 6 ].get< double >( ) : 0.0;
+		source = str_at( root, 2 );
+		conf   = root.size( ) > 6 && root[ 6 ].is_number( ) ? root[ 6 ].get< double >( ) : 0.0;
+		return true;
+	}
 
-		return !out.empty( ) && base_code( source ) != base_code( job.m_language ) && lower( out ) != lower( job.m_text ) &&
-		       !( conf < 0.7 && short_latin( job.m_text ) );
+	/* chrome extension client, own throttle bucket: [["out","src"]], no confidence */
+	bool clients5( const job_t& job, std::string& out, std::string& source, double&, unsigned long& code )
+	{
+		nlohmann::json root;
+		if ( !get_json( "clients5", std::format( "https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl={}&q={}", job.m_language,
+		                                         url_encode( job.m_text ) ),
+		                root, code ) )
+			return false;
+
+		const nlohmann::json& first = root.is_array( ) && !root.empty( ) ? root[ 0 ] : root;
+		out    = first.is_string( ) ? first.get< std::string >( ) : str_at( first, 0 );
+		source = str_at( first, 1 );
+		if ( out.empty( ) ) {
+			log_fail( "clients5", "bad shape", code, root.dump( -1, ' ', false, nlohmann::json::error_handler_t::replace ) );
+			return false;
+		}
+		return true;
+	}
+
+	/* mymemory, ~5000 chars/day per ip: {"responseData":{"translatedText","detectedLanguage"},"responseStatus":200|"403","quotaFinished"} */
+	bool mymemory( const job_t& job, std::string& out, std::string& source, double&, unsigned long& code )
+	{
+		nlohmann::json root;
+		if ( !get_json( "mymemory", std::format( "https://api.mymemory.translated.net/get?q={}&langpair=autodetect%7C{}", url_encode( job.m_text ), job.m_language ),
+		                root, code ) )
+			return false;
+
+		const auto data = root.is_object( ) ? root.find( "responseData" ) : root.end( );
+		if ( !root.is_object( ) || data == root.end( ) || !data->is_object( ) ) {
+			log_fail( "mymemory", "bad shape", code, root.dump( -1, ' ', false, nlohmann::json::error_handler_t::replace ) );
+			return false;
+		}
+
+		const auto& status_field = root[ "responseStatus" ];
+		const int status = status_field.is_number( ) ? status_field.get< int >( ) : status_field.is_string( ) ? std::atoi( status_field.get< std::string >( ).c_str( ) ) : 0;
+		const auto& details_field = root[ "responseDetails" ];
+		const std::string details = details_field.is_string( ) ? details_field.get< std::string >( ) : std::string( );
+
+		/* same source + target: answer it so the filter logs "already target lang" */
+		if ( details.find( "DISTINCT" ) != std::string::npos ) {
+			out    = job.m_text;
+			source = job.m_language;
+			return true;
+		}
+		if ( root[ "quotaFinished" ].is_boolean( ) && root[ "quotaFinished" ].get< bool >( ) ) {
+			code = 429;
+			log_fail( "mymemory", "quota", code, details );
+			return false;
+		}
+		if ( status != 200 ) {
+			code = static_cast< unsigned long >( status );
+			log_fail( "mymemory", "status", code, details );
+			return false;
+		}
+
+		if ( const auto text = data->find( "translatedText" ); text != data->end( ) && text->is_string( ) )
+			out = text->get< std::string >( );
+		if ( const auto lang = data->find( "detectedLanguage" ); lang != data->end( ) && lang->is_string( ) )
+			source = lang->get< std::string >( );
+		return !out.empty( );
+	}
+
+	/* LibreTranslate POST /translate -> {"translatedText":"..","detectedLanguage":{"confidence":0-100,"language":"ru"}}
+	   lang = base code: libre knows "pt" / "zh", falls back pt <-> pt-BR and zh -> zh-Hans itself */
+	bool libre( const job_t& job, std::string& out, std::string& source, double& conf, unsigned long& code )
+	{
+		if ( job.m_libre_url.empty( ) )
+			return false;
+
+		std::string url = job.m_libre_url;
+		while ( !url.empty( ) && url.back( ) == '/' )
+			url.pop_back( );
+		if ( url.size( ) < 10 || url.compare( url.size( ) - 10, 10, "/translate" ) )
+			url += "/translate";
+
+		nlohmann::json request = { { "q", job.m_text }, { "source", "auto" }, { "target", base_code( job.m_language ) }, { "format", "text" } };
+		if ( !job.m_libre_key.empty( ) )
+			request[ "api_key" ] = job.m_libre_key;
+
+		std::string body;
+		if ( !n_image_cache::http_post_json( url, request.dump( -1, ' ', false, nlohmann::json::error_handler_t::replace ), body, &code ) ) {
+			log_fail( "libre", "http fail", code, body );
+			return false;
+		}
+
+		const nlohmann::json root = nlohmann::json::parse( body, nullptr, false );
+		if ( root.is_discarded( ) || !root.is_object( ) || !root.contains( "translatedText" ) || !root[ "translatedText" ].is_string( ) ) {
+			log_fail( "libre", "bad json", code, body );
+			return false;
+		}
+
+		out = root[ "translatedText" ].get< std::string >( );
+		if ( const auto it = root.find( "detectedLanguage" ); it != root.end( ) && it->is_object( ) ) {
+			if ( const auto lang = it->find( "language" ); lang != it->end( ) && lang->is_string( ) )
+				source = lang->get< std::string >( );
+			if ( const auto c = it->find( "confidence" ); c != it->end( ) && c->is_number( ) )
+				conf = c->get< double >( ) / 100.0;
+		}
+		return true;
+	}
+
+	struct backend_t {
+		const char* m_name;
+		bool ( *m_fn )( const job_t&, std::string&, std::string&, double&, unsigned long& );
+		std::chrono::steady_clock::time_point m_cool_until{ };
+	};
+
+	/* worker thread only, one worker alive at a time */
+	backend_t s_backends[] = { { "google", google }, { "clients5", clients5 }, { "mymemory", mymemory }, { "libre", libre } };
+
+	/* 429 / 403 / quota: hammering a throttled ip only extends the ban; winhttp 12xxx: blocked host = timeout per line */
+	constexpr auto k_cooldown = std::chrono::minutes( 10 );
+
+	bool translate( const job_t& job, std::string& out, std::string& source )
+	{
+		double conf = 0.0;
+		bool got    = false;
+		for ( auto& backend : s_backends ) {
+			const auto now = std::chrono::steady_clock::now( );
+			if ( now < backend.m_cool_until )
+				continue;
+
+			out.clear( );
+			source.clear( );
+			conf               = 0.0;
+			unsigned long code = 0;
+			if ( backend.m_fn( job, out, source, conf, code ) ) {
+				got = true;
+				break;
+			}
+			if ( code == 429 || code == 403 || code >= 12000 ) {
+				backend.m_cool_until = now + k_cooldown;
+				g_console.print< n_console::log_level::WARNING >( std::format( "TRN: {} cooling 10 min after {}", backend.m_name, code ).c_str( ) );
+			}
+		}
+		if ( !got )
+			return false;
+
+		const char* why = out.empty( )                                    ? "empty result"
+		                  : base_code( source ) == base_code( job.m_language ) ? "already target lang"
+		                  : lower( out ) == lower( job.m_text )            ? "unchanged"
+		                  : conf < 0.7 && short_latin( job.m_text )         ? "short low conf"
+		                                                                    : nullptr;
+		if ( why ) {
+			log_skip( std::format( "{} src={} conf={:.2f}", why, source, conf ).c_str( ), job.m_text );
+			return false;
+		}
+		return true;
 	}
 
 	void worker( )
@@ -259,7 +456,12 @@ void n_chat_extras::on_chat_message( const int type, const void* msg, const int 
 		return;
 
 	/* ent 0 = server adverts / notices */
-	if ( say.m_ent_idx <= 0 || say.m_ent_idx == g_interfaces.m_engine_client->get_local_player( ) )
+	if ( say.m_ent_idx <= 0 ) {
+		log_skip( std::format( "ent 0 type {}", type ).c_str( ),
+		          strip_controls( !say.m_text.empty( ) ? say.m_text : say.m_params.size( ) > 1 ? say.m_params[ 1 ] : say.m_msg_name ) );
+		return;
+	}
+	if ( say.m_ent_idx == g_interfaces.m_engine_client->get_local_player( ) )
 		return;
 
 	/* stock "#Cstrike_Chat_*" = params name/text; other "#" tokens (name change, radio) skipped;
@@ -267,16 +469,22 @@ void n_chat_extras::on_chat_message( const int type, const void* msg, const int 
 	std::string name, text;
 	const bool token = !say.m_msg_name.empty( ) && say.m_msg_name[ 0 ] == '#';
 	if ( type == 5 ) {
-		if ( !split_line( strip_controls( say.m_text ), say.m_ent_idx, name, text ) )
+		if ( !split_line( strip_controls( say.m_text ), say.m_ent_idx, name, text ) ) {
+			log_skip( "no split saytext", strip_controls( say.m_text ) );
 			return;
+		}
 	} else if ( say.m_msg_name.find( "Chat" ) != std::string::npos || ( !token && say.m_params.size( ) >= 2 && !strip_controls( say.m_params[ 1 ] ).empty( ) ) ) {
-		if ( say.m_params.size( ) < 2 )
+		if ( say.m_params.size( ) < 2 ) {
+			log_skip( "chat token no params", say.m_msg_name );
 			return;
+		}
 		name = strip_controls( say.m_params[ 0 ] );
 		text = strip_controls( say.m_params[ 1 ] );
 	} else if ( !token ) {
-		if ( !split_line( strip_controls( say.m_msg_name ), say.m_ent_idx, name, text ) )
+		if ( !split_line( strip_controls( say.m_msg_name ), say.m_ent_idx, name, text ) ) {
+			log_skip( "no split saytext2", strip_controls( say.m_msg_name ) );
 			return;
+		}
 	} else
 		return;
 
@@ -287,10 +495,14 @@ void n_chat_extras::on_chat_message( const int type, const void* msg, const int 
 	                                 static_cast< int >( std::size( k_language_codes ) ) - 1 );
 
 	std::lock_guard< std::mutex > lock( s_lock );
-	if ( s_jobs.size( ) >= k_max_jobs )
+	if ( s_jobs.size( ) >= k_max_jobs ) {
+		log_skip( "queue full", text );
 		return;
+	}
 
-	s_jobs.push_back( { std::move( name ), std::move( text ), k_language_codes[ language ] } );
+	s_jobs.push_back( { std::move( name ), std::move( text ), k_language_codes[ language ],
+	                    strip_controls( GET_VARIABLE( g_variables.m_chat_translator_libre_url, std::string ) ),
+	                    strip_controls( GET_VARIABLE( g_variables.m_chat_translator_libre_key, std::string ) ) } );
 
 	if ( !g_worker_alive.exchange( true ) )
 		std::thread( worker ).detach( );

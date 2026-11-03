@@ -63,6 +63,7 @@ c_angle g_air_stuck_authored_view{ };
 bool g_air_stuck_authored_view_valid = false;
 
 bool g_air_stuck_stamp_valid    = false;
+bool g_air_stuck_view_forced    = false;
 float g_air_stuck_stamp_yaw     = 0.0f;
 float g_air_stuck_stamp_forward = 0.0f;
 float g_air_stuck_stamp_side    = 0.0f;
@@ -350,6 +351,7 @@ void n_movement::impl_t::on_create_move_pre( )
 	g_air_stuck_authored_view_valid = false;
 	/* this-tick fact: stale would re-press a dead weld cmd */
 	g_air_stuck_stamp_valid = false;
+	g_air_stuck_view_forced = false;
 
 	if ( g_ctx.m_cmd ) {
 		m_user_forward_move = g_ctx.m_cmd->m_forward_move;
@@ -1211,7 +1213,7 @@ void n_movement::impl_t::on_create_move_post( )
 				static bool prev_in_pixel_surf = false;
 				static bool prev_lirili_key    = false;
 				const bool now_ps              = g_movement.m_pixelsurf_data.m_pin_detected;
-				const bool lirili_key          = GET_VARIABLE( g_variables.m_lirili_larila, bool ) &&
+				const bool lirili_key          = GET_VARIABLE( g_variables.m_lirili_larila, bool ) && !g_ctx.m_eject_restoring &&
 				                        g_input.check_input( &GET_VARIABLE( g_variables.m_lirili_larila_key, key_bind_t ) );
 				if ( lirili_key && !prev_lirili_key )
 					g_interfaces.m_engine_client->execute_client_cmd( "y6_ast 1" );
@@ -2511,7 +2513,7 @@ void n_movement::impl_t::ladder_bug( c_user_cmd* cmd )
 
 	static auto cvar = g_interfaces.m_convar->find_var( "sv_autobunnyhopping" );
 
-	const bool wants = GET_VARIABLE( g_variables.m_ladder_bug, bool ) &&
+	const bool wants = GET_VARIABLE( g_variables.m_ladder_bug, bool ) && !g_ctx.m_eject_restoring &&
 	                   g_input.check_input( &GET_VARIABLE( g_variables.m_ladder_bug_key, key_bind_t ) ) && g_ctx.m_local &&
 	                   g_interfaces.m_engine_client->is_in_game( ) && g_ctx.m_local->is_alive( );
 
@@ -3789,7 +3791,8 @@ void poop_ladder_jump( c_user_cmd* )
 	};
 
 	auto local = g_ctx.m_local;
-	if ( !GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) || !g_input.check_input( &GET_VARIABLE( g_variables.m_poop_ladder_jump_key, key_bind_t ) ) ||
+	if ( !GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) || g_ctx.m_eject_restoring ||
+	     !g_input.check_input( &GET_VARIABLE( g_variables.m_poop_ladder_jump_key, key_bind_t ) ) ||
 	     !local || !g_interfaces.m_engine_client->is_in_game( ) || !local->is_alive( ) ) {
 		release_jetpack( );
 		restore_impulse( );
@@ -3998,7 +4001,8 @@ void edge_surf( c_user_cmd* cmd )
 
 void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 {
-	const bool on = GET_VARIABLE( g_variables.m_tung_surf, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_tung_surf_key, key_bind_t ) );
+	const bool on = GET_VARIABLE( g_variables.m_tung_surf, bool ) && !g_ctx.m_eject_restoring &&
+	                g_input.check_input( &GET_VARIABLE( g_variables.m_tung_surf_key, key_bind_t ) );
 
 	static bool y6_sent = false;
 	if ( const bool want = on && GET_VARIABLE( g_variables.m_tung_surf_y6, bool ); want != y6_sent ) {

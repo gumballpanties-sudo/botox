@@ -26,6 +26,10 @@ namespace n_ctx
 		std::atomic< bool > m_world_restore_requested{ false };
 		std::atomic< bool > m_world_restore_done{ false };
 
+		/* eject: set on the game thread first thing in the world restore, stays up till unload. every feature that
+		   puts the game back when its toggle reads off also reads this as off, so their own restore branches run */
+		std::atomic< bool > m_eject_restoring{ false };
+
 		bool m_is_window_focused{ };
 
 		/* settings "unload" button, the only way out (a stray key press must never eject) */

@@ -73,6 +73,8 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 	if ( stage == e_client_frame_stage::start )
 		g_edgebug.donor_frame_start( );
 
+	g_aimbot.camlock_frame( stage );
+
 	if ( stage == render_start ) {
 		const bool sound_chams = GET_VARIABLE( g_variables.m_chams_enable, bool ) &&
 		                         n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_sound_layers, std::vector< int > ) );
@@ -151,7 +153,7 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 		if ( ragdoll_physics ) {
 			static bool forced = false;
 
-			if ( const bool want = GET_VARIABLE( g_variables.m_remove_ragdolls, bool ); want && ragdoll_physics->get_int( ) != 0 ) {
+			if ( const bool want = GET_VARIABLE( g_variables.m_remove_ragdolls, bool ) && !g_ctx.m_eject_restoring; want && ragdoll_physics->get_int( ) != 0 ) {
 				ragdoll_physics->set_value( static_cast< int >( 0 ) );
 				forced = true;
 			}

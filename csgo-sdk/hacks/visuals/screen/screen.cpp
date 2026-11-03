@@ -447,9 +447,9 @@ void n_screen::impl_t::aspect_ratio( const bool restore )
 	if ( !aspect && !( aspect = g_convars[ HASH_BT( "r_aspectratio" ) ] ) )
 		return;
 
-	const bool enabled = !restore && GET_VARIABLE( g_variables.m_aspect_ratio_enable, bool );
+	const bool enabled = !restore && g_resolution_spoof.aspect_on( );
 
-	const float wanted = enabled ? GET_VARIABLE( g_variables.m_aspect_ratio, float ) : 0.f;
+	const float wanted = enabled ? g_resolution_spoof.aspect_wanted( ) : 0.f;
 
 	if ( aspect->get_float( ) != wanted )
 		aspect->set_value( wanted );

@@ -17,6 +17,7 @@ class c_net_message;
 class bf_write;
 
 struct game_event_t;
+struct player_info_t;
 struct model_render_info_t;
 struct matrix3x4_t;
 struct view_matrix_t;
@@ -82,6 +83,7 @@ namespace n_hooks
 		c_detour_hook m_draw_world_lists{ };
 		c_detour_hook m_world_to_screen_matrix{ };
 		c_detour_hook m_get_local_view_angles{ };
+		c_detour_hook m_get_player_info{ };
 
 		c_detour_hook m_tier0_warning{ };
 		c_detour_hook m_random_int{ };
@@ -168,6 +170,8 @@ namespace n_detoured_functions
 	bool __fastcall is_hltv( void* ecx, void* edx );
 	bool __fastcall is_paused( void* ecx, void* edx );
 	bool __fastcall is_playing_demo( void* ecx, void* edx );
+	/* body in hacks/misc/custom_names.cpp */
+	bool __fastcall get_player_info( void* ecx, void* edx, int index, player_info_t* info );
 	bool __fastcall send_net_msg( void* ecx, void* edx, c_net_message* message, bool force_reliable, bool voice );
 	bool __fastcall svc_msg_voice_data( void* ecx, void* edx, const void* message );
 	void __fastcall push_notice( void* ecx, void* edx, const char* text, int str_len, const char* null );

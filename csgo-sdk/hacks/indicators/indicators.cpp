@@ -117,8 +117,7 @@ static void push_crosshair_rect( float x1, const float y1, float x2, const float
 	if ( x2 <= x1 || y2 <= y1 )
 		return;
 
-	const bool overlay_list_stretched = GET_VARIABLE( g_variables.m_aspect_ratio_enable, bool ) &&
-	                                    GET_VARIABLE( g_variables.m_aspect_ratio_cheat_overlay, bool );
+	const bool overlay_list_stretched = g_resolution_spoof.aspect_cheat_overlay( ) || g_resolution_spoof.upscale_stretches( );
 
 	if ( const float aspect = overlay_list_stretched ? 1.f : g_resolution_spoof.overlay_aspect_scale( );
 	     fabsf( aspect - 1.f ) >= 0.001f && g_ctx.m_width > 0.f ) {

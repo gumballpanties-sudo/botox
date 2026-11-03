@@ -285,9 +285,38 @@ static float arrow_fade( float ratio )
 	float t = std::clamp( ( ratio - 0.10f ) / 0.30f, 0.f, 1.f );
 	return t * t * ( 3.f - 2.f * t );
 }
-static void draw_double_arrow( const c_vector_2d& centre, float half, float dir_x, float dir_y, unsigned int color, float thickness )
+/* same geometry twice: world points queue draw data, menu preview paints its window */
+struct world_painter_t {
+	void line( const c_vector_2d& a, const c_vector_2d& b, unsigned int c, float t ) const
+	{
+		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( line_draw_object_t{ a, b, c, t } ) );
+	}
+	void circle( const c_vector_2d& o, float r, unsigned int c, float t ) const
+	{
+		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_circle, std::make_any< circle_draw_object_t >( circle_draw_object_t{ o, r, c, 32, t } ) );
+	}
+	void fill( const c_vector_2d& o, float r, unsigned int c ) const
+	{
+		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_filled_circle, std::make_any< filled_circle_draw_object_t >( o, r, c, 32 ) );
+	}
+};
+struct list_painter_t {
+	ImDrawList* dl;
+	void line( const c_vector_2d& a, const c_vector_2d& b, unsigned int c, float t ) const
+	{
+		dl->AddLine( ImVec2( a.m_x, a.m_y ), ImVec2( b.m_x, b.m_y ), c, t );
+	}
+	void circle( const c_vector_2d& o, float r, unsigned int c, float t ) const { dl->AddCircle( ImVec2( o.m_x, o.m_y ), r, c, 64, t ); }
+	void fill( const c_vector_2d& o, float r, unsigned int c ) const { dl->AddCircleFilled( ImVec2( o.m_x, o.m_y ), r, c, 64 ); }
+};
+
+constexpr float k_point_pi = 3.14159265f;
+
+/* centre design, oriented along dir. order = k_point_design_names */
+template < class P >
+static void design_draw( const P& p, int type, const c_vector_2d& centre, float half, float dir_x, float dir_y, unsigned int color, float t )
 {
-	if ( half <= 0.f )
+	if ( type < 0 || half <= 0.f )
 		return;
 	const float dlen = std::sqrt( dir_x * dir_x + dir_y * dir_y );
 	if ( dlen < 0.0001f )
@@ -295,20 +324,219 @@ static void draw_double_arrow( const c_vector_2d& centre, float half, float dir_
 	const float ax = dir_x / dlen, ay = dir_y / dlen;
 	const float px = -ay, py = ax;
 	const float head = std::min( std::clamp( half * 0.4f, 2.f, 6.f ), half * 0.5f );
-	auto pt          = [ & ]( float along, float across ) -> c_vector_2d {
-		c_vector_2d p;
-		p.m_x = centre.m_x + ax * along + px * across;
-		p.m_y = centre.m_y + ay * along + py * across;
-		return p;
+	auto pt          = [ & ]( float along, float across ) {
+		return c_vector_2d( centre.m_x + ax * along + px * across, centre.m_y + ay * along + py * across );
 	};
-	auto line = [ & ]( const c_vector_2d& a, const c_vector_2d& b ) {
-		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( line_draw_object_t{ a, b, color, thickness } ) );
+	auto line = [ & ]( const c_vector_2d& a, const c_vector_2d& b ) { p.line( a, b, color, t ); };
+	auto loop = [ & ]( std::initializer_list< c_vector_2d > pts ) {
+		const c_vector_2d* prev = pts.begin( ) + pts.size( ) - 1;
+		for ( const auto& q : pts ) {
+			line( *prev, q );
+			prev = &q;
+		}
 	};
-	line( pt( -half, 0.f ), pt( half, 0.f ) );
-	line( pt( -half, 0.f ), pt( -half + head, -head ) );
-	line( pt( -half, 0.f ), pt( -half + head, head ) );
-	line( pt( half, 0.f ), pt( half - head, -head ) );
-	line( pt( half, 0.f ), pt( half - head, head ) );
+	switch ( type ) {
+	case 0:
+		line( pt( -half, 0.f ), pt( half, 0.f ) );
+		line( pt( -half, 0.f ), pt( -half + head, -head ) );
+		line( pt( -half, 0.f ), pt( -half + head, head ) );
+		[[fallthrough]];
+	case 1:
+		if ( type == 1 )
+			line( pt( -half, 0.f ), pt( half, 0.f ) );
+		line( pt( half, 0.f ), pt( half - head, -head ) );
+		line( pt( half, 0.f ), pt( half - head, head ) );
+		break;
+	case 2:
+		line( pt( -half, 0.f ), pt( half, 0.f ) );
+		break;
+	case 3:
+		line( pt( -half, 0.f ), pt( half, 0.f ) );
+		line( pt( 0.f, -half ), pt( 0.f, half ) );
+		break;
+	case 4: {
+		const float d = half * 0.7071f;
+		line( pt( -d, -d ), pt( d, d ) );
+		line( pt( -d, d ), pt( d, -d ) );
+		break;
+	}
+	case 5:
+		p.fill( centre, std::max( half * 0.3f, 1.5f ), color );
+		break;
+	case 6:
+		p.circle( centre, half * 0.5f, color, t );
+		break;
+	case 7: {
+		const float d = half * 0.6f;
+		loop( { pt( d, 0.f ), pt( 0.f, d ), pt( -d, 0.f ), pt( 0.f, -d ) } );
+		break;
+	}
+	case 8: {
+		const float d = half * 0.45f;
+		loop( { pt( d, d ), pt( -d, d ), pt( -d, -d ), pt( d, -d ) } );
+		break;
+	}
+	case 9:
+		loop( { pt( half * 0.6f, 0.f ), pt( -half * 0.4f, half * 0.5f ), pt( -half * 0.4f, -half * 0.5f ) } );
+		break;
+	case 10:
+		line( pt( half * 0.35f, 0.f ), pt( -half * 0.35f, -half * 0.55f ) );
+		line( pt( half * 0.35f, 0.f ), pt( -half * 0.35f, half * 0.55f ) );
+		break;
+	case 11:
+		for ( int i = 0; i < 8; ++i ) {
+			const float a = i * k_point_pi / 4.f, c = std::cos( a ), s = std::sin( a );
+			line( pt( c * half * 0.35f, s * half * 0.35f ), pt( c * half, s * half ) );
+		}
+		break;
+	}
+}
+
+/* outline: shape polygon split into short pieces; gap bits 1 top 2 bottom 4 left 8 right skip that quarter. order = k_point_shape_names */
+template < class P >
+static void ring_draw( const P& p, int shape, const c_vector_2d& c, float r, unsigned int color, int gaps, float t )
+{
+	gaps &= 15;
+	if ( gaps == 15 || r <= 0.f )
+		return;
+	if ( shape <= 0 && gaps == 0 ) {
+		p.circle( c, r, color, t );
+		return;
+	}
+	constexpr int k_sides[ ]    = { 64, 4, 4, 6, 8, 3 };
+	constexpr float k_start[ ]  = { 0.f, k_point_pi * 0.25f, 0.f, 0.f, k_point_pi / 8.f, -k_point_pi * 0.5f };
+	const int s                 = std::clamp( shape, 0, 5 );
+	const int sides             = k_sides[ s ];
+	const int sub               = std::max( 1, 64 / sides );
+	auto vertex                 = [ & ]( int i ) {
+		const float a = k_start[ s ] + i * 2.f * k_point_pi / sides;
+		return c_vector_2d( c.m_x + std::cos( a ) * r, c.m_y + std::sin( a ) * r );
+	};
+	for ( int i = 0; i < sides; ++i ) {
+		const c_vector_2d v0 = vertex( i ), v1 = vertex( i + 1 );
+		for ( int k = 0; k < sub; ++k ) {
+			const c_vector_2d a = v0 + ( v1 - v0 ) * ( static_cast< float >( k ) / sub );
+			const c_vector_2d b = v0 + ( v1 - v0 ) * ( static_cast< float >( k + 1 ) / sub );
+			float mid           = std::atan2( ( a.m_y + b.m_y ) * 0.5f - c.m_y, ( a.m_x + b.m_x ) * 0.5f - c.m_x );
+			if ( mid < 0.f )
+				mid += 2.f * k_point_pi;
+			const int quarter = mid < k_point_pi * 0.25f || mid >= k_point_pi * 1.75f ? 8
+			                    : mid < k_point_pi * 0.75f                            ? 2
+			                    : mid < k_point_pi * 1.25f                            ? 4
+			                                                                          : 1;
+			if ( !( gaps & quarter ) )
+				p.line( a, b, color, t );
+		}
+	}
+}
+
+const point_style_t& point_style( int style )
+{
+	static const point_style_t styles[ point_style_count ] = {
+		{ "pixelsurf assist point", "pixelsurf", 0, g_variables.m_point_gaps_ps, g_variables.m_point_design_ps, g_variables.m_point_design_type_ps,
+		  g_variables.m_point_shape_ps, false, true, true },
+		{ "bounce assist point", "bounce", 0, g_variables.m_point_gaps_hb, g_variables.m_point_design_hb, g_variables.m_point_design_type_hb,
+		  g_variables.m_point_shape_hb, false, true, true },
+		{ "pixeljump assist point", "pixeljump", 0, g_variables.m_point_gaps_pj, g_variables.m_point_design_pj, g_variables.m_point_design_type_pj,
+		  g_variables.m_point_shape_pj, false, true, true },
+		{ "calculator point", "calc", 0, g_variables.m_point_gaps_calc, 0, 0, g_variables.m_point_shape_calc, false, true, false },
+		{ "finder pixelsurf", "pixelsurf", g_variables.m_point_clr_pf_ps, 0, 0, 0, 0, true, false, false },
+		{ "finder headbounce", "headbounce", g_variables.m_point_clr_pf_hb, 0, 0, 0, 0, true, false, false },
+		{ "finder pixeljump", "pixeljump", g_variables.m_point_clr_pf_pj, 0, 0, 0, 0, true, false, false },
+		{ "finder texturebug", "texturebug", g_variables.m_point_clr_pf_tb, 0, 0, 0, 0, true, false, false },
+	};
+	return styles[ std::clamp( style, 0, point_style_count - 1 ) ];
+}
+unsigned int point_style_u32( int style, float alpha )
+{
+	const auto& s = point_style( style );
+	const float a = alpha * std::clamp( GET_VARIABLE( g_variables.m_points_opacity, float ), 0.f, 1.f );
+	return GET_VARIABLE( s.has_color ? s.color : g_variables.m_accent, c_color ).get_u32( a );
+}
+int point_style_gaps( int style )
+{
+	const auto& s = point_style( style );
+	return s.has_gaps ? GET_VARIABLE( s.gaps, int ) & 15 : 0;
+}
+int point_style_design( int style )
+{
+	const auto& s = point_style( style );
+	if ( !s.has_design || !GET_VARIABLE( s.design, bool ) )
+		return -1;
+	return std::clamp( GET_VARIABLE( s.design_type, int ), 0, k_point_design_count - 1 );
+}
+static int point_style_shape( int style )
+{
+	const auto& s = point_style( style );
+	return s.has_gaps ? std::clamp( GET_VARIABLE( s.shape, int ), 0, k_point_shape_count - 1 ) : 0;
+}
+static float points_thickness( float base )
+{
+	return base * std::clamp( GET_VARIABLE( g_variables.m_points_thickness, float ), 0.25f, 5.f );
+}
+template < class P >
+static void point_ring( const P& p, int style, const c_vector_2d& c, float r, unsigned int color, float t )
+{
+	const int shape = point_style_shape( style ), gaps = point_style_gaps( style );
+	if ( GET_VARIABLE( g_variables.m_points_glow, bool ) ) {
+		const unsigned int a = ( color >> IM_COL32_A_SHIFT ) & 0xFFu;
+		for ( int i = 1; i <= 3; ++i ) {
+			const unsigned int ga = a * ( 4 - i ) / 10;
+			ring_draw( p, shape, c, r + t * i * 1.5f, ( color & ~IM_COL32_A_MASK ) | ( ga << IM_COL32_A_SHIFT ), gaps, t * 1.5f );
+		}
+	}
+	ring_draw( p, shape, c, r, color, gaps, t );
+}
+void point_ring_emit( int style, const c_vector_2d& centre, float radius, unsigned int color, float thickness )
+{
+	point_ring( world_painter_t{ }, style, centre, radius, color, points_thickness( thickness ) );
+}
+void point_design_emit( int style, const c_vector_2d& centre, float half, float dir_x, float dir_y, unsigned int color )
+{
+	design_draw( world_painter_t{ }, point_style_design( style ), centre, half, dir_x, dir_y, color, points_thickness( 1.f ) );
+}
+static float point_design_half( float radius )
+{
+	return radius * std::clamp( GET_VARIABLE( g_variables.m_points_design_size, float ), 0.2f, 1.2f );
+}
+static float points_pulse( bool on )
+{
+	if ( !on || !GET_VARIABLE( g_variables.m_points_pulse, bool ) )
+		return 1.f;
+	return 1.f + 0.1f * std::sin( static_cast< float >( ImGui::GetTime( ) ) * 2.f * k_point_pi * 1.5f );
+}
+static void point_label_emit( int style, const c_vector_2d& centre, float radius, float alpha )
+{
+	if ( !GET_VARIABLE( g_variables.m_points_labels, bool ) )
+		return;
+	auto* font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
+	if ( !font )
+		return;
+	const char* label = point_style( style ).label;
+	const ImVec2 size = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, label );
+	text_draw_object_t text;
+	text.m_position = c_vector_2d( std::floor( centre.m_x - size.x * 0.5f ), centre.m_y + radius + 3.f );
+	text.m_color    = c_color( 255, 255, 255, 255 ).get_u32( alpha );
+	text.m_text     = label;
+	text.m_font     = font;
+	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_text, std::make_any< text_draw_object_t >( text ) );
+}
+void point_style_preview( int style, float x, float y, float radius )
+{
+	const list_painter_t p{ ImGui::GetWindowDrawList( ) };
+	const c_vector_2d c( x, y );
+	const float op = std::clamp( GET_VARIABLE( g_variables.m_points_opacity, float ), 0.f, 1.f );
+	const float fill = style == point_style_calc ? 1.f : std::clamp( GET_VARIABLE( g_variables.m_points_fill, float ), 0.f, 1.f );
+	p.fill( c, radius, IM_COL32( 0, 0, 0, static_cast< int >( 255.f * fill * op ) ) );
+	const unsigned int color = point_style_u32( style, 1.f );
+	const float t            = points_thickness( 2.f );
+	point_ring( p, style, c, radius, color, t );
+	const bool up = style != point_style_ps;
+	design_draw( p, point_style_design( style ), c, point_design_half( radius ), up ? 0.f : 1.f, up ? -1.f : 0.f, point_style_u32( style, 200.f / 255.f ), t );
+	if ( style == point_style_calc ) {
+		const ImVec2 s = ImGui::CalcTextSize( "1" );
+		p.dl->AddText( ImVec2( std::floor( x - s.x * 0.5f ), std::floor( y - s.y * 0.5f ) ), color, "1" );
+	}
 }
 struct point_edit_t {
 	bool active                       = true;
@@ -451,15 +679,27 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 	float dt                       = ImGui::GetIO( ).DeltaTime;
 	const float scaleSpeed         = 10.0f;
 	/* g_input: a Backspace typed into chat / console / the popup must not delete the hovered point */
-	static bool isBackspacePressed = false;
-	if ( g_input.is_key_down( VK_BACK ) ) {
-		isBackspacePressed = true;
-	} else {
-		isBackspacePressed = false;
-	}
-	auto accentclr = ImGui::GetStyle( ).Colors[ ImGuiCol_::ImGuiCol_Accent ];
-	if ( GET_VARIABLE( g_variables.m_pixel_surf_assist, bool ) && GET_VARIABLE( g_variables.m_pixel_surf_assist_show_points, bool ) ) {
-		const float maxDrawDist  = std::max( GET_VARIABLE( g_variables.m_pixel_surf_assist_point_dist, float ), 1.f );
+	const auto& delete_key        = GET_VARIABLE( g_variables.m_points_delete_key, key_bind_t );
+	const bool isBackspacePressed = GET_VARIABLE( g_variables.m_points_delete, bool ) && delete_key.m_key != 0 &&
+	                                g_input.is_key_down( delete_key.m_key ) && !g_input.keys_blocked( );
+	const bool render_ps          = GET_VARIABLE( g_variables.m_points_render_ps, bool );
+	const bool render_bounce      = GET_VARIABLE( g_variables.m_points_render_bounce, bool );
+	const float maxDrawDist       = std::max( GET_VARIABLE( g_variables.m_points_max_dist, float ), 1.f );
+	const bool radius_color       = GET_VARIABLE( g_variables.m_points_radius_color, bool );
+	const float opacity           = std::clamp( GET_VARIABLE( g_variables.m_points_opacity, float ), 0.f, 1.f );
+	const float size              = std::clamp( GET_VARIABLE( g_variables.m_points_size, float ), 0.25f, 4.f );
+	const float fill              = std::clamp( GET_VARIABLE( g_variables.m_points_fill, float ), 0.f, 1.f );
+	const float hover_scale       = std::clamp( GET_VARIABLE( g_variables.m_points_hover_scale, float ), 1.f, 3.f );
+	const bool fade               = GET_VARIABLE( g_variables.m_points_distance_fade, bool );
+	const bool shrink             = GET_VARIABLE( g_variables.m_points_distance_shrink, bool );
+	/* alpha passed in already holds opacity. radius color = active point while you stand outside its radius */
+	const auto style_color = [ & ]( int style, bool in_radius, float alpha ) {
+		if ( radius_color && !in_radius )
+			return GET_VARIABLE( g_variables.m_points_radius_clr, c_color ).get_u32( alpha );
+		const auto& s = point_style( style );
+		return GET_VARIABLE( s.has_color ? s.color : g_variables.m_accent, c_color ).get_u32( alpha );
+	};
+	if ( GET_VARIABLE( g_variables.m_pixel_surf_assist, bool ) && render_ps ) {
 		const float fadeStartDist = maxDrawDist * 0.6f;
 		for ( size_t i = 0; i < points.size( ); ++i ) {
 			points_check_t& point = points[ i ];
@@ -479,24 +719,24 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 				continue;
 			}
 			float baseRadius = 11.0f;
-			if ( distance > 300.0f ) {
+			if ( shrink && distance > 300.0f ) {
 				float t    = std::clamp( ( distance - 300.0f ) / 300.0f, 0.0f, 1.0f );
 				baseRadius = LerpFloat( 11.0f, 4.0f, t );
 			}
-			baseRadius                   = std::max( baseRadius, 3.0f );
+			baseRadius                   = std::max( baseRadius, 3.0f ) * size;
 			const float outlineThickness = 0.5f;
 			float alphaMultiplier        = 1.0f;
-			if ( distance > fadeStartDist ) {
+			if ( fade && distance > fadeStartDist ) {
 				alphaMultiplier = std::clamp( ( maxDrawDist - distance ) / ( maxDrawDist - fadeStartDist ), 0.0f, 1.0f );
 			}
-			const int outlineA = static_cast< int >( 255.0f * alphaMultiplier );
+			alphaMultiplier *= opacity;
+			const bool inRadius = distance <= point.radius;
+			const int outlineA  = static_cast< int >( 255.0f * alphaMultiplier );
 			unsigned int outlineColor;
 			if ( point.is_free_point ) {
 				outlineColor = c_color( 250, 120, 120, outlineA ).get_u32( );
 			} else if ( point.active ) {
-				outlineColor = c_color( static_cast< int >( accentclr.x * 255.f ), static_cast< int >( accentclr.y * 255.f ),
-				                        static_cast< int >( accentclr.z * 255.f ), outlineA )
-				                   .get_u32( );
+				outlineColor = style_color( point_style_ps, inRadius, alphaMultiplier );
 			} else {
 				outlineColor = c_color( 100, 100, 100, outlineA ).get_u32( );
 			}
@@ -506,13 +746,13 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 				fillAlpha = static_cast< int >( 255.0f * alphaMultiplier );
 				fillColor = c_color( 250, 120, 120, fillAlpha ).get_u32( );
 			} else {
-				fillAlpha = static_cast< int >( 100.0f * alphaMultiplier );
+				fillAlpha = static_cast< int >( 255.0f * fill * alphaMultiplier );
 				fillColor = c_color( 0, 0, 0, fillAlpha ).get_u32( );
 			}
 			bool isHovered        = InCrosshair( screenPos.m_x, screenPos.m_y, baseRadius );
-			float targetScale     = isHovered ? 1.5f : 1.0f;
+			float targetScale     = isHovered ? hover_scale : 1.0f;
 			point.currentScale    = LerpFloat( point.currentScale, targetScale, dt * scaleSpeed );
-			float effectiveRadius = baseRadius * point.currentScale;
+			float effectiveRadius = baseRadius * point.currentScale * points_pulse( point.active && !point.is_free_point && inRadius );
 			if ( isHovered ) {
 				if ( !point.open_settings && isEnterPressed( ) ) {
 					gloabal_settings_timer = GetTickCount64( ) + 500;
@@ -526,9 +766,7 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 				point_edit_sync( point, 0 );
 			filled_circle_draw_object_t filledCircle{ screenPos, effectiveRadius, fillColor, 32 };
 			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_filled_circle, std::make_any< filled_circle_draw_object_t >( filledCircle ) );
-			g_render.m_draw_data.emplace_back(
-				e_draw_type::draw_type_circle,
-				std::make_any< circle_draw_object_t >( circle_draw_object_t{ screenPos, effectiveRadius, outlineColor, 32, outlineThickness } ) );
+			point_ring_emit( point_style_ps, screenPos, effectiveRadius, outlineColor, outlineThickness );
 			const int crossAlpha = static_cast< int >( 200.0f * alphaMultiplier );
 			unsigned int crossColor;
 			if ( point.is_free_point )
@@ -536,10 +774,8 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 			else if ( !point.active )
 				crossColor = c_color( 150, 150, 150, crossAlpha ).get_u32( );
 			else
-				crossColor = c_color( static_cast< int >( accentclr.x * 255.f ), static_cast< int >( accentclr.y * 255.f ),
-				                      static_cast< int >( accentclr.z * 255.f ), crossAlpha )
-				                 .get_u32( );
-			if ( point.surf_dir_state == 0 ) {
+				crossColor = style_color( point_style_ps, inRadius, alphaMultiplier * 200.f / 255.f );
+			if ( point_style_design( point_style_ps ) >= 0 && point.surf_dir_state == 0 ) {
 				c_vector probed;
 				if ( probe_surf_dir( point.pos, probed ) ) {
 					point.surf_dir       = probed;
@@ -557,12 +793,13 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 					arrowRatio = ratio;
 				}
 			}
-			const float arrowHalf = effectiveRadius * 0.8f * arrow_length_scale( arrowRatio );
+			const float arrowHalf = point_design_half( effectiveRadius ) * arrow_length_scale( arrowRatio );
 			const int arrowAlpha  = static_cast< int >( ( ( crossColor >> 24 ) & 0xFFu ) * arrow_fade( arrowRatio ) );
 			if ( arrowAlpha > 0 ) {
 				const unsigned int arrowColor = ( crossColor & 0x00FFFFFFu ) | ( static_cast< unsigned int >( arrowAlpha ) << 24 );
-				draw_double_arrow( screenPos, arrowHalf, arrowDirX, arrowDirY, arrowColor, 1.0f );
+				point_design_emit( point_style_ps, screenPos, arrowHalf, arrowDirX, arrowDirY, arrowColor );
 			}
+			point_label_emit( point_style_ps, screenPos, effectiveRadius, alphaMultiplier );
 			if ( isHovered && point.show_3d_radius )
 				draw_point_radius_rings( point );
 			if ( isHovered && isBackspacePressed ) {
@@ -575,7 +812,7 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 		for ( auto& point : points )
 			point.open_settings = false;
 	}
-	if ( GET_VARIABLE( g_variables.m_bouncee_assist, bool ) || GET_VARIABLE( g_variables.m_pixel_jump_assist, bool ) ) {
+	if ( ( GET_VARIABLE( g_variables.m_bouncee_assist, bool ) || GET_VARIABLE( g_variables.m_pixel_jump_assist, bool ) ) && render_bounce ) {
 		for ( size_t i = 0; i < m_bounce_points_check.size( ); ++i ) {
 			points_check_t& point = m_bounce_points_check[ i ];
 			/* same stale-flag rule as the pixelsurf loop above */
@@ -583,6 +820,8 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 				point.open_settings = false;
 				continue;
 			}
+			/* pixeljump assist point = type 2 in the bounce list */
+			const int style = point.point_type == 2 ? point_style_pj : point_style_hb;
 			float assist_height   = GET_VARIABLE( g_variables.m_pixel_surf_assist_render_height, float );
 			c_vector adjusted_pos = point.pos;
 			adjusted_pos.m_z += assist_height;
@@ -592,12 +831,12 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 				continue;
 			}
 			float distance = playerPos.dist_to( adjusted_pos );
-			if ( distance > 1100.f ) {
+			if ( distance > maxDrawDist ) {
 				point.open_settings = false;
 				continue;
 			}
 			float baseRadius = 10.0f;
-			if ( distance > 275.0f ) {
+			if ( shrink && distance > 275.0f ) {
 				if ( distance <= 650.0f ) {
 					float t    = std::clamp( ( distance - 275.0f ) / 375.0f, 0.0f, 1.0f );
 					t          = t * t * ( 3.0f - 2.0f * t );
@@ -606,36 +845,27 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 					baseRadius = 2.0f;
 				}
 			}
-			baseRadius             = std::max( baseRadius, 3.0f );
+			baseRadius             = std::max( baseRadius, 3.0f ) * size;
 			float outlineThickness = 0.5f;
 			if ( distance > 200.0f ) {
 				float t          = std::clamp( ( distance - 200.0f ) / 200.0f, 0.0f, 1.0f );
 				outlineThickness = LerpFloat( 0.5f, 1.0f, t );
 			}
-			const float bFadeStart = 1100.0f * 0.6f;
+			const float bFadeStart = maxDrawDist * 0.6f;
 			float alphaMultiplier  = 1.0f;
-			if ( distance > bFadeStart )
-				alphaMultiplier = std::clamp( ( 1100.0f - distance ) / ( 1100.0f - bFadeStart ), 0.0f, 1.0f );
+			if ( fade && distance > bFadeStart )
+				alphaMultiplier =std::clamp( ( maxDrawDist - distance ) / ( maxDrawDist - bFadeStart ), 0.0f, 1.0f );
+			alphaMultiplier *= opacity;
 			unsigned int outlineColor;
 			bool inRadius = distance <= point.radius;
 			if ( point.is_free_point ) {
 				int outlineA = static_cast< int >( 255.0f * alphaMultiplier );
 				outlineColor = c_color( 250, 120, 120, outlineA ).get_u32( );
-			} else if ( point.point_type == 2 && point.active ) {
-				/* pixeljump assist point: the finder's yellow */
-				outlineColor = c_color( 255, 220, 0, static_cast< int >( 255.0f * alphaMultiplier ) ).get_u32( );
 			} else if ( !point.active ) {
 				int outlineA = static_cast< int >( 255.0f * alphaMultiplier );
 				outlineColor = c_color( 150, 150, 150, outlineA ).get_u32( );
-			} else if ( inRadius ) {
-				int outlineR = static_cast< int >( accentclr.x * 255.f );
-				int outlineG = static_cast< int >( accentclr.y * 255.f );
-				int outlineB = static_cast< int >( accentclr.z * 255.f );
-				int outlineA = static_cast< int >( 255.0f * alphaMultiplier );
-				outlineColor = c_color( outlineR, outlineG, outlineB, outlineA ).get_u32( );
 			} else {
-				int outlineA = static_cast< int >( 255.0f * alphaMultiplier );
-				outlineColor = c_color( 255, 255, 255, outlineA ).get_u32( );
+				outlineColor = style_color( style, inRadius, alphaMultiplier );
 			}
 			int fillAlpha;
 			unsigned int fillColor;
@@ -643,7 +873,7 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 				fillAlpha = static_cast< int >( 255.0f * alphaMultiplier );
 				fillColor = c_color( 250, 120, 120, fillAlpha ).get_u32( );
 			} else {
-				fillAlpha = static_cast< int >( 100.0f * alphaMultiplier );
+				fillAlpha = static_cast< int >( 255.0f * fill * alphaMultiplier );
 				fillColor = c_color( 0, 0, 0, fillAlpha ).get_u32( );
 			}
 			bool isHovered = InCrosshair( screenPos.m_x, screenPos.m_y, baseRadius );
@@ -658,27 +888,12 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 			}
 			if ( point.open_settings )
 				point_edit_sync( point, 1 );
-			float targetScale     = isHovered ? 1.5f : 1.0f;
+			float targetScale     = isHovered ? hover_scale : 1.0f;
 			point.currentScale    = LerpFloat( point.currentScale, targetScale, dt * scaleSpeed );
-			float effectiveRadius = baseRadius * point.currentScale;
+			float effectiveRadius = baseRadius * point.currentScale * points_pulse( point.active && !point.is_free_point && inRadius );
 			filled_circle_draw_object_t filledCircle{ screenPos, effectiveRadius, fillColor, 32 };
 			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_filled_circle, std::make_any< filled_circle_draw_object_t >( filledCircle ) );
-			unsigned int grayColor = c_color( 128, 128, 128, static_cast< int >( 255.0f * alphaMultiplier ) ).get_u32( );
-			const int segments     = 32;
-			const float angleStep  = 2.0f * 3.14159f / segments;
-			for ( int j = 0; j < segments; ++j ) {
-				float angle1       = j * angleStep;
-				float angle2       = ( j + 1 ) * angleStep;
-				bool isGraySegment = ( angle1 >= 0.79f && angle1 <= 2.36f ) || ( angle2 >= 0.79f && angle2 <= 2.36f );
-				c_vector_2d pos1, pos2;
-				pos1.m_x                  = screenPos.m_x + cos( angle1 ) * effectiveRadius;
-				pos1.m_y                  = screenPos.m_y + sin( angle1 ) * effectiveRadius;
-				pos2.m_x                  = screenPos.m_x + cos( angle2 ) * effectiveRadius;
-				pos2.m_y                  = screenPos.m_y + sin( angle2 ) * effectiveRadius;
-				unsigned int segmentColor = isGraySegment ? grayColor : outlineColor;
-				line_draw_object_t outlineLine{ pos1, pos2, segmentColor, outlineThickness };
-				g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( outlineLine ) );
-			}
+			point_ring_emit( style, screenPos, effectiveRadius, outlineColor, outlineThickness );
 			const int bArrowAlpha = static_cast< int >( 200.0f * alphaMultiplier );
 			unsigned int bArrowColor;
 			if ( point.is_free_point )
@@ -686,9 +901,7 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 			else if ( !point.active )
 				bArrowColor = c_color( 150, 150, 150, bArrowAlpha ).get_u32( );
 			else
-				bArrowColor = c_color( static_cast< int >( accentclr.x * 255.f ), static_cast< int >( accentclr.y * 255.f ),
-				                       static_cast< int >( accentclr.z * 255.f ), bArrowAlpha )
-				                  .get_u32( );
+				bArrowColor = style_color( style, inRadius, alphaMultiplier * 200.f / 255.f );
 			float bDirX = 0.0f, bDirY = -1.0f, bRatio = 1.0f;
 			{
 				float dx, dy, ratio;
@@ -698,12 +911,13 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 					bRatio = ratio;
 				}
 			}
-			const float bArrowHalf = effectiveRadius * 0.8f * arrow_length_scale( bRatio );
+			const float bArrowHalf = point_design_half( effectiveRadius ) * arrow_length_scale( bRatio );
 			const int bFadedAlpha  = static_cast< int >( ( ( bArrowColor >> 24 ) & 0xFFu ) * arrow_fade( bRatio ) );
 			if ( bFadedAlpha > 0 ) {
 				const unsigned int bFadedColor = ( bArrowColor & 0x00FFFFFFu ) | ( static_cast< unsigned int >( bFadedAlpha ) << 24 );
-				draw_double_arrow( screenPos, bArrowHalf, bDirX, bDirY, bFadedColor, 1.0f );
+				point_design_emit( style, screenPos, bArrowHalf, bDirX, bDirY, bFadedColor );
 			}
+			point_label_emit( style, screenPos, effectiveRadius, alphaMultiplier );
 			if ( isHovered && point.show_3d_radius )
 				draw_point_radius_rings( point );
 			if ( isHovered && isBackspacePressed ) {
@@ -945,7 +1159,7 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 
 	constexpr int k_hb = 0, k_pj = 1, k_ps = 2;
 	std::vector< AnimatedPoint >* const lists[ k_pf_types ] = { &animated_points2, &animated_points4, &animated_points, &animated_points3 };
-	constexpr int k_rgb[ k_pf_types ][ 3 ]                  = { { 255, 0, 0 }, { 255, 220, 0 }, { 0, 255, 0 }, { 0, 200, 255 } };
+	constexpr int k_style[ k_pf_types ]                     = { point_style_pf_hb, point_style_pf_pj, point_style_pf_ps, point_style_pf_tb };
 
 	std::vector< pf_group_t > groups;
 	std::vector< pf_member_t > members;
@@ -993,7 +1207,8 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 
 	const float ease = 1.f - std::exp( -5.f * dt );
 	for ( auto& m : members ) {
-		const float target = ( m.group == hovered ? k_pf_hover_size : k_pf_dot_size ) * m.dot->animation_progress;
+		const float target = ( m.group == hovered ? k_pf_hover_size : k_pf_dot_size ) * m.dot->animation_progress *
+		                     std::clamp( GET_VARIABLE( g_variables.m_points_size, float ), 0.25f, 4.f );
 		m.dot->current_size += ( target - m.dot->current_size ) * ease;
 		groups[ m.group ].size = ( std::max )( groups[ m.group ].size, m.dot->current_size );
 	}
@@ -1032,6 +1247,9 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 		botox_dbg_log( "[pf place] pixeljump assist point z %.4f\n", p.m_z );
 	}
 
+	/* hidden = draw only, fade + place keys keep running */
+	if ( !GET_VARIABLE( g_variables.m_points_render_finder, bool ) )
+		return;
 	struct arc_t {
 		float a0 = 0.f, a1 = 0.f;
 		unsigned int color = 0;
@@ -1041,7 +1259,12 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 			continue;
 		g_render.m_draw_data.emplace_back(
 			e_draw_type::draw_type_filled_circle,
-			std::make_any< filled_circle_draw_object_t >( g.screen, g.size, c_color( 0, 0, 0, static_cast< int >( g.progress * 100.f ) ).get_u32( ) ) );
+			std::make_any< filled_circle_draw_object_t >(
+				g.screen, g.size,
+				c_color( 0, 0, 0,
+				         static_cast< int >( g.progress * 255.f * std::clamp( GET_VARIABLE( g_variables.m_points_fill, float ), 0.f, 1.f ) *
+				                             std::clamp( GET_VARIABLE( g_variables.m_points_opacity, float ), 0.f, 1.f ) ) )
+					.get_u32( ) ) );
 		arc_t arcs[ k_pf_types ]{ };
 		for ( int t = 0; t < k_pf_types; ++t ) {
 			if ( !g.dot[ t ] )
@@ -1049,10 +1272,12 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 			auto& a = arcs[ g.slot[ t ] ];
 			a.a0    = k_pf_top + g.slot[ t ] * k_pf_turn / g.types;
 			a.a1    = a.a0 + k_pf_turn / g.types;
-			a.color = c_color( k_rgb[ t ][ 0 ], k_rgb[ t ][ 1 ], k_rgb[ t ][ 2 ], static_cast< int >( g.dot[ t ]->animation_progress * 255.f ) ).get_u32( );
+			a.color = point_style_u32( k_style[ t ], g.dot[ t ]->animation_progress );
 		}
+		const float thick = points_thickness( 1.f );
 		if ( g.types == 1 ) {
-			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_circle, std::make_any< circle_draw_object_t >( g.screen, g.size, arcs[ 0 ].color ) );
+			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_circle,
+			                                   std::make_any< circle_draw_object_t >( g.screen, g.size, arcs[ 0 ].color, 32, thick ) );
 			continue;
 		}
 		const ImVec2 centre( g.screen.m_x, g.screen.m_y );
@@ -1062,7 +1287,7 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 		                                   std::make_any< callback_draw_object_t >( callback_draw_object_t{ [ = ]( ImDrawList* dl ) {
 											   for ( int i = 0; i < count; ++i ) {
 												   dl->PathArcTo( centre, radius, arcs[ i ].a0, arcs[ i ].a1, 32 / count );
-												   dl->PathStroke( arcs[ i ].color, 0, 1.f );
+												   dl->PathStroke( arcs[ i ].color, 0, thick );
 											   }
 										   } } ) );
 	}

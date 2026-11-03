@@ -1387,7 +1387,7 @@ bool n_chud::impl_t::chat_on_key( unsigned int msg, unsigned int wide_param, lon
 		if ( stale )
 			return false;
 
-		if ( !m_inited || !GET_VARIABLE( g_variables.m_chud_hud, bool ) )
+		if ( !m_inited || !GET_VARIABLE( g_variables.m_chud_hud, bool ) || g_ctx.m_eject_restoring )
 			return false;
 
 		if ( !g_interfaces.m_engine_client || !g_interfaces.m_input_system || !g_interfaces.m_engine_client->is_in_game( ) ||
@@ -1511,7 +1511,7 @@ bool n_chud::impl_t::resolve_hud( )
 
 void n_chud::impl_t::on_createmove( )
 {
-	const bool enabled = GET_VARIABLE( g_variables.m_chud_hud, bool );
+	const bool enabled = GET_VARIABLE( g_variables.m_chud_hud, bool ) && !g_ctx.m_eject_restoring;
 
 	if ( m_should_force_update ) {
 		m_should_force_update = false;

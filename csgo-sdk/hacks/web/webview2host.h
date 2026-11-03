@@ -17,6 +17,7 @@ enum EvType {
     EV_TITLE,
     EV_CLEARED,
     EV_CRASHED,
+    EV_JS,      // botox: ExecJsResult done, a = result json, n = tag
 };
 struct Event { EvType type; std::string a, b; int n = 0; };
 
@@ -32,6 +33,7 @@ void SetCaptureEnabled(bool on);
 
 void Navigate(const char* url);
 void ExecJs(const char* js);
+void ExecJsResult(const char* js, int tag);
 void AddStartScript(const char* js);
 void Resize(int w, int h);
 void MouseInput(Mouse m, int x, int y, int wheelDelta = 0);
@@ -44,5 +46,16 @@ void ClearData();
 
 bool PollEvent(Event& out);
 std::string Diag();
+
+// botox: botox network screens, one browser each, slot 1..k_peers. the calls above = slot 0 (own screen)
+constexpr int k_peers = 4;
+using PeerSink = void (*)(int slot, const uint8_t* bgra, int w, int h, int pitch);
+bool PeerStart(int slot, int w, int h, PeerSink sink, NavFilter filter);   // main thread, after RuntimeVersion
+void PeerStop(int slot);                                                    // joins its engine thread
+void PeerNavigate(int slot, const char* url);
+void PeerExecJs(int slot, const char* js);
+void PeerAddStartScript(int slot, const char* js);
+void PeerResize(int slot, int w, int h);
+bool PeerPollEvent(int slot, Event& out);
 
 }

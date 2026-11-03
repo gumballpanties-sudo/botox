@@ -2,6 +2,7 @@
 #include "../../game/sdk/classes/c_vector.h"
 #include "../skins/skins.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,7 @@ namespace n_botox_net
 	constexpr int NAME_MAX          = 40;
 	constexpr int NAME_CHUNK        = 11;
 	constexpr float ESP_TIMEOUT     = 1.5f;
+	constexpr float ESP_SNAP        = 256.f;
 	constexpr float USER_TIMEOUT    = 5.f;
 	constexpr float SKIN_TIMEOUT    = 15.f;
 	constexpr float ITEM_PATIENCE   = 4.f;
@@ -40,7 +42,8 @@ namespace n_botox_net
 		packet_web_place = 8,
 		packet_web_basis = 9,
 		packet_web_url   = 10,
-		packet_last      = packet_web_url,
+		packet_web_media = 11,
+		packet_last      = packet_web_media,
 	};
 
 	enum e_hello_flags : std::uint8_t {
@@ -124,6 +127,13 @@ namespace n_botox_net
 		std::uint8_t m_chunk;
 		char m_text[ WEB_URL_CHUNK ];
 	};
+
+	/* sender's main video, applied only to the url it was taken on */
+	struct web_media_data_t {
+		float m_time;
+		std::uint16_t m_url_hash;
+		std::uint8_t m_paused;
+	};
 #pragma pack( pop )
 
 	static_assert( sizeof( packet_t ) == 20 );
@@ -138,6 +148,7 @@ namespace n_botox_net
 	static_assert( sizeof( web_place_data_t ) == PAYLOAD_BYTES );
 	static_assert( sizeof( web_basis_data_t ) <= PAYLOAD_BYTES );
 	static_assert( sizeof( web_url_data_t ) == PAYLOAD_BYTES );
+	static_assert( sizeof( web_media_data_t ) <= PAYLOAD_BYTES );
 	static_assert( ( WEB_URL_MAX + WEB_URL_CHUNK - 1 ) / WEB_URL_CHUNK <= 32 );
 
 	struct impl_t {
@@ -178,11 +189,21 @@ namespace n_botox_net
 		bool web_on( ) const;
 		void send_web( );
 		void apply_web( int sender );
+		void drop_web_peers( bool stale_only );
 
+		/* glides m_from -> m_origin over one packet gap: smooth, one gap behind, never overshoots */
 		struct shared_t {
 			c_vector m_origin = { };
+			c_vector m_from   = { };
 			int m_health      = 0;
 			float m_time      = -1.f;
+			float m_interval  = 0.1f;
+
+			c_vector at( float time ) const
+			{
+				const float f = std::clamp( ( time - m_time ) / m_interval, 0.f, 1.f );
+				return m_from + ( m_origin - m_from ) * f;
+			}
 		} m_shared[ 65 ]{ };
 
 		struct user_t {
@@ -254,7 +275,7 @@ namespace n_botox_net
 		std::vector< packet_t > m_web_queue{ };
 		std::size_t m_web_cursor = 0;
 		float m_last_web         = -1.f;
-		int m_web_follow         = 0;
+		float m_last_web_media   = -1.f;
 		int m_web_own_seq        = -1;
 
 		/* client resends vban every ~1s while its mask != the server's (always 0 after our rewrite), silent = no mutes */

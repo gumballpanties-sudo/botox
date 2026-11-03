@@ -65,6 +65,12 @@ namespace n_wall_climb
 		} m_steer{ };
 		int m_ground_cmd = -1000;
 
+		/* debug log `WC WIG:`: last wall tick's START along speed, normal, branch ( side to side shake finder ) */
+		int m_wig_cmd = -1;
+		float m_wig_along = 0.f;
+		c_vector m_wig_n{ };
+		const char* m_wig_branch = "-";
+
 		/* last wall tick, written in create move, read in paint ( same thread ) */
 		struct viz_t {
 			bool valid = false, ground = false, lands = false;

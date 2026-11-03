@@ -2,190 +2,40 @@
 #include "../../../game/sdk/includes/includes.h"
 #include "../../../globals/includes/includes.h"
 #include "../../../utilities/console/console.h"
-// render scale draws raw d3d from a main thread hook, shares the mat_queue_mode hold
-#include "serial_render.h"
 #include "frame_dump.h"
+#include "fx_compat.h"
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
+#include <utility>
 
-void n_resolution_spoof::impl_t::viewport_scale( const bool enabled )
-{
-	static c_cconvar* viewport_scale_var = nullptr;
-	static float last_written            = 0.f;
+static constexpr D3DRENDERSTATETYPE k_render_states[] = { D3DRS_ZENABLE,           D3DRS_ZWRITEENABLE,      D3DRS_ALPHABLENDENABLE,
+	                                                      D3DRS_ALPHATESTENABLE,   D3DRS_CULLMODE,          D3DRS_LIGHTING,
+	                                                      D3DRS_FOGENABLE,         D3DRS_SCISSORTESTENABLE, D3DRS_STENCILENABLE,
+	                                                      D3DRS_CLIPPING,          D3DRS_SRGBWRITEENABLE,   D3DRS_COLORWRITEENABLE,
+	                                                      D3DRS_CLIPPLANEENABLE,   D3DRS_FILLMODE };
+static constexpr DWORD k_render_values[] = { FALSE, FALSE, FALSE, FALSE, D3DCULL_NONE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 0x0f, 0, D3DFILL_SOLID };
 
-	if ( !viewport_scale_var && !( viewport_scale_var = g_convars[ HASH_BT( "mat_viewportscale" ) ] ) )
-		return;
+struct stage_state_t {
+	DWORD m_stage;
+	D3DTEXTURESTAGESTATETYPE m_type;
+	DWORD m_value;
+};
 
-	float wanted = 1.f;
+static constexpr stage_state_t k_stage_states[] = {
+	{ 0, D3DTSS_COLOROP, D3DTOP_SELECTARG1 },   { 0, D3DTSS_COLORARG1, D3DTA_TEXTURE },
+	{ 0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1 },   { 0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE },
+	{ 0, D3DTSS_TEXCOORDINDEX, 0 },             { 0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_DISABLE },
+	{ 1, D3DTSS_COLOROP, D3DTOP_DISABLE },      { 1, D3DTSS_ALPHAOP, D3DTOP_DISABLE },
+};
 
-	if ( enabled && this->m_screen_width > 0 && this->m_screen_height > 0 ) {
-		int target_width  = 0;
-		int target_height = 0;
+static constexpr D3DSAMPLERSTATETYPE k_sampler_states[] = { D3DSAMP_ADDRESSU,  D3DSAMP_ADDRESSV,    D3DSAMP_MINFILTER,   D3DSAMP_MAGFILTER,
+	                                                        D3DSAMP_MIPFILTER, D3DSAMP_MAXMIPLEVEL, D3DSAMP_SRGBTEXTURE, D3DSAMP_MIPMAPLODBIAS };
+static constexpr DWORD k_sampler_values[] = { D3DTADDRESS_CLAMP, D3DTADDRESS_CLAMP, D3DTEXF_LINEAR, D3DTEXF_LINEAR, D3DTEXF_LINEAR, 0, FALSE, 0 };
 
-		this->target_size( this->m_screen_width, this->m_screen_height, target_width, target_height );
-
-		wanted = std::min( static_cast< float >( target_width ) / this->m_screen_width,
-		                   static_cast< float >( target_height ) / this->m_screen_height );
-
-		wanted = std::clamp( wanted, 1.f / 640.f, 1.f );
-	}
-
-	if ( fabsf( wanted - last_written ) < 0.0005f )
-		return;
-
-	viewport_scale_var->set_value( wanted );
-
-	if ( fabsf( viewport_scale_var->get_float( ) - wanted ) > 0.005f )
-		viewport_scale_var->force_value( wanted );
-
-	last_written = wanted;
-
-	float log_wanted = wanted;
-	float log_read   = viewport_scale_var->get_float( );
-
-	g_console.print( std::vformat( "resolution spoofer: mat_viewportscale {:.4f} ( reads back {:.4f} )",
-	                               std::make_format_args( log_wanted, log_read ) )
-	                     .c_str( ) );
-}
-
-bool n_resolution_spoof::impl_t::render_scale_active( )
-{
-	return this->enabled( ) && GET_VARIABLE( g_variables.m_resolution_spoof_render_scale, bool );
-}
-
-void n_resolution_spoof::impl_t::on_post_screen_space_effects( c_view_setup* setup )
-{
-	IDirect3DDevice9* device = g_interfaces.m_direct_device;
-
-	const int view_width  = setup ? setup->m_width : 0;
-	const int view_height = setup ? setup->m_height : 0;
-	const int full_width  = setup && setup->m_unscaled_width > 0 ? setup->m_unscaled_width : this->m_screen_width;
-	const int full_height = setup && setup->m_unscaled_height > 0 ? setup->m_unscaled_height : this->m_screen_height;
-
-	if ( !device || !this->render_scale_active( ) || view_width <= 0 || view_height <= 0 || full_width <= 0 || full_height <= 0 ||
-	     ( view_width >= full_width && view_height >= full_height ) ) {
-		this->m_view_width = this->m_view_height = 0;
-		g_serial_render.idle( );
-		return;
-	}
-
-	this->m_view_width  = view_width;
-	this->m_view_height = view_height;
-
-	// main thread, mid queue: no draws until the material system runs serial
-	if ( !g_serial_render.request( ) )
-		return;
-
-	IDirect3DSurface9* target = nullptr;
-	if ( FAILED( device->GetRenderTarget( 0, &target ) ) || !target )
-		return;
-
-	D3DSURFACE_DESC description{ };
-
-	if ( FAILED( target->GetDesc( &description ) ) || !this->build_scale_target( device, view_width, view_height, description.Format ) ) {
-		target->Release( );
-		return;
-	}
-
-	const LONG rendered_x = setup ? setup->m_x : 0;
-	const LONG rendered_y = setup ? setup->m_y : 0;
-
-	const RECT rendered{ rendered_x, rendered_y, rendered_x + view_width, rendered_y + view_height };
-
-	if ( FAILED( device->StretchRect( target, &rendered, this->m_scale_surface, nullptr, D3DTEXF_NONE ) ) ) {
-		static bool warned = false;
-		if ( !warned ) {
-			g_console.print( "resolution spoofer: render scale copy out refused" );
-			warned = true;
-		}
-
-		target->Release( );
-		return;
-	}
-
-	if ( GET_VARIABLE( g_variables.m_resolution_spoof_dump, bool ) ) {
-		GET_VARIABLE( g_variables.m_resolution_spoof_dump, bool ) = false;
-
-		n_frame_dump::save( device, this->m_scale_surface, "spoof_render_scale.png" );
-	}
-
-	D3DVIEWPORT9 previous_viewport{ };
-	const bool had_viewport = SUCCEEDED( device->GetViewport( &previous_viewport ) );
-
-	const D3DVIEWPORT9 full{ static_cast< DWORD >( setup ? setup->m_unscaled_x : 0 ), static_cast< DWORD >( setup ? setup->m_unscaled_y : 0 ),
-	                         static_cast< DWORD >( full_width ), static_cast< DWORD >( full_height ), 0.f, 1.f };
-	device->SetViewport( &full );
-
-	IDirect3DStateBlock9* state_block = nullptr;
-	bool drawn                        = false;
-
-	if ( this->begin_quad_state( device, &state_block ) ) {
-		drawn = this->draw_quad( device, this->m_scale_texture, full_width, full_height );
-
-		this->end_quad_state( device, state_block );
-	}
-
-	if ( had_viewport )
-		device->SetViewport( &previous_viewport );
-
-	static bool warned = false;
-	if ( !drawn && !warned ) {
-		g_console.print( "resolution spoofer: render scale quad draw failed" );
-		warned = true;
-	}
-
-	target->Release( );
-}
-
-bool n_resolution_spoof::impl_t::build_scale_target( IDirect3DDevice9* device, const int width, const int height, const D3DFORMAT format )
-{
-	if ( this->m_scale_surface && this->m_scale_width == width && this->m_scale_height == height && this->m_scale_format == format )
-		return true;
-
-	this->release_scale( );
-
-	if ( FAILED( device->CreateTexture( width, height, 1, D3DUSAGE_RENDERTARGET, format, D3DPOOL_DEFAULT, &this->m_scale_texture, nullptr ) ) ||
-	     FAILED( this->m_scale_texture->GetSurfaceLevel( 0, &this->m_scale_surface ) ) ) {
-		this->release_scale( );
-
-		static bool warned = false;
-		if ( !warned ) {
-			g_console.print( "resolution spoofer: render scale target creation failed" );
-			warned = true;
-		}
-
-		return false;
-	}
-
-	this->m_scale_width  = width;
-	this->m_scale_height = height;
-	this->m_scale_format = format;
-
-	int log_width  = width;
-	int log_height = height;
-
-	g_console.print( std::vformat( "resolution spoofer: render scale target {:d}x{:d}", std::make_format_args( log_width, log_height ) ).c_str( ) );
-
-	return true;
-}
-
-void n_resolution_spoof::impl_t::release_scale( )
-{
-	if ( this->m_scale_surface ) {
-		this->m_scale_surface->Release( );
-		this->m_scale_surface = nullptr;
-	}
-
-	if ( this->m_scale_texture ) {
-		this->m_scale_texture->Release( );
-		this->m_scale_texture = nullptr;
-	}
-
-	this->m_scale_width  = 0;
-	this->m_scale_height = 0;
-	this->m_scale_format = D3DFMT_UNKNOWN;
-}
+static_assert( std::size( k_render_states ) == std::size( k_render_values ) );
+static_assert( std::size( k_sampler_states ) == std::size( k_sampler_values ) );
 
 void n_resolution_spoof::impl_t::release( )
 {
@@ -263,61 +113,43 @@ bool n_resolution_spoof::impl_t::build_chain( IDirect3DDevice9* device, const in
 	return true;
 }
 
-/* one state block per pass, not per draw (D3DSBT_ALL is costly). no block = don't draw, or every
-   state below leaks into the device. */
-bool n_resolution_spoof::impl_t::begin_quad_state( IDirect3DDevice9* device, IDirect3DStateBlock9** state_block )
+void n_resolution_spoof::impl_t::begin_quad_state( IDirect3DDevice9* device )
 {
-	*state_block = nullptr;
+	auto& saved = this->m_quad;
 
-	if ( FAILED( device->CreateStateBlock( D3DSBT_ALL, state_block ) ) || !*state_block ) {
-		static bool warned = false;
-		if ( !warned ) {
-			g_console.print( "resolution spoofer: CreateStateBlock failed, skipping the pass" );
-			warned = true;
-		}
+	static_assert( std::size( k_render_states ) == sizeof( m_quad.m_render ) / sizeof( DWORD ) );
+	static_assert( std::size( k_stage_states ) == sizeof( m_quad.m_stage ) / sizeof( DWORD ) );
+	static_assert( std::size( k_sampler_states ) == sizeof( m_quad.m_sampler ) / sizeof( DWORD ) );
 
-		return false;
+	device->GetVertexShader( &saved.m_vertex_shader );
+	device->GetPixelShader( &saved.m_pixel_shader );
+	device->GetVertexDeclaration( &saved.m_declaration );
+	device->GetFVF( &saved.m_fvf );
+	device->GetTexture( 0, &saved.m_texture );
+	device->GetViewport( &saved.m_viewport );
+
+	for ( std::size_t i = 0; i < std::size( k_render_states ); ++i ) {
+		device->GetRenderState( k_render_states[ i ], &saved.m_render[ i ] );
+		device->SetRenderState( k_render_states[ i ], k_render_values[ i ] );
 	}
 
-	this->m_quad_streams.capture( device );
+	for ( std::size_t i = 0; i < std::size( k_stage_states ); ++i ) {
+		device->GetTextureStageState( k_stage_states[ i ].m_stage, k_stage_states[ i ].m_type, &saved.m_stage[ i ] );
+		device->SetTextureStageState( k_stage_states[ i ].m_stage, k_stage_states[ i ].m_type, k_stage_states[ i ].m_value );
+	}
 
-	const DWORD filter = D3DTEXF_LINEAR;
+	for ( std::size_t i = 0; i < std::size( k_sampler_states ); ++i ) {
+		device->GetSamplerState( 0, k_sampler_states[ i ], &saved.m_sampler[ i ] );
+		device->SetSamplerState( 0, k_sampler_states[ i ], k_sampler_values[ i ] );
+	}
+
+	saved.m_streams.capture( device );
+	saved.m_captured = true;
 
 	device->SetVertexShader( nullptr );
 	device->SetPixelShader( nullptr );
+	device->SetVertexDeclaration( nullptr );
 	device->SetFVF( D3DFVF_XYZRHW | D3DFVF_TEX1 );
-
-	device->SetRenderState( D3DRS_ZENABLE, FALSE );
-	device->SetRenderState( D3DRS_ZWRITEENABLE, FALSE );
-	device->SetRenderState( D3DRS_ALPHABLENDENABLE, FALSE );
-	device->SetRenderState( D3DRS_ALPHATESTENABLE, FALSE );
-	device->SetRenderState( D3DRS_CULLMODE, D3DCULL_NONE );
-	device->SetRenderState( D3DRS_LIGHTING, FALSE );
-	device->SetRenderState( D3DRS_FOGENABLE, FALSE );
-	device->SetRenderState( D3DRS_SCISSORTESTENABLE, FALSE );
-	device->SetRenderState( D3DRS_STENCILENABLE, FALSE );
-	device->SetRenderState( D3DRS_CLIPPING, FALSE );
-	device->SetRenderState( D3DRS_SRGBWRITEENABLE, FALSE );
-	device->SetRenderState( D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE |
-	                                                    D3DCOLORWRITEENABLE_ALPHA );
-
-	device->SetTextureStageState( 0, D3DTSS_COLOROP, D3DTOP_SELECTARG1 );
-	device->SetTextureStageState( 0, D3DTSS_COLORARG1, D3DTA_TEXTURE );
-	device->SetTextureStageState( 0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1 );
-	device->SetTextureStageState( 0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE );
-	device->SetTextureStageState( 1, D3DTSS_COLOROP, D3DTOP_DISABLE );
-	device->SetTextureStageState( 1, D3DTSS_ALPHAOP, D3DTOP_DISABLE );
-
-	device->SetSamplerState( 0, D3DSAMP_MINFILTER, filter );
-	device->SetSamplerState( 0, D3DSAMP_MAGFILTER, filter );
-
-	device->SetSamplerState( 0, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR );
-	device->SetSamplerState( 0, D3DSAMP_MAXMIPLEVEL, 0 );
-	device->SetSamplerState( 0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP );
-	device->SetSamplerState( 0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP );
-	device->SetSamplerState( 0, D3DSAMP_SRGBTEXTURE, FALSE );
-
-	return true;
 }
 
 bool n_resolution_spoof::impl_t::draw_quad( IDirect3DDevice9* device, IDirect3DTexture9* texture, const int quad_width, const int quad_height )
@@ -344,55 +176,71 @@ bool n_resolution_spoof::impl_t::draw_quad( IDirect3DDevice9* device, IDirect3DT
 
 	device->SetTexture( 0, texture );
 
+	// fixed function vertex AND pixel ( no ps ): legal on amd too, so no n_fx_compat::draw_up
 	return SUCCEEDED( device->DrawPrimitiveUP( D3DPT_TRIANGLESTRIP, 2, vertices, sizeof( vertex_t ) ) );
 }
 
-void n_resolution_spoof::impl_t::end_quad_state( IDirect3DDevice9* device, IDirect3DStateBlock9* state_block )
+void n_resolution_spoof::impl_t::end_quad_state( IDirect3DDevice9* device )
 {
-	if ( !state_block )
+	auto& saved = this->m_quad;
+	if ( !saved.m_captured )
 		return;
 
-	// DrawPrimitiveUP nulls stream 0 + indices, state blocks don't carry them, and source skips the
-	// re-bind when its cache matches. restore exactly.
-	this->m_quad_streams.restore( device );
+	// DrawPrimitiveUP nulls stream 0 + indices and source skips the re-bind when its cache matches
+	saved.m_streams.restore( device );
 
-	state_block->Apply( );
-	state_block->Release( );
+	device->SetVertexShader( saved.m_vertex_shader );
+	device->SetPixelShader( saved.m_pixel_shader );
+	if ( saved.m_fvf )
+		device->SetFVF( saved.m_fvf );
+	device->SetVertexDeclaration( saved.m_declaration );
+	device->SetTexture( 0, saved.m_texture );
+	device->SetViewport( &saved.m_viewport );
+
+	for ( std::size_t i = 0; i < std::size( k_render_states ); ++i )
+		device->SetRenderState( k_render_states[ i ], saved.m_render[ i ] );
+
+	for ( std::size_t i = 0; i < std::size( k_stage_states ); ++i )
+		device->SetTextureStageState( k_stage_states[ i ].m_stage, k_stage_states[ i ].m_type, saved.m_stage[ i ] );
+
+	for ( std::size_t i = 0; i < std::size( k_sampler_states ); ++i )
+		device->SetSamplerState( 0, k_sampler_states[ i ], saved.m_sampler[ i ] );
+
+	for ( IUnknown* held : { static_cast< IUnknown* >( saved.m_vertex_shader ), static_cast< IUnknown* >( saved.m_pixel_shader ),
+	                         static_cast< IUnknown* >( saved.m_declaration ), static_cast< IUnknown* >( saved.m_texture ) } )
+		if ( held )
+			held->Release( );
+
+	saved = { };
 }
 
 void n_resolution_spoof::impl_t::on_device_lost( )
 {
 	this->release( );
-	this->release_scale( );
 }
 
 void n_resolution_spoof::impl_t::on_release( )
 {
 	this->net_graph_scale( false );
 
-	this->viewport_scale( false );
-
 	this->release( );
-	this->release_scale( );
 }
 
 bool n_resolution_spoof::impl_t::enabled( )
 {
-	constexpr bool shelved = true;
+	return GET_VARIABLE( g_variables.m_resolution_spoof, bool ) && !g_ctx.m_eject_restoring;
+}
 
-	if ( shelved )
-		return false;
-
-	return GET_VARIABLE( g_variables.m_resolution_spoof, bool );
+// eject = every aspect half off: r_aspectratio 0, hud / crosshair / scope widen undone by their own off branches
+static bool aspect_var( const bool value )
+{
+	return value && GET_VARIABLE( g_variables.m_aspect_ratio_enable, bool ) && !g_ctx.m_eject_restoring;
 }
 
 bool n_resolution_spoof::impl_t::wants_overlay_pass( )
 {
 	// never in a debug mode: they skip draw or resize, so the menu would land where it can't be clicked
-	if ( GET_VARIABLE( g_variables.m_resolution_spoof_debug, int ) != 0 )
-		return false;
-
-	if ( this->render_scale_active( ) )
+	if ( GET_VARIABLE( g_variables.m_resolution_spoof_debug, int ) != 0 || n_fx_compat::dead( "res spoof" ) )
 		return false;
 
 	return this->enabled( ) && GET_VARIABLE( g_variables.m_resolution_spoof_overlay, bool ) && this->pass_is_running( );
@@ -409,12 +257,55 @@ void n_resolution_spoof::impl_t::on_end_scene( )
 		++this->m_frames_without_pass;
 }
 
+bool n_resolution_spoof::impl_t::stretch_res( )
+{
+	return this->enabled( ) && GET_VARIABLE( g_variables.m_resolution_spoof_stretch, bool );
+}
+
+bool n_resolution_spoof::impl_t::upscale_stretches( )
+{
+	return this->stretch_res( ) && this->wants_overlay_pass( );
+}
+
+bool n_resolution_spoof::impl_t::aspect_on( )
+{
+	return this->stretch_res( ) || aspect_var( true );
+}
+
+float n_resolution_spoof::impl_t::aspect_wanted( )
+{
+	if ( !this->stretch_res( ) )
+		return GET_VARIABLE( g_variables.m_aspect_ratio, float );
+
+	return static_cast< float >( std::max( GET_VARIABLE( g_variables.m_resolution_spoof_width, int ), 32 ) ) /
+	       static_cast< float >( std::max( GET_VARIABLE( g_variables.m_resolution_spoof_height, int ), 32 ) );
+}
+
+bool n_resolution_spoof::impl_t::aspect_hud( )
+{
+	return this->stretch_res( ) || aspect_var( GET_VARIABLE( g_variables.m_aspect_ratio_hud, bool ) );
+}
+
+bool n_resolution_spoof::impl_t::aspect_crosshair( )
+{
+	return this->stretch_res( ) || aspect_var( GET_VARIABLE( g_variables.m_aspect_ratio_overlay, bool ) );
+}
+
+bool n_resolution_spoof::impl_t::aspect_cheat_overlay( )
+{
+	// stretched res: the low res -> screen upscale already widens the overlay. pass not running = widen it here instead
+	if ( this->stretch_res( ) )
+		return !this->wants_overlay_pass( );
+
+	return aspect_var( GET_VARIABLE( g_variables.m_aspect_ratio_cheat_overlay, bool ) );
+}
+
 float n_resolution_spoof::impl_t::aspect_scale( )
 {
-	if ( !GET_VARIABLE( g_variables.m_aspect_ratio_enable, bool ) )
+	if ( !this->aspect_on( ) )
 		return 1.f;
 
-	const float wanted = GET_VARIABLE( g_variables.m_aspect_ratio, float );
+	const float wanted = this->aspect_wanted( );
 	if ( wanted <= 0.f || this->m_screen_width <= 0 || this->m_screen_height <= 0 )
 		return 1.f;
 
@@ -425,27 +316,23 @@ float n_resolution_spoof::impl_t::aspect_scale( )
 
 float n_resolution_spoof::impl_t::overlay_aspect_scale( )
 {
-	return GET_VARIABLE( g_variables.m_aspect_ratio_overlay, bool ) || GET_VARIABLE( g_variables.m_aspect_ratio_hud, bool )
-	           ? this->aspect_scale( )
-	           : 1.f;
+	return this->aspect_crosshair( ) || this->aspect_hud( ) ? this->aspect_scale( ) : 1.f;
 }
 
 void n_resolution_spoof::impl_t::target_size( const int screen_width, const int screen_height, int& width, int& height )
 {
-	width  = std::clamp( GET_VARIABLE( g_variables.m_resolution_spoof_width, int ), 32, std::max( screen_width, 32 ) );
 	height = std::clamp( GET_VARIABLE( g_variables.m_resolution_spoof_height, int ), 32, std::max( screen_height, 32 ) );
+
+	// no stretch: the res's line count over the screen's own shape, square pixels ( a 4:3 res unstretched is black bars )
+	const int wanted_width = GET_VARIABLE( g_variables.m_resolution_spoof_stretch, bool ) || screen_height <= 0
+	                             ? GET_VARIABLE( g_variables.m_resolution_spoof_width, int )
+	                             : static_cast< int >( lroundf( static_cast< float >( height ) * screen_width / screen_height ) );
+
+	width = std::clamp( wanted_width, 32, std::max( screen_width, 32 ) );
 }
 
 bool n_resolution_spoof::impl_t::low_res_grid( float& pixels_x, float& pixels_y )
 {
-	if ( this->render_scale_active( ) ) {
-		if ( this->m_view_width <= 0 || this->m_screen_width <= 0 )
-			return false;
-
-		pixels_x = pixels_y = static_cast< float >( this->m_screen_width ) / this->m_view_width;
-		return pixels_x > 1.001f;
-	}
-
 	if ( !this->enabled( ) )
 		return false;
 
@@ -456,6 +343,182 @@ bool n_resolution_spoof::impl_t::low_res_grid( float& pixels_x, float& pixels_y 
 	pixels_y = static_cast< float >( this->m_chain_screen_height ) / static_cast< float >( this->m_height );
 
 	return pixels_x > 1.001f || pixels_y > 1.001f;
+}
+
+void n_resolution_spoof::impl_t::crosshair_color( const int r, const int g, const int b, const int a, const bool outline )
+{
+	const auto byte = []( const int value ) { return static_cast< unsigned int >( std::clamp( value, 0, 255 ) ); };
+
+	this->m_crosshair_rgba       = IM_COL32( byte( r ), byte( g ), byte( b ), byte( a ) );
+	this->m_crosshair_is_outline = outline;
+}
+
+bool n_resolution_spoof::impl_t::crosshair_capture( const int x0, const int y0, const int x1, const int y1 )
+{
+	if ( !g_ctx.m_is_hud_weapon_being_drawn || !this->wants_overlay_pass( ) || this->m_screen_height <= 0 )
+		return false;
+
+	if ( this->m_crosshair_count < static_cast< int >( std::size( this->m_crosshair ) ) )
+		this->m_crosshair[ this->m_crosshair_count++ ] = { std::min( x0, x1 ), std::min( y0, y1 ), std::max( x0, x1 ), std::max( y0, y1 ),
+		                                                   this->m_crosshair_rgba, this->m_crosshair_is_outline };
+
+	return true;
+}
+
+/* CWeaponCSBase::DrawCrosshair ( weapon_csbase.cpp:2132-2317 ) at the spoofed height. size / thickness are YRES
+   ( height / 480, rounded per res ), the gap is raw px ( style 4: the whole 4 + gap; else cl_crosshairgap on top of
+   a height scaled spread ), outline = x0 - cl_crosshair_outlinethickness truncated. each captured rect is read back
+   as an arm ( distance from the centre band + length ) and laid out again exactly as that res would */
+void n_resolution_spoof::impl_t::crosshair_flush( )
+{
+	const int count = std::exchange( this->m_crosshair_count, 0 );
+
+	const int screen_width  = this->m_screen_width;
+	const int screen_height = this->m_screen_height;
+	const float low_width   = g_ctx.m_width;
+	const float low_height  = g_ctx.m_height;
+
+	if ( !count || screen_width <= 0 || screen_height <= 0 || low_width <= 0.f || low_height <= 0.f )
+		return;
+
+	const auto csgo_round = []( const float value ) { return static_cast< int >( std::floor( value + 0.5f ) ); };
+
+	const float k            = low_height / static_cast< float >( screen_height );
+	const int style          = g_convars.int_or( HASH_BT( "cl_crosshairstyle" ), 4 );
+	const float thickness    = g_convars.float_or( HASH_BT( "cl_crosshairthickness" ), 0.5f );
+	const float size         = g_convars.float_or( HASH_BT( "cl_crosshairsize" ), 5.f );
+	const int raw_gap        = static_cast< int >( g_convars.float_or( HASH_BT( "cl_crosshairgap" ), 0.f ) );
+	const float outline_size = g_convars.float_or( HASH_BT( "cl_crosshair_outlinethickness" ), 1.f );
+
+	const int thick_full = std::max( 1, csgo_round( thickness * screen_height / 480.f ) );
+	const int thick_low  = std::max( 1, csgo_round( thickness * low_height / 480.f ) );
+	const int bar_full   = csgo_round( size * screen_height / 480.f );
+	const int bar_low    = csgo_round( size * low_height / 480.f );
+
+	const int band_full_x = screen_width / 2 - thick_full / 2;
+	const int band_full_y = screen_height / 2 - thick_full / 2;
+	const int band_low_x  = static_cast< int >( low_width ) / 2 - thick_low / 2;
+	const int band_low_y  = static_cast< int >( low_height ) / 2 - thick_low / 2;
+
+	const auto low_distance = [ & ]( const int distance ) {
+		return style == 4 ? distance : csgo_round( static_cast< float >( distance - raw_gap ) * k ) + raw_gap;
+	};
+
+	// style 2 split bars are not bar_size long: plain scale
+	const auto low_length = [ & ]( const int length ) { return length == bar_full ? bar_low : std::max( 1, csgo_round( length * k ) ); };
+	const auto low_thin   = [ & ]( const int span ) { return span == thick_full ? thick_low : std::max( 1, csgo_round( span * k ) ); };
+
+	// band shift off centre ( cl_crosshair_recoil, cam driver ) is height scaled
+	const auto low_band = [ & ]( const int low, const int band_full, const int band_low ) {
+		return band_low + csgo_round( static_cast< float >( low - band_full ) * k );
+	};
+
+	/* role by draw order ( left, right, top unless cl_crosshair_t, bottom, then dot; style 2 split = the arm set twice ).
+	   geometry can't tell: a negative gap pulls every arm across the centre. odd counts ( weapon_debug_spread_show ) = geometry */
+	enum e_role { role_left, role_right, role_top, role_bottom, role_dot, role_shape };
+
+	const bool t_style = g_convars.int_or( HASH_BT( "cl_crosshair_t" ), 0 ) != 0;
+	const int dots     = g_convars.int_or( HASH_BT( "cl_crosshairdot" ), 0 ) != 0 ? 1 : 0;
+	const int arms     = t_style ? 3 : 4;
+
+	int lines = 0;
+	for ( int i = 0; i < count; ++i )
+		lines += this->m_crosshair[ i ].m_outline ? 0 : 1;
+
+	const bool by_order = lines > dots && ( lines - dots ) % arms == 0;
+
+	const auto role_of = [ & ]( const int line ) {
+		if ( !by_order || line < 0 )
+			return role_shape;
+
+		if ( dots && line == lines - 1 )
+			return role_dot;
+
+		const int arm = line % arms;
+		return arm < 2 ? static_cast< e_role >( arm ) : ( arm == 2 && !t_style ? role_top : role_bottom );
+	};
+
+	const auto rebuild = [ & ]( const crosshair_rect_t& rect, const int line ) {
+		crosshair_rect_t out = rect;
+
+		const int width  = rect.m_x1 - rect.m_x0;
+		const int height = rect.m_y1 - rect.m_y0;
+		const float dx   = ( rect.m_x0 + rect.m_x1 ) * 0.5f - screen_width * 0.5f;
+		const float dy   = ( rect.m_y0 + rect.m_y1 ) * 0.5f - screen_height * 0.5f;
+
+		e_role role = role_of( line );
+
+		if ( role == role_shape )
+			role = fabsf( dx ) <= 1.f && fabsf( dy ) <= 1.f ? role_dot
+			       : fabsf( dx ) > fabsf( dy )               ? ( dx < 0.f ? role_left : role_right )
+			                                                 : ( dy < 0.f ? role_top : role_bottom );
+
+		if ( role == role_dot ) {
+			out.m_x0 = low_band( rect.m_x0, band_full_x, band_low_x );
+			out.m_y0 = low_band( rect.m_y0, band_full_y, band_low_y );
+			out.m_x1 = out.m_x0 + low_thin( width );
+			out.m_y1 = out.m_y0 + low_thin( height );
+		} else if ( role == role_left || role == role_right ) {
+			out.m_y0 = low_band( rect.m_y0, band_full_y, band_low_y );
+			out.m_y1 = out.m_y0 + low_thin( height );
+
+			if ( role == role_left ) {
+				out.m_x1 = band_low_x - low_distance( band_full_x - rect.m_x1 );
+				out.m_x0 = out.m_x1 - low_length( width );
+			} else {
+				out.m_x0 = band_low_x + thick_low + low_distance( rect.m_x0 - ( band_full_x + thick_full ) );
+				out.m_x1 = out.m_x0 + low_length( width );
+			}
+		} else {
+			out.m_x0 = low_band( rect.m_x0, band_full_x, band_low_x );
+			out.m_x1 = out.m_x0 + low_thin( width );
+
+			if ( role == role_top ) {
+				out.m_y1 = band_low_y - low_distance( band_full_y - rect.m_y1 );
+				out.m_y0 = out.m_y1 - low_length( height );
+			} else {
+				out.m_y0 = band_low_y + thick_low + low_distance( rect.m_y0 - ( band_full_y + thick_full ) );
+				out.m_y1 = out.m_y0 + low_length( height );
+			}
+		}
+
+		return out;
+	};
+
+	const auto push = []( const crosshair_rect_t& rect ) {
+		if ( rect.m_x1 <= rect.m_x0 || rect.m_y1 <= rect.m_y0 )
+			return;
+
+		g_render.m_draw_data.emplace_back(
+			e_draw_type::draw_type_rect,
+			std::make_any< rect_draw_object_t >( c_vector_2d( static_cast< float >( rect.m_x0 ), static_cast< float >( rect.m_y0 ) ),
+		                                        c_vector_2d( static_cast< float >( rect.m_x1 ), static_cast< float >( rect.m_y1 ) ), rect.m_color,
+		                                        ImColor( 0.f, 0.f, 0.f, 0.f ), true, 0.f, ImDrawFlags_::ImDrawFlags_None, 1.f,
+		                                        e_rect_flags::rect_flag_none ) );
+	};
+
+	for ( int i = 0, line_index = 0; i < count; ++i ) {
+		const crosshair_rect_t& rect = this->m_crosshair[ i ];
+
+		// DrawCrosshairRect: outline right before its line, sized off the line, never scaled itself
+		if ( rect.m_outline && i + 1 < count && !this->m_crosshair[ i + 1 ].m_outline ) {
+			const crosshair_rect_t line = rebuild( this->m_crosshair[ i + 1 ], line_index++ );
+
+			crosshair_rect_t outline = rect;
+			outline.m_x0             = static_cast< int >( line.m_x0 - outline_size );
+			outline.m_y0             = static_cast< int >( line.m_y0 - outline_size );
+			outline.m_x1             = static_cast< int >( line.m_x1 + outline_size );
+			outline.m_y1             = static_cast< int >( line.m_y1 + outline_size );
+
+			push( outline );
+			push( line );
+			++i;
+			continue;
+		}
+
+		// lone outline ( never followed by its line ) keeps role order intact by not counting as a line
+		push( rebuild( rect, rect.m_outline ? -1 : line_index++ ) );
+	}
 }
 
 void n_resolution_spoof::impl_t::on_imgui_new_frame( )
@@ -478,7 +541,6 @@ void n_resolution_spoof::impl_t::on_imgui_new_frame( )
 			io.MousePos.y *= scale_y;
 		}
 	}
-
 }
 
 void n_resolution_spoof::impl_t::net_graph_scale( const bool enabled )
@@ -520,9 +582,6 @@ void n_resolution_spoof::impl_t::on_frame_stage_notify( )
 {
 	// convar writes, game thread only
 	this->net_graph_scale( this->enabled( ) && GET_VARIABLE( g_variables.m_resolution_spoof_net_graph, bool ) );
-
-	this->viewport_scale( this->render_scale_active( ) );
-
 }
 
 void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std::function< void( ) >& draw )
@@ -558,7 +617,7 @@ void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std
 	this->m_screen_width  = static_cast< int >( description.Width );
 	this->m_screen_height = static_cast< int >( description.Height );
 
-	if ( !this->enabled( ) || this->render_scale_active( ) ) {
+	if ( !this->enabled( ) ) {
 		this->release( );
 		back_buffer->Release( );
 		draw_fallback( );
@@ -700,18 +759,12 @@ void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std
 		return;
 	}
 
-	IDirect3DStateBlock9* state_block = nullptr;
-
-	if ( !this->begin_quad_state( device, &state_block ) ) {
-		back_buffer->Release( );
-		draw_fallback( );
-		return;
-	}
+	this->begin_quad_state( device );
 
 	const bool scene = SUCCEEDED( device->BeginScene( ) );
 
 	if ( !scene ) {
-		this->end_quad_state( device, state_block );
+		this->end_quad_state( device );
 		back_buffer->Release( );
 		draw_fallback( );
 
@@ -787,7 +840,7 @@ void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std
 	if ( previous_depth )
 		previous_depth->Release( );
 
-	this->end_quad_state( device, state_block );
+	this->end_quad_state( device );
 
 	if ( !stepped ) {
 		back_buffer->Release( );
@@ -832,15 +885,6 @@ void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std
 	const bool had_target   = SUCCEEDED( device->GetRenderTarget( 0, &previous_target ) ) && previous_target;
 	const bool had_viewport = SUCCEEDED( device->GetViewport( &previous_viewport ) );
 
-	static bool reported = false;
-	if ( !reported && had_target ) {
-		reported = true;
-
-		g_console.print( previous_target == back_buffer
-		                     ? "resolution spoofer: render target at Present IS the back buffer"
-		                     : "resolution spoofer: render target at Present is NOT the back buffer — the quad was landing in an engine target" );
-	}
-
 	const bool bound = SUCCEEDED( device->SetRenderTarget( 0, back_buffer ) );
 
 	if ( bound ) {
@@ -855,16 +899,13 @@ void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std
 	}
 
 	if ( SUCCEEDED( device->BeginScene( ) ) ) {
-		IDirect3DStateBlock9* up_state = nullptr;
-		bool drawn                     = false;
+		this->begin_quad_state( device );
 
-		if ( this->begin_quad_state( device, &up_state ) ) {
-			IDirect3DTexture9* up_source = debug_mode == 2 ? this->m_capture : this->m_texture;
+		IDirect3DTexture9* up_source = debug_mode == 2 ? this->m_capture : this->m_texture;
 
-			drawn = this->draw_quad( device, up_source, static_cast< int >( description.Width ), static_cast< int >( description.Height ) );
+		const bool drawn = this->draw_quad( device, up_source, static_cast< int >( description.Width ), static_cast< int >( description.Height ) );
 
-			this->end_quad_state( device, up_state );
-		}
+		this->end_quad_state( device );
 
 		device->EndScene( );
 

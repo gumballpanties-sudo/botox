@@ -507,7 +507,8 @@ void n_skins::impl_t::deagle_spinner( )
 	const auto local  = g_ctx.m_local;
 	const auto weapon = local ? g_interfaces.m_client_entity_list->get< c_base_entity >( local->get_active_weapon_handle( ) ) : nullptr;
 
-	if ( !GET_VARIABLE( g_variables.m_deagle_spinner, bool ) || !weapon || weapon->get_item_definition_index( ) != weapon_deagle ) {
+	if ( !GET_VARIABLE( g_variables.m_deagle_spinner, bool ) || g_ctx.m_eject_restoring || !weapon ||
+	     weapon->get_item_definition_index( ) != weapon_deagle ) {
 		rolling = false;
 		if ( held )
 			send( false );

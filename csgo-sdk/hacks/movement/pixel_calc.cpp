@@ -24,7 +24,7 @@ void n_movement::impl_t::pixel_calc_render( )
 
 	n_route::g_pixel_popup.publish( data.rows, data.popup_started );
 
-	if ( !GET_VARIABLE( g_variables.m_pixel_calc_show_point, bool ) )
+	if ( !GET_VARIABLE( g_variables.m_pixel_calc_show_point, bool ) || !GET_VARIABLE( g_variables.m_points_render_calc, bool ) )
 		return;
 
 	if ( data.point_vec.is_zero( ) )
@@ -34,22 +34,16 @@ void n_movement::impl_t::pixel_calc_render( )
 	if ( !g_render.world_to_screen( data.point_vec, screen_pos ) )
 		return;
 
-	auto accent  = GET_VARIABLE( g_variables.m_accent, c_color );
-	float radius = 12.f;
+	const unsigned int color = point_style_u32( point_style_calc, 1.f );
+	float radius             = 12.f * std::clamp( GET_VARIABLE( g_variables.m_points_size, float ), 0.25f, 4.f );
 
 	filled_circle_draw_object_t filled;
 	filled.m_center = screen_pos;
 	filled.m_radius = radius;
-	filled.m_color  = c_color( 0, 0, 0, 255 ).get_u32( );
+	filled.m_color  = c_color( 0, 0, 0, static_cast< int >( 255.f * std::clamp( GET_VARIABLE( g_variables.m_points_opacity, float ), 0.f, 1.f ) ) ).get_u32( );
 	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_filled_circle, std::make_any< filled_circle_draw_object_t >( filled ) );
 
-	circle_draw_object_t outline;
-	outline.m_center = screen_pos;
-	outline.m_radius = radius;
-	outline.m_color =
-		c_color( static_cast< int >( accent.get< 0 >( ) ), static_cast< int >( accent.get< 1 >( ) ), static_cast< int >( accent.get< 2 >( ) ), 255 )
-			.get_u32( );
-	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_circle, std::make_any< circle_draw_object_t >( outline ) );
+	point_ring_emit( point_style_calc, screen_pos, radius, color, 1.f );
 
 	auto* font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
 	if ( font ) {
@@ -57,9 +51,7 @@ void n_movement::impl_t::pixel_calc_render( )
 		ImVec2 text_size  = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.0f, label );
 		text_draw_object_t text;
 		text.m_position = c_vector_2d( screen_pos.m_x - text_size.x * 0.5f, screen_pos.m_y - text_size.y * 0.5f - 1.f );
-		text.m_color    = c_color( static_cast< int >( accent.get< 0 >( ) ), static_cast< int >( accent.get< 1 >( ) ),
-		                           static_cast< int >( accent.get< 2 >( ) ), 255 )
-		                   .get_u32( );
+		text.m_color    = color;
 		text.m_text = label;
 		text.m_font = font;
 		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_text, std::make_any< text_draw_object_t >( text ) );

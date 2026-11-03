@@ -821,7 +821,7 @@ void n_aimbot::impl_t::run_nospread( )
 	if ( !g_interfaces.m_engine_client )
 		return;
 
-	const bool enabled = GET_VARIABLE( g_variables.m_nospread_enable, bool );
+	const bool enabled = GET_VARIABLE( g_variables.m_nospread_enable, bool ) && !g_ctx.m_eject_restoring;
 
 	if ( !g_interfaces.m_engine_client->is_in_game( ) ) {
 		m_ns_sent_on    = false;
@@ -838,7 +838,7 @@ void n_aimbot::impl_t::run_nospread( )
 		nospread_apply( false );
 	}
 
-	if ( !GET_VARIABLE( g_variables.m_nospread_sourcemod, bool ) ) {
+	if ( !GET_VARIABLE( g_variables.m_nospread_sourcemod, bool ) || g_ctx.m_eject_restoring ) {
 		if ( m_ns_sent_on ) {
 			g_interfaces.m_engine_client->execute_client_cmd( "sm_nospread 0" );
 			m_ns_sent_on = false;
@@ -945,6 +945,34 @@ void n_aimbot::impl_t::nospread_frame_stage( const int stage )
 		m_ns_window_end = 0.f;
 }
 
+void n_aimbot::impl_t::camlock_frame( const int stage )
+{
+	if ( stage != e_client_frame_stage::render_start || m_cam_stamp == 0.f || m_cam_smooth <= 1.f )
+		return;
+
+	/* create_move stopped ticking ( pause, menu, disconnect ): no fresh aim, drop the glide */
+	const auto globals = g_interfaces.m_global_vars_base;
+	if ( globals->m_real_time - m_cam_stamp > 0.1f || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) ) {
+		m_cam_stamp = 0.f;
+		return;
+	}
+
+	c_angle camera{ };
+	g_interfaces.m_engine_client->get_view_angles( camera );
+
+	c_angle delta = c_angle( m_cam_pitch, m_cam_yaw, camera.m_z ) - camera;
+	delta.normalize( );
+
+	/* same rate as the old per tick step ( 1 - ( 1 - 1/s )^( interval * 64 ) ), just split over frames */
+	const float frame_time = std::clamp( globals->m_frame_time, 0.f, 0.1f );
+	camera += delta * ( 1.f - std::pow( 1.f - 1.f / m_cam_smooth, frame_time * 64.f ) );
+	camera.normalize( );
+	camera.clamp( );
+
+	if ( std::isfinite( camera.m_x ) && std::isfinite( camera.m_y ) )
+		g_interfaces.m_engine_client->set_view_angles( camera );
+}
+
 bool n_aimbot::impl_t::can_aimbot( )
 {
 	if ( !GET_VARIABLE( g_variables.m_aimbot_enable, bool ) || g_ctx.m_cmd->m_tick_count == 0 )
@@ -978,6 +1006,8 @@ bool n_aimbot::impl_t::shot_leaves( )
 
 void n_aimbot::impl_t::on_create_move_post( )
 {
+	m_cam_stamp = 0.f;
+
 	if ( !g_ctx.m_local || !g_ctx.m_cmd || !g_ctx.m_local->is_alive( ) )
 		return;
 
@@ -1181,21 +1211,22 @@ void n_aimbot::impl_t::on_create_move_post( )
 		return;
 	}
 
-	/* camlock ( salvia FUN_1009d890 ): silent off, camera + bullets ride the target ( SetViewAngles( cmd view ) ). smooth from the
-	   camera, 1 - ( 1 - 1/s )^( interval * 64 ), no first bullet snap. no target = normal path ( mouse + standalone rcs ) */
+	/* camlock ( salvia FUN_1009d890 ): silent off, camera + bullets ride the target ( SetViewAngles( cmd view ) ). smoothed glide
+	   runs per frame ( camlock_frame ), the cmd takes the camera it reached. no smooth = snap here. no target = normal path */
 	if ( camlock && aiming ) {
-		c_angle delta = aim - camera;
-		delta.normalize( );
-
-		if ( settings.m_smooth > 1.f )
-			delta = delta * ( 1.f - std::pow( 1.f - 1.f / settings.m_smooth, interval * 64.f ) );
-
-		camera += delta;
-		camera.normalize( );
-		camera.clamp( );
+		if ( settings.m_smooth <= 1.f ) {
+			camera = aim;
+			camera.normalize( );
+			camera.clamp( );
+		}
 
 		if ( !std::isfinite( camera.m_x ) || !std::isfinite( camera.m_y ) )
 			return;
+
+		m_cam_pitch  = aim.m_x;
+		m_cam_yaw    = aim.m_y;
+		m_cam_smooth = settings.m_smooth;
+		m_cam_stamp  = ( std::max )( g_interfaces.m_global_vars_base->m_real_time, 1e-3f );
 
 		/* aim holds the full comp, lock end unwinds it from here */
 		m_rcs_applied_x = want.m_x;

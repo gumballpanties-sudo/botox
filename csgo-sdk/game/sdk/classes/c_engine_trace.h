@@ -103,12 +103,6 @@ enum e_debug_trace_counter_behavior : int {
 	trace_counter_inc,
 };
 
-struct brush_side_info_t {
-	c_vector_aligned m_plane;
-	unsigned short m_bevel;
-	unsigned short m_thin;
-};
-
 struct cplane_t {
 	c_vector m_normal;
 	float m_distance;
@@ -116,6 +110,24 @@ struct cplane_t {
 	unsigned char m_sign_bits;
 	unsigned char pad[ 0x2 ];
 };
+
+/* BrushSideInfo_t ( public/engine/IEngineTrace.h ) */
+struct brush_side_info_t {
+	cplane_t m_plane;
+	unsigned short m_bevel;
+	unsigned short m_thin;
+};
+static_assert( sizeof( brush_side_info_t ) == 24 );
+
+/* CBrushQuery: engine holds a TraceInfo_t until m_release runs, call it right after reading */
+struct c_brush_query {
+	int m_count                               = 0;
+	unsigned int* m_brushes                   = nullptr;
+	int m_max_brush_sides                     = 0;
+	void( __cdecl* m_release )( c_brush_query* ) = nullptr;
+	void* m_data                              = nullptr;
+};
+static_assert( sizeof( c_brush_query ) == 20 );
 
 struct csurface_t {
 	const char* m_name;
@@ -329,12 +341,13 @@ public:
 	virtual void enumerate_entities( const c_vector& vec_abs_mins, const c_vector& vec_abs_maxs, i_entity_enumerator* p_enumerator )         = 0;
 	virtual c_collideable* get_collideable( c_base_entity* p_entity )                                                                        = 0;
 	virtual int get_stat_by_index( int n_index, bool b_clear )                                                                               = 0;
-	virtual void get_brushes_in_aabb( const c_vector& vec_mins, const c_vector& vec_maxs, c_utl_vector< int >* p_output,
-	                                  int f_contents_mask = mask_all )                                                                       = 0;
+	virtual void get_brushes_in_aabb( const c_vector& vec_mins, const c_vector& vec_maxs, c_brush_query& query, int f_contents_mask = mask_all,
+	                                  int cmodel_index = 0 )                                                                                 = 0;
 	virtual c_phys_collide* get_collidable_from_displacements_in_aabb( const c_vector& vec_mins, const c_vector& vec_maxs )                  = 0;
 	virtual int get_num_displacements( )                                                                                                     = 0;
 	virtual void get_displacement_mesh( int n_index, virtualmeshlist_t* p_mesh_tri_list )                                                    = 0;
-	virtual bool get_brush_info( int i_brush, c_utl_vector< brush_side_info_t >* p_brush_side_info_out, int* p_contents_out )                = 0;
+	/* returns side count, -needed if out_size too small, 0 bad brush */
+	virtual int get_brush_info( int i_brush, int& contents_out, brush_side_info_t* out, int out_size )                                     = 0;
 	virtual bool point_outside_world( const c_vector& vec_point )                                                                            = 0;
 	virtual int get_leaf_containing_point( const c_vector& vec_point )                                                                       = 0;
 	virtual i_trace_list_data* alloc_trace_list_data( )                                                                                      = 0;

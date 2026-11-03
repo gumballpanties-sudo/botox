@@ -34,6 +34,7 @@ extern void end_movement_fix( c_user_cmd* cmd );
 extern void botox_dbg_log( const char* fmt, ... );
 
 extern bool g_air_stuck_owns_cmd;
+extern bool g_air_stuck_view_forced;
 extern bool HITGODA;
 extern bool HITGODA2;
 
@@ -237,6 +238,9 @@ namespace
 	void silent_view( c_user_cmd* cmd, c_base_entity* local )
 	{
 		if ( !GET_VARIABLE( g_variables.m_silent_view, bool ) || !local || !local->is_alive( ) || g_edgebug.m_found )
+			return;
+		/* air stuck movement fix off: the pin view is sent on purpose */
+		if ( g_air_stuck_view_forced )
 			return;
 
 		c_angle live{ };

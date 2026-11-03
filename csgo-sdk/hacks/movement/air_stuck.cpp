@@ -164,6 +164,14 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		s_hold.fwd                = move;
 		cmd->m_view_point         = live_view;
 		stamp_rotate( live_view.m_y, yaw, move, 0.0f, cmd->m_forward_move, cmd->m_side_move );
+		/* use movement fix off ( ridobebra apply_air_stuck_view ): send the proof cmd as simmed, pin view + raw move, not silent */
+		g_air_stuck_view_forced = !GET_VARIABLE( g_variables.m_movement_fix, bool );
+		if ( g_air_stuck_view_forced ) {
+			cmd->m_view_point.m_x = pitch;
+			cmd->m_view_point.m_y = yaw;
+			cmd->m_forward_move   = move;
+			cmd->m_side_move      = 0.0f;
+		}
 		cmd->m_buttons            = live_buttons;
 		g_air_stuck_stamp_yaw     = yaw;
 		g_air_stuck_stamp_forward = move;

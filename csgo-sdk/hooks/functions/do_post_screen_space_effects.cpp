@@ -9,7 +9,6 @@
 #include "../../hacks/visuals/screen/flip_world.h"
 #include "../../hacks/visuals/screen/player_stencil.h"
 #include "../../hacks/visuals/screen/reflections.h"
-#include "../../hacks/visuals/screen/resolution_spoof.h"
 #include "../../hacks/visuals/screen/true_motion_blur.h"
 #include "../../hacks/web/websurface.h"
 #include "../../utilities/perf/perf_watch.h"
@@ -54,8 +53,6 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 
 		g_bloom.on_post_screen_space_effects( setup );
 	}
-
-	g_resolution_spoof.on_post_screen_space_effects( setup );
 
 	// last: DoPostScreenSpaceEffects runs after DrawViewModels in csgo, glow + every pass above must be in the mirror
 	g_flip_world.on_post_screen_space_effects( setup );

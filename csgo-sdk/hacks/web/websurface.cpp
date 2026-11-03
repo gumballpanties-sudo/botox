@@ -8,7 +8,9 @@
 #include "../visuals/screen/color_correction.h"
 #include "../visuals/screen/render_queue.h"
 
+#include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -25,14 +27,18 @@ void botox_dbg_log(const char* fmt, ...);
 #define g_webClickKey         (GET_VARIABLE(g_variables.m_web_click_key, key_bind_t).m_key)
 #define g_webRClickKey        (GET_VARIABLE(g_variables.m_web_right_click_key, key_bind_t).m_key)
 #define g_webRemoveKey        (GET_VARIABLE(g_variables.m_web_remove_key, key_bind_t).m_key)
-// botox: a screen adopted from the botox network keeps its sender's size + aspect
-static bool        s_shareDims   = false;
-static float       s_shareScale  = 1.f;
-static int         s_shareAspect = 0;
 static unsigned    s_shareSeq    = 0;
 static std::string s_shareUrl;
-#define g_webScale            (s_shareDims ? s_shareScale : GET_VARIABLE(g_variables.m_web_scale, float))
-#define g_webAspect           (s_shareDims ? s_shareAspect : GET_VARIABLE(g_variables.m_web_aspect, int))
+static float       s_shareTime   = 0.f;
+static bool        s_sharePaused = false;
+static DWORD       s_shareMediaMs = 0;   // 0 = no video seen
+static const int   k_wsMediaTag  = 1;
+static const char* k_wsMediaGetJs =
+    "(function(){try{" WS_MAINVIDEO_JS
+    "var v=M();if(!v||!isFinite(v.currentTime)||!isFinite(v.duration))return null;return (v.paused?-1:1)*(v.currentTime+1);"
+    "}catch(e){return null;}})()";
+#define g_webScale            GET_VARIABLE(g_variables.m_web_scale, float)
+#define g_webAspect           GET_VARIABLE(g_variables.m_web_aspect, int)
 #define g_webWorldOpacity     GET_VARIABLE(g_variables.m_web_world_opacity, float)
 #define g_webDepthMode        GET_VARIABLE(g_variables.m_web_depth_mode, int)
 #define g_webBackMode         GET_VARIABLE(g_variables.m_web_back_mode, int)
@@ -626,7 +632,10 @@ static void OnURLChanged(HTML_URLChanged_t* p)
 {
     if (p->unBrowserHandle == s_browser) {
         WebNoteOrigin(p->pchURL);
-        if (p->pchURL && !strncmp(p->pchURL, "http", 4)) s_curUrl = p->pchURL;
+        if (p->pchURL && !strncmp(p->pchURL, "http", 4)) {
+            s_curUrl = p->pchURL;
+            if (s_placed && s_curUrl != s_shareUrl) { s_shareUrl = s_curUrl; ++s_shareSeq; s_shareMediaMs = 0; }   // botox: clicked links share too
+        }
     }
     if (!s_wv2) WebApplyGuard();
 }
@@ -943,6 +952,16 @@ static void WebWv2Pump()
             OnChangedTitle(&t);
             break;
         }
+        case wv2::EV_JS: {
+            if (e.n != k_wsMediaTag) break;
+            const double v = strtod(e.a.c_str(), nullptr);
+            if (!std::isfinite(v) || fabs(v) < 1.0) break;   // "null" = no video
+            s_sharePaused  = v < 0.0;
+            s_shareTime    = (float)(fabs(v) - 1.0);
+            s_shareMediaMs = GetTickCount();
+            break;
+        }
+        default: break;
         }
     }
 }
@@ -953,7 +972,48 @@ static void WebReleaseTexture()
     s_texW = s_texH = 0;
 }
 
-void Web_InvalidateTexture() { WebReleaseTexture(); }
+static void WebPeersReleaseTextures();
+void Web_InvalidateTexture() { WebReleaseTexture(); WebPeersReleaseTextures(); }
+
+// Render thread. MANAGED first, DYNAMIC + DEFAULT where d3d9ex refuses it.
+static void WsUploadTex(IDirect3DDevice9* dev, IDirect3DTexture9*& tex, int& texW, int& texH, bool& dynamic,
+                        const std::vector<uint8_t>& px, int w, int h, bool fresh)
+{
+    if (w <= 0 || h <= 0 || px.size() < (size_t)w * h * 4) return;
+
+    if (!tex || texW != w || texH != h) {
+        if (tex) { tex->Release(); tex = nullptr; }
+        texW = texH = 0;
+        HRESULT hr = dev->CreateTexture(w, h, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &tex, nullptr);
+        dynamic = false;
+        if (FAILED(hr) || !tex) {
+            tex = nullptr;
+            hr = dev->CreateTexture(w, h, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8,
+                                    D3DPOOL_DEFAULT, &tex, nullptr);
+            dynamic = true;
+        }
+        if (FAILED(hr) || !tex) {
+            tex = nullptr;
+            static bool s_logged = false;
+            if (!s_logged) { s_logged = true; DebugLog("web: CreateTexture %dx%d failed hr=0x%08X", w, h, (unsigned)hr); }
+            return;
+        }
+        texW = w; texH = h;
+        fresh = true;
+        DebugLog("web: texture created %dx%d tex=%p pool=%s", w, h, (void*)tex,
+                 dynamic ? "DEFAULT+DYNAMIC" : "MANAGED");
+    } else if (!fresh) {
+        return;
+    }
+
+    D3DLOCKED_RECT lr{};
+    if (FAILED(tex->LockRect(0, &lr, nullptr, dynamic ? D3DLOCK_DISCARD : 0))) return;
+    const size_t row = (size_t)w * 4;
+    if (lr.Pitch == (int)row) memcpy(lr.pBits, px.data(), row * (size_t)h);
+    else for (int y = 0; y < h; ++y)
+        memcpy((uint8_t*)lr.pBits + (size_t)y * lr.Pitch, &px[(size_t)y * row], row);
+    tex->UnlockRect(0);
+}
 
 static void WebUploadPixels(IDirect3DDevice9* dev)
 {
@@ -969,40 +1029,7 @@ static void WebUploadPixels(IDirect3DDevice9* dev)
     }
     LeaveCriticalSection(&s_lock);
 
-    const int w = s_outW, h = s_outH;
-    if (w <= 0 || h <= 0 || s_pixOut.size() < (size_t)w * h * 4) return;
-
-    if (!s_tex || s_texW != w || s_texH != h) {
-        WebReleaseTexture();
-        HRESULT hr = dev->CreateTexture(w, h, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &s_tex, nullptr);
-        s_texDynamic = false;
-        if (FAILED(hr) || !s_tex) {
-            s_tex = nullptr;
-            hr = dev->CreateTexture(w, h, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8,
-                                    D3DPOOL_DEFAULT, &s_tex, nullptr);
-            s_texDynamic = true;
-        }
-        if (FAILED(hr) || !s_tex) {
-            s_tex = nullptr;
-            static bool s_logged = false;
-            if (!s_logged) { s_logged = true; DebugLog("web: CreateTexture %dx%d failed hr=0x%08X", w, h, (unsigned)hr); }
-            return;
-        }
-        s_texW = w; s_texH = h;
-        fresh = true;
-        DebugLog("web: texture created %dx%d tex=%p pool=%s", w, h, (void*)s_tex,
-                 s_texDynamic ? "DEFAULT+DYNAMIC" : "MANAGED");
-    } else if (!fresh) {
-        return;
-    }
-
-    D3DLOCKED_RECT lr{};
-    if (FAILED(s_tex->LockRect(0, &lr, nullptr, s_texDynamic ? D3DLOCK_DISCARD : 0))) return;
-    const size_t row = (size_t)w * 4;
-    if (lr.Pitch == (int)row) memcpy(lr.pBits, s_pixOut.data(), row * (size_t)h);
-    else for (int y = 0; y < h; ++y)
-        memcpy((uint8_t*)lr.pBits + (size_t)y * lr.Pitch, &s_pixOut[(size_t)y * row], row);
-    s_tex->UnlockRect(0);
+    WsUploadTex(dev, s_tex, s_texW, s_texH, s_texDynamic, s_pixOut, s_outW, s_outH, fresh);
 }
 
 struct WsPlane { WsVec3 normal; };
@@ -1073,6 +1100,43 @@ static void WebTrace(const WsVec3& start, const WsVec3& end, WsTrace* tr)
     WebTraceRay_SEH(start, end, tr);
 }
 
+static bool WsBuildMesh(const WsVec3& pos, const WsVec3& right, const WsVec3& up, float ww, float wh,
+                        std::vector<WsVert>& verts, std::vector<WsVert>& vertsBack, std::vector<uint16_t>& idx)
+{
+    const float w = ww > 1.f ? ww : 1.f;
+    const float h = wh > 1.f ? wh : 1.f;
+    float rad = g_webRound;
+    const float maxRad = (w < h ? w : h) * 0.5f;
+    if (rad < 0.f)      rad = 0.f;
+    if (rad > maxRad)   rad = maxRad;
+
+    float uv[4 * (k_wsCornerSeg + 1) * 2];
+    const int n = WsRoundedRectOutline(rad / w, rad / h, rad > 0.01f ? k_wsCornerSeg : 0,
+                                       uv, 4 * (k_wsCornerSeg + 1));
+    if (n < 3) return false;
+
+    {
+        const WsVec3 c = WsQuadPoint(0.5f, 0.5f, pos, right, up, ww, wh);
+        WsVert vt{ c.x, c.y, c.z, 0xFFFFFFFF, 0.5f, 0.5f };
+        verts.push_back(vt);
+        vertsBack.push_back(vt);
+    }
+    for (int i = 0; i < n; ++i) {
+        const float u = uv[i * 2], v = uv[i * 2 + 1];
+        const WsVec3 p = WsQuadPoint(u, v, pos, right, up, ww, wh);
+        WsVert vt{ p.x, p.y, p.z, 0xFFFFFFFF, u, v };
+        verts.push_back(vt);
+        vt.u = 1.f - u;
+        vertsBack.push_back(vt);
+    }
+    for (int i = 0; i < n; ++i) {
+        idx.push_back(0);
+        idx.push_back((uint16_t)(1 + i));
+        idx.push_back((uint16_t)(1 + ((i + 1) % n)));
+    }
+    return true;
+}
+
 static void WebBakeMesh()
 {
     std::vector<WsVert>   verts, vertsBack;
@@ -1088,37 +1152,7 @@ static void WebBakeMesh()
     }
 
     float ww, wh; WebWorldDims(ww, wh);
-    const float w = ww > 1.f ? ww : 1.f;
-    const float h = wh > 1.f ? wh : 1.f;
-    float rad = g_webRound;
-    const float maxRad = (w < h ? w : h) * 0.5f;
-    if (rad < 0.f)      rad = 0.f;
-    if (rad > maxRad)   rad = maxRad;
-
-    float uv[4 * (k_wsCornerSeg + 1) * 2];
-    const int n = WsRoundedRectOutline(rad / w, rad / h, rad > 0.01f ? k_wsCornerSeg : 0,
-                                       uv, 4 * (k_wsCornerSeg + 1));
-    if (n < 3) { s_rebake = false; return; }
-
-    {
-        const WsVec3 c = WsQuadPoint(0.5f, 0.5f, s_pos, s_right, s_up, ww, wh);
-        WsVert vt{ c.x, c.y, c.z, 0xFFFFFFFF, 0.5f, 0.5f };
-        verts.push_back(vt);
-        vertsBack.push_back(vt);
-    }
-    for (int i = 0; i < n; ++i) {
-        const float u = uv[i * 2], v = uv[i * 2 + 1];
-        const WsVec3 p = WsQuadPoint(u, v, s_pos, s_right, s_up, ww, wh);
-        WsVert vt{ p.x, p.y, p.z, 0xFFFFFFFF, u, v };
-        verts.push_back(vt);
-        vt.u = 1.f - u;
-        vertsBack.push_back(vt);
-    }
-    for (int i = 0; i < n; ++i) {
-        idx.push_back(0);
-        idx.push_back((uint16_t)(1 + i));
-        idx.push_back((uint16_t)(1 + ((i + 1) % n)));
-    }
+    if (!WsBuildMesh(s_pos, s_right, s_up, ww, wh, verts, vertsBack, idx)) { s_rebake = false; return; }
 
     // Published in one go: the render thread never sees a half-built mesh.
     EnterCriticalSection(&s_meshLock);
@@ -1145,8 +1179,7 @@ static void WebDoPlace()
     WsBasisFromNormal(s_normal, s_viewFwd, s_right, s_up);
     s_placed = true;
     s_rebake = true;
-    s_shareDims = false;   // botox: own place = own size, new share event
-    ++s_shareSeq;
+    ++s_shareSeq;   // botox: share event
     if (!s_curUrl.empty()) s_shareUrl = s_curUrl;
     if (g_webAutoPlay && WebAlive()) {
         if (g_webPlayFromStart) WebExecJs_SEH("window.__fpsPlayFrom0=1");
@@ -1261,6 +1294,9 @@ static bool WsDsHasStencil(IDirect3DSurface9* ds)
            d.Format == D3DFMT_D15S1;
 }
 
+__declspec(noinline) static void WsDrawTris(IDirect3DDevice9* dev, bool depthTest, IDirect3DTexture9* tex,
+                                            const WsVert* verts, UINT nv, const uint16_t* idx, UINT ntri);
+
 __declspec(noinline) static void WebDrawWorld(IDirect3DDevice9* dev, bool depthTest)
 {
     if (!dev || !s_tex || !s_placed || !s_vpValid) return;
@@ -1291,6 +1327,15 @@ __declspec(noinline) static void WebDrawWorld(IDirect3DDevice9* dev, bool depthT
     }
     if (s_draw.empty() || s_drawIdx.empty()) return;
 
+    if (InterlockedIncrement(&s_draws) == 1)
+        DebugLog("web: first world draw verts=%d tris=%d depthTest=%d",
+                 (int)s_draw.size(), (int)(s_drawIdx.size() / 3), (int)depthTest);
+    WsDrawTris(dev, depthTest, s_tex, s_draw.data(), (UINT)s_draw.size(), s_drawIdx.data(), (UINT)(s_drawIdx.size() / 3));
+}
+
+__declspec(noinline) static void WsDrawTris(IDirect3DDevice9* dev, bool depthTest, IDirect3DTexture9* tex,
+                                            const WsVert* verts, UINT nv, const uint16_t* idx, UINT ntri)
+{
     WsSavedState st{};
     __try {
         WsSave(dev, st);
@@ -1359,17 +1404,14 @@ __declspec(noinline) static void WebDrawWorld(IDirect3DDevice9* dev, bool depthT
         dev->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
         dev->SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
 
-        dev->SetTexture(0, s_tex);
-        if (InterlockedIncrement(&s_draws) == 1)
-            DebugLog("web: first world draw verts=%d tris=%d depthTest=%d",
-                     (int)s_draw.size(), (int)(s_drawIdx.size() / 3), (int)depthTest);
-        dev->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, (UINT)s_draw.size(),
-                                    (UINT)(s_drawIdx.size() / 3), s_drawIdx.data(), D3DFMT_INDEX16,
-                                    s_draw.data(), sizeof(WsVert));
+        dev->SetTexture(0, tex);
+        dev->DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, nv, ntri, idx, D3DFMT_INDEX16, verts, sizeof(WsVert));
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
 
     __try { WsRestore(dev, st); } __except(EXCEPTION_EXECUTE_HANDLER) {}
 }
+
+static void WebDrawPeers(IDirect3DDevice9* dev, bool depthTest);
 
 static bool s_cqRefused = false;
 static volatile bool s_cqRan = false;
@@ -1381,6 +1423,7 @@ static bool WebQueueOnRenderThread()
     return n_render_queue::submit([depthTest] {
         s_cqRan = true;
         WebDrawWorld(g_d3dDev, depthTest);
+        WebDrawPeers(g_d3dDev, depthTest);
     });
 }
 
@@ -1502,7 +1545,7 @@ static void WebDrainCommands()
         switch (c.op) {
         case WS_NAV:
             WebNavigate(c.s);
-            if (!c.a) { s_shareUrl = WsNormalizeUrl(c.s); ++s_shareSeq; }   // botox: a = 1 = adopted, not ours
+            s_shareUrl = WsNormalizeUrl(c.s); ++s_shareSeq; s_shareMediaMs = 0;   // botox: share event
             break;
         case WS_BACK:    WebSimple_SEH(0); break;
         case WS_FWD:     WebSimple_SEH(1); break;
@@ -1556,7 +1599,6 @@ static void WebUnplace()
     if (s_placed) WebPost(WS_PAUSE);
     s_placed = false;
     s_rebake = true;
-    s_shareDims = false;
 }
 
 void Web_Unplace()
@@ -1576,30 +1618,390 @@ bool Web_ShareGet(web_share_t& out)
     out.m_aspect = g_webAspect;
     out.m_seq    = s_shareSeq;
     out.m_url    = !s_shareUrl.empty() ? s_shareUrl : !s_curUrl.empty() ? s_curUrl : g_webUrl;
+    out.m_media  = s_shareMediaMs && GetTickCount() - s_shareMediaMs < 3000;
+    out.m_time   = s_shareTime;
+    out.m_paused = s_sharePaused;
     return true;
 }
 
-void Web_ShareApply(const web_share_t& in)
+bool Web_On() { return g_webEnable && !g_eject; }
+
+// ponytail: no latency comp, 2s drift allowed before a seek
+static void WsMediaSyncJs(char* js, size_t n, float t, bool paused)
 {
-    if (!g_webEnable) return;
-    if (!in.m_placed) { WebUnplace(); return; }
+    snprintf(js, n,
+             "(function(){try{" WS_MAINVIDEO_JS
+             "var v=M(),t=%.2f,s=%d,p=document.getElementById('movie_player');if(!v)return;"
+             "if(Math.abs(v.currentTime-t)>2){if(p&&p.seekTo)p.seekTo(t,true);else v.currentTime=t;}"
+             "if(s&&!v.paused){if(p&&p.pauseVideo)p.pauseVideo();else v.pause();}"
+             "else if(!s&&v.paused){if(p&&p.playVideo)p.playVideo();var r=v.play();if(r&&r.catch)r.catch(function(){});}"
+             "}catch(e){}})()", t, paused ? 1 : 0);
+}
 
+static void WsVolumeJs(char* js, size_t n, float vol)
+{
+    snprintf(js, n,
+             "(function(){try{var v=%.3f;document.querySelectorAll('video,audio')"
+             ".forEach(function(e){e.volume=v;e.muted=(v<=0);});}catch(e){}})()", vol);
+}
+
+// Main thread owns all but: pixels (s_peerLock, capture thread), verts/idx/mesh*/epoch (s_meshLock),
+// pixOut/tex/draw* (render thread only).
+struct WsPeer
+{
+    int    sender   = 0;   // botox net player index, 0 = free slot
+    bool   started  = false, ready = false;
+    int    restarts = 0;
+    WsVec3 pos, normal, right, up;
+    float  scale  = 1.f;
+    int    aspect = 0;
+    int    resW = 0, resH = 0;
+    std::string url, shownUrl;
+    bool   rebake = false;
+    float  atten = 1.f, lastVol = -1.f;
+    DWORD  volMs = 0;
+    float  mediaTime = 0.f;
+    bool   mediaPaused = false, mediaPending = false;
+
+    std::vector<uint8_t> pixIn;
+    std::vector<uint8_t> pixels;
+    int    pixW = 0, pixH = 0;
+    bool   dirty = false;
+
+    std::vector<WsVert>   verts, vertsBack;
+    std::vector<uint16_t> idx;
+    WsVec3   meshPos, meshNormal;
+    unsigned epoch = 0;
+
+    std::vector<uint8_t>  pixOut;
+    int    outW = 0, outH = 0;
+    IDirect3DTexture9* tex = nullptr;
+    int    texW = 0, texH = 0;
+    bool   texDynamic = false;
+    std::vector<WsVert>   draw;
+    std::vector<uint16_t> drawIdx;
+    DWORD    drawCol = 0;
+    bool     drawBack = false;
+    unsigned drawEpoch = 0xFFFFFFFFu;
+    WsVec3   drawPos, drawNormal;
+    volatile bool freeTex = false;
+};
+static WsPeer s_peers[wv2::k_peers];
+static CRITICAL_SECTION s_peerLock;
+static struct WsPeerLockInit { WsPeerLockInit() { InitializeCriticalSection(&s_peerLock); } } s_peerLockOnce;
+
+// Capture thread of that slot's browser.
+static void WebPeerSink(int slot, const uint8_t* bgra, int w, int h, int pitch)
+{
+    if (slot < 1 || slot > wv2::k_peers || !bgra || w <= 0 || h <= 0) return;
+    WsPeer& p = s_peers[slot - 1];
+    const size_t row = (size_t)w * 4, bytes = row * (size_t)h;
+    if (p.pixIn.size() != bytes) p.pixIn.resize(bytes);
+    if (pitch == (int)row) memcpy(p.pixIn.data(), bgra, bytes);
+    else for (int y = 0; y < h; ++y) memcpy(&p.pixIn[(size_t)y * row], bgra + (size_t)y * pitch, row);
+
+    EnterCriticalSection(&s_peerLock);
+    p.pixels.swap(p.pixIn);
+    p.pixW = w; p.pixH = h;
+    p.dirty = true;
+    LeaveCriticalSection(&s_peerLock);
+}
+
+static int WebPeerFind(int sender)
+{
+    for (int i = 0; i < wv2::k_peers; ++i) if (s_peers[i].sender == sender) return i;
+    return -1;
+}
+
+static void WebPeerBake(WsPeer& p)
+{
+    std::vector<WsVert>   verts, vertsBack;
+    std::vector<uint16_t> idx;
+    float ww, wh; WsAspectDims(p.aspect, p.scale, ww, wh);
+    if (!WsBuildMesh(p.pos, p.right, p.up, ww, wh, verts, vertsBack, idx)) { verts.clear(); vertsBack.clear(); idx.clear(); }
+
+    EnterCriticalSection(&s_meshLock);
+    p.verts.swap(verts);
+    p.vertsBack.swap(vertsBack);
+    p.idx.swap(idx);
+    p.meshPos = p.pos; p.meshNormal = p.normal;
+    ++p.epoch;
+    LeaveCriticalSection(&s_meshLock);
+    p.rebake = false;
+}
+
+// Main thread (or eject). PeerStop joins the engine thread: no sink call after it.
+static void WebPeerFree(int i)
+{
+    WsPeer& p = s_peers[i];
+    wv2::PeerStop(i + 1);
+    EnterCriticalSection(&s_peerLock);
+    std::vector<uint8_t>().swap(p.pixels);
+    p.pixW = p.pixH = 0;
+    p.dirty = false;
+    LeaveCriticalSection(&s_peerLock);
+    std::vector<uint8_t>().swap(p.pixIn);
+
+    EnterCriticalSection(&s_meshLock);
+    p.verts.clear(); p.vertsBack.clear(); p.idx.clear();
+    ++p.epoch;
+    LeaveCriticalSection(&s_meshLock);
+    p.freeTex = true;
+
+    p.sender = 0;
+    p.started = p.ready = false;
+    p.restarts = 0;
+    p.url.clear(); p.shownUrl.clear();
+    p.rebake = false;
+    p.lastVol = -1.f;
+    p.mediaPending = false;
+}
+
+static void WebPeersHideAll()
+{
+    for (int i = 0; i < wv2::k_peers; ++i)
+        if (s_peers[i].sender) { DebugLog("web: peer %d screen dropped", s_peers[i].sender); WebPeerFree(i); }
+}
+
+bool Web_PeerShow(int sender, const web_share_t& in)
+{
+    if (!g_webEnable || g_eject || !in.m_placed || sender <= 0) return false;
+    static int s_runtime = -1;
+    if (s_runtime < 0) { char v[64]; s_runtime = wv2::RuntimeVersion(v, sizeof(v)) ? 1 : 0; }
+    if (!s_runtime) return false;
+
+    int i = WebPeerFind(sender);
+    if (i < 0) {
+        for (int k = 0; k < wv2::k_peers && i < 0; ++k) if (!s_peers[k].sender) i = k;
+        if (i < 0) {
+            static DWORD s_fullLog = 0;
+            if (GetTickCount() - s_fullLog > 10000) { s_fullLog = GetTickCount(); DebugLog("web: peer %d screen skipped, all %d slots busy", sender, wv2::k_peers); }
+            return false;
+        }
+        s_peers[i].sender = sender;
+    }
+
+    WsPeer& p = s_peers[i];
+    p.normal = WsNorm(WsVec3(in.m_normal[0], in.m_normal[1], in.m_normal[2]));
+    p.right  = WsNorm(WsVec3(in.m_right[0], in.m_right[1], in.m_right[2]));
+    p.up     = WsNorm(WsCross(p.normal, p.right));
+    p.pos    = WsVec3(in.m_pos[0], in.m_pos[1], in.m_pos[2]);
+    p.scale  = in.m_scale;
+    p.aspect = (in.m_aspect >= 0 && in.m_aspect < k_wsAspectCount) ? in.m_aspect : 0;
     const std::string url = WsNormalizeUrl(in.m_url);
-    if (!url.empty() && url != s_shareUrl && url != s_curUrl) WebPost(WS_NAV, 1, 0, url.c_str());
-    if (!url.empty()) s_shareUrl = url;
+    if (!url.empty()) p.url = url;
+    p.rebake = true;
+    DebugLog("web: peer %d screen slot %d at %.1f %.1f %.1f n=%.2f %.2f %.2f url=%.160s",
+             sender, i + 1, p.pos.x, p.pos.y, p.pos.z, p.normal.x, p.normal.y, p.normal.z, p.url.c_str());
+    return true;
+}
 
-    s_normal = WsNorm(WsVec3(in.m_normal[0], in.m_normal[1], in.m_normal[2]));
-    s_right  = WsNorm(WsVec3(in.m_right[0], in.m_right[1], in.m_right[2]));
-    s_up     = WsNorm(WsCross(s_normal, s_right));
-    s_pos    = WsVec3(in.m_pos[0], in.m_pos[1], in.m_pos[2]);
-    s_shareScale  = in.m_scale;
-    s_shareAspect = (in.m_aspect >= 0 && in.m_aspect < k_wsAspectCount) ? in.m_aspect : 0;
-    s_shareDims   = true;
-    s_placed = true;
-    s_rebake = true;
-    if (g_webAutoPlay && WebAlive()) WebExecJs_SEH(k_wsPlayJs);
-    DebugLog("web: shared screen at %.1f %.1f %.1f n=%.2f %.2f %.2f url=%.160s",
-             s_pos.x, s_pos.y, s_pos.z, s_normal.x, s_normal.y, s_normal.z, url.c_str());
+void Web_PeerHide(int sender)
+{
+    const int i = WebPeerFind(sender);
+    if (i < 0) return;
+    DebugLog("web: peer %d screen removed", sender);
+    WebPeerFree(i);
+}
+
+void Web_PeerMedia(int sender, float time, bool paused)
+{
+    const int i = WebPeerFind(sender);
+    if (i < 0 || !std::isfinite(time) || time < 0.f) return;
+    s_peers[i].mediaTime    = time;
+    s_peers[i].mediaPaused  = paused;
+    s_peers[i].mediaPending = true;
+}
+
+static void WebPeersTick()
+{
+    const DWORD now = GetTickCount();
+    for (int i = 0; i < wv2::k_peers; ++i) {
+        WsPeer& p = s_peers[i];
+        if (!p.sender) continue;
+        const int slot = i + 1;
+        int rw, rh; WsAspectRes(p.aspect, g_webResH, rw, rh);
+
+        if (!p.started) {
+            if (p.restarts > 3) continue;
+            if (!wv2::PeerStart(slot, rw, rh, &WebPeerSink, &WebWv2Filter)) {
+                p.restarts = 4;
+                DebugLog("web: peer %d browser did not start", p.sender);
+                continue;
+            }
+            p.started = true; p.ready = false;
+            p.resW = rw; p.resH = rh;
+            p.shownUrl.clear();
+            DebugLog("web: peer %d browser starting (slot %d)", p.sender, slot);
+        } else if (rw != p.resW || rh != p.resH) {
+            p.resW = rw; p.resH = rh;
+            wv2::PeerResize(slot, rw, rh);
+        }
+
+        bool drop = false;
+        wv2::Event e;
+        while (!drop && wv2::PeerPollEvent(slot, e)) {
+            switch (e.type) {
+            case wv2::EV_READY:
+                p.ready = true;
+                wv2::PeerAddStartScript(slot, k_guardJs);
+                wv2::PeerAddStartScript(slot, k_wsEndedJs);
+                if (g_webAdblock) wv2::PeerAddStartScript(slot, WebAdJs().c_str());
+                if (g_webSmooth)  wv2::PeerAddStartScript(slot, k_wsSmoothJs);
+                DebugLog("web: peer %d browser ready", p.sender);
+                break;
+            case wv2::EV_FINISHED:
+                p.lastVol = -1.f;
+                if (g_webAutoPlay) wv2::PeerExecJs(slot, k_wsPlayJs);
+                break;
+            case wv2::EV_FAILED:
+            case wv2::EV_CRASHED:
+                DebugLog("web: peer %d browser %s -- %s", p.sender, e.a.c_str(), p.restarts < 3 ? "restarting" : "giving up");
+                drop = true;
+                break;
+            default: break;
+            }
+        }
+        if (drop) {
+            wv2::PeerStop(slot);
+            p.started = p.ready = false;
+            ++p.restarts;
+            continue;
+        }
+        if (!p.ready) continue;
+
+        if (!p.url.empty() && p.url != p.shownUrl) {
+            p.shownUrl = p.url;
+            wv2::PeerNavigate(slot, p.url.c_str());
+        }
+
+        float vol = g_webVolume < 0.f ? 0.f : (g_webVolume > 1.f ? 1.f : g_webVolume);
+        if (g_webVolDistance) vol *= p.atten;
+        if (fabsf(vol - p.lastVol) > 0.02f || now - p.volMs > 1000) {
+            char js[256];
+            WsVolumeJs(js, sizeof(js), vol);
+            wv2::PeerExecJs(slot, js);
+            p.lastVol = vol; p.volMs = now;
+        }
+
+        if (p.mediaPending) {
+            p.mediaPending = false;
+            char js[640];
+            WsMediaSyncJs(js, sizeof(js), p.mediaTime, p.mediaPaused);
+            wv2::PeerExecJs(slot, js);
+        }
+    }
+}
+
+// Main thread, the post slot: view origin is fresh here.
+static void WebPeersView()
+{
+    static float s_lastRound = -1.f;
+    const bool roundChanged = s_lastRound != g_webRound;
+    s_lastRound = g_webRound;
+    for (WsPeer& p : s_peers) {
+        if (!p.sender) continue;
+        if (p.rebake || roundChanged) WebPeerBake(p);
+        if (g_webVolDistance && s_viewValid) {
+            const float d  = WsLen(s_viewOrigin - p.pos);
+            const float n0 = g_webVolNear;
+            const float f0 = g_webVolFar > n0 + 1.f ? g_webVolFar : n0 + 1.f;
+            p.atten = (d <= n0) ? 1.f : (d >= f0 ? 0.f : 1.f - (d - n0) / (f0 - n0));
+        } else {
+            p.atten = 1.f;
+        }
+    }
+}
+
+static bool WebPeersUp()
+{
+    for (const WsPeer& p : s_peers) if (p.sender) return true;
+    return false;
+}
+
+// Render thread.
+static void WebPeersUpload(IDirect3DDevice9* dev)
+{
+    for (WsPeer& p : s_peers) {
+        if (p.freeTex) {
+            p.freeTex = false;
+            if (p.tex) { p.tex->Release(); p.tex = nullptr; }
+            p.texW = p.texH = 0;
+            std::vector<uint8_t>().swap(p.pixOut);
+            p.outW = p.outH = 0;
+            p.draw.clear(); p.drawIdx.clear();
+            p.drawEpoch = 0xFFFFFFFFu;
+        }
+        bool fresh = false;
+        EnterCriticalSection(&s_peerLock);
+        if (p.dirty) {
+            p.pixOut.swap(p.pixels);
+            p.outW = p.pixW; p.outH = p.pixH;
+            p.dirty = false;
+            fresh = true;
+        }
+        LeaveCriticalSection(&s_peerLock);
+        WsUploadTex(dev, p.tex, p.texW, p.texH, p.texDynamic, p.pixOut, p.outW, p.outH, fresh);
+    }
+}
+
+static void WebPeersReleaseTextures()
+{
+    for (WsPeer& p : s_peers) {
+        if (p.tex) { p.tex->Release(); p.tex = nullptr; }
+        p.texW = p.texH = 0;
+    }
+}
+
+// Render thread (or main, no call queue).
+static void WebDrawPeers(IDirect3DDevice9* dev, bool depthTest)
+{
+    if (!dev || !s_vpValid) return;
+    float a = g_webWorldOpacity;
+    if (a <= 0.003f) return;
+    if (a > 1.f) a = 1.f;
+    const DWORD col = D3DCOLOR_ARGB((int)(a * 255.f + 0.5f), 255, 255, 255);
+
+    for (WsPeer& p : s_peers) {
+        if (!p.tex) continue;
+        EnterCriticalSection(&s_meshLock);
+        const bool remesh = p.drawEpoch != p.epoch;
+        if (remesh) { p.drawPos = p.meshPos; p.drawNormal = p.meshNormal; }
+        LeaveCriticalSection(&s_meshLock);
+
+        const bool facing = WsDot(s_viewOrigin - p.drawPos, p.drawNormal) > 0.f;
+        if (!facing && g_webBackMode == 1) continue;
+        const bool wantBack = !facing && g_webBackMode == 2;
+        if (remesh || p.drawCol != col || p.drawBack != wantBack) {
+            EnterCriticalSection(&s_meshLock);
+            p.draw      = wantBack ? p.vertsBack : p.verts;
+            p.drawIdx   = p.idx;
+            p.drawEpoch = p.epoch;
+            p.drawPos   = p.meshPos; p.drawNormal = p.meshNormal;
+            LeaveCriticalSection(&s_meshLock);
+            for (WsVert& v : p.draw) v.col = col;
+            p.drawCol  = col;
+            p.drawBack = wantBack;
+        }
+        if (p.draw.empty() || p.drawIdx.empty()) continue;
+        WsDrawTris(dev, depthTest, p.tex, p.draw.data(), (UINT)p.draw.size(), p.drawIdx.data(), (UINT)(p.drawIdx.size() / 3));
+    }
+}
+
+// Eject, after the render thread let go. Own function: Web_Destroy's __try (C2712).
+__declspec(noinline) static void WebPeersDestroy()
+{
+    for (int i = 0; i < wv2::k_peers; ++i) {
+        WebPeerFree(i);
+        WsPeer& p = s_peers[i];
+        p.freeTex = false;
+        if (p.tex) { p.tex->Release(); p.tex = nullptr; }
+        p.texW = p.texH = 0;
+        std::vector<uint8_t>().swap(p.pixOut);
+        p.outW = p.outH = 0;
+        p.draw.clear(); p.drawIdx.clear();
+        p.drawEpoch = 0xFFFFFFFFu;
+    }
 }
 
 // Main thread (CreateMove). s_crossInside is only ever true with the menu closed.
@@ -1643,6 +2045,7 @@ void Web_MainTick()
     if (g_eject) return;
     if (!g_webEnable) {
         if (s_wv2) { WebWv2Drop(true); WebSetStatus("off"); }
+        WebPeersHideAll();
         return;
     }
 
@@ -1652,10 +2055,18 @@ void Web_MainTick()
     s_pixWanted = s_placed || (g_webPanel && (g_webPanelAlways || Menu_Visible()));
     wv2::SetCaptureEnabled(s_pixWanted);
 
+    WebPeersTick();
+
     if (!s_wv2Tried) WebWv2TryStart();
     if (s_wv2) {
         WebWv2Pump();
         if (s_wv2) WebDrainCommands();
+        static DWORD s_mediaAskMs = 0;
+        if (s_wv2 && s_placed && WebAlive() && GET_VARIABLE(g_variables.m_botox_network_web, bool) &&
+            GetTickCount() - s_mediaAskMs > 1000) {
+            s_mediaAskMs = GetTickCount();
+            wv2::ExecJsResult(k_wsMediaGetJs, k_wsMediaTag);
+        }
         return;
     }
 
@@ -1747,6 +2158,7 @@ void Web_OnPostScreenSpaceEffects(const void* setup)
         }
     }
     if (s_rebake && s_placed) WebBakeMesh();
+    WebPeersView();
 
     if (g_webVolDistance && s_placed && s_viewValid) {
         const float d  = WsLen(s_viewOrigin - s_pos);
@@ -1812,7 +2224,7 @@ void Web_OnPostScreenSpaceEffects(const void* setup)
         if (s_ptrOnPage)      { WebMousePark();        s_ptrOnPage = false; }
     }
 
-    if (!s_placed || g_webDepthMode == 2) return;
+    if ((!s_placed && !WebPeersUp()) || g_webDepthMode == 2) return;
     if (!s_presentTid) return;
 
     if (WebQueueOnRenderThread()) {
@@ -1823,6 +2235,7 @@ void Web_OnPostScreenSpaceEffects(const void* setup)
     }
     if (!s_cqRefused) { s_cqRefused = true; DebugLog("web: no call queue -- world screen drawn inline"); }
     WebDrawWorld(g_d3dDev, g_webDepthMode == 0);
+    WebDrawPeers(g_d3dDev, g_webDepthMode == 0);
 }
 
 // The keys that never arrive as characters. Anything else the page needs, it gets from KeyChar.
@@ -2199,6 +2612,7 @@ void Web_Present(IDirect3DDevice9* dev)
         std::vector<uint8_t>().swap(s_pixOut);
         s_outW = s_outH = 0;
     }
+    if (!g_eject) WebPeersUpload(dev);
     if (g_eject || !g_webEnable || (s_steamDead && !s_wv2)) return;
 
     if (WebAlive()) {
@@ -2237,19 +2651,21 @@ void Web_Present(IDirect3DDevice9* dev)
     if (g_webPanel) WebPanel();
 
     if (s_placed && g_webDepthMode == 2) WebDrawWorld(dev, false);
+    if (g_webDepthMode == 2) WebDrawPeers(dev, false);
 }
 
 void Web_LevelShutdown()
 {
     if (s_placed) WebPost(WS_PAUSE);
     s_placed = false;
-    s_shareDims = false;
     s_verts.clear(); s_vertsBack.clear(); s_idx.clear();
+    WebPeersHideAll();
 }
 
 void Web_Destroy()
 {
     if (s_wv2) WebWv2Drop(false);   // joins the engine thread: nothing of it outlives the DLL
+    WebPeersDestroy();
     if (s_registered && s_pfnUnreg) {
         for (const WsCbReg& r : k_cbs) { __try { s_pfnUnreg(r.cb); } __except(EXCEPTION_EXECUTE_HANDLER) {} }
         if (s_pfnUnregCr && s_createCall) {

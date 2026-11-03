@@ -223,6 +223,10 @@ bool n_hooks::impl_t::on_attach( )
 	initialise_hook( m_is_playing_demo, safe_vfunc( g_interfaces.m_engine_client, 82 ), &n_detoured_functions::is_playing_demo,
 	                 "CBaseClient::IsPlayingDemo()" );
 
+	/* custom names: c_engine_client::get_player_info = slot 8 */
+	initialise_hook( m_get_player_info, safe_vfunc( g_interfaces.m_engine_client, 8 ), &n_detoured_functions::get_player_info,
+	                 "CEngineClient::GetPlayerInfo()" );
+
 	initialise_hook( m_push_notice, g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 E4 F8 B8 ? ? ? ? E8 ? ? ? ? 53 8B D9 8B 0D" ),
 	                 &n_detoured_functions::push_notice, "CHudChat::PushNotice()" );
 

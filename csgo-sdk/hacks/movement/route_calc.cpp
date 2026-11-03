@@ -1555,12 +1555,6 @@ void n_movement::impl_t::route_calc_render( )
 	n_route::g_route_popup.publish( std::move( rows ), data.popup_started );
 
 	const auto accent_var = GET_VARIABLE( g_variables.m_accent, c_color );
-	const unsigned int accent =
-		c_color( static_cast< int >( accent_var.get< 0 >( ) ), static_cast< int >( accent_var.get< 1 >( ) ),
-		         static_cast< int >( accent_var.get< 2 >( ) ), 255 )
-			.get_u32( );
-	const unsigned int white = c_color( 255, 255, 255, 255 ).get_u32( );
-	const unsigned int black = c_color( 0, 0, 0, 255 ).get_u32( );
 
 	auto* font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
 	if ( !font )
@@ -1609,29 +1603,30 @@ void n_movement::impl_t::route_calc_render( )
 		}
 	}
 
-	for ( std::size_t i = 0; i < data.points.size( ); ++i ) {
+	const bool render_points       = GET_VARIABLE( g_variables.m_points_render_calc, bool );
+	const float opacity            = std::clamp( GET_VARIABLE( g_variables.m_points_opacity, float ), 0.f, 1.f );
+	const unsigned int mark_color  = point_style_u32( point_style_calc, 1.f );
+	const unsigned int mark_fill   = c_color( 0, 0, 0, static_cast< int >( 255.f * opacity ) ).get_u32( );
+	const unsigned int label_color = c_color( 255, 255, 255, static_cast< int >( 255.f * opacity ) ).get_u32( );
+	for ( std::size_t i = 0; render_points && i < data.points.size( ); ++i ) {
 		c_vector_2d screen_pos;
 		if ( !g_render.world_to_screen( route_point_mark( data.points[ i ] ), screen_pos ) )
 			continue;
 
-		const float radius = 11.f;
+		const float radius = 11.f * std::clamp( GET_VARIABLE( g_variables.m_points_size, float ), 0.25f, 4.f );
 
 		filled_circle_draw_object_t filled;
 		filled.m_center = screen_pos;
 		filled.m_radius = radius;
-		filled.m_color  = black;
+		filled.m_color  = mark_fill;
 		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_filled_circle,
 		                                   std::make_any< filled_circle_draw_object_t >( filled ) );
 
-		circle_draw_object_t outline;
-		outline.m_center = screen_pos;
-		outline.m_radius = radius;
-		outline.m_color  = accent;
-		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_circle, std::make_any< circle_draw_object_t >( outline ) );
+		point_ring_emit( point_style_calc, screen_pos, radius, mark_color, 1.f );
 
 		const std::string index = std::to_string( i + 1 );
 		const ImVec2 index_size = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, index.c_str( ) );
-		add_text( font, screen_pos.m_x - index_size.x * 0.5f, screen_pos.m_y - index_size.y * 0.5f - 1.f, index, accent );
+		add_text( font, screen_pos.m_x - index_size.x * 0.5f, screen_pos.m_y - index_size.y * 0.5f - 1.f, index, mark_color );
 
 		std::string label = route_point_type_name( route_point_shown_type( data.points[ i ] ) );
 		const bool head_shown = data.points[ i ].head_tb && data.points[ i ].type == route_pt_pixelsurf;
@@ -1649,7 +1644,7 @@ void n_movement::impl_t::route_calc_render( )
 		else if ( !head_shown && !data.points[ i ].allow_duck )
 			label += " (stand)";
 		const float label_w = text_width( font, label );
-		add_text( font, screen_pos.m_x - label_w * 0.5f, screen_pos.m_y - radius - font->FontSize - 3.f, label, white );
+		add_text( font, screen_pos.m_x - label_w * 0.5f, screen_pos.m_y - radius - font->FontSize - 3.f, label, label_color );
 	}
 }
 

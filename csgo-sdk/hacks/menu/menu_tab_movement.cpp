@@ -201,6 +201,103 @@ static void route_calc_page( )
 	menu_columns_end( );
 }
 
+/* lumi points page: global look | per kind design, preview right */
+static void points_page( )
+{
+	static int selected = point_style_ps;
+
+	menu_columns_begin( );
+
+	if ( menu_group_begin( "points" ) ) {
+		ImGui::Checkbox( "render ps assist points", &GET_VARIABLE( g_variables.m_points_render_ps, bool ) );
+		ImGui::Checkbox( "render bounce assist points", &GET_VARIABLE( g_variables.m_points_render_bounce, bool ) );
+		ImGui::Checkbox( "render calculator points", &GET_VARIABLE( g_variables.m_points_render_calc, bool ) );
+		ImGui::Checkbox( "render finder points", &GET_VARIABLE( g_variables.m_points_render_finder, bool ) );
+		ImGui::SliderFloat( "points opacity", &GET_VARIABLE( g_variables.m_points_opacity, float ), 0.1f, 1.f, "%.1f", ImGuiSliderFlags_AlwaysClamp );
+		ImGui::SliderFloat( "max render distance", &GET_VARIABLE( g_variables.m_points_max_dist, float ), 200.f, 4000.f, "%.0f u",
+		                    ImGuiSliderFlags_AlwaysClamp );
+		ImGui::Checkbox( "distance fade", &GET_VARIABLE( g_variables.m_points_distance_fade, bool ) );
+		ImGui::Checkbox( "distance shrink", &GET_VARIABLE( g_variables.m_points_distance_shrink, bool ) );
+		ImGui::Checkbox( "radius color", &GET_VARIABLE( g_variables.m_points_radius_color, bool ) );
+		if ( GET_VARIABLE( g_variables.m_points_radius_color, bool ) ) {
+			ImGui::SameLine( );
+			ImGui::ColorEdit4( "##points radius color", &GET_VARIABLE( g_variables.m_points_radius_clr, c_color ), color_picker_alpha_flags );
+		}
+		ImGui::Checkbox( "delete points", &GET_VARIABLE( g_variables.m_points_delete, bool ) );
+		if ( GET_VARIABLE( g_variables.m_points_delete, bool ) )
+			ImGui::Keybind( "delete points key", &GET_VARIABLE( g_variables.m_points_delete_key, key_bind_t ) );
+	}
+	menu_group_end( );
+
+	if ( menu_group_begin( "appearance" ) ) {
+		ImGui::SliderFloat( "point size", &GET_VARIABLE( g_variables.m_points_size, float ), 0.5f, 3.f, "%.2fx", ImGuiSliderFlags_AlwaysClamp );
+		ImGui::SliderFloat( "outline thickness", &GET_VARIABLE( g_variables.m_points_thickness, float ), 0.5f, 4.f, "%.2fx",
+		                    ImGuiSliderFlags_AlwaysClamp );
+		ImGui::SliderFloat( "background opacity", &GET_VARIABLE( g_variables.m_points_fill, float ), 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+		ImGui::SliderFloat( "hover size", &GET_VARIABLE( g_variables.m_points_hover_scale, float ), 1.f, 2.5f, "%.2fx", ImGuiSliderFlags_AlwaysClamp );
+		ImGui::SliderFloat( "design size", &GET_VARIABLE( g_variables.m_points_design_size, float ), 0.2f, 1.2f, "%.2fx",
+		                    ImGuiSliderFlags_AlwaysClamp );
+		ImGui::Checkbox( "glow", &GET_VARIABLE( g_variables.m_points_glow, bool ) );
+		ImGui::Checkbox( "pulse in radius", &GET_VARIABLE( g_variables.m_points_pulse, bool ) );
+		ImGui::Checkbox( "point labels", &GET_VARIABLE( g_variables.m_points_labels, bool ) );
+	}
+	menu_group_end( );
+
+	menu_columns_next( );
+
+	if ( menu_group_begin( "point design" ) ) {
+		static const std::vector< const char* > names = [ ] {
+			std::vector< const char* > out;
+			for ( int s = 0; s < point_style_count; ++s )
+				out.push_back( point_style( s ).name );
+			return out;
+		}( );
+		ImGui::Combo( "point type", &selected, names.data( ), point_style_count );
+		const auto& style = point_style( selected );
+
+		/* assist + calculator points follow the accent */
+		if ( style.has_color )
+			ImGui::ColorEdit4( "point color", &GET_VARIABLE( style.color, c_color ), color_picker_alpha_flags );
+
+		if ( style.has_gaps ) {
+			ImGui::Combo( "outline shape", &GET_VARIABLE( style.shape, int ), k_point_shape_names, k_point_shape_count );
+			const int stored = GET_VARIABLE( style.gaps, int );
+			std::vector< bool > gaps( 4 );
+			for ( int g = 0; g < 4; ++g )
+				gaps[ g ] = ( stored & ( 1 << g ) ) != 0;
+			if ( ImGui::MultiCombo( "outline gaps", gaps, { "top", "bottom", "left", "right" }, 4 ) ) {
+				int built = 0;
+				for ( int g = 0; g < 4; ++g )
+					if ( gaps[ g ] )
+						built |= 1 << g;
+				GET_VARIABLE( style.gaps, int ) = built;
+			}
+		}
+
+		if ( style.has_design ) {
+			ImGui::Checkbox( "draw design", &GET_VARIABLE( style.design, bool ) );
+			if ( GET_VARIABLE( style.design, bool ) )
+				ImGui::Combo( "design type", &GET_VARIABLE( style.design_type, int ), k_point_design_names, k_point_design_count );
+		}
+	}
+	menu_group_end( );
+
+	if ( menu_group_begin( "preview" ) ) {
+		ImGui::Dummy( ImVec2( ImGui::GetContentRegionAvail( ).x, 220.f ) );
+		const ImVec2 lo = ImGui::GetItemRectMin( ), hi = ImGui::GetItemRectMax( );
+		const float cx = ( lo.x + hi.x ) * 0.5f, cy = ( lo.y + hi.y ) * 0.5f - 8.f;
+		const float r  = std::clamp( ( std::min )( hi.x - lo.x, hi.y - lo.y ) * 0.15f * GET_VARIABLE( g_variables.m_points_size, float ), 2.5f,
+		                             ( hi.y - lo.y ) * 0.35f );
+		point_style_preview( selected, cx, cy, r );
+		const char* label   = point_style( selected ).name;
+		const ImVec2 text_s = ImGui::CalcTextSize( label );
+		ImGui::GetWindowDrawList( )->AddText( ImVec2( std::floor( cx - text_s.x * 0.5f ), cy + r + 10.f ), ImGui::GetColorU32( ImGuiCol_Text ), label );
+	}
+	menu_group_end( );
+
+	menu_columns_end( );
+}
+
 void n_menu::impl_t::tab_movement( )
 {
 	switch ( this->m_subtab ) {
@@ -554,12 +651,6 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderFloat( "ground angle limit",
 							                    &GET_VARIABLE( g_variables.m_pixel_surf_assist_ground_angle_limit, float ), 0.f, 45.f, "%.1f" );
 
-						ImGui::Checkbox( "show points", &GET_VARIABLE( g_variables.m_pixel_surf_assist_show_points, bool ) );
-						if ( GET_VARIABLE( g_variables.m_pixel_surf_assist_show_points, bool ) )
-							ImGui::SliderFloat( "point draw distance",
-							                    &GET_VARIABLE( g_variables.m_pixel_surf_assist_point_dist, float ), 200.f, 4000.f, "%.0f",
-							                    ImGuiSliderFlags_AlwaysClamp );
-
 						ImGui::Checkbox( "pixel surf assist render", &GET_VARIABLE( g_variables.m_pixel_surf_assist_render, bool ) );
 						if ( GET_VARIABLE( g_variables.m_pixel_surf_assist_render, bool ) )
 							ImGui::SliderFloat( "render height", &GET_VARIABLE( g_variables.m_pixel_surf_assist_render_height, float ), 0.f,
@@ -686,6 +777,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "air stuck key", &GET_VARIABLE( g_variables.m_air_stuck_key, key_bind_t ) );
 
 						ImGui::Checkbox( "fix air stucks", &GET_VARIABLE( g_variables.m_fix_air_stucks, bool ) );
+						ImGui::Checkbox( "use movement fix", &GET_VARIABLE( g_variables.m_movement_fix, bool ) );
 						ImGui::Checkbox( "screen message", &GET_VARIABLE( g_variables.m_air_stuck_display_screen, bool ) );
 						ImGui::SliderFloat( "extra reach", &GET_VARIABLE( g_variables.m_air_stuck_extra_reach, float ), 0.f, 32.f, "%.2f" );
 						ImGui::SliderFloat( "fan budget", &GET_VARIABLE( g_variables.m_air_stuck_budget, float ), 5.f, 90.f, "%.0f%%" );
@@ -704,6 +796,8 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "crouch catches", &GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) );
 						ImGui::SliderInt( "spot reach", &GET_VARIABLE( g_variables.m_wall_climb_spot_reach, int ), 0, 32, "%d u" );
 						ImGui::Checkbox( "steer to seam", &GET_VARIABLE( g_variables.m_wall_climb_seam_steer, bool ) );
+						if ( GET_VARIABLE( g_variables.m_wall_climb_seam_steer, bool ) )
+							ImGui::SliderFloat( "delta strafe scale", &GET_VARIABLE( g_variables.m_wall_climb_steer_scale, float ), 0.25f, 2.f, "%.2fx" );
 						ImGui::Checkbox( "visualize##wcviz", &GET_VARIABLE( g_variables.m_wall_climb_visualize, bool ) );
 						ImGui::ColorEdit4( "visualize color##wcvizcolor", &GET_VARIABLE( g_variables.m_wall_climb_visualize_color, c_color ),
 						                   color_picker_alpha_flags );
@@ -762,8 +856,6 @@ void n_menu::impl_t::tab_movement( )
 		if ( menu_group_begin( "other" ) ) {
 			ImGui::Checkbox( "128 tick fix", &GET_VARIABLE( g_variables.m_tick_fix_128, bool ) );
 
-			ImGui::Checkbox( "movement fix", &GET_VARIABLE( g_variables.m_movement_fix, bool ) );
-
 			ImGui::Checkbox( "smooth demo view", &GET_VARIABLE( g_variables.m_silent_view, bool ) );
 
 			ImGui::Checkbox( "pixel surf fix", &GET_VARIABLE( g_variables.m_pixel_surf_fix, bool ) );
@@ -815,6 +907,15 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "texturebugs", &GET_VARIABLE( g_variables.m_pixel_finder_texturebugs, bool ) );
 						ImGui::Checkbox( "headbounces", &GET_VARIABLE( g_variables.m_pixel_finder_headbounces, bool ) );
 						ImGui::Checkbox( "pixeljumps", &GET_VARIABLE( g_variables.m_pixel_finder_pixeljumps, bool ) );
+						const pf_map_state_t ms = pf_map_scan_get( );
+						const std::string pm_label =
+							ms.busy ? std::format( "cancel scan  {}%###pf map scan", ms.total > 0 ? ms.done * 100 / ms.total : 0 ) : std::string( "search whole map###pf map scan" );
+						if ( ImGui::Button( pm_label.c_str( ), ImVec2( -1.f, 15.f ) ) )
+							pf_map_scan_toggle( );
+						ImGui::Checkbox( "show map lines", &GET_VARIABLE( g_variables.m_pixel_finder_map_lines, bool ) );
+						if ( ms.busy || ms.lines > 0 || ms.tb > 0 )
+							ImGui::TextDisabled( "seam %d / %d   %d surf%s   %d texturebug%s", ms.done, ms.total, ms.lines, ms.lines == 1 ? "" : "s", ms.tb,
+							                     ms.tb == 1 ? "" : "s" );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
@@ -1343,7 +1444,7 @@ void n_menu::impl_t::tab_movement( )
 
 		if ( menu_group_begin( "recorder" ) ) {
 			ImGui::Checkbox( "movement recorder", &GET_VARIABLE( g_variables.m_movement_rec, bool ) );
-			ImGui::Checkbox( "show recording line", &GET_VARIABLE( g_variables.m_movement_rec_show_line, bool ) );
+			ImGui::Checkbox( "show route lines", &GET_VARIABLE( g_variables.m_movement_rec_show_line, bool ) );
 			ImGui::Checkbox( "show recorder timer", &GET_VARIABLE( g_variables.m_movement_rec_render, bool ) );
 			if ( GET_VARIABLE( g_variables.m_movement_rec_render, bool ) ) {
 				ImGui::OptionPopup(
@@ -1451,6 +1552,10 @@ void n_menu::impl_t::tab_movement( )
 		menu_group_end( );
 
 		menu_columns_end( );
+		break;
+	}
+	case 4: {
+		points_page( );
 		break;
 	}
 	}

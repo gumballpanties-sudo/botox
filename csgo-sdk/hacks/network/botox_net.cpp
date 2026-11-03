@@ -217,6 +217,7 @@ void n_botox_net::impl_t::on_create_move( )
 	if ( !active( ) ) {
 		m_masks_forced = false;
 		m_users.store( 0, std::memory_order_relaxed );
+		drop_web_peers( false );
 		return;
 	}
 
@@ -231,6 +232,8 @@ void n_botox_net::impl_t::on_create_move( )
 			users++;
 	}
 	m_users.store( users, std::memory_order_relaxed );
+
+	drop_web_peers( web_on( ) && Web_On( ) );
 
 	const bool share_esp   = GET_VARIABLE( g_variables.m_botox_network_esp, bool );
 	const bool share_skins = GET_VARIABLE( g_variables.m_botox_network_skins, bool );
@@ -268,12 +271,17 @@ void n_botox_net::impl_t::send_web( )
 
 	const int seq    = static_cast< int >( web.m_seq & WEB_SEQ );
 	const bool event = seq != m_web_own_seq;
-	if ( event ) {
-		if ( m_web_own_seq >= 0 && m_web_follow ) {
-			botox_dbg_log( "NET: web own change, stop following %d", m_web_follow );
-			m_web_follow = 0;
-		}
-		m_web_own_seq = seq;
+	m_web_own_seq    = seq;
+
+	const auto length = static_cast< std::uint8_t >( web.m_url.size( ) <= static_cast< std::size_t >( WEB_URL_MAX ) ? web.m_url.size( ) : 0 );
+
+	if ( web.m_placed && web.m_media && !fresh( m_last_web_media, 1.f ) ) {
+		web_media_data_t media{ };
+		media.m_time     = web.m_time;
+		media.m_url_hash = hash16( web.m_url.c_str( ), length );
+		media.m_paused   = web.m_paused ? 1 : 0;
+		send( make_packet( packet_web_media, &media, sizeof( media ) ) );
+		m_last_web_media = now( );
 	}
 
 	if ( !event && fresh( m_last_web, 0.05f ) )
@@ -285,7 +293,6 @@ void n_botox_net::impl_t::send_web( )
 		m_web_queue.clear( );
 		m_web_cursor = 0;
 
-		const auto length  = static_cast< std::uint8_t >( web.m_url.size( ) <= static_cast< std::size_t >( WEB_URL_MAX ) ? web.m_url.size( ) : 0 );
 		const auto seq_bit = static_cast< std::uint8_t >( seq | ( web.m_placed ? WEB_PLACED : 0 ) );
 
 		web_place_data_t place{ };
@@ -318,7 +325,7 @@ void n_botox_net::impl_t::send_web( )
 		send( m_web_queue[ m_web_cursor++ ] );
 }
 
-/* newest share event of any sender wins; first sight of a sender never replaces a screen we already have */
+/* every sender gets its own screen + browser; ours is never touched */
 void n_botox_net::impl_t::apply_web( int sender )
 {
 	auto& web = m_web[ sender ];
@@ -342,29 +349,16 @@ void n_botox_net::impl_t::apply_web( int sender )
 		}
 	}
 
-	web_share_t local{ };
-	if ( !Web_ShareGet( local ) )
-		return;
-
-	const bool first = web.m_applied < 0;
-	web.m_applied    = seq;
-
 	if ( !placed ) {
-		if ( m_web_follow == sender ) {
-			local.m_placed = false;
-			Web_ShareApply( local );
-			m_web_follow = 0;
+		if ( web.m_applied >= 0 )
 			botox_dbg_log( "NET: web screen removed by %d", sender );
-		}
-		return;
-	}
-
-	if ( first && local.m_placed ) {
-		botox_dbg_log( "NET: web screen from %d skipped, ours is up", sender );
+		web.m_applied = seq;
+		Web_PeerHide( sender );
 		return;
 	}
 
 	if ( web.m_url_length && !safe_url( web.m_url ) ) {
+		web.m_applied = seq;
 		botox_dbg_log( "NET: web url from %d refused", sender );
 		return;
 	}
@@ -379,9 +373,34 @@ void n_botox_net::impl_t::apply_web( int sender )
 	if ( web.m_url_length )
 		share.m_url = web.m_url;
 
-	Web_ShareApply( share );
-	m_web_follow = sender;
-	botox_dbg_log( "NET: web screen from %d seq %d url %.120s", sender, seq, web.m_url_length ? web.m_url : "(theirs empty, kept ours)" );
+	/* not shown = web off / slots full: m_applied stays, the next packet retries */
+	if ( !Web_PeerShow( sender, share ) )
+		return;
+
+	web.m_applied = seq;
+	botox_dbg_log( "NET: web screen from %d seq %d url %.120s", sender, seq, web.m_url_length ? web.m_url : "(none)" );
+}
+
+/* stale_only: senders gone quiet. else every peer screen (feature or web off); packet state kept so they come back */
+void n_botox_net::impl_t::drop_web_peers( bool stale_only )
+{
+	for ( int i = 1; i <= 64; i++ ) {
+		auto& web = m_web[ i ];
+		if ( web.m_applied < 0 )
+			continue;
+
+		const bool stale = !fresh( m_user_seen[ i ].m_time, USER_TIMEOUT );
+		if ( stale_only && !stale )
+			continue;
+
+		Web_PeerHide( i );
+		if ( stale ) {
+			botox_dbg_log( "NET: web screen of %d dropped, user gone", i );
+			web = { };
+		} else {
+			web.m_applied = -1;
+		}
+	}
 }
 
 void n_botox_net::impl_t::send_esp( )
@@ -604,18 +623,37 @@ void n_botox_net::impl_t::receive( int sender, const packet_t& packet )
 		     std::fabs( origin.m_x ) > 65536.f || std::fabs( origin.m_y ) > 65536.f || std::fabs( origin.m_z ) > 65536.f )
 			return;
 
-		auto& shared    = m_shared[ esp.m_index ];
+		/* gap = 1 player per sender tick round robin, so it grows with player count. stale / teleport / respawn snaps */
+		auto& shared     = m_shared[ esp.m_index ];
+		const float time = now( );
+		const c_vector shown = shared.at( time );
+		if ( fresh( shared.m_time, ESP_TIMEOUT ) && shared.m_health > 0 && shown.dist_to_squared( origin ) < ESP_SNAP * ESP_SNAP ) {
+			shared.m_interval += ( std::clamp( time - shared.m_time, 0.015f, 0.5f ) - shared.m_interval ) * 0.5f;
+			shared.m_from = shown;
+		} else {
+			shared.m_interval = 0.1f;
+			shared.m_from     = origin;
+		}
 		shared.m_origin = origin;
 		shared.m_health = esp.m_health;
-		shared.m_time   = now( );
+		shared.m_time   = time;
 		return;
 	}
 
-	if ( packet.m_type >= packet_web_place && packet.m_type <= packet_web_url ) {
+	if ( packet.m_type >= packet_web_place && packet.m_type <= packet_web_media ) {
 		if ( !web_on( ) )
 			return;
 
 		auto& web = m_web[ sender ];
+		if ( packet.m_type == packet_web_media ) {
+			web_media_data_t data{ };
+			std::memcpy( &data, packet.m_data, sizeof( data ) );
+			if ( web.m_applied >= 0 && data.m_url_hash == web.m_url_hash && std::isfinite( data.m_time ) && data.m_time >= 0.f &&
+			     data.m_time < 1e7f )
+				Web_PeerMedia( sender, data.m_time, data.m_paused != 0 );
+			return;
+		}
+
 		if ( packet.m_type == packet_web_place ) {
 			web_place_data_t data{ };
 			std::memcpy( &data, packet.m_data, sizeof( data ) );
@@ -860,7 +898,7 @@ bool n_botox_net::impl_t::shared_player( int index, c_vector& origin, int& healt
 	if ( !fresh( shared.m_time, ESP_TIMEOUT ) || shared.m_health <= 0 )
 		return false;
 
-	origin = shared.m_origin;
+	origin = shared.at( now( ) );
 	health = shared.m_health;
 	return true;
 }
@@ -1246,7 +1284,7 @@ void n_botox_net::impl_t::on_level_init( )
 	m_web_queue.clear( );
 	m_web_cursor    = 0;
 	m_last_web      = -1.f;
-	m_web_follow    = 0;
+	m_last_web_media = -1.f;
 
 	m_spec_target   = 0;
 	m_spec_weapon   = 0;

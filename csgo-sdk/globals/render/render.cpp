@@ -1562,14 +1562,15 @@ static ImVec2 dpi_logical_mouse( const ImVec2 mouse, const ImVec2 screen, const 
 
 static bool overlay_stretch( float& scale, float& center_x )
 {
-	if ( !GET_VARIABLE( g_variables.m_aspect_ratio_enable, bool ) || !GET_VARIABLE( g_variables.m_aspect_ratio_cheat_overlay, bool ) )
+	if ( !g_resolution_spoof.aspect_cheat_overlay( ) )
 		return false;
 
 	scale = g_resolution_spoof.aspect_scale( );
 	if ( fabsf( scale - 1.f ) < 0.001f )
 		return false;
 
-	center_x = ( g_resolution_spoof.m_screen_width > 0 ? static_cast< float >( g_resolution_spoof.m_screen_width ) : g_ctx.m_width ) * 0.5f;
+	// overlay space: the spoofed res while its pass draws imgui small, else the screen
+	center_x = g_ctx.m_width * 0.5f;
 
 	return center_x > 0.f;
 }

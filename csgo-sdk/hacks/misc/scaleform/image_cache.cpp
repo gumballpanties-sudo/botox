@@ -84,8 +84,14 @@ namespace
 		return attributes != INVALID_FILE_ATTRIBUTES && !( attributes & FILE_ATTRIBUTE_DIRECTORY );
 	}
 
-	bool http_get( const std::string& url, std::string& out, const bool allow_empty = false, const size_t max_bytes = k_max_bytes )
+	/* error: http status when one came back, else the WinHTTP GetLastError code */
+	bool http_get( const std::string& url, std::string& out, const bool allow_empty = false, const size_t max_bytes = k_max_bytes,
+	               unsigned long* error = nullptr, const std::string* json_body = nullptr )
 	{
+		unsigned long dummy = 0;
+		unsigned long& code = error ? *error : dummy;
+		code                = 0;
+
 		const std::wstring wide( url.begin( ), url.end( ) );
 
 		wchar_t host[ 256 ]{ }, path[ 2048 ]{ };
@@ -96,30 +102,40 @@ namespace
 		parts.lpszUrlPath      = path;
 		parts.dwUrlPathLength  = _countof( path );
 
-		if ( !WinHttpCrackUrl( wide.c_str( ), 0, 0, &parts ) )
+		if ( !WinHttpCrackUrl( wide.c_str( ), 0, 0, &parts ) ) {
+			code = GetLastError( );
 			return false;
+		}
 
 		HINTERNET session = WinHttpOpen( L"botox", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0 );
-		if ( !session )
+		if ( !session ) {
+			code = GetLastError( );
 			return false;
+		}
 
 		WinHttpSetTimeouts( session, 5000, 5000, 10000, 15000 );
 
 		HINTERNET connection = WinHttpConnect( session, host, parts.nPort, 0 );
-		HINTERNET request    = connection ? WinHttpOpenRequest( connection, L"GET", path, nullptr, WINHTTP_NO_REFERER,
+		HINTERNET request    = connection ? WinHttpOpenRequest( connection, json_body ? L"POST" : L"GET", path, nullptr, WINHTTP_NO_REFERER,
 		                                                        WINHTTP_DEFAULT_ACCEPT_TYPES,
 		                                                        parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0u )
 		                                  : nullptr;
 
 		bool ok = false;
 
-		if ( request && WinHttpSendRequest( request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0 )
-		     && WinHttpReceiveResponse( request, nullptr ) ) {
+		const DWORD body_size = json_body ? static_cast< DWORD >( json_body->size( ) ) : 0;
+		const bool sent       = request && ( json_body ? WinHttpSendRequest( request, L"Content-Type: application/json\r\n", static_cast< DWORD >( -1 ),
+		                                                                     const_cast< char* >( json_body->data( ) ), body_size, body_size, 0 )
+		                                               : WinHttpSendRequest( request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0 ) );
+
+		if ( sent && WinHttpReceiveResponse( request, nullptr ) ) {
 			DWORD status = 0, status_size = sizeof( status );
 
 			if ( WinHttpQueryHeaders( request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
-			                          &status, &status_size, WINHTTP_NO_HEADER_INDEX )
-			     && status == 200 ) {
+			                          &status, &status_size, WINHTTP_NO_HEADER_INDEX ) )
+				code = status;
+
+			if ( status == 200 ) {
 				char buffer[ 8192 ]{ };
 				DWORD read = 0;
 				ok         = true;
@@ -133,7 +149,8 @@ namespace
 					}
 				}
 			}
-		}
+		} else
+			code = GetLastError( );
 
 		if ( request )
 			WinHttpCloseHandle( request );
@@ -238,9 +255,14 @@ bool n_image_cache::download_file( const std::string& url, const std::string& de
 	return download_to( url, destination, true, 32u * 1024u * 1024u );
 }
 
-bool n_image_cache::http_get_text( const std::string& url, std::string& out )
+bool n_image_cache::http_get_text( const std::string& url, std::string& out, unsigned long* error )
 {
-	return http_get( url, out );
+	return http_get( url, out, false, k_max_bytes, error );
+}
+
+bool n_image_cache::http_post_json( const std::string& url, const std::string& body, std::string& out, unsigned long* error )
+{
+	return http_get( url, out, false, k_max_bytes, error, &body );
 }
 
 std::string n_image_cache::impl_t::rewrite( const char* js )
