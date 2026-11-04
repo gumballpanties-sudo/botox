@@ -290,7 +290,6 @@ namespace n_variables
 		ADD_VARIABLE( int, m_backtrack_extend_amount, 200 );
 		ADD_VARIABLE( int, m_backtrack_time_limit, 200 );
 		ADD_VARIABLE( bool, m_backtrack_extra, false );
-		ADD_VARIABLE( int, m_backtrack_extra_amount, 1200 );
 
 		/* offline lagcomp needs no variable: n_misc::force_host_lagcomp is unconditional. never re-add fake ping */
 

@@ -75,34 +75,23 @@ bool n_lagcomp::impl_t::is_hosting( )
 
 bool n_lagcomp::impl_t::extra( )
 {
-	return GET_VARIABLE( g_variables.m_backtrack_enable, bool ) && GET_VARIABLE( g_variables.m_backtrack_extra, bool );
-}
-
-static float extra_reach( )
-{
-	return std::clamp( static_cast< float >( GET_VARIABLE( g_variables.m_backtrack_extra_amount, int ) ) / 1000.f, 0.f,
-	                   n_lagcomp::impl_t::k_max_extra );
+	return GET_VARIABLE( g_variables.m_backtrack_enable, bool ) && GET_VARIABLE( g_variables.m_backtrack_extend, bool ) &&
+	       GET_VARIABLE( g_variables.m_backtrack_extra, bool );
 }
 
 float n_lagcomp::impl_t::extend( )
 {
-	/* slider = oldest record: hold the ack so correct sits 0.2 under it, band = correct +-0.2 */
-	if ( extra( ) )
-		return std::clamp( extra_reach( ) - 0.2f, 0.f, max_unlag( ) );
-
 	if ( !GET_VARIABLE( g_variables.m_backtrack_enable, bool ) || !GET_VARIABLE( g_variables.m_backtrack_extend, bool ) )
 		return 0.f;
 
 	const float wanted = static_cast< float >( GET_VARIABLE( g_variables.m_backtrack_extend_amount, int ) ) / 1000.f;
 
-	return std::clamp( wanted, 0.f, std::min( max_unlag( ), k_max_backtrack ) );
+	/* extra: up to sv_maxunlag (1.0), + 0.2 backtrack time = 1.2s reach */
+	return std::clamp( wanted, 0.f, extra( ) ? max_unlag( ) : std::min( max_unlag( ), k_max_backtrack ) );
 }
 
 float n_lagcomp::impl_t::time_limit( )
 {
-	if ( extra( ) )
-		return extra_reach( );
-
 	const float wanted = static_cast< float >( GET_VARIABLE( g_variables.m_backtrack_time_limit, int ) ) / 1000.f;
 
 	return std::clamp( wanted, 0.f, k_max_backtrack ) + extend( );
