@@ -2005,7 +2005,14 @@ void n_urt_hud::draw_options( )
 		{ "cg_skinFixed", "fixed skins (ally = blue)", k_bool, 0, 1 },
 		{ "cg_instagib", "instagib", k_bool, 0, 1 },
 	};
+	/* popup = AlwaysAutoResize -> default table sizing is FixedFit, force stretch */
+	if ( !ImGui::BeginTable( "##urt columns", 2, ImGuiTableFlags_SizingStretchSame ) )
+		return;
+	ImGui::TableNextColumn( );
+	constexpr size_t k_half = ( std::size( k_options ) + 1 ) / 2;
 	for ( const option_t& o : k_options ) {
+		if ( static_cast< size_t >( &o - k_options ) == k_half )
+			ImGui::TableNextColumn( );
 		const std::string id = std::string( o.m_label ) + "##" + o.m_cvar;
 		switch ( o.m_kind ) {
 		case k_bool: {
@@ -2041,6 +2048,7 @@ void n_urt_hud::draw_options( )
 		}
 		}
 	}
+	ImGui::EndTable( );
 	if ( ImGui::Button( "defaults##urt", ImVec2( -1.f, 15.f ) ) )
 		GET_VARIABLE( g_variables.m_urt_hud_cvars, std::string ).clear( );
 }

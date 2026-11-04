@@ -226,6 +226,12 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		return !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk && vel_pinned( g_ctx.m_local->get_velocity( ) );
 	};
 
+	/* pins ranked by how long the move keeps pinning; a repeat ( END == START ) is a fixed point = holds for good = k_chain.
+	   k_ahead = ticks a held pin is replayed ahead, a fall inside it = search early from the still-pinned START */
+	constexpr int k_chain = 16;
+	constexpr int k_ahead = 4;
+	const auto bits_eq    = [ ]( const c_vector& a, const c_vector& b ) { return a.m_x == b.m_x && a.m_y == b.m_y && a.m_z == b.m_z; };
+
 	/* server rounding != ours: a moving-START catch only ports if its first tick pins from START +-1 ulp on every origin / velocity axis
 	   ( 10-10 offline log: 71/83 sim-proven catches fell, pinned-START ones all held ). early out once it cannot beat `need` */
 	constexpr int k_crob  = 12;
@@ -273,7 +279,11 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	}
 
 	/* hold: START pinned by last tick's pin = replay it in the latched view, 1 sim proves this tick ( clarity + lumi; was 0 sims / a full fan ).
-	   break = search below from this still-pinned START, never send a cmd that falls */
+	   break = search below from this still-pinned START, never send a cmd that falls.
+	   ahead = pins now, replay falls within k_ahead ticks: search now, keep the hold unless a pin that lasts longer turns up */
+	bool ahead  = false;
+	int ahead_h = 0;
+	c_vector ahead_end{ };
 	if ( hold_armed && vel_pinned( live_velocity ) ) {
 		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 		apply_predicted_state( );
@@ -288,21 +298,58 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		const bool held    = !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk &&
 		                  vel_pinned( g_ctx.m_local->get_velocity( ) );
 		const bool fixed   = end.m_x == origin.m_x && end.m_y == origin.m_y && end.m_z == origin.m_z;
+		int held_for       = held ? k_ahead + 1 : 0;
+		if ( held && !fixed ) {
+			c_vector prev = end;
+			for ( int t = 0; t < k_ahead; ++t ) {
+				g_prediction.begin( g_ctx.m_local, cmd );
+				g_prediction.end( g_ctx.m_local );
+				if ( !pin_held( ) ) {
+					held_for = t + 1;
+					break;
+				}
+				if ( bits_eq( g_ctx.m_local->get_abs_origin( ), prev ) )
+					break;
+				prev = g_ctx.m_local->get_abs_origin( );
+			}
+		}
 		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 		apply_predicted_state( );
 		cmd->m_view_point   = live_view;
 		cmd->m_forward_move = live_fwd;
 		cmd->m_side_move    = live_side;
-		if ( held ) {
+		if ( held && held_for <= k_ahead ) {
+			ahead     = true;
+			ahead_h   = held_for;
+			ahead_end = end;
+			botox_dbg_log( "AS: hold ahead t=%d h=%d yaw=%.1f fwd=%.4f", s_hold.ticks, held_for, s_hold.yaw, s_hold.fwd );
+		} else if ( held ) {
 			if ( s_hold.ticks++ == 0 )
 				botox_dbg_log( "AS: hold yaw=%.1f fwd=%.4f pitch=%.2f fixed=%d", s_hold.yaw, s_hold.fwd, s_hold.pitch, ( int )fixed );
 			publish( s_hold.yaw, s_hold.fwd, true, s_hold.pitch, true );
 			s_expect = { true, end };
 			return;
-		}
-		botox_dbg_log( "AS: hold break t=%d yaw=%.1f fwd=%.4f pitch=%.2f b=%x", s_hold.ticks, s_hold.yaw, s_hold.fwd, s_hold.pitch, live_buttons );
+		} else
+			botox_dbg_log( "AS: hold break t=%d yaw=%.1f fwd=%.4f pitch=%.2f b=%x", s_hold.ticks, s_hold.yaw, s_hold.fwd, s_hold.pitch, live_buttons );
 	}
-	s_hold.ticks = 0;
+	if ( !ahead )
+		s_hold.ticks = 0;
+
+	/* search result vs the doomed hold: true = hold sent ( search found nothing that pins longer ) */
+	const auto keep_hold = [ & ]( const int ticks ) {
+		if ( !ahead )
+			return false;
+		if ( ticks > ahead_h ) {
+			botox_dbg_log( "AS: ahead swap t=%d h=%d to=%d", s_hold.ticks, ahead_h, ticks );
+			s_hold.ticks = 0;
+			return false;
+		}
+		const auto latched = s_hold;
+		++s_hold.ticks;
+		publish( latched.yaw, latched.fwd, true, latched.pitch, true );
+		s_expect = { true, ahead_end };
+		return true;
+	};
 
 	{
 		c_vector cl_normal{ };
@@ -326,6 +373,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		int cl_rob     = -1;
 		int cl_crob    = -1;
 		int cl_score   = -1;
+		int cl_ticks   = 0;
 		int cl_pins    = 0;
 		float cl_yaw = 0.f, cl_fwd = 0.f, cl_pitch = 0.f;
 		c_vector cl_end{ };
@@ -355,7 +403,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 
 			/* server float noise != ours ( online: near-axis pins die after 1 rtt ): prefer a pin that survives 1 ulp of origin each way */
 			constexpr int k_rob  = 6;
-			constexpr int k_best = k_crob * ( k_rob + 1 ) + k_rob;
+			constexpr int k_rank = k_crob * ( k_rob + 1 ) + k_rob + 1; /* one more pinned tick outranks any robustness */
+			constexpr int k_best = ( k_chain + 1 ) * k_rank - 1;
 			const auto robust = [ & ]( ) {
 				const c_vector base = g_ctx.m_local->get_abs_origin( );
 				int n               = 0;
@@ -394,27 +443,40 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 					cmd->m_side_move      = 0.0f;
 					cmd->m_buttons = live_buttons;
 
-					bool ok = true;
+					int ticks = 0;
 					c_vector end0{ };
-					for ( int t = 0; t < 6 && ok; ++t ) {
+					for ( int t = 0; t < k_chain; ++t ) {
+						const c_vector from = g_ctx.m_local->get_abs_origin( );
 						g_prediction.begin( g_ctx.m_local, cmd );
 						g_prediction.end( g_ctx.m_local );
 						++cl_sims;
 						if ( t == 0 )
 							end0 = g_ctx.m_local->get_abs_origin( );
-						ok = !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk &&
-						     vel_pinned( g_ctx.m_local->get_velocity( ) );
+						const bool ok = !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk &&
+						                vel_pinned( g_ctx.m_local->get_velocity( ) );
+						if ( !ok )
+							break;
+						++ticks;
+						if ( t > 0 && bits_eq( g_ctx.m_local->get_abs_origin( ), from ) ) {
+							ticks = k_chain;
+							break;
+						}
 					}
-					if ( !ok )
+					if ( ticks < 6 )
 						continue;
 					++cl_pins;
-					const int rob = robust( );
-					if ( k_crob * ( k_rob + 1 ) + rob <= cl_score )
+					const int base = ticks * k_rank;
+					if ( base + k_rank - 1 <= cl_score )
 						continue;
-					const int crob  = catch_rob( cl_sims, cl_score < rob ? -1 : ( cl_score - rob ) / ( k_rob + 1 ), cl_clock );
-					const int score = crob * ( k_rob + 1 ) + rob;
+					const int rob = robust( );
+					if ( base + k_crob * ( k_rob + 1 ) + rob <= cl_score )
+						continue;
+					const int rem   = cl_score - base;
+					const int crob  = catch_rob( cl_sims, rem < rob ? -1 : ( rem - rob ) / ( k_rob + 1 ), cl_clock );
+					const int score = base + crob * ( k_rob + 1 ) + rob;
 					if ( score > cl_score ) {
 						cl_held  = true;
+						cl_ticks = ticks;
 						cl_score = score;
 						cl_rob   = rob;
 						cl_crob  = crob;
@@ -480,16 +542,19 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			cmd->m_side_move    = live_side;
 			cmd->m_buttons      = live_buttons;
 
-			botox_dbg_log( "AS: clarity %s n=%.3f,%.3f yaw=%.0f fwd=%.4f sims=%d vz=%.3f vxy=%.1f gap=%.5f disp=%d rob=%d crob=%d np=%d cp=%d ent=%d surf=%s us=%lld",
+			botox_dbg_log( "AS: clarity %s n=%.3f,%.3f yaw=%.0f fwd=%.4f sims=%d vz=%.3f vxy=%.1f gap=%.5f t=%d disp=%d rob=%d crob=%d np=%d cp=%d ent=%d surf=%s us=%lld",
 			               cl_held ? "pin" : cl_parked ? "park" : "miss", cl_normal.m_x, cl_normal.m_y,
 			               cl_parked ? cl_park_yaw : cl_yaw, cl_parked ? cl_park_fwd : cl_fwd, cl_sims, live_velocity.m_z, live_velocity.length_2d( ), cl_park_gap,
-			               ( int )cl_disp, cl_rob, cl_crob, cl_pins, g_interfaces.m_prediction->m_commands_predicted, cl_ent, cl_surf, cl_clock.used_us( ) );
+			               cl_ticks, ( int )cl_disp, cl_rob, cl_crob, cl_pins, g_interfaces.m_prediction->m_commands_predicted, cl_ent, cl_surf, cl_clock.used_us( ) );
 			if ( cl_held ) {
+				if ( keep_hold( cl_ticks ) )
+					return;
 				publish( cl_yaw, cl_fwd, true, cl_pitch, true );
 				s_expect = { true, cl_end };
 				return;
 			}
-			if ( cl_parked ) {
+			/* park is unpinned: a doomed hold still pins this tick, lumi decides */
+			if ( cl_parked && !ahead ) {
 				publish( cl_park_yaw, cl_park_fwd, false, live_view.m_x, false );
 				return;
 			}
@@ -506,6 +571,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		ray_t ray( origin, origin, c_vector( -half, -half, mins.m_z - 1.0f ), c_vector( half, half, maxs.m_z + 1.0f ) );
 		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
 		if ( !tr.did_hit( ) ) {
+			if ( keep_hold( 0 ) )
+				return;
 			start_angle = 0.0f;
 			was_stuck   = false;
 			return;
@@ -583,6 +650,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	}
 
 	if ( !found ) {
+		if ( keep_hold( 0 ) )
+			return;
 		start_angle = 0.0f;
 		was_stuck   = false;
 		return;
@@ -622,15 +691,21 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		g_prediction.end( g_ctx.m_local );
 		const c_vector end1 = g_ctx.m_local->get_abs_origin( );
 
+		/* lumi chains 3 ticks; ours runs to a fall or a repeat ( fixed point ) so a pin that lasts longer ranks higher */
 		int ticks = 0;
 		if ( pinned( ) ) {
 			ticks = 1;
-			for ( int k = 0; k < 2; ++k ) {
+			for ( int k = 1; k < k_chain; ++k ) {
+				const c_vector from = g_ctx.m_local->get_abs_origin( ), from_v = g_ctx.m_local->get_velocity( );
 				g_prediction.begin( g_ctx.m_local, cmd );
 				g_prediction.end( g_ctx.m_local );
 				if ( !pinned( ) )
 					break;
 				++ticks;
+				if ( bits_eq( g_ctx.m_local->get_abs_origin( ), from ) && bits_eq( g_ctx.m_local->get_velocity( ), from_v ) ) {
+					ticks = k_chain;
+					break;
+				}
 			}
 		}
 
@@ -662,7 +737,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		}
 	}
 
-	if ( best_ticks < 3 && !out_of_time( ) ) {
+	if ( best_ticks < k_chain && !out_of_time( ) ) {
 		constexpr float k_moves_far[ 6 ] = { 1.0f, 5.0f, 30.0f, 60.0f, 90.0f, 120.0f };
 		for ( const float move : k_moves_far ) {
 			if ( out_of_time( ) )
@@ -677,13 +752,14 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 
 	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 	apply_predicted_state( );
-	/* a hold is armed only by the full 3-tick chain; shorter pins go out as the approach move, unarmed */
-	publish( best_yaw, best_move, best_ticks >= 3, live_view.m_x, false );
-	s_expect = { best_ticks >= 3, best_end };
-
 	botox_dbg_log( "AS: lumi scan=%c n=%.3f,%.3f,%.3f hz=%.1f side=%.0f pin=%d crob=%d/%d gap=%.3f yaw=%.1f fwd=%.0f cand=%d vz=%.2f ent=%d scan_us=%lld us=%lld", scan,
 	               normal.m_x, normal.m_y, normal.m_z, hit_z - origin.m_z, side, best_ticks, best_crob, crob_sims, best_gap, best_yaw, best_move, cands, live_velocity.m_z,
 	               hit_ent, scan_us, clock.used_us( ) );
+	if ( keep_hold( best_ticks ) )
+		return;
+	/* a hold is armed only by the full 3-tick chain; shorter pins go out as the approach move, unarmed */
+	publish( best_yaw, best_move, best_ticks >= 3, live_view.m_x, false );
+	s_expect = { best_ticks >= 3, best_end };
 }
 
 void air_stuck_final_stamp( c_user_cmd* cmd )

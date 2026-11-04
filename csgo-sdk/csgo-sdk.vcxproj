@@ -127,6 +127,7 @@
     <ClCompile Include="hacks\visuals\screen\serial_render.cpp" />
     <ClCompile Include="hacks\visuals\screen\frame_dump.cpp" />
     <ClCompile Include="hacks\visuals\screen\resolution_spoof.cpp" />
+    <ClCompile Include="hacks\visuals\crosshair\custom_crosshair.cpp" />
     <ClCompile Include="hacks\visuals\screen\screen.cpp" />
     <ClCompile Include="hooks\detour_hook\c_detour_hook.cpp" />
     <ClCompile Include="hooks\functions\alloc_key_values_memory.cpp" />
@@ -514,6 +515,10 @@
     <ClInclude Include="hacks\visuals\screen\serial_render.h" />
     <ClInclude Include="hacks\visuals\screen\frame_dump.h" />
     <ClInclude Include="hacks\visuals\screen\resolution_spoof.h" />
+    <ClInclude Include="hacks\visuals\crosshair\custom_crosshair.h" />
+    <ClInclude Include="hacks\visuals\crosshair\ch_blend_modes.h" />
+    <ClInclude Include="hacks\visuals\crosshair\fx_chblend_ps.h" />
+    <ClInclude Include="hacks\visuals\crosshair\fx_chblend_vs.h" />
     <ClInclude Include="hacks\visuals\screen\screen.h" />
     <ClInclude Include="hooks\detour_hook\c_detour_hook.h" />
     <ClInclude Include="hooks\functions\flash_probe.h" />

@@ -217,14 +217,18 @@ static const char k_gather_body[] =
 	"float wpx=min(wl,max(3.0,c2.y));"
 	"float3 sum=0.0;"
 	"float w=0.0;"
+	"float cnt=0.0;"
 	"[loop] for(int e=0;e<9;e++){"
 	"float2 t=uv+((((float)e+0.5)*(1.0/9.0))-0.5)*2.0*wpx*wdir*c6.zw;"
 	"float4 ie=tex2Dlod(s1,float4(t,0,0));"
-	"float k=1.0-step(ie.y,c15.y);"
+	"float wd=1.0-step(ie.y,c15.y);"
+	// world taps by their OWN streak: still world + moving gun = tile is the gun's, no rim ( gather owns that edge )
+	"float k=wd*saturate(ie.x);"
 	"sum+=in_color(tex2Dlod(s0,float4(t,0,0)).rgb)*k;"
 	"w+=k;"
+	"cnt+=wd;"
 	"}"
-	"return (w<0.5)?c:lerp(c,sum*1.0/(w),edge);"
+	"return (w<0.05)?c:lerp(c,sum*1.0/(w),edge*w/max(cnt,1.0));"
 	"}"
 	"float4 main(float2 uv:TEXCOORD0):COLOR0{"
 	"float2 vpos=uv*c6.xy;"
@@ -251,6 +255,9 @@ static const char k_gather_body[] =
 	"if(fmod(half_n,2.0)<0.5)half_n+=1.0;"
 	"float4 tile_main=float4(tile_dir,tile_len,cen_len<1.0?1.0:abs(dot(info.zw,tile_dir)));"
 	"float4 cen_main=cen_len<1.0?tile_main:float4(info.zw,cen_len,1.0);"
+	// taps are spaced by the TILE streak: a part slower than the tile max ( hand beside the blade tip ) is hit by
+	// fewer taps, so each counts tile/own reach ( bg = centre's, fg = tap's ). else both sides of its edge under-blur = step
+	"float rc=min(tile_len/max(cen_len,1.0),half_n);"
 	// negated on the way back so the two halves don't leave a gap
 	"float2 noise=(ign(vpos)-0.5)*float2(1.0,-1.0);"
 	"float inv=1.0/(half_n);"
@@ -272,6 +279,8 @@ static const char k_gather_body[] =
 	"float2 s1w=saturate(float2(cen_len,i1.x)*to_step-max(0.0,st.y-1.0));"
 	"float2 w0=d0*s0w*float2(m.w,smoothstep(0.10,0.45,abs(dot(i0.zw,m.xy))));"
 	"float2 w1=d1*s1w*float2(m.w,smoothstep(0.10,0.45,abs(dot(i1.zw,m.xy))));"
+	"w0*=float2(rc,min(tile_len/max(i0.x,1.0),half_n));"
+	"w1*=float2(rc,min(tile_len/max(i1.x,1.0),half_n));"
 	// fence fg only: bg term rides the gun's OWN speed = see-through moving edge
 	"w0.y*=max(1.0-cen_gun,step(i0.y,c15.y));"
 	"w1.y*=max(1.0-cen_gun,step(i1.y,c15.y));"
@@ -290,6 +299,7 @@ static const char k_gather_body[] =
 	"float3 fill=(bg.w>1e-4)?bg.rgb*1.0/(bg.w):cen;"
 	"bg+=float4(cen,1.0);"
 	"float4 acc=(bg+fg)*1.0/(total);"
+	"acc/=max(acc.w,1.0);"
 	"acc.rgb+=saturate(1.0-acc.w)*fill;"
 	"return float4(out_color(fringe(uv,acc.rgb,edge,tile_pair.xy)),1.0);"
 	"}";

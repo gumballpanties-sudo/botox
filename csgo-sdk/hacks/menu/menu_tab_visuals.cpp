@@ -5,6 +5,7 @@
 #include "../web/websurf_math.h"
 #include "../web/websurface.h"
 #include "../visuals/screen/depth_source.h"
+#include "../visuals/crosshair/custom_crosshair.h"
 #include "../visuals/edicts/edicts.h"
 
 static void bool_combo( const char* label, std::initializer_list< std::pair< const char*, bool* > > items )
@@ -2004,6 +2005,174 @@ void n_menu::impl_t::tab_visuals( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			ImGui::Checkbox( "custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair, bool ) );
+
+			if ( GET_VARIABLE( g_variables.m_custom_crosshair, bool ) ) {
+				ImGui::OptionPopup(
+					"custom crosshair settings",
+					[ & ]( ) {
+						static bool s_test_running = false;
+						static float s_test_speed  = 0.f;
+						static double s_test_t0    = 0.0;
+						static bool s_preview_bg   = false;
+
+						const auto sides = []( const char* id, bool* left, bool* right, bool* top, bool* bottom ) {
+							ImGui::PushID( id );
+							ImGui::Checkbox( "left", left );
+							ImGui::Checkbox( "right", right );
+							ImGui::Checkbox( "top", top );
+							ImGui::Checkbox( "bottom", bottom );
+							ImGui::PopID( );
+						};
+
+						/* popup = AlwaysAutoResize -> default table sizing is FixedFit, force stretch */
+						if ( !ImGui::BeginTable( "##custom crosshair columns", 2, ImGuiTableFlags_SizingStretchSame ) )
+							return;
+						ImGui::TableNextColumn( );
+
+						ImGui::Checkbox( "antialiased##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_antialias, bool ) );
+						ImGui::Checkbox( "dot##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_dot, bool ) );
+						ImGui::Checkbox( "outline##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_outline, bool ) );
+						ImGui::Checkbox( "only some sides##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_sides_only, bool ) );
+						if ( GET_VARIABLE( g_variables.m_custom_crosshair_sides_only, bool ) )
+							sides( "custom crosshair sides", &GET_VARIABLE( g_variables.m_custom_crosshair_side_left, bool ),
+							       &GET_VARIABLE( g_variables.m_custom_crosshair_side_right, bool ),
+							       &GET_VARIABLE( g_variables.m_custom_crosshair_side_top, bool ),
+							       &GET_VARIABLE( g_variables.m_custom_crosshair_side_bottom, bool ) );
+
+						if ( n_custom_crosshair::blend_combo( "blend##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_blend, int ) ) )
+							ImGui::SetTooltip( "how the arms + dot mix with the frame under them.\n"
+							                   "additive adds light; the rest work like photoshop layer modes.\n"
+							                   "alpha is the opacity. the outline always draws normal." );
+
+						ImGui::SliderFloat( "thickness##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_thickness, float ), 0.5f, 5.f,
+						                    "%.1f" );
+						ImGui::SliderFloat( "length##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_length, float ), 0.5f, 20.f,
+						                    "%.1f" );
+						ImGui::SliderFloat( "gap##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_gap, float ), -10.f, 10.f, "%.1f" );
+						ImGui::SliderFloat( "aspect##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_aspect, float ), 0.1f, 10.f,
+						                    "%.2f" );
+						ImGui::SliderFloat( "gap aspect##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_gap_aspect, float ), 0.1f,
+						                    5.f, "%.2f" );
+						ImGui::SliderFloat( "rotation##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_rotation, float ), 0.f, 360.f,
+						                    "%.0f deg" );
+						ImGui::Checkbox( "taper##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_taper, bool ) );
+						if ( GET_VARIABLE( g_variables.m_custom_crosshair_taper, bool ) ) {
+							ImGui::SliderFloat( "near width##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_taper_near, float ), 0.f,
+							                    10.f, "%.2f" );
+							ImGui::SliderFloat( "far width##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_taper_far, float ), 0.f,
+							                    10.f, "%.2f" );
+						}
+
+						ImGui::ColorEdit4( "color##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_color, c_color ),
+						                   color_picker_alpha_flags );
+
+						ImGui::Checkbox( "gradient##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_gradient, bool ) );
+						if ( GET_VARIABLE( g_variables.m_custom_crosshair_gradient, bool ) ) {
+							ImGui::ColorEdit4( "center / outer##custom crosshair gradient",
+							                   &GET_VARIABLE( g_variables.m_custom_crosshair_gradient_center, c_color ), color_picker_alpha_flags );
+							ImGui::SameLine( );
+							ImGui::ColorEdit4( "##custom crosshair gradient outer", &GET_VARIABLE( g_variables.m_custom_crosshair_gradient_outer, c_color ),
+							                   color_picker_alpha_flags, 1 );
+							ImGui::SliderFloat( "gradient start##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_gradient_start, float ),
+							                    0.f, 1.f, "%.2f" );
+							ImGui::SliderFloat( "gradient end##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_gradient_end, float ), 0.f,
+							                    1.f, "%.2f" );
+							float& grad_end = GET_VARIABLE( g_variables.m_custom_crosshair_gradient_end, float );
+							grad_end        = ImMax( grad_end, GET_VARIABLE( g_variables.m_custom_crosshair_gradient_start, float ) );
+						}
+
+						ImGui::TableNextColumn( );
+
+						if ( GET_VARIABLE( g_variables.m_custom_crosshair_dot, bool ) ) {
+							ImGui::Checkbox( "round dot##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_dot_circle, bool ) );
+							ImGui::Checkbox( "custom dot color##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_dot_custom_color, bool ) );
+							if ( GET_VARIABLE( g_variables.m_custom_crosshair_dot_custom_color, bool ) ) {
+								ImGui::SameLine( );
+								ImGui::ColorEdit4( "##custom crosshair dot color", &GET_VARIABLE( g_variables.m_custom_crosshair_dot_color, c_color ),
+								                   color_picker_alpha_flags );
+							}
+						}
+
+						if ( GET_VARIABLE( g_variables.m_custom_crosshair_outline, bool ) ) {
+							ImGui::Checkbox( "outline on lines##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_outline_on_lines, bool ) );
+							ImGui::Checkbox( "outline on dot##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_outline_on_dot, bool ) );
+							float& outline_thickness = GET_VARIABLE( g_variables.m_custom_crosshair_outline_thickness, float );
+							ImGui::SliderFloat( "outline thickness##custom crosshair", &outline_thickness, 0.1f, 5.f, "%.1f" );
+							outline_thickness = roundf( outline_thickness * 10.f ) / 10.f;
+							ImGui::ColorEdit4( "outline color##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_outline_color, c_color ),
+							                   color_picker_alpha_flags );
+							ImGui::Checkbox( "soft outline (drop shadow)##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_outline_blur, bool ) );
+							if ( GET_VARIABLE( g_variables.m_custom_crosshair_outline_blur, bool ) )
+								ImGui::SliderFloat( "softness##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_outline_blur_radius, float ),
+								                    0.5f, 10.f, "%.1f" );
+							ImGui::Checkbox( "outline only some sides##custom crosshair",
+							                 &GET_VARIABLE( g_variables.m_custom_crosshair_outline_sides_only, bool ) );
+							if ( GET_VARIABLE( g_variables.m_custom_crosshair_outline_sides_only, bool ) )
+								sides( "custom crosshair outline sides", &GET_VARIABLE( g_variables.m_custom_crosshair_outline_side_left, bool ),
+								       &GET_VARIABLE( g_variables.m_custom_crosshair_outline_side_right, bool ),
+								       &GET_VARIABLE( g_variables.m_custom_crosshair_outline_side_top, bool ),
+								       &GET_VARIABLE( g_variables.m_custom_crosshair_outline_side_bottom, bool ) );
+						}
+
+						ImGui::Checkbox( "dynamic spread##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_dynamic, bool ) );
+						if ( GET_VARIABLE( g_variables.m_custom_crosshair_dynamic, bool ) ) {
+							float& dyn_min = GET_VARIABLE( g_variables.m_custom_crosshair_dynamic_min, float );
+							float& dyn_ref = GET_VARIABLE( g_variables.m_custom_crosshair_dynamic_ref, float );
+							ImGui::SliderFloat( "min speed##custom crosshair", &dyn_min, 0.f, 900.f, "%.0f u/s" );
+							ImGui::SliderFloat( "max spread##custom crosshair", &GET_VARIABLE( g_variables.m_custom_crosshair_dynamic_max, float ), 0.f,
+							                    20.f, "%.1f" );
+							ImGui::SliderFloat( "full at##custom crosshair", &dyn_ref, 1.f, 1000.f, "%.0f u/s" );
+							if ( dyn_min >= dyn_ref )
+								dyn_min = ImMax( 0.f, dyn_ref - 1.f );
+
+							if ( ImGui::Button( s_test_running ? "stop test##custom crosshair" : "test##custom crosshair", ImVec2( -1.f, 15.f ) ) ) {
+								s_test_running = !s_test_running;
+								s_test_t0      = ImGui::GetTime( );
+							}
+						} else
+							s_test_running = false;
+
+						/* 0 -> "full at" over 3 s, then restart */
+						s_test_speed = 0.f;
+						if ( s_test_running ) {
+							const float dyn_ref = GET_VARIABLE( g_variables.m_custom_crosshair_dynamic_ref, float );
+							s_test_speed        = static_cast< float >( ImGui::GetTime( ) - s_test_t0 ) / 3.f * dyn_ref;
+							if ( s_test_speed >= dyn_ref ) {
+								s_test_speed = 0.f;
+								s_test_t0    = ImGui::GetTime( );
+							}
+						}
+
+						ImGui::Checkbox( "moving preview background##custom crosshair", &s_preview_bg );
+
+						const float side = ImGui::GetContentRegionAvail( ).x;
+						if ( side > 4.f ) {
+							ImDrawList* const list = ImGui::GetWindowDrawList( );
+							const ImVec2 p0        = ImGui::GetCursorScreenPos( );
+							const ImVec2 p1( p0.x + side, p0.y + side );
+							list->AddRectFilled( p0, p1, IM_COL32( 20, 20, 20, 220 ), 4.f );
+
+							if ( s_preview_bg )
+								n_custom_crosshair::draw_preview_scene( list, p0, side );
+
+							n_custom_crosshair::draw_preview( list, p0, p1, s_test_running ? s_test_speed : -1.f );
+
+							if ( s_test_running ) {
+								char speed_text[ 32 ];
+								snprintf( speed_text, sizeof( speed_text ), "%.0f u/s", s_test_speed );
+								const ImVec2 ts = ImGui::CalcTextSize( speed_text );
+								list->AddText( ImVec2( p0.x + ( side - ts.x ) * 0.5f, p1.y - ts.y - 4.f ), IM_COL32( 200, 200, 200, 210 ), speed_text );
+							}
+
+							ImGui::Dummy( ImVec2( side, side ) );
+						}
+
+						ImGui::EndTable( );
+					},
+					ImVec2( 440.f, -1.f ) );
+			}
+
 			ImGui::Checkbox( "aimbot fov circle", &GET_VARIABLE( g_variables.m_aimbot_fov_circle, bool ) );
 
 			if ( GET_VARIABLE( g_variables.m_aimbot_fov_circle, bool ) ) {
@@ -2186,12 +2355,17 @@ void n_menu::impl_t::tab_visuals( )
 				ImGui::OptionPopup(
 					"call of duty 4 hud settings",
 					[ & ]( ) {
+						if ( !ImGui::BeginTable( "##cod4 columns", 2, ImGuiTableFlags_SizingStretchSame ) )
+							return;
+						ImGui::TableNextColumn( );
 						ImGui::Label( "hardpoint key" );
 						ImGui::Keybind( "hardpoint key##cod4", &GET_VARIABLE( g_variables.m_cod4_hud_hardpoint_key, key_bind_t ), false );
 
+						ImGui::TableNextColumn( );
 						n_cod4_hud::draw_options( );
+						ImGui::EndTable( );
 					},
-					ImVec2( 320.f, -1.f ) );
+					ImVec2( 440.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "urban terror hud", &GET_VARIABLE( g_variables.m_urt_hud, bool ) );
@@ -2205,7 +2379,7 @@ void n_menu::impl_t::tab_visuals( )
 
 						n_urt_hud::draw_options( );
 					},
-					ImVec2( 320.f, -1.f ) );
+					ImVec2( 640.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "web on surface", &GET_VARIABLE( g_variables.m_web, bool ) );

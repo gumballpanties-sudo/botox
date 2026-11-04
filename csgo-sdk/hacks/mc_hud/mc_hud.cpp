@@ -325,7 +325,9 @@ void n_mc_hud::impl_t::on_paint_traverse( )
 	const bool in_game = engine && engine->is_in_game( ) && g_ctx.m_local;
 
 	// hud_weapon.cpp:77 (classic) + the panorama reticle both stop on `crosshair 0`
-	const bool hide_crosshair = on && in_game && GET_VARIABLE( g_variables.m_mc_hud_crosshair, bool );
+	/* custom crosshair shares this hold: two savers of `crosshair` would save each other's 0 */
+	const bool custom_crosshair = GET_VARIABLE( g_variables.m_custom_crosshair, bool ) && !g_ctx.m_eject_restoring;
+	const bool hide_crosshair   = in_game && ( ( on && GET_VARIABLE( g_variables.m_mc_hud_crosshair, bool ) ) || custom_crosshair );
 	if ( hide_crosshair != m_crosshair_hidden ) {
 		if ( hide_crosshair ) {
 			const int current = g_convars.int_or( HASH_BT( "crosshair" ), 1 );

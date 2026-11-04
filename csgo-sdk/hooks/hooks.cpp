@@ -7,6 +7,7 @@
 #include "../hacks/avatar_cache/avatar_cache.h"
 #include "../hacks/chams/chams.h"
 #include "../hacks/indicators/indicators.h"
+#include "../hacks/visuals/crosshair/custom_crosshair.h"
 #include "../hacks/lagcomp/lagcomp.h"
 #include "../hacks/mc_hud/mc_hud.h"
 #include "../hacks/cod4_hud/cod4_hud.h"
@@ -326,6 +327,7 @@ void n_hooks::impl_t::release_render_resources( )
 	g_avatar_cache.release_all( );
 
 	g_indicators.release_textures( );
+	n_custom_crosshair::release_textures( );
 
 	kill_effects_release_textures( );
 

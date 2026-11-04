@@ -1,6 +1,7 @@
 #include "../../globals/includes/includes.h"
 #include "../../hacks/avatar_cache/avatar_cache.h"
 #include "../../hacks/indicators/indicators.h"
+#include "../../hacks/visuals/crosshair/custom_crosshair.h"
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
 #include "../../hacks/urt_hud/urt_hud.h"
@@ -56,6 +57,7 @@ long __stdcall n_detoured_functions::reset( IDirect3DDevice9* device, D3DPRESENT
 	n_fx_compat::on_device_lost( );
 
 	g_indicators.release_textures( );
+	n_custom_crosshair::release_textures( );
 	g_mc_hud.release_textures( );
 	g_cod4_hud.release_textures( );
 	g_urt_hud.release_textures( );

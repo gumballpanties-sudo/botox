@@ -17,6 +17,7 @@
 #include "../aimbot/aimbot.h"
 #include "../lagcomp/lagcomp.h"
 #include "../visuals/screen/resolution_spoof.h"
+#include "../visuals/crosshair/custom_crosshair.h"
 
 extern bool HITGODA;
 extern bool HITGODA2;
@@ -45,6 +46,8 @@ void n_indicators::impl_t::on_paint_traverse( )
 
 	if ( GET_VARIABLE( g_variables.m_key_press_indicator, bool ) )
 		this->key_press( );
+
+	n_custom_crosshair::on_paint_traverse( );
 
 	if ( GET_VARIABLE( g_variables.m_sniper_crosshair, bool ) )
 		this->sniper_crosshair( );
