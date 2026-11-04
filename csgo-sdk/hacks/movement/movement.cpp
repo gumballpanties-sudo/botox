@@ -3836,7 +3836,7 @@ bool botox_is_ladder_trace( const trace_t& tr );
 
 namespace
 {
-	/* edge surf ( listen server ) / poop soorf hold: each cmd starts at the hold z with vz +g*dt/2 -> StartGravity 0, no z move,
+	/* edge surf ( listen server ) hold: each cmd starts at the hold z with vz +g*dt/2 -> StartGravity 0, no z move,
 	   FinishGravity -g*dt/2 = a real surf's end. dx / dy = edge surf catch pull flush to the face */
 	struct esurf_slot_t {
 		int cmd       = -1;
@@ -3845,8 +3845,6 @@ namespace
 		float z = 0.f, vz = 0.f, dx = 0.f, dy = 0.f;
 		unsigned long long at = 0ull;
 		bool sv_done          = false;
-		/* poop soorf: online server START trails the hold by its jetpack lag, pin any START */
-		bool any = false;
 	} s_esurf[ 128 ];
 }
 
@@ -3889,7 +3887,7 @@ void edge_surf_apply( c_base_entity* player, c_move_data* mv )
 		return;
 	const auto& s = s_esurf[ cur->m_command_number & 127 ];
 	if ( s.cmd != cur->m_command_number ||
-	     ( g_prediction.m_in_begin ? player->get_tick_base( ) != s.tick_base : !s.any && ( mv->m_abs_origin - s.from ).length( ) > 8.f ) )
+	     ( g_prediction.m_in_begin ? player->get_tick_base( ) != s.tick_base : ( mv->m_abs_origin - s.from ).length( ) > 8.f ) )
 		return;
 	mv->m_abs_origin.m_x += s.dx;
 	mv->m_abs_origin.m_y += s.dy;
@@ -4034,151 +4032,8 @@ void edge_surf( c_user_cmd* cmd )
 	slot.dy            = dy;
 	slot.at            = GetTickCount64( );
 	slot.sv_done       = false;
-	slot.any           = false;
 	g_edge_surf_active = true;
 	/* our z wins: a tung snap on the same cmd would pull xy off the edge */
-	s_tung[ cmd->m_command_number & 127 ].cmd = -1;
-}
-
-bool g_poop_surf_active = false;
-static float s_psurf_z  = 0.f;
-
-/* POV demo cam = IPrediction::GetViewOrigin at RecordPacket ( cl_demo.cpp:376 ), right after the packet = server z with the jetpack
-   bob: record the hold instead */
-void poop_surf_demo_origin( c_vector& org )
-{
-	if ( g_poop_surf_active && !edge_surf_local( ) )
-		org.m_z = s_psurf_z;
-}
-
-/* poop soorf = fake pixelsurf. catch: falling, a wall lip at the hull's feet or head ( that slice meets a wall, the rest of the hull
-   is clear ). every cmd starts at the hold z with real surf vz ( s_esurf ring, edge_surf_apply ) so the client rides flat. offline the
-   server takes the same pin, online +jetpack is held while the acked server z, free fallen over the cmds in flight, is under the hold,
-   at least `pulse` ticks a press ( plugins push on timers ) */
-void poop_surf( c_user_cmd* cmd )
-{
-	static bool s_on = false, s_jet = false;
-	float& s_z = s_psurf_z;
-	static int s_ticks = 0, s_presses = 0, s_held = 0;
-	const auto jet = [ & ]( const bool on ) {
-		if ( on == s_jet )
-			return;
-		s_jet = on;
-		g_interfaces.m_engine_client->execute_client_cmd( on ? "+jetpack" : "-jetpack" );
-	};
-	const auto drop = [ & ]( const char* why ) {
-		jet( false );
-		if ( !s_on )
-			return;
-		botox_dbg_log( "PSURF: drop %s z=%.3f ticks=%d presses=%d", why, s_z, s_ticks, s_presses );
-		s_on = false;
-		/* cmds in flight keep their absolute pin on every re-predict = snapped back up to the old hold */
-		for ( auto& s : s_esurf )
-			if ( s.any )
-				s.cmd = -1;
-	};
-	g_poop_surf_active         = false;
-	c_base_entity* const local = g_ctx.m_local;
-	if ( !cmd || !local || !local->is_alive( ) || !local->get_collideable( ) || g_ctx.m_eject_restoring ||
-	     !GET_VARIABLE( g_variables.m_poop_surf, bool ) || !g_input.check_input( &GET_VARIABLE( g_variables.m_poop_surf_key, key_bind_t ) ) )
-		return drop( "off" );
-	if ( g_edge_surf_active )
-		return drop( "esurf" );
-
-	const int last = g_interfaces.m_prediction->m_commands_predicted - 1;
-	g_prediction.restore_entity_to_predicted_frame( last );
-	auto& slot = s_esurf[ cmd->m_command_number & 127 ];
-	slot.cmd   = -1;
-	const c_vector org = local->get_origin( ), vel = local->get_velocity( );
-	const c_vector mins = local->get_collideable( )->get_obb_mins( ), maxs = local->get_collideable( )->get_obb_maxs( );
-	const auto mt       = local->get_move_type( );
-	const bool ground   = local->get_flags( ) & fl_onground;
-	const float reach   = std::clamp( GET_VARIABLE( g_variables.m_poop_surf_reach, float ), 0.5f, 16.f );
-	const float band    = std::clamp( GET_VARIABLE( g_variables.m_poop_surf_band, float ), 1.f, maxs.m_z - mins.m_z );
-	c_trace_filter filter( local );
-	/* box swept `reach` along dir: 1 = wall, 0 = clear, -1 = start solid */
-	const auto hit = [ & ]( const float z0, const float z1, const c_vector& dir ) {
-		trace_t tr{ };
-		ray_t ray( org, org + dir * reach, c_vector( mins.m_x, mins.m_y, z0 ), c_vector( maxs.m_x, maxs.m_y, z1 ) );
-		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
-		if ( tr.m_start_solid )
-			return -1;
-		return tr.m_fraction < 1.f && std::fabsf( tr.m_plane.m_normal.m_z ) < 0.7f && !botox_is_ladder_trace( tr ) ? 1 : 0;
-	};
-	/* 1 = feet, 2 = head: that slice meets a wall along one of 8 world yaws. lip = the rest of the hull does not ( catch only, a ride
-	   sliding the face flips it ) */
-	const auto wall = [ & ]( const bool lip ) {
-		const bool whole = !lip || band >= maxs.m_z - mins.m_z;
-		for ( int i = 0; i < 8; ++i ) {
-			const float a = deg2rad( 45.f * static_cast< float >( i ) );
-			const c_vector dir( std::cosf( a ), std::sinf( a ), 0.f );
-			if ( hit( mins.m_z, mins.m_z + band, dir ) == 1 && ( whole || hit( mins.m_z + band, maxs.m_z, dir ) == 0 ) )
-				return 1;
-			if ( hit( maxs.m_z - band, maxs.m_z, dir ) == 1 && ( whole || hit( mins.m_z, maxs.m_z - band, dir ) == 0 ) )
-				return 2;
-		}
-		return 0;
-	};
-
-	if ( s_on ) {
-		/* jetpack plugins may fly the player server side, the networked move type follows */
-		if ( ground || ( mt != e_move_types::move_type_walk && mt != e_move_types::move_type_fly && mt != e_move_types::move_type_flygravity ) )
-			return drop( "ground" );
-		if ( std::fabsf( org.m_z - s_z ) > 0.05f )
-			return drop( "moved" );
-		if ( !wall( false ) )
-			return drop( "wall" );
-		++s_ticks;
-	} else {
-		if ( ground || mt != e_move_types::move_type_walk || vel.m_z >= 0.f )
-			return;
-		const int side = wall( true );
-		if ( !side )
-			return;
-		s_on  = true;
-		s_z   = org.m_z;
-		s_ticks = s_presses = 0;
-		botox_dbg_log( "PSURF: catch %s z=%.3f vz=%.1f xy=%.1f online=%d", side == 1 ? "feet" : "head", s_z, vel.m_z, vel.length_2d( ),
-		               ( int )!edge_surf_local( ) );
-	}
-
-	const bool online = !edge_surf_local( );
-	if ( online ) {
-		/* original data = server END of the acked cmd: the only z the jetpack moved */
-		g_prediction.restore_entity_to_predicted_frame( -1 );
-		const float sv_z = local->get_origin( ).m_z, sv_vz = local->get_velocity( ).m_z;
-		const bool sv_ground = local->get_flags( ) & fl_onground;
-		g_prediction.restore_entity_to_predicted_frame( last );
-		/* this cmd runs `lag` ticks after the acked END: free fall the server there, jetpack pushes in flight not modeled */
-		const int lag = std::clamp( cmd->m_command_number - g_interfaces.m_client_state->m_last_command_ack, 1, 64 );
-		/* acked state trails the catch by lag ticks: ground before that = the ledge we left */
-		if ( sv_ground && s_ticks > lag )
-			return drop( "server ground" );
-		if ( s_z - sv_z > 64.f )
-			return drop( "server fell" );
-		const float t   = g_interfaces.m_global_vars_base->m_interval_per_tick * static_cast< float >( lag );
-		const float g   = g_convars.float_or( HASH_BT( "sv_gravity" ), 800.f );
-		const float pz  = sv_z + sv_vz * t - 0.5f * g * t * t;
-		s_held          = s_jet ? s_held + 1 : 0;
-		const bool want = pz < s_z || ( s_jet && s_held < std::clamp( GET_VARIABLE( g_variables.m_poop_surf_pulse, int ), 1, 32 ) );
-		if ( want != s_jet ) {
-			s_presses += want;
-			botox_dbg_log( "PSURF: %cjetpack sv dz=%.2f vz=%.1f pred dz=%.2f lag=%d held=%d", want ? '+' : '-', sv_z - s_z, sv_vz, pz - s_z, lag,
-			               s_held );
-		}
-		jet( want );
-	}
-
-	slot.cmd           = cmd->m_command_number;
-	slot.tick_base     = local->get_tick_base( );
-	slot.from          = org;
-	slot.z             = s_z;
-	slot.vz            = -g_prediction.get_engine_target_predict_z_velocity( );
-	slot.dx = slot.dy  = 0.f;
-	slot.at            = GetTickCount64( );
-	slot.sv_done       = false;
-	slot.any           = online;
-	g_poop_surf_active = true;
 	s_tung[ cmd->m_command_number & 127 ].cmd = -1;
 }
 

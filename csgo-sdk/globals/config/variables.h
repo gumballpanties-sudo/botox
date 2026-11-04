@@ -1260,11 +1260,6 @@ namespace n_variables
 		ADD_VARIABLE( key_bind_t, m_poop_ladder_jump_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( float, m_poop_ladder_jump_strength, 150.f );
 		ADD_VARIABLE( float, m_poop_ladder_jump_height, 128.f );
-		ADD_VARIABLE( bool, m_poop_surf, false );
-		ADD_VARIABLE( key_bind_t, m_poop_surf_key, key_bind_t( 0, 1 ) );
-		ADD_VARIABLE( float, m_poop_surf_reach, 4.f );
-		ADD_VARIABLE( float, m_poop_surf_band, 8.f );
-		ADD_VARIABLE( int, m_poop_surf_pulse, 7 );
 		ADD_VARIABLE( bool, m_ladder_glide, false );
 		ADD_VARIABLE( key_bind_t, m_ladder_glide_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_ladder_freelook_climb, false );

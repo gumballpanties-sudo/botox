@@ -1014,20 +1014,6 @@ void n_menu::impl_t::tab_movement( )
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
-
-			ImGui::Checkbox( "poop soorf", &GET_VARIABLE( g_variables.m_poop_surf, bool ) );
-			if ( GET_VARIABLE( g_variables.m_poop_surf, bool ) ) {
-				ImGui::OptionPopup(
-					"poop soorf settings",
-					[ & ]( ) {
-						ImGui::Label( "poop soorf keybind" );
-						ImGui::Keybind( "poop soorf key", &GET_VARIABLE( g_variables.m_poop_surf_key, key_bind_t ) );
-						ImGui::SliderFloat( "wall reach", &GET_VARIABLE( g_variables.m_poop_surf_reach, float ), 0.5f, 16.f, "%.1f u" );
-						ImGui::SliderFloat( "wall band (feet / head)", &GET_VARIABLE( g_variables.m_poop_surf_band, float ), 1.f, 36.f, "%.0f u" );
-						ImGui::SliderInt( "jetpack min hold", &GET_VARIABLE( g_variables.m_poop_surf_pulse, int ), 1, 32, "%d ticks" );
-					},
-					ImVec2( 220.f, -1.f ) );
-			}
 		}
 		menu_group_end( );
 
