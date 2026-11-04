@@ -135,6 +135,26 @@ namespace n_assist
 		return t.grid ? z > t.plane && z <= t.plane + 0.03125f : check( z, t.z );
 	}
 
+	/* lumi FUN_10120a10( head + 0.04, point ). point = round_pos2( stop head + 1 ) = ceiling + ~0.03, ABOVE the ceiling, so a head
+	   never crosses it. window = negative: same trunc int, frac( point ) <= frac( head ) < 0.99 ( head 0.01..0.03 under ceiling );
+	   positive: both fracs in ( 0, 0.3 ). same floor added on positive: the decompile drops it ( would fire every arc ) */
+	inline bool head_window( const float head, const float point )
+	{
+		const float a = head + 0.04f;
+		if ( a < 0.f && point < 0.f ) {
+			if ( static_cast< int >( a ) != static_cast< int >( point ) )
+				return false;
+			const int fa = static_cast< int >( std::fabs( ( a - static_cast< float >( static_cast< int >( a ) ) ) * 1e6f ) );
+			const int fp = static_cast< int >( std::fabs( ( point - static_cast< float >( static_cast< int >( point ) ) ) * 1e6f ) );
+			return fp <= fa && fa < 990000;
+		}
+		if ( a > 0.f && point > 0.f ) {
+			const float da = a - std::floor( a ), dp = point - std::floor( point );
+			return std::floor( a ) == std::floor( point ) && da > 0.f && da < 0.3f && dp > 0.f && dp < 0.3f;
+		}
+		return false;
+	}
+
 	inline bool arrives( const e_arrival kind, const target_t& t, const sample_t& s, const double half_g )
 	{
 		if ( kind == arrival_land )
@@ -146,11 +166,8 @@ namespace n_assist
 				return false;
 			return in_window( t, static_cast< float >( s.z ) );
 		}
-		if ( s.vz_in <= 0.0 || s.hull_in != s.hull )
-			return false;
-		if ( s.z_in + s.hull_in <= t.z + 0.001 && s.z + s.hull > t.z )
-			return true;
-		return s.clipped && std::fabs( s.z + s.hull - t.z ) < 0.05;
+		/* lumi: tick end still rising ( a clip leaves vz = -h_end ), head in the window under the ceiling */
+		return s.vz > 0.0 && head_window( static_cast< float >( s.z + s.hull ), t.z );
 	}
 
 	inline float near_gap( const e_arrival kind, const target_t& t, const sample_t& s, const double half_g )
@@ -161,7 +178,7 @@ namespace n_assist
 			return 1e9f;
 		if ( kind == arrival_surf )
 			return s.vz - half_g < 0.0 ? static_cast< float >( std::fabs( s.z - t.z ) ) : 1e9f;
-		return s.vz_in > 0.0 ? static_cast< float >( std::fabs( s.z + s.hull - t.z ) ) : 1e9f;
+		return s.vz > 0.0 ? static_cast< float >( std::fabs( s.z + s.hull + 0.04 - t.z ) ) : 1e9f;
 	}
 
 	inline bool past( const e_arrival kind, const double lowest, const sample_t& s )

@@ -1251,7 +1251,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_edge_surf, false );
 		ADD_VARIABLE( key_bind_t, m_edge_surf_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( float, m_edge_surf_range, 96.f );
-		ADD_VARIABLE( float, m_edge_surf_reach, 2.f );
+		ADD_VARIABLE( float, m_edge_surf_reach, 6.f );
 		ADD_VARIABLE( bool, m_fix_air_stucks, false );
 
 		ADD_VARIABLE( bool, m_ladder_bug, false );
@@ -1260,6 +1260,11 @@ namespace n_variables
 		ADD_VARIABLE( key_bind_t, m_poop_ladder_jump_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( float, m_poop_ladder_jump_strength, 150.f );
 		ADD_VARIABLE( float, m_poop_ladder_jump_height, 128.f );
+		ADD_VARIABLE( bool, m_poop_surf, false );
+		ADD_VARIABLE( key_bind_t, m_poop_surf_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( float, m_poop_surf_reach, 4.f );
+		ADD_VARIABLE( float, m_poop_surf_band, 8.f );
+		ADD_VARIABLE( int, m_poop_surf_pulse, 7 );
 		ADD_VARIABLE( bool, m_ladder_glide, false );
 		ADD_VARIABLE( key_bind_t, m_ladder_glide_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_ladder_freelook_climb, false );
@@ -1327,6 +1332,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_pixel_finder_headbounces, true );
 		ADD_VARIABLE( bool, m_pixel_finder_pixeljumps, true );
 		ADD_VARIABLE( bool, m_pixel_finder_map_lines, true );
+		ADD_VARIABLE( bool, m_pixel_finder_map_texturebugs, false );
 		ADD_VARIABLE( bool, m_pixel_surf_assist_brokehop, false );
 		ADD_VARIABLE( float, m_pixel_surf_assist_ground_angle_limit, 2.5f );
 		ADD_VARIABLE( bool, m_pixel_surf_assist_ground_help, false );
@@ -1707,6 +1713,7 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_watermark_interium_bg, c_color( 0, 0, 0, 255 ) );
 		ADD_VARIABLE( c_color, m_spectators_interium_bg, c_color( 0, 0, 0, 255 ) );
 		ADD_VARIABLE( c_color, m_watermark_gamesense_game_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( c_color, m_watermark_lobotomy_title_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( c_color, m_watermark_gamesense_sense_color, c_color( 149, 184, 6, 255 ) );
 		ADD_VARIABLE( bool, m_watermark_gamesense_bar, true );
 		ADD_VARIABLE( float, m_watermark_gamesense_x, 0.f );
@@ -1892,6 +1899,7 @@ namespace n_variables
 
 		ADD_VARIABLE( bool, m_movement_rec, false );
 		ADD_VARIABLE( bool, m_movement_rec_show_line, true );
+		ADD_VARIABLE( bool, m_movement_rec_preview_line, false );
 		ADD_VARIABLE( bool, m_movement_rec_render, true );
 		ADD_VARIABLE( int, m_movement_rec_position, 0 );
 		ADD_VARIABLE( bool, m_movement_rec_lockva, true );

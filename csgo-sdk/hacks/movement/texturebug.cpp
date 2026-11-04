@@ -20,6 +20,7 @@ extern void CorrectMovement( c_user_cmd* cmd, c_angle wish_angle, c_angle old_an
 extern void botox_dbg_log( const char* fmt, ... );
 extern bool botox_is_ladder_trace( const trace_t& tr );
 extern bool g_air_stuck_owned_prev_tick;
+extern bool g_edge_surf_active;
 bool edge_surf_local( );
 
 /* head bounce: a bounce must keep this share of entry xy */
@@ -101,6 +102,9 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 	m_assist          = false;
 	reset_command( );
 	m_hb_hit          = false;
+	/* listen server: movement.cpp edge_surf owns the flag ( ran earlier this cmd ) */
+	if ( !edge_surf_local( ) )
+		g_edge_surf_active = false;
 	s_sims_this_cmd   = 0;
 	s_traces_this_cmd = 0;
 	s_trace_qpc_this_cmd = 0ll;
@@ -372,7 +376,8 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	m_hit = m_hs_hit = m_owns_cmd = false;
 
 	c_base_entity* const local = g_ctx.m_local;
-	/* listen server: edge surf is the fake glide ( movement.cpp edge_surf ), online it leads tb */
+	/* listen server: edge surf is the fake hold ( movement.cpp edge_surf ), online it leads tb onto a brush bottom edge whose ride
+	   phase can hold */
 	const bool edge_on         = GET_VARIABLE( g_variables.m_edge_surf, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) &&
 	                     !edge_surf_local( );
 	const bool armed           = ( ( GET_VARIABLE( g_variables.m_texture_bug, bool ) &&
@@ -599,7 +604,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 			return -1;
 		};
 		float hc = 0.f, ho = 0.f, fc = org.m_z, fo = org.m_z;
-		const int kc = edge.ok ? crossing( maxs.m_z, hc, fc ) : -1;
+		const int kc = edge.ok && allowed( ducked0 ) ? crossing( maxs.m_z, hc, fc ) : -1;
 		const int ko = edge.ok && allowed( !ducked0 ) ? crossing( 63.f, ho, fo ) : -1;
 		/* air duck lifts the feet 9 ( unduck drops them ): D = T - feet, the band floor, moves with it */
 		fo += ducked0 ? -9.f : 9.f;
@@ -625,6 +630,13 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 				               lead ? "lead" : "touch", gap, edge.ok ? 1 : 0, edge.B, edge.T, head_now, kc, ko, hc, ho, phi_c, phi_o, lo_c, lo_o, period,
 				               in_c ? 1 : 0, in_o ? 1 : 0, ulp, s_lead_pick, stance, vel.m_z, vel.length_2d( ) );
 			}
+		}
+		g_edge_surf_active = in_c || in_o;
+		/* no stance in band = 1-tick pin at best ( 10-31 log: lo > period on every lead ), don't shove into it */
+		if ( lead && !g_edge_surf_active ) {
+			s_lead_pick = -1;
+			drop( );
+			return;
 		}
 	} else
 		s_lead_pick = -1;

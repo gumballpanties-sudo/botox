@@ -45,6 +45,7 @@ extern void gnd_wish_check( const char* stage, bool final_view = false );
 extern void cmd_start_guard( const char* stage, bool close );
 extern void psa_ride_end( const c_user_cmd* cmd );
 extern void edge_surf( c_user_cmd* cmd );
+extern void poop_surf( c_user_cmd* cmd );
 
 namespace
 {
@@ -389,6 +390,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 			g_edgebug.m_ducked = false;
 			g_edgebug.drop_mouse( );
 			g_edge_skip.reset( true );
+			/* dead: drop the hold + -jetpack */
+			poop_surf( nullptr );
 			return;
 		}
 
@@ -409,6 +412,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 			PERF_ZONE( zone_cmd_tung );
 			g_movement.tung_surf( cmd );
 			edge_surf( cmd );
+			poop_surf( cmd );
 		}
 		cmd_start_guard( "tung", false );
 
@@ -553,7 +557,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		g_botox_net.on_create_move( );
 	}
 
-	if ( ( GET_VARIABLE( g_variables.m_tung_surf, bool ) ||GET_VARIABLE( g_variables.m_edge_surf, bool ) ) &&
+	if ( ( GET_VARIABLE( g_variables.m_tung_surf, bool ) || GET_VARIABLE( g_variables.m_edge_surf, bool ) || GET_VARIABLE( g_variables.m_poop_surf, bool ) ) &&
 	     !g_hooks.m_process_movement_sv.is_hooked( ) ) {
 		static unsigned long long next_try = 0ull;
 		if ( const unsigned long long now = GetTickCount64( ); now >= next_try ) {

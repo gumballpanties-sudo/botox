@@ -102,6 +102,8 @@ bool n_hooks::impl_t::on_attach( )
 	initialise_hook( m_get_local_view_angles, safe_vfunc( g_interfaces.m_prediction, 12 ), &n_detoured_functions::get_local_view_angles,
 	                 "IPrediction::GetLocalViewAngles()" );
 
+	initialise_hook( m_get_view_origin, safe_vfunc( g_interfaces.m_prediction, 8 ), &n_detoured_functions::get_view_origin, "IPrediction::GetViewOrigin()" );
+
 	initialise_hook( m_emit_sound, safe_vfunc( g_interfaces.m_engine_sound, 5 ), &n_detoured_functions::emit_sound, "IEngineSound::EmitSound()" );
 
 	initialise_hook( m_frame_stage_notify, safe_vfunc( g_interfaces.m_base_client, 37 ), &n_detoured_functions::frame_stage_notify,

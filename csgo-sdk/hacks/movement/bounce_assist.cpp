@@ -23,6 +23,7 @@ void n_movement::impl_t::autobounce_assist( c_user_cmd* cmd )
 	static unsigned long long render_after = 0ull;
 	static bool ended                      = false;
 	static long long st_calls = 0ll, st_sims = 0ll, st_plans = 0ll, st_diverge = 0ll, st_bang = 0ll, st_miss = 0ll, st_us = 0ll;
+	static long long st_nopoint = 0ll, st_stam = 0ll, st_duck = 0ll; /* silent gates, key held */
 
 	const auto stop = [ & ]( ) {
 		plan.clear( );
@@ -39,6 +40,17 @@ void n_movement::impl_t::autobounce_assist( c_user_cmd* cmd )
 			botox_dbg_log( "[bsa] key up k=%d/%d", cmd->m_tick_count - plan.start_tick, plan.arrival );
 		stop( );
 		return;
+	}
+
+	/* 1/s, before the silent gates: nopoint = no active point of this map in radius, stam = ground stamina ( brokehop off ), duck = ducked */
+	static unsigned long long next_report = 0ull;
+	if ( const unsigned long long now = GetTickCount64( ); now >= next_report ) {
+		next_report = now + 1000ull;
+		if ( st_calls || st_plans || st_diverge || st_bang || st_miss || st_nopoint || st_stam || st_duck )
+			botox_dbg_log( "BSA: calls=%lld sims=%lld avg=%.1f us=%lld plans=%lld diverge=%lld bang=%lld missed=%lld nopoint=%lld stam=%lld duck=%lld", st_calls,
+			               st_sims, st_calls ? static_cast< float >( st_sims ) / static_cast< float >( st_calls ) : 0.f, st_calls ? st_us / st_calls : 0ll,
+			               st_plans, st_diverge, st_bang, st_miss, st_nopoint, st_stam, st_duck );
+		st_calls = st_sims = st_plans = st_diverge = st_bang = st_miss = st_us = st_nopoint = st_stam = st_duck = 0ll;
 	}
 
 	const c_angle live_view = cmd->m_view_point;
@@ -106,6 +118,7 @@ void n_movement::impl_t::autobounce_assist( c_user_cmd* cmd )
 	if ( !plan.active ) {
 		HITGODA2 = false;
 		if ( cand_count == 0 ) {
+			++st_nopoint;
 			static uint64_t last_unreachable_msg_bounce = 0;
 			if ( const uint64_t now = GetTickCount64( ); now - last_unreachable_msg_bounce > 3000 ) {
 				if ( GET_VARIABLE( g_variables.m_bouncee_assist_render, bool ) )
@@ -115,11 +128,15 @@ void n_movement::impl_t::autobounce_assist( c_user_cmd* cmd )
 			return;
 		}
 
-		if ( !GET_VARIABLE( g_variables.m_bouncee_assist_brokehop, bool ) && on_ground && g_ctx.m_local->get_stamina( ) != 0.f )
+		if ( !GET_VARIABLE( g_variables.m_bouncee_assist_brokehop, bool ) && on_ground && g_ctx.m_local->get_stamina( ) != 0.f ) {
+			++st_stam;
 			return;
+		}
 		/* old gate: never plans off a crouch already in */
-		if ( g_ctx.m_local->get_flags( ) & fl_ducking )
+		if ( g_ctx.m_local->get_flags( ) & fl_ducking ) {
+			++st_duck;
 			return;
+		}
 
 		n_assist::ctx_t c;
 		c.kind      = n_assist::arrival_bang;
@@ -222,16 +239,6 @@ void n_movement::impl_t::autobounce_assist( c_user_cmd* cmd )
 		++st_calls;
 		st_sims += c.sims;
 		st_us += budget.used_us( );
-	}
-
-	static unsigned long long next_report = 0ull;
-	if ( const unsigned long long now = GetTickCount64( ); now >= next_report ) {
-		next_report = now + 1000ull;
-		if ( st_calls || st_plans || st_diverge || st_bang || st_miss )
-			botox_dbg_log( "BSA: calls=%lld sims=%lld avg=%.1f us=%lld plans=%lld diverge=%lld bang=%lld missed=%lld", st_calls, st_sims,
-			               st_calls ? static_cast< float >( st_sims ) / static_cast< float >( st_calls ) : 0.f, st_calls ? st_us / st_calls : 0ll, st_plans,
-			               st_diverge, st_bang, st_miss );
-		st_calls = st_sims = st_plans = st_diverge = st_bang = st_miss = st_us = 0ll;
 	}
 
 	if ( !plan.active )

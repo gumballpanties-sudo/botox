@@ -450,6 +450,8 @@ void n_misc::impl_t::draw_watermark( )
 		return this->draw_watermark_gamesense( );
 	case 22:
 		return this->draw_watermark_millionware_v1( );
+	case 23:
+		return this->draw_watermark_lobotomy_v2( );
 	default:
 		break;
 	}
@@ -986,6 +988,7 @@ static std::tuple< ImFont*, ImFont*, float > media_player_fonts( )
 			size = 13.f;
 			break;
 		case 22: pick( e_font_names::font_name_millionware_tahoma_11, e_font_names::font_name_millionware_tahoma_11 ); break;
+		case 23: pick( e_font_names::font_name_lobotomy_bold_13, e_font_names::font_name_lobotomy_bold_13 ); break;
 		default: break;
 		}
 	}

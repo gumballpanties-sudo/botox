@@ -911,7 +911,8 @@ namespace
 		if ( thick <= 0.f )
 			return;
 		// the line crosses the compass square left -> right in screen space, one pass per compassRadarUpdateTime
-		const float u = ( 0.5f - s_sweep ) / thick + 0.5f;
+		// texture centre (u 0.5) lands at screen x = s_sweep, same x the ping test below uses
+		const float u = 0.5f - s_sweep / thick;
 		const texture_t* t = texture( mat( "compass_radarline" ) );
 		if ( !t )
 			return;

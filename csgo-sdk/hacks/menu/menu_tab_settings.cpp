@@ -895,16 +895,19 @@ void n_menu::impl_t::player_list_page( )
 
 	/* negative y = sized after show_text's 20 px title shift */
 	if ( ImGui::BeginChild( "players", ImVec2( 0.f, -menu_bottom_band_height ), true, 0, true ) ) {
-		/* name ~28%, 4 cells of 12% each, header centred in its slot; custom name takes the rest (last column: the
-		   custom InputText runs to the right edge by itself) */
+		/* name ~28%, 4 cells of max(12%, header + 12 px), header centred in its slot; custom name takes the rest (last
+		   column: the custom InputText runs to the right edge by itself) */
 		const float row_width = ImGui::GetContentRegionAvail( ).x;
 		const float name_width = ImFloor( row_width * 0.28f ), slot = ImFloor( row_width * 0.12f );
-		const float k_custom = ImFloor( name_width + slot * 4.f + 8.f );
-		const auto slot_x = [ & ]( const int index, const char* header ) {
-			return ImFloor( name_width + slot * index + ( slot - ImGui::CalcTextSize( header ).x ) / 2.f );
-		};
-		const float k_team = slot_x( 0, "team" ), k_revive = slot_x( 1, "auto revive" ), k_ignore = slot_x( 2, "aimbot ignore" ),
-		            k_only = slot_x( 3, "only aimbot" );
+		const char* headers[ 4 ] = { "team", "auto revive", "aimbot ignore", "only aimbot" };
+		float slot_pos[ 4 ], cursor = name_width;
+		for ( int c = 0; c < 4; c++ ) {
+			const float text = ImGui::CalcTextSize( headers[ c ] ).x, width = ImMax( slot, text + 12.f );
+			slot_pos[ c ] = ImFloor( cursor + ( width - text ) / 2.f );
+			cursor += width;
+		}
+		const float k_custom = ImFloor( cursor + 8.f );
+		const float k_team = slot_pos[ 0 ], k_revive = slot_pos[ 1 ], k_ignore = slot_pos[ 2 ], k_only = slot_pos[ 3 ];
 		const float base_x = ImGui::GetCursorScreenPos( ).x;
 		const auto column  = [ base_x ]( const float offset, const char* header = nullptr, const float width = 0.f ) {
 			const float centre = header ? ImMax( 0.f, ( ImGui::CalcTextSize( header ).x - width ) / 2.f ) : 0.f;
@@ -1226,12 +1229,13 @@ void n_menu::impl_t::tab_misc( )
 				"watermark settings",
 				[]( ) {
 					auto& style = GET_VARIABLE( g_variables.m_watermark_style, int );
-					if ( style < 0 || style > 22 )
+					if ( style < 0 || style > 23 )
 						style = 0;
 
 					ImGui::Combo( "style##watermark style", &style,
 					              "default\0kamibebra\0clarity\0clarity v2\0delusional\0interwebz\0havoc\0onetap\0airflow\0ev0lve\0legendware\0"
-					              "interium\0skebob\0cumidere\0illusory\0lumi\0billware\0dna\0dna clarity\0cucumber\0howeweware\0gamesense\0millionware v1\0" );
+					              "interium\0skebob\0cumidere\0illusory\0lumi\0billware\0dna\0dna clarity\0cucumber\0howeweware\0gamesense\0millionware v1\0"
+					              "lobotomy v2\0" );
 
 					{
 						static char name_buffer[ 25 ] = { };
@@ -1280,6 +1284,15 @@ void n_menu::impl_t::tab_misc( )
 						ImGui::Checkbox( "time##watermark millionware v1", &GET_VARIABLE( g_variables.m_watermark_time, bool ) );
 					}
 
+					if ( style == 23 ) {
+						ImGui::Checkbox( "user##watermark lobotomy v2", &GET_VARIABLE( g_variables.m_watermark_user, bool ) );
+						ImGui::Checkbox( "tickrate##watermark lobotomy v2", &GET_VARIABLE( g_variables.m_watermark_tickrate, bool ) );
+						ImGui::Checkbox( "fps##watermark lobotomy v2", &GET_VARIABLE( g_variables.m_watermark_fps, bool ) );
+						ImGui::Checkbox( "time##watermark lobotomy v2", &GET_VARIABLE( g_variables.m_watermark_time, bool ) );
+						ImGui::ColorEdit4( "title color##watermark lobotomy v2", &GET_VARIABLE( g_variables.m_watermark_lobotomy_title_color, c_color ),
+						                   color_picker_alpha_flags );
+					}
+
 					if ( style == 12 )
 						ImGui::Checkbox( "typing effect##watermark skebob", &GET_VARIABLE( g_variables.m_watermark_skebob_typing, bool ) );
 
@@ -1294,7 +1307,7 @@ void n_menu::impl_t::tab_misc( )
 					if ( label_style )
 						ImGui::Combo( "label##watermark label", &label, "time\0fps\0user\0none\0" );
 
-					const bool shows_user = ( ( style == 0 || style == 2 || style == 15 || style == 21 || style == 22 ) && GET_VARIABLE( g_variables.m_watermark_user, bool ) ) ||
+					const bool shows_user = ( ( style == 0 || style == 2 || style == 15 || style == 21 || style == 22 || style == 23 ) && GET_VARIABLE( g_variables.m_watermark_user, bool ) ) ||
 					                        style == 12 ||
 					                        ( style == 1 && ( GET_VARIABLE( g_variables.m_watermark_kami_show_flags, int ) & 1 ) ) || style == 3 ||
 					                        style == 8 || style == 10 || style == 17 || style == 18 || style == 19 || style == 20 || ( label_style && label == 2 );

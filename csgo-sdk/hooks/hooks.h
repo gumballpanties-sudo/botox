@@ -83,6 +83,7 @@ namespace n_hooks
 		c_detour_hook m_draw_world_lists{ };
 		c_detour_hook m_world_to_screen_matrix{ };
 		c_detour_hook m_get_local_view_angles{ };
+		c_detour_hook m_get_view_origin{ };
 		c_detour_hook m_get_player_info{ };
 
 		c_detour_hook m_tier0_warning{ };
@@ -110,6 +111,7 @@ namespace n_detoured_functions
 	void __fastcall create_move_proxy( void* ecx, void* edx, int sequence_number, float input_sample_frametime, bool is_active );
 	void __fastcall run_command( void* ecx, void* edx, void* entity, void* cmd, void* move_helper );
 	void __fastcall get_local_view_angles( void* ecx, void* edx, c_angle& angles );
+	void __fastcall get_view_origin( void* ecx, void* edx, c_vector& origin );
 	int __fastcall emit_sound( void* ecx, void* edx, void* filter, int idx, int channel, const char* sound_entry, unsigned int sound_entry_hash,
 	                           const char* sample, float volume, int seed, float attenuation, int flags, int pitch, const c_vector* origin,
 	                           const c_vector* direction, void* vec_origins, bool update_pos, float soundtime, int speakerentity, int unk );

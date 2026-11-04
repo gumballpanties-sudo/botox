@@ -166,20 +166,25 @@ namespace n_pm
 		return inset + ( 1.f - 2.f * inset ) * ( static_cast< float >( i ) / static_cast< float >( n - 1 ) );
 	}
 
-	/* confirmed run lo..hi -> segment, half a stride wider each end, clamped to the seam */
-	inline void run_segment( const seam_t& s, int lo, int hi, int n, float stride, float& ax, float& ay, float& bx, float& by )
+	/* hit at t_in, miss at t_out: bisect, return the middle of the last bracket ( run end within stride / 2^(steps+1) ) */
+	template < class F >
+	inline float refine_edge( float t_in, float t_out, int steps, F&& hit )
 	{
-		const float len  = s.len( );
-		const float half = ( stride * 0.5f ) / ( len > 1.f ? len : 1.f );
-		float t0         = sample_t( lo, n, len ) - half;
-		float t1         = sample_t( hi, n, len ) + half;
-		if ( t0 < 0.f )
-			t0 = 0.f;
-		if ( t1 > 1.f )
-			t1 = 1.f;
-		ax = s.ax + ( s.bx - s.ax ) * t0;
-		ay = s.ay + ( s.by - s.ay ) * t0;
-		bx = s.ax + ( s.bx - s.ax ) * t1;
-		by = s.ay + ( s.by - s.ay ) * t1;
+		for ( int i = 0; i < steps; ++i ) {
+			const float m = 0.5f * ( t_in + t_out );
+			( hit( m ) ? t_in : t_out ) = m;
+		}
+		return 0.5f * ( t_in + t_out );
+	}
+
+	/* squared xy distance point -> seam segment ( scan order: nearest seams first ) */
+	inline float dist2( const seam_t& s, float x, float y )
+	{
+		const float dx = s.bx - s.ax, dy = s.by - s.ay;
+		const float l2 = dx * dx + dy * dy;
+		float t        = l2 > 1e-6f ? ( ( x - s.ax ) * dx + ( y - s.ay ) * dy ) / l2 : 0.f;
+		t              = t < 0.f ? 0.f : ( t > 1.f ? 1.f : t );
+		const float ex = s.ax + dx * t - x, ey = s.ay + dy * t - y;
+		return ex * ex + ey * ey;
 	}
 }

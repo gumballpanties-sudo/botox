@@ -160,6 +160,7 @@ namespace n_misc
 		void draw_watermark_howeweware( );
 		void draw_watermark_gamesense( );
 		void draw_watermark_millionware_v1( );
+		void draw_watermark_lobotomy_v2( );
 		void draw_watermark_gif( );
 		void draw_media_player( );
 		void update_clantag( );

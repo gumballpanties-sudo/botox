@@ -52,6 +52,7 @@ namespace
 				size = 13.f;
 				break;
 			case 22: font = g_render.m_fonts[ e_font_names::font_name_millionware_tahoma_11 ]; break;
+			case 23: font = g_render.m_fonts[ e_font_names::font_name_lobotomy_bold_13 ]; break;
 			default: break;
 			}
 		}

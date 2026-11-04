@@ -6601,6 +6601,100 @@ void n_misc::impl_t::draw_spectator_list_millionware_v1( )
 	g_render.end_stretch_block( block );
 }
 
+/* lumiabeta FUN_1007b020. sf pro bold 13, box ( x, 10 ) to ( x + w, size + 22 ), x = screen - w - 5, w = text + 12 eased dt * 8
+   ( snaps after a 1 s gap or a > 200 px jump ). fill ( 13 ) r4, black ring 1 px out, ( 50 ) ring on the edge. text ( x + 6, 16 ):
+   brand in the title colour, then per part " | " ( 150 ) + user / time ( 150 ) or number ( white ) + unit ( 150 ) */
+void n_misc::impl_t::draw_watermark_lobotomy_v2( )
+{
+	const auto font = g_render.m_fonts[ e_font_names::font_name_lobotomy_bold_13 ];
+
+	if ( !font )
+		return;
+
+	constexpr ImU32 grey = IM_COL32( 150, 150, 150, 255 ), white = IM_COL32( 255, 255, 255, 255 );
+
+	const ImGuiIO& io = ImGui::GetIO( );
+	const float now   = static_cast< float >( ImGui::GetTime( ) );
+
+	static float smooth_fps = 0.f, fps_time = 0.f;
+	static int shown_fps    = 0;
+	smooth_fps              = smooth_fps * 0.9f + io.Framerate * 0.100000024f;
+
+	if ( now - fps_time >= 0.3f ) {
+		fps_time  = now;
+		shown_fps = static_cast< int >( smooth_fps + 0.5f );
+	}
+
+	using part_t = std::vector< std::pair< std::string, ImU32 > >;
+	std::vector< part_t > parts{ };
+
+	if ( GET_VARIABLE( g_variables.m_watermark_user, bool ) )
+		parts.push_back( { { GET_VARIABLE( g_variables.m_watermark_clarity_user, std::string ), grey } } );
+
+	if ( GET_VARIABLE( g_variables.m_watermark_time, bool ) ) {
+		const std::time_t raw = std::time( nullptr );
+		std::tm local{ };
+		localtime_s( &local, &raw );
+
+		char clock[ 16 ]{ };
+		std::strftime( clock, sizeof( clock ), "%H:%M", &local );
+		parts.push_back( { { clock, grey } } );
+	}
+
+	if ( const auto globals = g_interfaces.m_global_vars_base; GET_VARIABLE( g_variables.m_watermark_tickrate, bool ) &&
+	                                                           g_interfaces.m_engine_client->is_in_game( ) && globals && globals->m_interval_per_tick > 0.f )
+		parts.push_back( { { std::to_string( static_cast< int >( 1.f / globals->m_interval_per_tick + 0.5f ) ), white }, { " tick", grey } } );
+
+	if ( GET_VARIABLE( g_variables.m_watermark_fps, bool ) )
+		parts.push_back( { { std::to_string( shown_fps ), white }, { " fps", grey } } );
+
+	const std::string brand = watermark_brand( );
+	const float size        = font->FontSize;
+	const float separator_w = imgui_text_width( font, " | " );
+
+	float target = imgui_text_width( font, brand.c_str( ) ) + 12.f;
+	for ( const auto& part : parts ) {
+		target += separator_w;
+		for ( const auto& [ text, color ] : part )
+			target += imgui_text_width( font, text.c_str( ) );
+	}
+
+	static float width = 0.f, width_time = 0.f;
+	if ( now - width_time <= 1.f && std::abs( width - target ) <= 200.f )
+		target = ( target - width ) * io.DeltaTime * 8.f + width;
+	width      = target;
+	width_time = now;
+
+	const float x = static_cast< float >( g_ctx.m_width ) - width - 5.f;
+	const ImVec2 min( x, 10.f ), max( x + width, size + 22.f );
+
+	g_watermark_box = ImVec4( min.x - 1.f, min.y - 1.f, max.x + 1.f, max.y + 1.f );
+
+	const auto draw_list = ImGui::GetForegroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	draw_list->AddRectFilled( min, max, IM_COL32( 13, 13, 13, 255 ), 4.f );
+	draw_list->AddRect( ImVec2( min.x - 1.f, 9.f ), ImVec2( max.x + 1.f, max.y + 1.f ), IM_COL32( 0, 0, 0, 255 ), 4.f, 0, 1.f );
+	draw_list->AddRect( min, max, IM_COL32( 50, 50, 50, 255 ), 4.f, 0, 1.f );
+
+	float text_x    = x + 6.f;
+	const auto put = [ & ]( const std::string& text, const ImU32 color ) {
+		draw_list->AddText( font, size, ImVec2( text_x, 16.f ), color, text.c_str( ) );
+		text_x += imgui_text_width( font, text.c_str( ) );
+	};
+
+	const c_color& title = GET_VARIABLE( g_variables.m_watermark_lobotomy_title_color, c_color );
+	put( brand, IM_COL32( title[ 0 ], title[ 1 ], title[ 2 ], 255 ) );
+
+	for ( const auto& part : parts ) {
+		put( " | ", grey );
+		for ( const auto& [ text, color ] : part )
+			put( text, color );
+	}
+
+	g_render.end_stretch_block( block );
+}
+
 bool n_misc::media_player_donor_look( const int style, media_look_t& look )
 {
 	const ImVec4 accent = ImGui::GetStyleColorVec4( ImGuiCol_::ImGuiCol_Accent );
@@ -6624,6 +6718,11 @@ bool n_misc::media_player_donor_look( const int style, media_look_t& look )
 		look = { true, GET_VARIABLE( g_variables.m_watermark_gamesense_sense_color, c_color ).get_u32( ), IM_COL32( 255, 255, 255, 230 ), 0 };
 		return true;
 	case 22: look = { true, millionware_pulse( ), millionware_pulse( ), 1 }; return true;
+	case 23: {
+		const c_color& title = GET_VARIABLE( g_variables.m_watermark_lobotomy_title_color, c_color );
+		look                 = { true, IM_COL32( title[ 0 ], title[ 1 ], title[ 2 ], 255 ), IM_COL32( 150, 150, 150, 255 ), 0 };
+		return true;
+	}
 	default: return false;
 	}
 }
@@ -6728,6 +6827,11 @@ void n_misc::media_player_donor_frame( ImDrawList* list, const ImVec2 min, const
 			gamesense_bar( list, ImVec2( min.x + 3.f, min.y + 3.f ), ImVec2( max.x - 3.f, max.y - 3.f ) );
 		break;
 	case 22: millionware_underline( list, min.x, max.y - 2.f, max.x - min.x, millionware_pulse( ) ); break;
+	case 23:
+		list->AddRectFilled( min, max, IM_COL32( 13, 13, 13, 255 ), 4.f );
+		list->AddRect( ImVec2( min.x - 1.f, min.y - 1.f ), ImVec2( max.x + 1.f, max.y + 1.f ), IM_COL32( 0, 0, 0, 255 ), 4.f, 0, 1.f );
+		list->AddRect( min, max, IM_COL32( 50, 50, 50, 255 ), 4.f, 0, 1.f );
+		break;
 	default: break;
 	}
 }

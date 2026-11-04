@@ -24,6 +24,22 @@ static struct {
 	int ticks   = 0;
 } s_hold;
 
+/* server says pinned where our sim says fall ( 11-04 online log: 64/85 `lost` had the server pinned, 34 still pinned after we gave up;
+   server pinned + same wire cmd next = kept 35/35, any other cmd 24/53 ) = resend the acked cmd until the server stops pinning */
+static struct {
+	bool valid  = false;
+	c_angle view{ };
+	float fwd = 0.0f, side = 0.0f;
+	int ticks = 0, moved = 0;
+} s_lock;
+
+static void lock_end( const char* why )
+{
+	if ( s_lock.valid )
+		botox_dbg_log( "AS: sv lock end t=%d moved=%d why=%s", s_lock.ticks, s_lock.moved, why );
+	s_lock.valid = false;
+}
+
 /* online the engine keeps its own START while the server's END differs < 0.0625u / 0.5u/s ( cl_pred_optimize 2, c_baseentity.cpp:656/681,
    prediction.cpp:1681 ); pins are exact floats, so armed = full re-predict off the server snapshot every packet ( offline already is ).
    log: server END of the acked cmd vs the START we built on */
@@ -40,6 +56,7 @@ static void as_sync( c_user_cmd* cmd, const bool armed )
 	static int last_ack = -1, ok = 0;
 	if ( !armed ) {
 		last_ack = -1;
+		lock_end( "off" );
 		return;
 	}
 	c_base_entity* const local = g_ctx.m_local;
@@ -66,12 +83,26 @@ static void as_sync( c_user_cmd* cmd, const bool armed )
 
 	const c_vector d  = sv_origin - ring[ ack & 127 ].origin;
 	const c_vector dv = sv_velocity - ring[ ack & 127 ].velocity;
-	if ( d.m_x == 0.0f && d.m_y == 0.0f && d.m_z == 0.0f && dv.m_x == 0.0f && dv.m_y == 0.0f && dv.m_z == 0.0f ) {
+	const bool match  = d.m_x == 0.0f && d.m_y == 0.0f && d.m_z == 0.0f && dv.m_x == 0.0f && dv.m_y == 0.0f && dv.m_z == 0.0f;
+	const c_user_cmd* const a = g_interfaces.m_input->get_user_cmd( ack );
+	const bool sv_pinned      = sv_velocity.m_x == 0.0f && sv_velocity.m_y == 0.0f && sv_velocity.m_z == g_prediction.get_engine_target_predict_z_velocity( );
+	if ( !sv_pinned )
+		lock_end( "fell" );
+	else if ( !match || s_lock.valid ) {
+		if ( !s_lock.valid ) {
+			s_lock.ticks = s_lock.moved = 0;
+			botox_dbg_log( "AS: sv lock ack=%d cmd=%.4f/%.4f v=%.4f/%.4f", ack, a->m_forward_move, a->m_side_move, a->m_view_point.m_x, a->m_view_point.m_y );
+		}
+		s_lock.valid = true;
+		s_lock.view  = a->m_view_point;
+		s_lock.fwd   = a->m_forward_move;
+		s_lock.side  = a->m_side_move;
+	}
+	if ( match ) {
 		++ok;
 		return;
 	}
 	/* same cmd as the one before + dtb 0 + a pinned START = server float noise; dtb != 0 = server ran an extra / null cmd ( player.cpp:3603 ) */
-	const c_user_cmd* const a = g_interfaces.m_input->get_user_cmd( ack );
 	const c_user_cmd* const b = g_interfaces.m_input->get_user_cmd( ack - 1 );
 	const bool same_cmd = a->m_view_point.m_x == b->m_view_point.m_x && a->m_view_point.m_y == b->m_view_point.m_y && a->m_forward_move == b->m_forward_move &&
 	                      a->m_side_move == b->m_side_move && a->m_buttons == b->m_buttons;
@@ -156,26 +187,26 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	/* silent: the sent cmd always keeps your view; the proven move ( pin yaw frame ) is rotated into it and air_stuck_shot_proof re-proves
 	   the final cmd ( 10-30 log: 125/125 live-view re-proofs pinned, <= 18 ulp tries ). zero move: wishvel 0, AirAccelerate returns on
 	   addspeed 0 ( gamemovement.cpp:2028/1985 ) = any view sims the same */
-	const auto publish = [ & ]( const float yaw, const float move, const bool stuck, const float pitch, const bool exact ) {
+	const auto publish = [ & ]( const float yaw, const float move, const bool stuck, const float pitch, const bool exact, const float side = 0.0f ) {
 		s_proof                   = { stuck, exact, origin, live_velocity };
 		s_hold.valid              = stuck;
 		s_hold.pitch              = pitch;
 		s_hold.yaw                = yaw;
 		s_hold.fwd                = move;
 		cmd->m_view_point         = live_view;
-		stamp_rotate( live_view.m_y, yaw, move, 0.0f, cmd->m_forward_move, cmd->m_side_move );
+		stamp_rotate( live_view.m_y, yaw, move, side, cmd->m_forward_move, cmd->m_side_move );
 		/* use movement fix off ( ridobebra apply_air_stuck_view ): send the proof cmd as simmed, pin view + raw move, not silent */
 		g_air_stuck_view_forced = !GET_VARIABLE( g_variables.m_movement_fix, bool );
 		if ( g_air_stuck_view_forced ) {
 			cmd->m_view_point.m_x = pitch;
 			cmd->m_view_point.m_y = yaw;
 			cmd->m_forward_move   = move;
-			cmd->m_side_move      = 0.0f;
+			cmd->m_side_move      = side;
 		}
 		cmd->m_buttons            = live_buttons;
 		g_air_stuck_stamp_yaw     = yaw;
 		g_air_stuck_stamp_forward = move;
-		g_air_stuck_stamp_side    = 0.0f;
+		g_air_stuck_stamp_side    = side;
 		g_air_stuck_stamp_buttons = cmd->m_buttons;
 		g_air_stuck_stamp_valid   = true;
 		g_air_stuck_stamp_pitch   = pitch;
@@ -217,6 +248,19 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		}
 		return n;
 	};
+
+	/* server pinned, our sim can't prove its pins ( it predicts the fall ) = resend the server's cmd, no client proof / search.
+	   silent: exact wire cmd while your view is still, else rotated ( `moved=` ) */
+	if ( s_lock.valid ) {
+		s_expect.valid = false;
+		s_hold.ticks   = 0;
+		publish( s_lock.view.m_y, s_lock.fwd, true, s_lock.view.m_x, true, s_lock.side );
+		s_proof.valid = false;
+		s_hold.valid  = false;
+		++s_lock.ticks;
+		s_lock.moved += !g_air_stuck_view_forced && ( live_view.m_x != s_lock.view.m_x || live_view.m_y != s_lock.view.m_y );
+		return;
+	}
 
 	/* last tick sent a proven pin that did not hold: d = real START - our sim end */
 	if ( s_expect.valid ) {

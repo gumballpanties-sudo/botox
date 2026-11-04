@@ -451,6 +451,20 @@ void n_menu::impl_t::tab_movement( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			ImGui::Checkbox( "poop soorf", &GET_VARIABLE( g_variables.m_poop_surf, bool ) );
+			if ( GET_VARIABLE( g_variables.m_poop_surf, bool ) ) {
+				ImGui::OptionPopup(
+					"poop soorf settings",
+					[ & ]( ) {
+						ImGui::Label( "poop soorf keybind" );
+						ImGui::Keybind( "poop soorf key", &GET_VARIABLE( g_variables.m_poop_surf_key, key_bind_t ) );
+						ImGui::SliderFloat( "wall reach", &GET_VARIABLE( g_variables.m_poop_surf_reach, float ), 0.5f, 16.f, "%.1f u" );
+						ImGui::SliderFloat( "wall band (feet / head)", &GET_VARIABLE( g_variables.m_poop_surf_band, float ), 1.f, 36.f, "%.0f u" );
+						ImGui::SliderInt( "jetpack min hold", &GET_VARIABLE( g_variables.m_poop_surf_pulse, int ), 1, 32, "%d ticks" );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
 			ImGui::Checkbox( "ladder glide", &GET_VARIABLE( g_variables.m_ladder_glide, bool ) );
 			ImGui::Keybind( "ladder glide key", &GET_VARIABLE( g_variables.m_ladder_glide_key, key_bind_t ) );
 
@@ -912,9 +926,10 @@ void n_menu::impl_t::tab_movement( )
 							ms.busy ? std::format( "cancel scan  {}%###pf map scan", ms.total > 0 ? ms.done * 100 / ms.total : 0 ) : std::string( "search whole map###pf map scan" );
 						if ( ImGui::Button( pm_label.c_str( ), ImVec2( -1.f, 15.f ) ) )
 							pf_map_scan_toggle( );
+						ImGui::Checkbox( "map texturebugs", &GET_VARIABLE( g_variables.m_pixel_finder_map_texturebugs, bool ) );
 						ImGui::Checkbox( "show map lines", &GET_VARIABLE( g_variables.m_pixel_finder_map_lines, bool ) );
 						if ( ms.busy || ms.lines > 0 || ms.tb > 0 )
-							ImGui::TextDisabled( "seam %d / %d   %d surf%s   %d texturebug%s", ms.done, ms.total, ms.lines, ms.lines == 1 ? "" : "s", ms.tb,
+							ImGui::TextDisabled( "seam %d / %d   %d surf%s   %d tb line%s", ms.done, ms.total, ms.lines, ms.lines == 1 ? "" : "s", ms.tb,
 							                     ms.tb == 1 ? "" : "s" );
 					},
 					ImVec2( 220.f, -1.f ) );
@@ -1445,6 +1460,7 @@ void n_menu::impl_t::tab_movement( )
 		if ( menu_group_begin( "recorder" ) ) {
 			ImGui::Checkbox( "movement recorder", &GET_VARIABLE( g_variables.m_movement_rec, bool ) );
 			ImGui::Checkbox( "show route lines", &GET_VARIABLE( g_variables.m_movement_rec_show_line, bool ) );
+			ImGui::Checkbox( "route lines near start", &GET_VARIABLE( g_variables.m_movement_rec_preview_line, bool ) );
 			ImGui::Checkbox( "show recorder timer", &GET_VARIABLE( g_variables.m_movement_rec_render, bool ) );
 			if ( GET_VARIABLE( g_variables.m_movement_rec_render, bool ) ) {
 				ImGui::OptionPopup(

@@ -26,6 +26,7 @@ namespace
 {
 	constexpr const char* k_root_dir   = "C:\\botox\\recordings";
 	constexpr float k_start_radius     = 28.f;
+	constexpr float k_preview_line_dist = 300.f;
 	constexpr float k_pos_close_eps    = 0.1f;
 	constexpr float k_approach_give_up = 2.f;
 	constexpr float k_indicator_lerp_k = 6.f;
@@ -1098,8 +1099,11 @@ void n_movement_recorder::impl_t::render_route_preview( )
 		if ( alpha_mul <= 0.f )
 			continue;
 
-		if ( GET_VARIABLE( g_variables.m_movement_rec_show_line, bool ) )
-			enqueue_path( route.frames, 0, route.frames.size( ), accent_u32( 0.55f * alpha_mul ), 1.f );
+		/* idle line = own checkbox, only near the start */
+		if ( GET_VARIABLE( g_variables.m_movement_rec_preview_line, bool ) && distance < k_preview_line_dist ) {
+			const float line_mul = std::clamp( ( k_preview_line_dist - distance ) / 50.f, 0.f, 1.f );
+			enqueue_path( route.frames, 0, route.frames.size( ), accent_u32( 0.55f * line_mul ), 1.f );
+		}
 
 		c_vector_2d screen{ };
 		if ( !g_render.world_to_screen( start_pos, screen ) )
