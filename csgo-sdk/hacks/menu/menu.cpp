@@ -1005,12 +1005,19 @@ void n_menu::impl_t::tab_aimbot( )
 				"backtrack settings",
 				[ & ]( ) {
 					ImGui::Checkbox( "aim at backtrack", &GET_VARIABLE( g_variables.m_aimbot_aim_at_backtrack, bool ) );
-					ImGui::SliderInt( "backtrack time", &GET_VARIABLE( g_variables.m_backtrack_time_limit, int ), 0, 200, "%d ms",
-				                      ImGuiSliderFlags_AlwaysClamp );
-					ImGui::Checkbox( "extended", &GET_VARIABLE( g_variables.m_backtrack_extend, bool ) );
-					if ( GET_VARIABLE( g_variables.m_backtrack_extend, bool ) ) {
-						ImGui::SliderInt( "extend amount", &GET_VARIABLE( g_variables.m_backtrack_extend_amount, int ), 0, 200, "%d ms",
+					/* extra overrides time + extend: one slider = oldest record. online needs an sv_maxunlag 1 server */
+					ImGui::Checkbox( "extra extended", &GET_VARIABLE( g_variables.m_backtrack_extra, bool ) );
+					if ( GET_VARIABLE( g_variables.m_backtrack_extra, bool ) ) {
+						ImGui::SliderInt( "extra amount", &GET_VARIABLE( g_variables.m_backtrack_extra_amount, int ), 0, 1200, "%d ms",
 					                      ImGuiSliderFlags_AlwaysClamp );
+					} else {
+						ImGui::SliderInt( "backtrack time", &GET_VARIABLE( g_variables.m_backtrack_time_limit, int ), 0, 200, "%d ms",
+					                      ImGuiSliderFlags_AlwaysClamp );
+						ImGui::Checkbox( "extended", &GET_VARIABLE( g_variables.m_backtrack_extend, bool ) );
+						if ( GET_VARIABLE( g_variables.m_backtrack_extend, bool ) ) {
+							ImGui::SliderInt( "extend amount", &GET_VARIABLE( g_variables.m_backtrack_extend_amount, int ), 0, 200, "%d ms",
+						                      ImGuiSliderFlags_AlwaysClamp );
+						}
 					}
 				},
 				ImVec2( 220.f, -1.f ) );

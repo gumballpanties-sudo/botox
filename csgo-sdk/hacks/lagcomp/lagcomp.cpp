@@ -46,8 +46,9 @@ float n_lagcomp::impl_t::lerp_time( )
 float n_lagcomp::impl_t::max_unlag( )
 {
 	/* remote sv_maxunlag is never sent to clients; local copy is server.dll's, not theirs. csgo default 0.2 (player_lagcompensation.cpp:36) */
+	/* extra assumes an sv_maxunlag 1 server (cvar max); a 0.2 server clamps correct = shots past ~400ms re-aim at curtime - 0.2 */
 	if ( !is_hosting( ) )
-		return 0.2f;
+		return extra( ) ? 1.f : 0.2f;
 
 	const auto unlag = g_convars[ HASH_BT( "sv_maxunlag" ) ];
 	return unlag ? unlag->get_float( ) : 0.2f;
@@ -72,8 +73,23 @@ bool n_lagcomp::impl_t::is_hosting( )
 	return !nci || nci->is_loopback( );
 }
 
+bool n_lagcomp::impl_t::extra( )
+{
+	return GET_VARIABLE( g_variables.m_backtrack_enable, bool ) && GET_VARIABLE( g_variables.m_backtrack_extra, bool );
+}
+
+static float extra_reach( )
+{
+	return std::clamp( static_cast< float >( GET_VARIABLE( g_variables.m_backtrack_extra_amount, int ) ) / 1000.f, 0.f,
+	                   n_lagcomp::impl_t::k_max_extra );
+}
+
 float n_lagcomp::impl_t::extend( )
 {
+	/* slider = oldest record: hold the ack so correct sits 0.2 under it, band = correct +-0.2 */
+	if ( extra( ) )
+		return std::clamp( extra_reach( ) - 0.2f, 0.f, max_unlag( ) );
+
 	if ( !GET_VARIABLE( g_variables.m_backtrack_enable, bool ) || !GET_VARIABLE( g_variables.m_backtrack_extend, bool ) )
 		return 0.f;
 
@@ -84,6 +100,9 @@ float n_lagcomp::impl_t::extend( )
 
 float n_lagcomp::impl_t::time_limit( )
 {
+	if ( extra( ) )
+		return extra_reach( );
+
 	const float wanted = static_cast< float >( GET_VARIABLE( g_variables.m_backtrack_time_limit, int ) ) / 1000.f;
 
 	return std::clamp( wanted, 0.f, k_max_backtrack ) + extend( );

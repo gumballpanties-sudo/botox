@@ -67,6 +67,11 @@ namespace n_lagcomp
 
 		static constexpr float k_max_backtrack = 0.2f;
 
+		/* sv_maxunlag hard max 1.0 + the server's 0.2 delta tolerance (player_lagcompensation.cpp:36/292) */
+		static constexpr float k_max_extra = 1.2f;
+
+		bool extra( );
+
 		float time_limit( );
 
 		bool is_valid( float sim_time, float margin = k_edge_margin );
