@@ -1009,10 +1009,8 @@ void n_menu::impl_t::tab_aimbot( )
 				                      ImGuiSliderFlags_AlwaysClamp );
 					ImGui::Checkbox( "extended", &GET_VARIABLE( g_variables.m_backtrack_extend, bool ) );
 					if ( GET_VARIABLE( g_variables.m_backtrack_extend, bool ) ) {
-						/* extra: sv_maxunlag cap 1000 (+200 backtrack time = 1200). online needs an sv_maxunlag 1 server */
-						ImGui::Checkbox( "extra extended", &GET_VARIABLE( g_variables.m_backtrack_extra, bool ) );
-						ImGui::SliderInt( "extend amount", &GET_VARIABLE( g_variables.m_backtrack_extend_amount, int ), 0,
-						                  GET_VARIABLE( g_variables.m_backtrack_extra, bool ) ? 1000 : 200, "%d ms", ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderInt( "extend amount", &GET_VARIABLE( g_variables.m_backtrack_extend_amount, int ), 0, 200, "%d ms",
+					                      ImGuiSliderFlags_AlwaysClamp );
 					}
 				},
 				ImVec2( 220.f, -1.f ) );

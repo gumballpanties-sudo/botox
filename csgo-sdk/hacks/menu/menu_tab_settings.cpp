@@ -1985,12 +1985,6 @@ void n_menu::impl_t::tab_misc( )
 				[]( ) {
 					ImGui::Combo( "translate to##chat translator", &GET_VARIABLE( g_variables.m_chat_translator_language, int ),
 					              n_chat_extras::k_language_names );
-
-					static char libre_url[ 128 ] = { }, libre_key[ 128 ] = { };
-					text_buffer_sync( "libre fallback url##chat translator", GET_VARIABLE( g_variables.m_chat_translator_libre_url, std::string ), libre_url,
-					                  sizeof( libre_url ), "http://localhost:5000" );
-					text_buffer_sync( "libre api key##chat translator", GET_VARIABLE( g_variables.m_chat_translator_libre_key, std::string ), libre_key,
-					                  sizeof( libre_key ), "optional" );
 				},
 				ImVec2( 220.f, -1.f ) );
 		}

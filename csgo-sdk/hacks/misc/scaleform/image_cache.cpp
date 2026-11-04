@@ -86,7 +86,7 @@ namespace
 
 	/* error: http status when one came back, else the WinHTTP GetLastError code */
 	bool http_get( const std::string& url, std::string& out, const bool allow_empty = false, const size_t max_bytes = k_max_bytes,
-	               unsigned long* error = nullptr, const std::string* json_body = nullptr )
+	               unsigned long* error = nullptr )
 	{
 		unsigned long dummy = 0;
 		unsigned long& code = error ? *error : dummy;
@@ -116,17 +116,13 @@ namespace
 		WinHttpSetTimeouts( session, 5000, 5000, 10000, 15000 );
 
 		HINTERNET connection = WinHttpConnect( session, host, parts.nPort, 0 );
-		HINTERNET request    = connection ? WinHttpOpenRequest( connection, json_body ? L"POST" : L"GET", path, nullptr, WINHTTP_NO_REFERER,
-		                                                        WINHTTP_DEFAULT_ACCEPT_TYPES,
+		HINTERNET request    = connection ? WinHttpOpenRequest( connection, L"GET", path, nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
 		                                                        parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0u )
 		                                  : nullptr;
 
 		bool ok = false;
 
-		const DWORD body_size = json_body ? static_cast< DWORD >( json_body->size( ) ) : 0;
-		const bool sent       = request && ( json_body ? WinHttpSendRequest( request, L"Content-Type: application/json\r\n", static_cast< DWORD >( -1 ),
-		                                                                     const_cast< char* >( json_body->data( ) ), body_size, body_size, 0 )
-		                                               : WinHttpSendRequest( request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0 ) );
+		const bool sent = request && WinHttpSendRequest( request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0 );
 
 		if ( sent && WinHttpReceiveResponse( request, nullptr ) ) {
 			DWORD status = 0, status_size = sizeof( status );
@@ -258,11 +254,6 @@ bool n_image_cache::download_file( const std::string& url, const std::string& de
 bool n_image_cache::http_get_text( const std::string& url, std::string& out, unsigned long* error )
 {
 	return http_get( url, out, false, k_max_bytes, error );
-}
-
-bool n_image_cache::http_post_json( const std::string& url, const std::string& body, std::string& out, unsigned long* error )
-{
-	return http_get( url, out, false, k_max_bytes, error, &body );
 }
 
 std::string n_image_cache::impl_t::rewrite( const char* js )

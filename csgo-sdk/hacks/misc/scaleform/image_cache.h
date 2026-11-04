@@ -22,8 +22,6 @@ namespace n_image_cache
 	bool download_file( const std::string& url, const std::string& destination );
 
 	/* error: http status, or WinHTTP error code when no response came back */
-	bool http_get_text( const std::string& url, std::string& out, unsigned long* error = nullptr );
-	bool http_post_json( const std::string& url, const std::string& body, std::string& out, unsigned long* error = nullptr );
-}
+	bool http_get_text( const std::string& url, std::string& out, unsigned long* error = nullptr );}
 
 inline n_image_cache::impl_t g_image_cache{ };

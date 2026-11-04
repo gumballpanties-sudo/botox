@@ -289,7 +289,6 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_backtrack_extend, false );
 		ADD_VARIABLE( int, m_backtrack_extend_amount, 200 );
 		ADD_VARIABLE( int, m_backtrack_time_limit, 200 );
-		ADD_VARIABLE( bool, m_backtrack_extra, false );
 
 		/* offline lagcomp needs no variable: n_misc::force_host_lagcomp is unconditional. never re-add fake ping */
 
@@ -1873,8 +1872,6 @@ namespace n_variables
 
 		ADD_VARIABLE( bool, m_chat_translator, false );
 		ADD_VARIABLE( int, m_chat_translator_language, 0 );
-		ADD_VARIABLE( std::string, m_chat_translator_libre_url, "" );
-		ADD_VARIABLE( std::string, m_chat_translator_libre_key, "" );
 		ADD_VARIABLE( bool, m_chat_images, false );
 
 		ADD_VARIABLE( bool, m_practice_window, false );

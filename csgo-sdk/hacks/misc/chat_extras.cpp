@@ -29,8 +29,6 @@ namespace
 		std::string m_name;
 		std::string m_text;
 		std::string m_language;
-		std::string m_libre_url; // copied on game thread, worker never reads config
-		std::string m_libre_key;
 	};
 
 	std::mutex s_lock;
@@ -253,45 +251,6 @@ namespace
 		return !out.empty( );
 	}
 
-	/* LibreTranslate POST /translate -> {"translatedText":"..","detectedLanguage":{"confidence":0-100,"language":"ru"}}
-	   lang = base code: libre knows "pt" / "zh", falls back pt <-> pt-BR and zh -> zh-Hans itself */
-	bool libre( const job_t& job, std::string& out, std::string& source, double& conf, unsigned long& code )
-	{
-		if ( job.m_libre_url.empty( ) )
-			return false;
-
-		std::string url = job.m_libre_url;
-		while ( !url.empty( ) && url.back( ) == '/' )
-			url.pop_back( );
-		if ( url.size( ) < 10 || url.compare( url.size( ) - 10, 10, "/translate" ) )
-			url += "/translate";
-
-		nlohmann::json request = { { "q", job.m_text }, { "source", "auto" }, { "target", base_code( job.m_language ) }, { "format", "text" } };
-		if ( !job.m_libre_key.empty( ) )
-			request[ "api_key" ] = job.m_libre_key;
-
-		std::string body;
-		if ( !n_image_cache::http_post_json( url, request.dump( -1, ' ', false, nlohmann::json::error_handler_t::replace ), body, &code ) ) {
-			log_fail( "libre", "http fail", code, body );
-			return false;
-		}
-
-		const nlohmann::json root = nlohmann::json::parse( body, nullptr, false );
-		if ( root.is_discarded( ) || !root.is_object( ) || !root.contains( "translatedText" ) || !root[ "translatedText" ].is_string( ) ) {
-			log_fail( "libre", "bad json", code, body );
-			return false;
-		}
-
-		out = root[ "translatedText" ].get< std::string >( );
-		if ( const auto it = root.find( "detectedLanguage" ); it != root.end( ) && it->is_object( ) ) {
-			if ( const auto lang = it->find( "language" ); lang != it->end( ) && lang->is_string( ) )
-				source = lang->get< std::string >( );
-			if ( const auto c = it->find( "confidence" ); c != it->end( ) && c->is_number( ) )
-				conf = c->get< double >( ) / 100.0;
-		}
-		return true;
-	}
-
 	struct backend_t {
 		const char* m_name;
 		bool ( *m_fn )( const job_t&, std::string&, std::string&, double&, unsigned long& );
@@ -299,7 +258,7 @@ namespace
 	};
 
 	/* worker thread only, one worker alive at a time */
-	backend_t s_backends[] = { { "google", google }, { "clients5", clients5 }, { "mymemory", mymemory }, { "libre", libre } };
+	backend_t s_backends[] = { { "google", google }, { "clients5", clients5 }, { "mymemory", mymemory } };
 
 	/* 429 / 403 / quota: hammering a throttled ip only extends the ban; winhttp 12xxx: blocked host = timeout per line */
 	constexpr auto k_cooldown = std::chrono::minutes( 10 );
@@ -500,9 +459,7 @@ void n_chat_extras::on_chat_message( const int type, const void* msg, const int 
 		return;
 	}
 
-	s_jobs.push_back( { std::move( name ), std::move( text ), k_language_codes[ language ],
-	                    strip_controls( GET_VARIABLE( g_variables.m_chat_translator_libre_url, std::string ) ),
-	                    strip_controls( GET_VARIABLE( g_variables.m_chat_translator_libre_key, std::string ) ) } );
+	s_jobs.push_back( { std::move( name ), std::move( text ), k_language_codes[ language ] } );
 
 	if ( !g_worker_alive.exchange( true ) )
 		std::thread( worker ).detach( );

@@ -67,9 +67,6 @@ namespace n_lagcomp
 
 		static constexpr float k_max_backtrack = 0.2f;
 
-		/* extend slider past 200ms, assumes an sv_maxunlag 1 server */
-		bool extra( );
-
 		float time_limit( );
 
 		bool is_valid( float sim_time, float margin = k_edge_margin );

@@ -438,33 +438,6 @@ void n_menu::impl_t::tab_movement( )
 			ImGui::Checkbox( "ladder bug", &GET_VARIABLE( g_variables.m_ladder_bug, bool ) );
 			ImGui::Keybind( "ladder bug key", &GET_VARIABLE( g_variables.m_ladder_bug_key, key_bind_t ) );
 
-			ImGui::Checkbox( "poop joomp", &GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) );
-			if ( GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) ) {
-				ImGui::OptionPopup(
-					"poop joomp settings",
-					[ & ]( ) {
-						ImGui::Label( "poop joomp keybind" );
-						ImGui::Keybind( "poop joomp key", &GET_VARIABLE( g_variables.m_poop_ladder_jump_key, key_bind_t ) );
-						ImGui::SliderFloat( "jump strength (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_strength, float ), 100.f, 500.f, "%.0f%%" );
-						ImGui::SliderFloat( "jetpack height (online)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ), 10.f, 2000.f, "%.0f u" );
-					},
-					ImVec2( 220.f, -1.f ) );
-			}
-
-			ImGui::Checkbox( "poop soorf", &GET_VARIABLE( g_variables.m_poop_surf, bool ) );
-			if ( GET_VARIABLE( g_variables.m_poop_surf, bool ) ) {
-				ImGui::OptionPopup(
-					"poop soorf settings",
-					[ & ]( ) {
-						ImGui::Label( "poop soorf keybind" );
-						ImGui::Keybind( "poop soorf key", &GET_VARIABLE( g_variables.m_poop_surf_key, key_bind_t ) );
-						ImGui::SliderFloat( "wall reach", &GET_VARIABLE( g_variables.m_poop_surf_reach, float ), 0.5f, 16.f, "%.1f u" );
-						ImGui::SliderFloat( "wall band (feet / head)", &GET_VARIABLE( g_variables.m_poop_surf_band, float ), 1.f, 36.f, "%.0f u" );
-						ImGui::SliderInt( "jetpack min hold", &GET_VARIABLE( g_variables.m_poop_surf_pulse, int ), 1, 32, "%d ticks" );
-					},
-					ImVec2( 220.f, -1.f ) );
-			}
-
 			ImGui::Checkbox( "ladder glide", &GET_VARIABLE( g_variables.m_ladder_glide, bool ) );
 			ImGui::Keybind( "ladder glide key", &GET_VARIABLE( g_variables.m_ladder_glide_key, key_bind_t ) );
 
@@ -625,22 +598,6 @@ void n_menu::impl_t::tab_movement( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
-			ImGui::Checkbox( "tung surf (local y6 ast)", &GET_VARIABLE( g_variables.m_tung_surf, bool ) );
-			if ( GET_VARIABLE( g_variables.m_tung_surf, bool ) ) {
-				ImGui::OptionPopup(
-					"tung surf settings",
-					[ & ]( ) {
-						ImGui::Label( "tung surf keybind" );
-						ImGui::Keybind( "tung surf key", &GET_VARIABLE( g_variables.m_tung_surf_key, key_bind_t ) );
-						/* online the server never sees the snap: this assist makes it real there */
-						ImGui::Checkbox( "y6 assist", &GET_VARIABLE( g_variables.m_tung_surf_y6, bool ) );
-						ImGui::SliderFloat( "snap to pixelsurfs##tungsnap", &GET_VARIABLE( g_variables.m_tung_surf_snap, float ), 0.f, 32.f, "%.0f u" );
-						/* a catch / ride needs a move INTO the wall: presses when your keys don't, never when they point away */
-						ImGui::Checkbox( "press into wall##tungpress", &GET_VARIABLE( g_variables.m_tung_surf_press, bool ) );
-					},
-					ImVec2( 220.f, -1.f ) );
-			}
-
 			ImGui::Checkbox( "pixelsurf assist", &GET_VARIABLE( g_variables.m_pixel_surf_assist, bool ) );
 			if ( GET_VARIABLE( g_variables.m_pixel_surf_assist, bool ) ) {
 				ImGui::OptionPopup(
@@ -765,19 +722,6 @@ void n_menu::impl_t::tab_movement( )
 						}
 						if ( GET_VARIABLE( g_variables.m_texture_bug_sound, int ) > 0 )
 							ImGui::SliderFloat( "sound volume##tbsndvol", &GET_VARIABLE( g_variables.m_texture_bug_sound_volume, float ), 0.f, 2.f, "%.2f" );
-					},
-					ImVec2( 220.f, -1.f ) );
-			}
-
-			ImGui::Checkbox( "edge surf", &GET_VARIABLE( g_variables.m_edge_surf, bool ) );
-			if ( GET_VARIABLE( g_variables.m_edge_surf, bool ) ) {
-				ImGui::OptionPopup(
-					"edge surf settings",
-					[ & ]( ) {
-						ImGui::Label( "edge surf keybind" );
-						ImGui::Keybind( "edge surf key", &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
-						ImGui::SliderFloat( "catch reach (local)##esurfreach", &GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.1f, 32.f, "%.1f u" );
-						ImGui::SliderFloat( "lead range##esurfrange", &GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f, "%.0f u" );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
@@ -1002,14 +946,85 @@ void n_menu::impl_t::tab_movement( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
-			ImGui::Checkbox( "hide y6o ps", &GET_VARIABLE( g_variables.m_hide_y6o_ps, bool ) );
-
 			ImGui::Checkbox( "jumpstats", &GET_VARIABLE( g_variables.m_jump_stats, bool ) );
 			if ( GET_VARIABLE( g_variables.m_jump_stats, bool ) ) {
 				ImGui::OptionPopup(
 					"jumpstats settings",
 					[ & ]( ) {
 						ImGui::Checkbox( "show fails##jumpstats", &GET_VARIABLE( g_variables.m_jump_stats_show_fails, bool ) );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+		}
+		menu_group_end( );
+
+		/* not real movement: local server only, client side fakes, +jetpack or y6_ast online */
+		if ( menu_group_begin( "fake movement" ) ) {
+			ImGui::Checkbox( "tung surf (local y6 ast)", &GET_VARIABLE( g_variables.m_tung_surf, bool ) );
+			if ( GET_VARIABLE( g_variables.m_tung_surf, bool ) ) {
+				ImGui::OptionPopup(
+					"tung surf settings",
+					[ & ]( ) {
+						ImGui::Label( "tung surf keybind" );
+						ImGui::Keybind( "tung surf key", &GET_VARIABLE( g_variables.m_tung_surf_key, key_bind_t ) );
+						/* online the server never sees the snap: this assist makes it real there */
+						ImGui::Checkbox( "y6 assist", &GET_VARIABLE( g_variables.m_tung_surf_y6, bool ) );
+						ImGui::SliderFloat( "snap to pixelsurfs##tungsnap", &GET_VARIABLE( g_variables.m_tung_surf_snap, float ), 0.f, 32.f, "%.0f u" );
+						/* a catch / ride needs a move INTO the wall: presses when your keys don't, never when they point away */
+						ImGui::Checkbox( "press into wall##tungpress", &GET_VARIABLE( g_variables.m_tung_surf_press, bool ) );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "y6 ast bind", &GET_VARIABLE( g_variables.m_lirili_larila, bool ) );
+			if ( GET_VARIABLE( g_variables.m_lirili_larila, bool ) ) {
+				ImGui::OptionPopup(
+					"y6 ast bind settings",
+					[ & ]( ) {
+						ImGui::Label( "y6 ast keybind" );
+						ImGui::Keybind( "y6 ast key", &GET_VARIABLE( g_variables.m_lirili_larila_key, key_bind_t ) );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "hide y6o ps", &GET_VARIABLE( g_variables.m_hide_y6o_ps, bool ) );
+
+			ImGui::Checkbox( "edge surf", &GET_VARIABLE( g_variables.m_edge_surf, bool ) );
+			if ( GET_VARIABLE( g_variables.m_edge_surf, bool ) ) {
+				ImGui::OptionPopup(
+					"edge surf settings",
+					[ & ]( ) {
+						ImGui::Label( "edge surf keybind" );
+						ImGui::Keybind( "edge surf key", &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
+						ImGui::SliderFloat( "catch reach (local)##esurfreach", &GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.1f, 32.f, "%.1f u" );
+						ImGui::SliderFloat( "lead range##esurfrange", &GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f, "%.0f u" );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "poop joomp", &GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) );
+			if ( GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) ) {
+				ImGui::OptionPopup(
+					"poop joomp settings",
+					[ & ]( ) {
+						ImGui::Label( "poop joomp keybind" );
+						ImGui::Keybind( "poop joomp key", &GET_VARIABLE( g_variables.m_poop_ladder_jump_key, key_bind_t ) );
+						ImGui::SliderFloat( "jump strength (local)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_strength, float ), 100.f, 500.f, "%.0f%%" );
+						ImGui::SliderFloat( "jetpack height (online)", &GET_VARIABLE( g_variables.m_poop_ladder_jump_height, float ), 10.f, 2000.f, "%.0f u" );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "poop soorf", &GET_VARIABLE( g_variables.m_poop_surf, bool ) );
+			if ( GET_VARIABLE( g_variables.m_poop_surf, bool ) ) {
+				ImGui::OptionPopup(
+					"poop soorf settings",
+					[ & ]( ) {
+						ImGui::Label( "poop soorf keybind" );
+						ImGui::Keybind( "poop soorf key", &GET_VARIABLE( g_variables.m_poop_surf_key, key_bind_t ) );
+						ImGui::SliderFloat( "wall reach", &GET_VARIABLE( g_variables.m_poop_surf_reach, float ), 0.5f, 16.f, "%.1f u" );
+						ImGui::SliderFloat( "wall band (feet / head)", &GET_VARIABLE( g_variables.m_poop_surf_band, float ), 1.f, 36.f, "%.0f u" );
+						ImGui::SliderInt( "jetpack min hold", &GET_VARIABLE( g_variables.m_poop_surf_pulse, int ), 1, 32, "%d ticks" );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
