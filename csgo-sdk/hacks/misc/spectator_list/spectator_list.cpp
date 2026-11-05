@@ -6779,9 +6779,18 @@ void n_misc::media_player_donor_frame( ImDrawList* list, const ImVec2 min, const
 
 	switch ( style ) {
 	case 6: havoc_box( list, min, ImVec2( max.x - min.x, max.y - min.y ), 1.f ); break;
-	case 8:
-		airflow_blur_rect( list, airflow_blur.m_textures[ 0 ] != nullptr, min, max, IM_COL32( 100, 100, 100, 255 ), 3.f, ImDrawFlags_RoundCornersAll );
+	case 8: {
+		/* the watermark's draw captures the blur. watermark off = capture it here */
+		static int queued_frame = -1;
+		const int frame         = ImGui::GetFrameCount( );
+		bool blurred            = airflow_blur.m_textures[ 0 ] != nullptr;
+		if ( !GET_VARIABLE( g_variables.m_watermark, bool ) && queued_frame != frame ) {
+			blurred      = queue_airflow_blur( list );
+			queued_frame = frame;
+		}
+		airflow_blur_rect( list, blurred, min, max, IM_COL32( 100, 100, 100, 255 ), 3.f, ImDrawFlags_RoundCornersAll );
 		break;
+	}
 	case 9:
 		evolve_shadow( list, min, max, 12.f, evolve_max_alpha( ) * 0.25f );
 		list->AddRectFilled( min, ImVec2( max.x, max.y - 1.f ), IM_COL32( evolve_block, evolve_block, evolve_block, 255 ), 4.f, ImDrawFlags_RoundCornersTop );

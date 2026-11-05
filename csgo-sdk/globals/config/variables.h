@@ -1101,6 +1101,7 @@ namespace n_variables
 		ADD_VARIABLE( key_bind_t, m_wall_climb_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_wall_climb_prevent_slow, true );
 		ADD_VARIABLE( bool, m_wall_climb_duck, true );
+		ADD_VARIABLE( bool, m_wall_climb_pin_catch, false ); /* pin on a seam + hold till the lip: climbs, xy 0 ( 11-05 "stuck on vertical seams" ) */
 		ADD_VARIABLE( int, m_wall_climb_spot_reach, 16 );
 		ADD_VARIABLE( bool, m_wall_climb_seam_steer, false );
 		ADD_VARIABLE( float, m_wall_climb_steer_scale, 1.f );
@@ -1775,6 +1776,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_media_player_background, true );
 		ADD_VARIABLE( bool, m_media_player_progress_bar, true );
 		ADD_VARIABLE( bool, m_media_player_simple, false );
+		ADD_VARIABLE( bool, m_media_player_lumi, false );
 		ADD_VARIABLE( bool, m_media_player_visualizer, false );
 		ADD_VARIABLE( int, m_media_player_visualizer_bar_width, 3 );
 		ADD_VARIABLE( float, m_media_player_visualizer_height, 18.f );

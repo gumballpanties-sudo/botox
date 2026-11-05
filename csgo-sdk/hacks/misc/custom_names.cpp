@@ -120,6 +120,91 @@ const char* player_list_real_name( int index )
 	return ( index >= 1 && index <= 64 ) ? s_real[ index ] : "";
 }
 
+namespace
+{
+	bool read_varint( const std::uint8_t*& at, const std::uint8_t* end, std::uint64_t& value )
+	{
+		value = 0;
+		for ( int shift = 0; at < end && shift < 64; shift += 7 ) {
+			const std::uint8_t byte = *at++;
+			value |= static_cast< std::uint64_t >( byte & 0x7f ) << shift;
+			if ( !( byte & 0x80 ) )
+				return true;
+		}
+		return false;
+	}
+
+	void write_varint( std::string& out, std::uint64_t value )
+	{
+		do {
+			const auto byte = static_cast< std::uint8_t >( value & 0x7f );
+			value >>= 7;
+			out += static_cast< char >( value ? byte | 0x80 : byte );
+		} while ( value );
+	}
+}
+
+/* SayText: 1 ent_idx, 2 text (plugin line). SayText2: 1 ent_idx, 3 msg_name (raw = plugin line), 4 params, [0] = name.
+   ent_idx is serialized first, so it is known before any string. other fields copied byte for byte */
+bool custom_names_rewrite_chat( const int type, const void* msg, const int size, std::string& out )
+{
+	if ( !msg || size <= 0 || !g_interfaces.m_engine_client )
+		return false;
+
+	const auto* at  = static_cast< const std::uint8_t* >( msg );
+	const auto* end = at + size;
+	std::string real, fake;
+	bool param_seen = false, changed = false;
+	out.clear( );
+
+	while ( at < end ) {
+		const auto* start = at;
+		std::uint64_t key = 0;
+		if ( !read_varint( at, end, key ) )
+			return false;
+		const auto field = key >> 3, wire = key & 7;
+
+		if ( wire == 0 ) {
+			std::uint64_t value = 0;
+			if ( !read_varint( at, end, value ) )
+				return false;
+			player_info_t info{ };
+			if ( field == 1 && value >= 1 && value <= 64 && g_interfaces.m_engine_client->get_player_info( static_cast< int >( value ), &info ) ) {
+				real = s_real[ value ]; /* hook just refreshed it */
+				fake = info.m_name;
+				if ( real == fake )
+					real.clear( );
+			}
+			out.append( reinterpret_cast< const char* >( start ), at - start );
+			continue;
+		}
+		if ( wire != 2 )
+			return false;
+
+		std::uint64_t length = 0;
+		if ( !read_varint( at, end, length ) || length > static_cast< std::uint64_t >( end - at ) )
+			return false;
+		std::string value( reinterpret_cast< const char* >( at ), static_cast< std::size_t >( length ) );
+		at += length;
+
+		const bool name_field = ( type == 5 && field == 2 ) || ( type == 6 && field == 3 && !value.empty( ) && value[ 0 ] != '#' ) ||
+		                        ( type == 6 && field == 4 && !param_seen );
+		if ( type == 6 && field == 4 )
+			param_seen = true;
+
+		if ( name_field && !real.empty( ) ) {
+			if ( const auto pos = value.find( real ); pos != std::string::npos ) {
+				value.replace( pos, real.size( ), fake );
+				changed = true;
+			}
+		}
+		write_varint( out, key );
+		write_varint( out, value.size( ) );
+		out += value;
+	}
+	return changed;
+}
+
 /* fpsoverlay h_FireEvent on-kill block, 1:1 */
 void custom_names_on_kill( )
 {

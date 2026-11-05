@@ -148,7 +148,11 @@ namespace n_route
 	/* point list bits past the styles: style_jump's held-crouch and delay presses, each its own toggle */
 	inline constexpr unsigned int k_pt_duck_jump     = 1u << style_count;
 	inline constexpr unsigned int k_pt_delay_hop     = 1u << ( style_count + 1 );
-	inline constexpr unsigned int k_all_point_styles = k_all_styles | k_pt_duck_jump | k_pt_delay_hop;
+	inline constexpr unsigned int k_pt_delay_mj      = 1u << ( style_count + 2 );
+	inline constexpr unsigned int k_pt_delay_lj      = 1u << ( style_count + 3 );
+	inline constexpr unsigned int k_pt_delay_duck    = 1u << ( style_count + 4 );
+	inline constexpr unsigned int k_all_point_styles =
+		k_all_styles | k_pt_duck_jump | k_pt_delay_hop | k_pt_delay_mj | k_pt_delay_lj | k_pt_delay_duck;
 	extern const char* const k_style_names[ style_count ];
 
 	enum timing_t : int {
@@ -169,6 +173,10 @@ namespace n_route
 		move_delay_hop,
 		move_jumpbug,
 		move_walk_off,
+		/* appended: saved global move masks keep their old bits */
+		move_delay_mj,
+		move_delay_lj,
+		move_delay_crouch,
 		move_count,
 	};
 	inline constexpr unsigned int k_all_moves = ( 1u << move_count ) - 1u;

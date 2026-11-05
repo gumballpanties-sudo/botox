@@ -28,12 +28,15 @@ static void route_calc_page( )
 	                                                        1u << n_route::style_longjump, 1u << n_route::style_jumpbug,
 	                                                        1u << n_route::style_walk_off };
 	static const std::vector< const char* > point_names = { n_route::k_style_names[ n_route::style_jump ], "jump (ducked)",
-	                                                        "delay hop", n_route::k_style_names[ n_route::style_minijump ],
-	                                                        n_route::k_style_names[ n_route::style_longjump ],
+	                                                        "delay hop", "delay hop (ducked)",
+	                                                        n_route::k_style_names[ n_route::style_minijump ], "delay mj",
+	                                                        n_route::k_style_names[ n_route::style_longjump ], "delay lj",
 	                                                        n_route::k_style_names[ n_route::style_jumpbug ] };
 	static const std::vector< unsigned int > point_bits = { 1u << n_route::style_jump, n_route::k_pt_duck_jump,
-	                                                        n_route::k_pt_delay_hop, 1u << n_route::style_minijump,
-	                                                        1u << n_route::style_longjump, 1u << n_route::style_jumpbug };
+	                                                        n_route::k_pt_delay_hop, n_route::k_pt_delay_duck,
+	                                                        1u << n_route::style_minijump, n_route::k_pt_delay_mj,
+	                                                        1u << n_route::style_longjump, n_route::k_pt_delay_lj,
+	                                                        1u << n_route::style_jumpbug };
 
 	const auto style_combo = []( const char* label, unsigned int& mask, const std::vector< const char* >& names,
 	                             const std::vector< unsigned int >& bits ) {
@@ -752,6 +755,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "wall climb key", &GET_VARIABLE( g_variables.m_wall_climb_key, key_bind_t ) );
 						ImGui::Checkbox( "prevent slow", &GET_VARIABLE( g_variables.m_wall_climb_prevent_slow, bool ) );
 						ImGui::Checkbox( "crouch catches", &GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) );
+						ImGui::Checkbox( "pin catch ( stops on seams )", &GET_VARIABLE( g_variables.m_wall_climb_pin_catch, bool ) );
 						ImGui::SliderInt( "spot reach", &GET_VARIABLE( g_variables.m_wall_climb_spot_reach, int ), 0, 32, "%d u" );
 						ImGui::Checkbox( "steer to seam", &GET_VARIABLE( g_variables.m_wall_climb_seam_steer, bool ) );
 						if ( GET_VARIABLE( g_variables.m_wall_climb_seam_steer, bool ) )

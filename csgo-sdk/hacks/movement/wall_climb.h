@@ -27,6 +27,8 @@ namespace n_wall_climb
 	private:
 		void show_wall_slope( );
 
+		[[nodiscard]] bool wish_moved( const c_user_cmd* cmd ) const;
+
 		bool m_slope_down  = false;
 		int m_catch_cmd    = -1;
 		int m_active_cmd   = -1;
@@ -38,11 +40,17 @@ namespace n_wall_climb
 		int m_pred_cmd     = -1; /* debug log: END of what wc sent, checked against the next START ( `div` ) */
 		bool m_pred_stomped = false;
 		c_vector m_pred_org{ }, m_pred_vel{ };
+		/* debug log `cmiss=`: catch sent ( 1 land, 2 land flip, 3 pin catch ), its START + cmd, checked against the next START */
+		int m_ck_cmd = -1, m_ck_kind = 0, m_ck_buttons = 0;
+		c_vector m_ck_org{ }, m_ck_vel{ };
+		float m_ck_fwd = 0.f, m_ck_side = 0.f, m_ck_yaw = 0.f;
 		float m_ground_z = -1e9f;
 		bool m_holding   = false;
 		int m_hold_buttons = 0; /* stance the hold plan was proven in */
-		int m_free_cmd   = -1; /* cmd wc sent off a sim that ended unpinned */
-		bool m_park_off  = false;
+		int m_free_cmd   = -1; /* cmd wc sent off a sim that ended unpinned ( `miss=` ) */
+		/* exit memory: pin exit try sent last tick, tries the server pinned again this pin run go last */
+		int m_exit_cmd = -1, m_exit_sent = -1, m_wc_cmd = -1;
+		unsigned m_exit_bad = 0u;
 
 		/* ground: one wc hop replayed from each spot along the wall within reach, sliced over ticks, best one walked to */
 		struct spot_job_t {
@@ -54,9 +62,11 @@ namespace n_wall_climb
 		} m_spot{ };
 
 		/* air ( "steer to seam" ): along wall velocity targets replayed from the first air tick, sliced over k_steer_delay ticks in the
-		   spot slots ( spot is ground only ), the first that lands where your path does not gets steered to */
+		   spot slots ( spot is ground only ), the first that lands where your path does not gets steered to. pre = started on the jump
+		   tick off the predicted first air START ( pre_org / pre_vel ), kept only if air tick 1 is there */
 		struct steer_job_t {
-			bool valid = false, rolling = false, done = false, decided = false, steer = false;
+			bool valid = false, rolling = false, done = false, decided = false, steer = false, pre = false;
+			c_vector pre_org{ }, pre_vel{ };
 			int start_cmd = 0, cand = -1, count = 0, tick = 0, left = 0, steer_left = 0, sims = 0, base = -1, best = -1;
 			float order[ 5 ]{ }, target = 0.f, cur = 0.f;
 			c_vector t{ };

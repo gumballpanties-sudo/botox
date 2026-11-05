@@ -1399,7 +1399,11 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 		in.start_styles    = static_cast< unsigned int >( GET_VARIABLE( g_variables.m_route_calc_start_styles, int ) );
 		/* the starting row has no duck / delay toggles: its "jump" keeps covering them */
 		if ( in.start_styles & ( 1u << n_route::style_jump ) )
-			in.start_styles |= n_route::k_pt_duck_jump | n_route::k_pt_delay_hop;
+			in.start_styles |= n_route::k_pt_duck_jump | n_route::k_pt_delay_hop | n_route::k_pt_delay_duck;
+		if ( in.start_styles & ( 1u << n_route::style_minijump ) )
+			in.start_styles |= n_route::k_pt_delay_mj;
+		if ( in.start_styles & ( 1u << n_route::style_longjump ) )
+			in.start_styles |= n_route::k_pt_delay_lj;
 		in.points          = live;
 		const float stam       = local->get_stamina( );
 		const float duck_speed = local->get_duck_speed( );

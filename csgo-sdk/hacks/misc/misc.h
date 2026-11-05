@@ -292,6 +292,9 @@ std::string bot_names_status( );
 void custom_names_on_kill( );
 /* custom_names.cpp: slot's name as the engine had it before custom names patched it ("" = not seen yet) */
 const char* player_list_real_name( int index );
+/* custom_names.cpp: SayText (5) / SayText2 (6) carry the server's name string, not GetPlayerInfo: swap the sender's real
+   name for the patched one. true = out holds the rewritten message */
+bool custom_names_rewrite_chat( int type, const void* msg, int size, std::string& out );
 /* steam name fetch thread alive; waited on before FreeLibrary */
 inline std::atomic< bool > g_bot_names_fetching{ false };
 

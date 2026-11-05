@@ -1168,17 +1168,22 @@ void n_misc::impl_t::draw_media_player( )
 	const float title_px  = size_override > 0.f ? size_override : title_font->FontSize;
 	const float artist_px = size_override > 0.f ? size_override : artist_font->FontSize;
 
-	const int position     = std::clamp( GET_VARIABLE( g_variables.m_media_player_position, int ), 0, 5 );
-	const bool from_bottom = position >= 3;
-	const int align        = position == 0 || position == 5 ? 2 : position == 1 || position == 4 ? 0 : 1;
+	/* 0 tr 1 tl 2 tc 3 bc 4 bl 5 br 6 cl 7 cr. lumi = 10 px edge, 2 px under the watermark ( lumi.dll default 10 / 37 ) */
+	const bool lumi        = GET_VARIABLE( g_variables.m_media_player_lumi, bool );
+	const int position     = std::clamp( GET_VARIABLE( g_variables.m_media_player_position, int ), 0, 7 );
+	const bool from_bottom = position >= 3 && position <= 5;
+	const bool centered    = position >= 6;
+	const int align        = position == 0 || position == 5 || position == 7 ? 2 : position == 1 || position == 4 || position == 6 ? 0 : 1;
+	const float margin     = lumi ? 10.f : 8.f;
 	const float screen_w  = static_cast< float >( g_ctx.m_width ), mid_x = screen_w * 0.5f;
 	const ImVec4 wm_box   = n_misc::g_watermark_box;
 	const bool wm_column  = wm_box.z > wm_box.x && wm_box.y < g_ctx.m_height * 0.5f &&
 	                        ( align == 2 ? wm_box.z > mid_x : align == 0 ? wm_box.x < mid_x : wm_box.x < mid_x && wm_box.z > mid_x );
-	const bool under_wm   = !from_bottom && wm_column;
-	const float anchor_x  = align == 1 ? mid_x : align == 2 ? ( under_wm ? wm_box.z : screen_w - 8.f ) : ( under_wm ? wm_box.x : 8.f );
-	const float anchor_y   = from_bottom ? g_ctx.m_height - 8.f : under_wm ? wm_box.w + 4.f : 8.f;
-	const auto left_of     = [ & ]( const float w ) { return align == 0 ? anchor_x : align == 1 ? anchor_x - w * 0.5f : anchor_x - w; };
+	const bool under_wm   = !from_bottom && !centered && wm_column;
+	const float anchor_x  = align == 1 ? mid_x : align == 2 ? ( under_wm ? wm_box.z : screen_w - margin ) : ( under_wm ? wm_box.x : margin );
+	const float anchor_y  = from_bottom ? g_ctx.m_height - margin : centered ? g_ctx.m_height * 0.5f : under_wm ? wm_box.w + ( lumi ? 2.f : 4.f ) : margin;
+	const auto left_of    = [ & ]( const float w ) { return align == 0 ? anchor_x : align == 1 ? anchor_x - w * 0.5f : anchor_x - w; };
+	const auto top_of     = [ & ]( const float h ) { return from_bottom ? anchor_y - h : centered ? std::floor( anchor_y - h * 0.5f ) : anchor_y; };
 
 	const auto title  = g_utilities.truncate_utf8( g_media_player.get_title( ), 64 );
 	const auto artist = g_utilities.truncate_utf8( g_media_player.get_artist( ), 64 );
@@ -1287,7 +1292,7 @@ void n_misc::impl_t::draw_media_player( )
 	const bool buttons         = g_menu.m_opened;
 	const std::string time_now = GET_VARIABLE( g_variables.m_media_player_time, bool ) ? media_time_text( ) : std::string{ };
 	const float icon           = std::clamp( std::floor( artist_px * 0.7f ), 7.f, 14.f );
-	const float cell           = std::floor( icon * 1.6f ), cell_gap = std::floor( icon * 0.4f );
+	const float cell           = lumi ? 22.f : std::floor( icon * 1.6f ), cell_gap = lumi ? 8.f : std::floor( icon * 0.4f ); // lumi: 22 x 16 boxes, 30 pitch
 	const float buttons_w      = buttons ? cell * 3.f + cell_gap * 2.f : 0.f;
 	const ImU32 accent         = ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent );
 
@@ -1339,6 +1344,137 @@ void n_misc::impl_t::draw_media_player( )
 		}
 	};
 
+	/* lumi.dll FUN_100b87a0 geometry ( tools/decompiled/lumi_dll.c ). theme = watermark style: frame, text colours, text fx */
+	if ( lumi ) {
+		auto line = artist.empty( ) ? title : artist + " - " + title;
+		if ( !time_now.empty( ) )
+			line += "  " + time_now;
+		const auto line_size    = artist_font->CalcTextSizeA( artist_px, FLT_MAX, 0.f, line.c_str( ) );
+		const bool progress_bar = GET_VARIABLE( g_variables.m_media_player_progress_bar, bool );
+		const auto art          = GET_VARIABLE( g_variables.m_media_player_cover_art, bool ) ? g_media_player.m_image : nullptr;
+		const float progress    = g_media_player.get_progress( );
+
+		const auto draw_list = ImGui::GetForegroundDrawList( );
+		const auto block     = g_render.begin_stretch_block( draw_list );
+
+		if ( GET_VARIABLE( g_variables.m_media_player_simple, bool ) ) {
+			/* 14 px icon ( lumi: spotify png, here the cover ) + 20, one text line, 2 px progress under the line */
+			const float icon_w  = art ? 20.f : 0.f;
+			const float line_w  = icon_w + line_size.x;
+			const float total_w = line_w + ( buttons ? cell_gap * 2.f + buttons_w : 0.f );
+			const float h       = line_size.y + ( progress_bar ? 4.f : 0.f );
+			const float x = std::floor( left_of( total_w ) ), y = top_of( h );
+
+			if ( art ) {
+				const float iy = std::floor( y + ( line_size.y - 14.f ) * 0.5f );
+				draw_list->AddImage( art, ImVec2( x + 1.f, iy + 1.f ), ImVec2( x + 15.f, iy + 15.f ), ImVec2( 0.f, 0.f ), ImVec2( 1.f, 1.f ), IM_COL32( 0, 0, 0, 128 ) );
+				draw_list->AddImage( art, ImVec2( x, iy ), ImVec2( x + 14.f, iy + 14.f ) );
+			}
+			put( draw_list, bare_fx, artist_font, artist_px, ImVec2( x + icon_w, y ), look.m_title, line );
+
+			if ( progress_bar ) {
+				const float by = y + line_size.y + 2.f;
+				draw_list->AddRectFilled( ImVec2( x, by ), ImVec2( x + line_w, by + 2.f ), IM_COL32( 60, 60, 60, 255 ) );
+				draw_list->AddRectFilled( ImVec2( x, by ), ImVec2( x + line_w * progress, by + 2.f ), accent );
+			}
+
+			ImRect bounds( ImVec2( x, y ), ImVec2( x + total_w, y + h ) );
+			draw_lyrics( draw_list, from_bottom ? y - row_gap : y + h + row_gap, total_w, false, bare_fx, bounds );
+			if ( buttons )
+				draw_buttons( draw_list, x + line_w + cell_gap * 2.f, std::floor( y + line_size.y * 0.5f ), bare_fx, bounds );
+			g_render.end_stretch_block( block );
+			return;
+		}
+
+		/* box 172 wide: 8 pad, 36 cover, 8, 22 bars 3 wide on a 5 pitch ( 112 ), 8. text under the cover, 22 x 16 buttons centred */
+		constexpr float cover = 36.f, width = 172.f, column_w = 112.f;
+		const float height = artist_px + 12.f + cover + 8.f + ( buttons ? 24.f : 0.f );
+		const float x = std::floor( left_of( width ) ), y = top_of( height );
+		const float col_x = x + 8.f + cover + 8.f;
+
+		if ( background )
+			media_player_frame( draw_list, ImVec2( x, y ), ImVec2( x + width, y + height ), frame_style );
+
+		const ImVec2 c0( x + 8.f, y + 8.f ), c1( c0.x + cover, c0.y + cover );
+		draw_list->AddRectFilled( c0, c1, IM_COL32( 30, 30, 30, 255 ), 3.f );
+		draw_list->AddRect( c0, c1, IM_COL32( 0, 0, 0, 255 ), 3.f, 0, 1.f );
+		if ( art )
+			draw_list->AddImageRounded( art, c0, c1, ImVec2( 0.f, 0.f ), ImVec2( 1.f, 1.f ), IM_COL32_WHITE, 3.f );
+
+		if ( GET_VARIABLE( g_variables.m_media_player_visualizer, bool ) ) {
+			float bands[ n_audio_bands::k_bands ]{ };
+			g_media_player.get_bands( bands );
+
+			const ImU32 rgb = GET_VARIABLE( g_variables.m_media_player_visualizer_custom_color, bool )
+			                      ? GET_VARIABLE( g_variables.m_media_player_visualizer_color, c_color ).get_u32( )
+			                      : accent;
+			const ImU32 top = ( rgb & ~IM_COL32_A_MASK ) | ( 45u << IM_COL32_A_SHIFT ), bottom = rgb | IM_COL32_A_MASK;
+			const float base = y + 8.f + 31.f;
+
+			for ( int bar = 0; bar < 22; bar++ ) {
+				const float h  = std::clamp( n_audio_bands::bar_level( bands, static_cast< std::size_t >( bar ), 22 ), 0.f, 1.f ) * 27.f + 1.f;
+				const float bx = col_x + static_cast< float >( bar ) * 5.f;
+				draw_list->AddRectFilledMultiColor( ImVec2( bx, base - h ), ImVec2( bx + 3.f, base ), top, top, bottom, bottom );
+			}
+		}
+
+		if ( progress_bar ) {
+			static float eased = 0.f;
+			if ( progress < eased )
+				eased = progress;
+			eased += ( progress - eased ) * 0.1f;
+
+			const ImVec2 p0( col_x, y + 8.f + 34.f ), p1( col_x + column_w, p0.y + 3.f );
+			draw_list->AddRectFilled( p0, p1, IM_COL32( 18, 18, 18, 255 ), 1.f );
+			draw_list->AddRect( p0, p1, IM_COL32( 0, 0, 0, 255 ), 1.f, 0, 1.f );
+			if ( eased > 0.f )
+				draw_list->AddRectFilled( p0, ImVec2( col_x + column_w * eased, p1.y ), accent, 1.f );
+		}
+
+		/* marquee once wider than the box: scrolls 30 px / s over text + 40, drawn twice */
+		const float text_y = c1.y + 4.f, clip_l = x + 8.f, clip_r = x + width - 8.f;
+		draw_list->PushClipRect( ImVec2( clip_l, text_y ), ImVec2( clip_r, text_y + artist_px + 2.f ), true );
+		if ( line_size.x <= clip_r - clip_l )
+			put( draw_list, fx, artist_font, artist_px, ImVec2( clip_l, text_y ), look.m_title, line );
+		else {
+			/* drawn at one fixed spot, then slid: ImFont floor + dpi twin per-glyph snap depend on x, a moving draw made letters
+			   jump. wide clip while drawing ( no glyph culled ), then the shown clip back on our commands */
+			const float span   = std::ceil( line_size.x ) + 40.f;
+			const float off    = static_cast< float >( std::fmod( ImGui::GetTime( ) * 30.0, static_cast< double >( span ) ) );
+			const ImVec4 shown = draw_list->_CmdHeader.ClipRect;
+			draw_list->PushClipRect( ImVec2( clip_l - 4.f, shown.y ), ImVec2( clip_l + span + 4.f, shown.w ), false );
+			const ImVec4 wide = draw_list->_CmdHeader.ClipRect;
+			const int cmd0 = draw_list->CmdBuffer.Size - 1, vtx0 = draw_list->VtxBuffer.Size;
+			put( draw_list, fx, artist_font, artist_px, ImVec2( clip_l, text_y ), look.m_title, line );
+			/* twin drawn on the same spot, then + span: snapped alike, no jump at the loop wrap */
+			const int vtx1 = draw_list->VtxBuffer.Size;
+			put( draw_list, fx, artist_font, artist_px, ImVec2( clip_l, text_y ), look.m_title, line );
+			for ( int v = vtx0; v < draw_list->VtxBuffer.Size; v++ )
+				draw_list->VtxBuffer[ v ].pos.x += ( v >= vtx1 ? span : 0.f ) - off;
+			for ( int c = cmd0; c < draw_list->CmdBuffer.Size; c++ )
+				if ( std::memcmp( &draw_list->CmdBuffer[ c ].ClipRect, &wide, sizeof( ImVec4 ) ) == 0 )
+					draw_list->CmdBuffer[ c ].ClipRect = shown;
+			draw_list->PopClipRect( );
+		}
+		draw_list->PopClipRect( );
+
+		ImRect bounds( ImVec2( x, y ), ImVec2( x + width, y + height ) );
+		draw_lyrics( draw_list, from_bottom ? y - row_gap : y + height + row_gap, width, background, fx, bounds );
+
+		if ( buttons ) {
+			const float row_y = c1.y + artist_px + 10.f, bx = x + ( width - buttons_w ) * 0.5f;
+			for ( int b = 0; b < 3; b++ ) {
+				const ImVec2 b0( bx + static_cast< float >( b ) * ( cell + cell_gap ), row_y ), b1( b0.x + cell, row_y + 16.f );
+				draw_list->AddRectFilled( b0, b1, IM_COL32( 22, 22, 22, 255 ), 2.f );
+				draw_list->AddRect( b0, b1, IM_COL32( 0, 0, 0, 255 ), 2.f, 0, 1.f );
+			}
+			draw_buttons( draw_list, bx, row_y + 8.f, fx, bounds );
+		}
+
+		g_render.end_stretch_block( block );
+		return;
+	}
+
 	if ( GET_VARIABLE( g_variables.m_media_player_simple, bool ) ) {
 		auto line = artist.empty( ) ? title : title + " - " + artist;
 		if ( !time_now.empty( ) )
@@ -1348,7 +1484,7 @@ void n_misc::impl_t::draw_media_player( )
 
 		const auto draw_list = ImGui::GetForegroundDrawList( );
 		const auto block     = g_render.begin_stretch_block( draw_list );
-		const float line_y   = from_bottom ? anchor_y - line_size.y : anchor_y;
+		const float line_y   = top_of( line_size.y );
 		const float line_x   = std::floor( left_of( total_w ) );
 		put( draw_list, bare_fx, artist_font, artist_px, ImVec2( line_x, line_y ), look.m_title, line );
 
@@ -1391,7 +1527,7 @@ void n_misc::impl_t::draw_media_player( )
 	const float height = padding + content_h + ( progress_bar || visualizer ? row_gap + bar_height : 0.f ) + ( control_row ? row_gap + control_h : 0.f ) + padding;
 
 	const float pos_x = std::floor( left_of( width ) );
-	const float pos_y = from_bottom ? anchor_y - height : anchor_y;
+	const float pos_y = top_of( height );
 
 	const auto draw_list = ImGui::GetForegroundDrawList( );
 	const auto block     = g_render.begin_stretch_block( draw_list );

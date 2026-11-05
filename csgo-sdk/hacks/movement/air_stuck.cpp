@@ -42,6 +42,13 @@ static struct {
 	int ticks = 0;
 } s_sticky;
 
+/* last cmd we sent ( pin frame ). START pinned by it + nothing re-proves = resend it: same cmd after a server pin = kept 35/35 ( 11-04
+   online ); 11-05 09:20 offline log: 2 lumi 1-tick pins the server took were lost to a fresh approach move the next tick */
+static struct {
+	int cmd = -1, resent = 0;
+	float pitch = 0.0f, yaw = 0.0f, fwd = 0.0f, side = 0.0f;
+} s_last;
+
 static void lock_end( const char* why )
 {
 	if ( s_lock.valid )
@@ -201,6 +208,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	const auto publish = [ & ]( const float yaw, const float move, const bool stuck, const float pitch, const bool exact, const float side = 0.0f ) {
 		if ( stuck )
 			s_sticky.valid = false;
+		s_last                    = { cmd->m_command_number, 0, pitch, yaw, move, side };
 		s_proof                   = { stuck, exact, origin, live_velocity };
 		s_hold.valid              = stuck;
 		s_hold.pitch              = pitch;
@@ -238,6 +246,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	const auto pin_held   = [ & ]( ) {
 		return !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk && vel_pinned( g_ctx.m_local->get_velocity( ) );
 	};
+	/* the server ( offline: START == server ) zeroed us last tick */
+	const bool start_pinned = vel_pinned( live_velocity );
 
 	/* pins ranked by how long the move keeps pinning; a repeat ( END == START ) is a fixed point = holds for good = k_chain.
 	   k_ahead = ticks a held pin is replayed ahead, a fall inside it = search early from the still-pinned START */
@@ -364,8 +374,29 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		return true;
 	};
 
+	/* pinned START, no proven re-pin: the cmd that pinned it beats any fresh unproven move. armed, so a sim-held replay becomes a hold */
+	const auto resend = [ & ]( ) {
+		if ( !start_pinned || s_last.cmd != cmd->m_command_number - 1 )
+			return false;
+		const int n = s_last.resent + 1;
+		botox_dbg_log( "AS: resend n=%d yaw=%.1f fwd=%.4f side=%.4f", n, s_last.yaw, s_last.fwd, s_last.side );
+		publish( s_last.yaw, s_last.fwd, true, s_last.pitch, false, s_last.side );
+		s_last.resent = n;
+		s_proof.valid = false;
+		s_expect      = { true, origin };
+		return true;
+	};
+
 	bool contact = false;
 	c_vector contact_n{ };
+	/* near-axis wall, moving START: clarity's cardinal pin waits for lumi ( 11-05 MARKETWALL n=0.028,-1 logs: clarity moving-START pins
+	   fell 0/9, lumi fwd 5/30 1-tick pins put the server on the pin 10/14, then clarity re-pins from that pinned START 7/7 ) */
+	struct {
+		bool valid = false;
+		float yaw = 0.f, fwd = 0.f, pitch = 0.f;
+		int ticks = 0;
+		c_vector end{ };
+	} cl_defer;
 
 	{
 		c_vector cl_normal{ };
@@ -403,13 +434,19 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		if ( cl_axis )
 			botox_dbg_log( "AS: clarity axis n=%.3f,%.3f vz=%.3f", cl_normal.m_x, cl_normal.m_y, live_velocity.m_z );
 		if ( cl_contact && !cl_axis && cl_normal.m_z == 0.0f ) {
-			int cl_sims = 0;
-			n_tick::c_sim_budget cl_clock;
-			cl_clock.start( GET_VARIABLE( g_variables.m_air_stuck_budget, float ) * 0.01f, n_tick::engine_interval( ), n_tick::search_as );
-
 			const float wall_yaw = rad2deg( std::atan2( -cl_normal.m_y, -cl_normal.m_x ) );
 			const float base     = std::roundf( wall_yaw / 90.0f ) * 90.0f;
 			const float off      = std::remainder( wall_yaw - base, 360.0f );
+			const bool cl_near   = std::fabsf( off ) < 10.0f;
+
+			int cl_sims = 0;
+			n_tick::c_sim_budget cl_clock;
+			/* 0.6 of the cmd clock ( 0.4 near-axis ): 11-05 09:20 log, clarity ate it all and lumi ran cand=1 every other tick while its pins
+			   were the ones the server took. pinned START = own clock, the whole slider: re-pins there took 97-176 sims at 45 us/sim and the
+			   3 misses had 28-81 ( 09:48 log ) */
+			constexpr float k_cl_share = 0.6f;
+			cl_clock.start( GET_VARIABLE( g_variables.m_air_stuck_budget, float ) * 0.01f, n_tick::engine_interval( ), n_tick::search_as,
+			                start_pinned ? 1.0f : cl_near ? 0.4f : k_cl_share, start_pinned );
 			const float yaws[ 2 ] = { std::remainder( base + ( off > 0.0f ? 90.0f : -90.0f ), 360.0f ), std::remainder( base, 360.0f ) };
 			const int first_yaw   = off == 0.0f ? 1 : 0;
 
@@ -567,12 +604,17 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			if ( cl_held ) {
 				if ( keep_hold( cl_ticks ) )
 					return;
-				publish( cl_yaw, cl_fwd, true, cl_pitch, true );
-				s_expect = { true, cl_end };
-				return;
+				if ( cl_near && !start_pinned ) {
+					cl_defer = { true, cl_yaw, cl_fwd, cl_pitch, cl_ticks, cl_end };
+					botox_dbg_log( "AS: clarity defer off=%.1f", off );
+				} else {
+					publish( cl_yaw, cl_fwd, true, cl_pitch, true );
+					s_expect = { true, cl_end };
+					return;
+				}
 			}
-			/* park is unpinned: a doomed hold still pins this tick, lumi decides */
-			if ( cl_parked && !ahead ) {
+			/* park is unpinned: a doomed hold still pins this tick, lumi decides; a pinned START is never pushed off its pin */
+			if ( cl_parked && !ahead && !start_pinned ) {
 				publish( cl_park_yaw, cl_park_fwd, false, live_view.m_x, false );
 				return;
 			}
@@ -592,7 +634,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		ray_t ray( origin, origin, c_vector( -half, -half, mins.m_z - 1.0f ), c_vector( half, half, maxs.m_z + 1.0f ) );
 		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
 		if ( !tr.did_hit( ) ) {
-			if ( keep_hold( 0 ) )
+			if ( keep_hold( 0 ) || resend( ) )
 				return;
 			start_angle    = 0.0f;
 			was_stuck      = false;
@@ -677,7 +719,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	}
 
 	if ( !found ) {
-		if ( keep_hold( 0 ) )
+		if ( keep_hold( 0 ) || resend( ) )
 			return;
 		start_angle    = 0.0f;
 		was_stuck      = false;
@@ -793,6 +835,14 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	               scan, normal.m_x, normal.m_y, normal.m_z, hit_z - origin.m_z, side, best_ticks, best_crob, crob_sims, best_gap, best_yaw, best_move, cands,
 	               live_velocity.m_z, hit_ent, scan_us, clock.used_us( ), sticky ? s_sticky.ticks : -1 );
 	if ( keep_hold( best_ticks ) )
+		return;
+	/* lumi found no pin at all: the deferred clarity pin still beats an approach move */
+	if ( best_ticks < 1 && cl_defer.valid ) {
+		publish( cl_defer.yaw, cl_defer.fwd, true, cl_defer.pitch, true );
+		s_expect = { true, cl_defer.end };
+		return;
+	}
+	if ( best_ticks < 3 && resend( ) )
 		return;
 	if ( best_ticks < 3 && sticky ) {
 		++s_sticky.ticks;

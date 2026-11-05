@@ -45,7 +45,8 @@ namespace n_route
 	const char* const k_style_names[ style_count ] = { "jump", "minijump", "longjump", "jumpbug", "walk off" };
 
 	const char* const k_move_names[ move_count ] = { "jump", "minijump", "longjump", "hop",     "mj hop",
-	                                                 "lj hop", "crouch hop", "delay hop", "jumpbug", "walk off" };
+	                                                 "lj hop", "crouch hop", "delay hop", "jumpbug", "walk off",
+	                                                 "delay mj", "delay lj", "delay hop (ducked)" };
 
 	int move_of( int style, int timing, bool ducked_in )
 	{
@@ -53,8 +54,13 @@ namespace n_route
 			return move_walk_off;
 		if ( style == style_jumpbug )
 			return move_jumpbug;
-		if ( timing == timing_delay )
-			return move_delay_hop;
+		if ( timing == timing_delay ) {
+			if ( style == style_minijump )
+				return move_delay_mj;
+			if ( style == style_longjump )
+				return move_delay_lj;
+			return ducked_in ? move_delay_crouch : move_delay_hop;
+		}
 		if ( timing == timing_bhop ) {
 			if ( ducked_in )
 				return move_crouch_hop;
@@ -773,8 +779,10 @@ namespace
 	{
 		std::string name;
 		if ( timing == n_route::timing_delay ) {
-			char buf[ 24 ]{ };
-			sprintf_s( buf, "delay hop %dt", delay_ticks );
+			char buf[ 32 ]{ };
+			sprintf_s( buf, "%s %dt%s",
+			           style == n_route::style_minijump ? "delay mj" : ( style == n_route::style_longjump ? "delay lj" : "delay hop" ),
+			           delay_ticks, hold_crouch ? " (ducked)" : "" );
 			name = buf;
 		} else if ( hold_crouch ) {
 			name = style == n_route::style_walk_off ? "walk off (ducked)" : "jump (ducked)";
@@ -1490,8 +1498,12 @@ namespace n_route
 				for ( int style = 0; style < style_count; ++style ) {
 					if ( !node.st.on_ground && style != style_walk_off )
 						continue;
-					const unsigned int style_bits =
-						style == style_jump ? ( 1u << style_jump ) | k_pt_duck_jump | k_pt_delay_hop : 1u << style;
+					const unsigned int delay_bits = style == style_jump       ? k_pt_delay_hop | k_pt_delay_duck
+					                                : style == style_minijump ? k_pt_delay_mj
+					                                : style == style_longjump ? k_pt_delay_lj
+					                                                          : 0u;
+					const unsigned int style_bits = style == style_jump ? ( 1u << style_jump ) | k_pt_duck_jump | delay_bits
+					                                                    : ( 1u << style ) | delay_bits;
 					if ( node.st.on_ground && !( node.mask & style_bits ) )
 						continue;
 					/* a jumpbug off a landing whose arc stepped over the 2 unit band never fires */
@@ -1512,7 +1524,12 @@ namespace n_route
 							continue;
 						if ( timing == timing_delay && in.delay_ticks <= 0 )
 							continue;
-						if ( timing == timing_delay && ( style != style_jump || node_ducked || !( node.mask & k_pt_delay_hop ) ) )
+						/* off a ducked landing only the crouch-held delay hop: the duck never lets go */
+						if ( timing == timing_delay &&
+						     ( !( node.mask & delay_bits ) || ( node_ducked && !( style == style_jump && ( node.mask & k_pt_delay_duck ) ) ) ) )
+							continue;
+						/* mj / lj kept on only for their delay toggle */
+						if ( timing != timing_delay && node.st.on_ground && style != style_jump && !( node.mask & ( 1u << style ) ) )
 							continue;
 						if ( timing != timing_rest && node.n_legs == 0 && in.start_on_ground )
 							continue;
@@ -1526,7 +1543,10 @@ namespace n_route
 						if ( node_ducked && timing != timing_rest && style == style_minijump )
 							continue;
 
-						if ( const unsigned int bit = 1u << move_of( style, timing, node_ducked );
+						/* a standing landing's delay hop has two binds ( plain / crouch held ): each pass checks its own */
+						if ( const unsigned int bit = style == style_jump && timing == timing_delay && !node_ducked
+						                                  ? ( 1u << move_delay_hop ) | ( 1u << move_delay_crouch )
+						                                  : 1u << move_of( style, timing, node_ducked );
 						     node.st.on_ground && !( in.global_moves & bit ) ) {
 							r.blocked |= bit;
 							r.refused |= bit;
@@ -1536,9 +1556,9 @@ namespace n_route
 						for ( int delay_n = only_delay; delay_n <= only_delay; ++delay_n ) {
 
 						const bool can_hold_crouch =
-							( style == style_jump || style == style_walk_off ) && timing != timing_delay &&
-							( node.st.on_ground ? !node.hop_only && ( timing == timing_rest || node_ducked ) : node_ducked );
-						const bool lj_here = ( node.mask & ( 1u << style_longjump ) ) &&
+							( style == style_jump || style == style_walk_off ) &&
+							( node.st.on_ground ? !node.hop_only && ( timing != timing_bhop || node_ducked ) : node_ducked );
+						const bool lj_here = ( node.mask & ( timing == timing_delay ? k_pt_delay_lj : 1u << style_longjump ) ) &&
 						                     ( in.global_moves & ( 1u << move_of( style_longjump, timing, node_ducked ) ) );
 						const bool duck_air_here = ( node.st.on_ground ? style != style_walk_off : !node_ducked ) &&
 						                           ( point.type == route_pt_pixeljump || point.type == route_pt_headbang ||
@@ -1566,6 +1586,14 @@ namespace n_route
 							if ( style == style_jump && node.st.on_ground && timing != timing_delay &&
 							     !( node.mask & ( hold_crouch == 1 ? k_pt_duck_jump : 1u << style_jump ) ) )
 								continue;
+							if ( style == style_jump && node.st.on_ground && timing == timing_delay ) {
+								if ( !( node.mask & ( hold_crouch == 1 ? k_pt_delay_duck : k_pt_delay_hop ) ) || ( node_ducked && hold_crouch != 1 ) )
+									continue;
+								if ( hold_crouch != 1 && !( in.global_moves & ( 1u << move_delay_hop ) ) ) {
+									r.refused |= 1u << move_delay_hop;
+									continue;
+								}
+							}
 							if ( duck_air && plain_arrived && point.type == route_pt_pixeljump && !last && !node.st.on_ground )
 								continue;
 							if ( duck_air && plain_arrived && point.type == route_pt_ground && last )
@@ -1594,7 +1622,7 @@ namespace n_route
 								   snaps onto the plane ( else the departure hovers ) */
 								if ( timing == timing_rest && i > 0 && s.stamina <= 0.f && !s.ducking && !s.ducked )
 									break;
-								sim_tick( s, false, false, node.floor, true, false, timing == timing_delay );
+								sim_tick( s, false, timing == timing_delay && hold_crouch == 1, node.floor, true, false, timing == timing_delay );
 								if ( !s.on_ground ) {
 									bailed = true;
 									break;
@@ -1603,7 +1631,10 @@ namespace n_route
 							if ( bailed )
 								continue;
 
-							if ( hold_crouch == 1 && s.on_ground ) {
+							/* delay ticks ducked for real: a refused duck ( spam ) is a plain delay hop, never listed as ducked */
+							if ( hold_crouch == 1 && timing == timing_delay && !s.ducked && !s.ducking )
+								continue;
+							if ( hold_crouch == 1 && s.on_ground && timing != timing_delay ) {
 								if ( !s.ducked ) {
 									if ( !duck_press_lands( s ) )
 										continue;

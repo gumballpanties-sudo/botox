@@ -2,6 +2,7 @@
 #include "../../globals/includes/includes.h"
 #include "../hooks.h"
 #include "../../hacks/misc/chat_extras.h"
+#include "../../hacks/misc/misc.h"
 
 #include <cctype>
 #include <cstring>
@@ -31,9 +32,15 @@ bool __fastcall n_detoured_functions::dispatch_user_message( void* ecx, void* ed
 			return true;
 	}
 
-	/* CS_UM_SayText / CS_UM_SayText2 */
-	if ( msg_type == 5 || msg_type == 6 )
+	/* CS_UM_SayText / CS_UM_SayText2. engine parses synchronously, local buffer outlives the call */
+	std::string renamed;
+	if ( msg_type == 5 || msg_type == 6 ) {
+		if ( custom_names_rewrite_chat( msg_type, msg, size, renamed ) ) {
+			msg  = renamed.data( );
+			size = static_cast< int >( renamed.size( ) );
+		}
 		n_chat_extras::on_chat_message( msg_type, msg, size );
+	}
 
 	return original( ecx, edx, msg_type, flags, size, msg );
 }

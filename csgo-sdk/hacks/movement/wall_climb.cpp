@@ -15,6 +15,8 @@ extern bool HITGODA3;
 // parked flush every air tick ( tb style press ladder ) and caught by the same ladder, or by a pin just over the lip.
 // 10-31 back from the 10-10 ebanat port: lab 5016 hops 64t, first catches ebanat 21, keys alone 186, this 2915, beam oracle 3633
 // 11-02 = lab P71 ( P68 + seam + pin catch other stance ), FL_NOISE 1: first 2304 -> 2359, rows 3006 -> 3066, seam snags wallA 128 -> 27
+// 11-05 = lab P88 / P89 ( unfreeze, disp face first at a corner, pin exit memory, no park off latch ): vs the game before ( P82 + latch )
+// online first 2724 -> 2874, stuck runs 179 -> 0, longest pin 137 -> 2 ticks; noise first 2151 -> 2489, wiggle 1844 -> 1604
 namespace
 {
 	constexpr float k_contact      = 0.05f;
@@ -33,6 +35,7 @@ namespace
 	constexpr int k_pin_tries      = 3;
 	constexpr int k_exit_look      = 3;
 	constexpr float k_keys_ulp     = 1.3e-4f;
+	constexpr float k_glue_xy      = 1.f; /* a park ending under this xy is dead on the face: your keys win the speed check even off the wall */
 	constexpr float k_park_keep    = 2.f; /* park ends this much slower in xy than your keys = your keys ( lab P42: park cost -91%, catches -2.6% ) */
 	constexpr float k_land_above   = 2.f;
 	constexpr float k_low_ledge    = 10.f; /* a land this far under your jump floor = a ledge you fall past, not a climb */
@@ -55,26 +58,32 @@ namespace
 	constexpr float k_spot_step    = 2.f;
 	constexpr float k_spot_rise    = 10.f;
 	constexpr int k_spot_ticks     = 64;
-	constexpr int k_spot_tick_sims = 20;
+	constexpr int k_spot_tick_sims = 36; /* one replay tick worst case: 16 ladder + 2 pin holds x 8 + 1 */
+	constexpr int k_spot_pin_hold  = 8;
 	constexpr float k_spot_snap    = 0.25f;
 	constexpr float k_spot_look    = 4.f; /* ticks of along speed counted when walking to the spot */
 	constexpr float k_spot_along[ ] = { 0.f, 10.f, -10.f, 25.f, -25.f, 60.f, -60.f, 150.f, -150.f, 250.f, -250.f };
 	constexpr int k_spot_slot_base = 62, k_spot_slot_roll = 63;
 	constexpr int k_viz_ticks = 16;
 	constexpr float k_steer_targets[ ] = { -30.f, -12.f, 0.f, 12.f, 30.f }; /* along wall u/s, lab P76 */
-	constexpr int k_steer_delay      = 4;   /* job slices, steer from this tick after the job START */
+	constexpr int k_steer_delay      = 5;   /* job slices ( + the jump tick ), steer from this tick after the job START. lab P91: 4 -> 5 = 3055 -> 3135 first */
 	constexpr int k_steer_tick_sims  = 150;
 	constexpr int k_steer_max        = 6;   /* steer ticks to reach the target */
 	constexpr int k_steer_roll_ticks = 80;
 	constexpr float k_steer_done     = 0.5f;
-	constexpr float k_steer_ratio    = 4.f; /* replay ladder 0 + 5e-4 x4 .. 0.032 F */
+	constexpr float k_steer_ratio    = 8.f; /* replay ladder 0 + 5e-4 x8 .. 0.032 F ( x4 caught the same for 10% more sims ) */
 	constexpr float k_steer_wish     = 250.f;
+	constexpr float k_steer_pre_org  = 0.01f; /* jump tick job: air tick 1 START off its prediction by more = fresh job ( online drift ~6e-4u ) */
+	constexpr float k_steer_pre_vel  = 0.1f;
+	/* unfreeze ( lab P88 ): the end must clear the face by DIST_EPSILON 1/32 ( wish 5 = 0.015u stays allsolid ), 30 = 0.088u, full = 0.47u */
+	constexpr float k_free_wish[ ]   = { 30.f, 450.f };
+	constexpr float k_free_off[ ]    = { 0.f, 45.f, -45.f, 90.f, -90.f, 135.f, -135.f, 180.f };
 
 	enum e_wc_count {
 		wc_land, wc_flip, wc_pin_catch, wc_hold, wc_park, wc_keys, wc_along, wc_own, wc_leave, wc_aa_leave, wc_exit, wc_exit_none, wc_far, wc_rise,
-		wc_scan_cut, wc_cut, wc_div, wc_div_stomp, wc_stomp, wc_yield, wc_ramp, wc_skip, wc_jump_back, wc_jump_strip, wc_as_take, wc_pin_miss, wc_no_park,
+		wc_scan_cut, wc_cut, wc_div, wc_div_stomp, wc_stomp, wc_yield, wc_ramp, wc_skip, wc_jump_back, wc_jump_strip, wc_as_take, wc_pin_miss,
 		wc_park_keep, wc_away, wc_robust, wc_spot, wc_spot_sims, wc_hold_land, wc_low, wc_leave_hang, wc_seam, wc_seam_park, wc_pin_flip, wc_st_job, wc_st_pick,
-		wc_st_tick, wc_st_sims, wc_wig, wc_hold_along, wc_ticks, wc_sims, wc_max
+		wc_st_tick, wc_st_sims, wc_st_pre, wc_st_pre_drop, wc_wig, wc_hold_along, wc_frozen, wc_free, wc_exit_mem, wc_unglue, wc_cmiss_land, wc_cmiss_flip, wc_cmiss_pinc, wc_ticks, wc_sims, wc_max
 	};
 	int s_count[ wc_max ]{ };
 	long long s_us = 0ll, s_us_worst = 0ll;
@@ -133,6 +142,16 @@ bool n_wall_climb::impl_t::active( const c_user_cmd* cmd ) const
 	return cmd && m_active_cmd == cmd->m_command_number;
 }
 
+// world wish, not raw fwd / side: silent view rotates the cmd every tick and keeps the wish
+bool n_wall_climb::impl_t::wish_moved( const c_user_cmd* cmd ) const
+{
+	constexpr int k_move_buttons = in_jump | in_duck;
+	float sx, sy, nx, ny;
+	world_wish( m_sent_yaw, m_sent_fwd, m_sent_side, sx, sy );
+	world_wish( cmd->m_view_point.m_y, cmd->m_forward_move, cmd->m_side_move, nx, ny );
+	return std::fabsf( nx - sx ) + std::fabsf( ny - sy ) > 1e-3f || ( cmd->m_buttons & k_move_buttons ) != ( m_sent_buttons & k_move_buttons );
+}
+
 void n_wall_climb::impl_t::check_stomp( const c_user_cmd* cmd )
 {
 	if ( !cmd )
@@ -140,8 +159,9 @@ void n_wall_climb::impl_t::check_stomp( const c_user_cmd* cmd )
 	constexpr int k_move_buttons = in_jump | in_duck;
 	const bool stomped = cmd->m_forward_move != m_sent_fwd || cmd->m_side_move != m_sent_side ||
 	                     ( cmd->m_buttons & k_move_buttons ) != ( m_sent_buttons & k_move_buttons );
+	// 11-05 log: raw compare marked 41 / 45 ticks stomped ( silent view rotation ) and hid their WC DIV lines
 	if ( m_pred_cmd == cmd->m_command_number )
-		m_pred_stomped = stomped;
+		m_pred_stomped = wish_moved( cmd );
 	if ( caught( cmd ) && stomped )
 		botox_dbg_log( "WC STOMP: fwd %.4f->%.4f side %.4f->%.4f j/d %d%d->%d%d", m_sent_fwd, cmd->m_forward_move, m_sent_side, cmd->m_side_move,
 		               ( m_sent_buttons & in_jump ) != 0, ( m_sent_buttons & in_duck ) != 0, ( cmd->m_buttons & in_jump ) != 0,
@@ -149,17 +169,13 @@ void n_wall_climb::impl_t::check_stomp( const c_user_cmd* cmd )
 	trace_stomp( cmd, "end" );
 }
 
-// world wish, not raw fwd / side: silent view rotates the cmd every tick and keeps the wish
 void n_wall_climb::impl_t::trace_stomp( const c_user_cmd* cmd, const char* stage )
 {
-	if ( !cmd || m_stomp_cmd == cmd->m_command_number || ( !active( cmd ) && !caught( cmd ) ) )
+	if ( !cmd || m_stomp_cmd == cmd->m_command_number || ( !active( cmd ) && !caught( cmd ) ) || !wish_moved( cmd ) )
 		return;
-	constexpr int k_move_buttons = in_jump | in_duck;
 	float sx, sy, nx, ny;
 	world_wish( m_sent_yaw, m_sent_fwd, m_sent_side, sx, sy );
 	world_wish( cmd->m_view_point.m_y, cmd->m_forward_move, cmd->m_side_move, nx, ny );
-	if ( std::fabsf( nx - sx ) + std::fabsf( ny - sy ) <= 1e-3f && ( cmd->m_buttons & k_move_buttons ) == ( m_sent_buttons & k_move_buttons ) )
-		return;
 	m_stomp_cmd = cmd->m_command_number;
 	++s_count[ wc_stomp ];
 	botox_dbg_log( "WC STOMP@%s: wish %.3f,%.3f->%.3f,%.3f fwd %.3f->%.3f side %.3f->%.3f yaw %.2f->%.2f j/d %d%d->%d%d catch=%d", stage, sx, sy, nx, ny,
@@ -199,11 +215,11 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	if ( const unsigned long long now = GetTickCount64( ); now >= s_log_next ) {
 		s_log_next = now + 1000ull;
 		if ( s_count[ wc_ticks ] || s_count[ wc_yield ] || s_count[ wc_ramp ] || s_count[ wc_skip ] )
-			botox_dbg_log( "WC: land=%d flip=%d pinc=%d hold=%d park=%d keys=%d along=%d own=%d leave=%d aa=%d exit=%d/%d far=%d rise=%d scut=%d cut=%d div=%d/%d stomp=%d yield=%d ramp=%d skip=%d jump back=%d strip=%d as=%d miss=%d np=%d pk=%d away=%d robust=%d spot=%d/%d hland=%d low=%d lhang=%d seam=%d/%d pflip=%d steer=%d/%d/%d ssims=%d wig=%d holda=%d ticks=%d sims=%d us=%lld worst=%lld",
+			botox_dbg_log( "WC: land=%d flip=%d pinc=%d hold=%d park=%d keys=%d along=%d own=%d leave=%d aa=%d exit=%d/%d far=%d rise=%d scut=%d cut=%d div=%d/%d stomp=%d yield=%d ramp=%d skip=%d jump back=%d strip=%d as=%d miss=%d pk=%d away=%d robust=%d spot=%d/%d hland=%d low=%d lhang=%d seam=%d/%d pflip=%d steer=%d/%d/%d ssims=%d pre=%d/%d wig=%d holda=%d free=%d/%d xmem=%d glue=%d cmiss=%d/%d/%d ticks=%d sims=%d us=%lld worst=%lld",
 			               s_count[ wc_land ], s_count[ wc_flip ], s_count[ wc_pin_catch ], s_count[ wc_hold ], s_count[ wc_park ], s_count[ wc_keys ],
 			               s_count[ wc_along ], s_count[ wc_own ], s_count[ wc_leave ], s_count[ wc_aa_leave ], s_count[ wc_exit ], s_count[ wc_exit_none ], s_count[ wc_far ],
 			               s_count[ wc_rise ], s_count[ wc_scan_cut ], s_count[ wc_cut ], s_count[ wc_div ], s_count[ wc_div_stomp ], s_count[ wc_stomp ], s_count[ wc_yield ], s_count[ wc_ramp ], s_count[ wc_skip ],
-			               s_count[ wc_jump_back ], s_count[ wc_jump_strip ], s_count[ wc_as_take ], s_count[ wc_pin_miss ], s_count[ wc_no_park ], s_count[ wc_park_keep ], s_count[ wc_away ], s_count[ wc_robust ], s_count[ wc_spot ], s_count[ wc_spot_sims ], s_count[ wc_hold_land ], s_count[ wc_low ], s_count[ wc_leave_hang ], s_count[ wc_seam ], s_count[ wc_seam_park ], s_count[ wc_pin_flip ], s_count[ wc_st_job ], s_count[ wc_st_pick ], s_count[ wc_st_tick ], s_count[ wc_st_sims ], s_count[ wc_wig ], s_count[ wc_hold_along ], s_count[ wc_ticks ], s_count[ wc_sims ], s_us,
+			               s_count[ wc_jump_back ], s_count[ wc_jump_strip ], s_count[ wc_as_take ], s_count[ wc_pin_miss ], s_count[ wc_park_keep ], s_count[ wc_away ], s_count[ wc_robust ], s_count[ wc_spot ], s_count[ wc_spot_sims ], s_count[ wc_hold_land ], s_count[ wc_low ], s_count[ wc_leave_hang ], s_count[ wc_seam ], s_count[ wc_seam_park ], s_count[ wc_pin_flip ], s_count[ wc_st_job ], s_count[ wc_st_pick ], s_count[ wc_st_tick ], s_count[ wc_st_sims ], s_count[ wc_st_pre ], s_count[ wc_st_pre_drop ], s_count[ wc_wig ], s_count[ wc_hold_along ], s_count[ wc_free ], s_count[ wc_frozen ], s_count[ wc_exit_mem ], s_count[ wc_unglue ], s_count[ wc_cmiss_land ], s_count[ wc_cmiss_flip ], s_count[ wc_cmiss_pinc ], s_count[ wc_ticks ], s_count[ wc_sims ], s_us,
 			               s_us_worst );
 		for ( int& c : s_count )
 			c = 0;
@@ -219,7 +235,6 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		m_holding = false;
 		return;
 	}
-	m_park_off = m_park_off && !( local->get_flags( ) & fl_onground );
 	if ( local->get_flags( ) & fl_onground )
 		m_ground_cmd = cmd->m_command_number, m_steer.valid = m_steer.steer = false;
 	if ( local->get_flags( ) & fl_onground )
@@ -259,16 +274,48 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	const float pin         = g_prediction.get_engine_target_predict_z_velocity( );
 	const auto pinned       = [ pin ]( const c_vector& v ) { return v.m_x == 0.f && v.m_y == 0.f && v.m_z == pin; };
 	const bool start_pinned = !on_ground && pinned( start_vel );
-	// server pinned what wc simmed free = flush park is a coin flip here ( 10-07 log: 0 / 41 pins simmed ), park off till ground
-	if ( start_pinned && m_free_cmd == cmd->m_command_number - 1 ) {
-		++s_count[ wc_pin_miss ];
-		m_park_off = true;
+	// cmiss: a catch the sim made that this START did not ( 11-05 log: 3 / 3 stand catches missed, 2 / 2 crouch lands real ). full floats =
+	// fl_lab replay of that exact tick
+	if ( m_ck_cmd >= 0 && m_ck_cmd == cmd->m_command_number - 1 && !( m_ck_kind == 3 ? on_ground || start_pinned : on_ground ) ) {
+		++s_count[ m_ck_kind == 1 ? wc_cmiss_land : m_ck_kind == 2 ? wc_cmiss_flip : wc_cmiss_pinc ];
+		static int s_ck_logged = 0;
+		if ( s_ck_logged < 64 && ++s_ck_logged )
+			botox_dbg_log( "WC CATCH MISS: %s%s at org=%.9g,%.9g,%.9g vel=%.9g,%.9g,%.9g fwd=%.9g side=%.9g yaw=%.9g duck=%d | next org=%.9g,%.9g,%.9g vel=%.9g,%.9g,%.9g",
+			               m_ck_kind == 1 ? "land" : m_ck_kind == 2 ? "land_flip" : "pin_catch", m_stomp_cmd == m_ck_cmd ? " STOMPED" : "", m_ck_org.m_x, m_ck_org.m_y,
+			               m_ck_org.m_z, m_ck_vel.m_x, m_ck_vel.m_y, m_ck_vel.m_z, m_ck_fwd, m_ck_side, m_ck_yaw, ( m_ck_buttons & in_duck ) != 0, origin.m_x, origin.m_y,
+			               origin.m_z, start_vel.m_x, start_vel.m_y, start_vel.m_z );
 	}
-	m_free_cmd = -1;
-
+	m_ck_cmd = -1;
 	c_trace_filter filter( local );
+	const auto in_solid = [ & ]( const c_vector& o, const c_vector& lo, const c_vector& hi ) {
+		trace_t tr{ };
+		ray_t ray( o, o, lo, hi );
+		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
+		return tr.m_start_solid;
+	};
+	// 11-05 lab P88: online drift 1..5 ulp into a face the hull sat flush on ( disp453 wall end brush ) = START in solid, every trace starts
+	// solid, the engine zeroes vel each tick till CheckStuck ( ~1 s ). lab online: 195 / 1608 eps froze up to 137 ticks
+	const bool start_solid = !on_ground && in_solid( origin, mins, maxs );
+	// miss = server pinned what wc simmed free ( a freeze is no pin of a free park ). count only: the 10-07 park off till ground latch went
+	// 11-05 ( pre robust park ). lab game P88 noise first 786 -> 917 ( +17% ), wiggle -25%, stuck 0 = 0; online 933 -> 951. exit memory
+	// takes the pin loop it was for
+	s_count[ wc_pin_miss ] += start_pinned && !start_solid && m_free_cmd == cmd->m_command_number - 1;
+	m_free_cmd = -1;
+	// exit memory ( lab P88 ): a pin exit try the server pinned again goes last this pin run. noise lab: crease pin, along -90 f30 simmed free
+	// every tick, START pinned 31 ticks ( stuck runs 8 -> 0 )
+	const int exit_prev = m_exit_cmd == cmd->m_command_number - 1 ? m_exit_sent : -1;
+	if ( !start_pinned || m_wc_cmd != cmd->m_command_number - 1 )
+		m_exit_bad = 0u;
+	else if ( exit_prev >= 0 )
+		m_exit_bad |= 1u << exit_prev;
+	m_wc_cmd = cmd->m_command_number;
+
 	trace_t wall_tr{ };
+	// wall end corner ( disp wall + brush ) = the disp face, lips live there: the first axis hit parked flush on the brush ( lab P86 disp453
+	// first 911 -> 951, the other walls same )
 	const auto find_wall = [ & ]( const float reach, const bool count ) {
+		bool found = false;
+		trace_t pick{ };
 		for ( int i = 0; i < 4; ++i ) {
 			const float a = deg2rad( static_cast< float >( i * 90 ) );
 			ray_t ray( origin, origin + c_vector( std::cosf( a ), std::sinf( a ), 0.f ) * reach, mins, maxs );
@@ -279,20 +326,30 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				s_count[ wc_skip ] += count;
 				continue;
 			}
-			if ( std::fabsf( wall_tr.m_plane.m_normal.m_z ) <= k_wall_nz )
-				return true;
-			s_count[ wc_ramp ] += count;
+			if ( std::fabsf( wall_tr.m_plane.m_normal.m_z ) > k_wall_nz ) {
+				s_count[ wc_ramp ] += count;
+				continue;
+			}
+			if ( !found || wall_tr.m_disp_flags )
+				pick = wall_tr, found = true;
+			if ( wall_tr.m_disp_flags )
+				break;
 		}
-		return false;
+		if ( found )
+			wall_tr = pick;
+		return found;
 	};
 	// pinned off the touch range ( an exit or your keys left a lip edge pin 0.18u out ): still exit it
-	bool far_pin = false;
+	// in solid every trace starts solid = no wall seen ( before: return, your keys froze you till CheckStuck )
+	bool far_pin = false, frozen = false;
 	if ( !find_wall( k_contact, true ) ) {
 		m_holding = false;
-		if ( !start_pinned || !find_wall( k_pin_reach, false ) )
+		if ( start_solid )
+			frozen = true, ++s_count[ wc_frozen ];
+		else if ( !start_pinned || !find_wall( k_pin_reach, false ) )
 			return;
-		far_pin = true;
-		++s_count[ wc_far ];
+		else
+			far_pin = true, ++s_count[ wc_far ];
 	}
 	// no yield to a pixel surf latch: wc parks flush, so crease pins come often and a latched ride hung you 27-34 ticks
 	// ( 10-06 22:20 log ). pixel_surf yields to active( ) instead, it runs after wc
@@ -327,6 +384,9 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 
 	const c_user_cmd keys = *cmd;
 	const bool user_duck  = ( keys.m_buttons & in_duck ) != 0;
+	// pin catch off ( default, 11-05 "stuck on vertical seams, loses all speed" ): no pin + hold till the lip anywhere ( lab pin_look 0, online
+	// sub grid P90 first 253 -> 232, rows 345 -> 322, hang 637 -> 0 ticks, pin catch xy lost 6508 -> 0 )
+	const bool pin_catch_on = GET_VARIABLE( g_variables.m_wall_climb_pin_catch, bool );
 	// leave = your raw keys: auto align's fix_air_stucks push off the wall lost the park / wall ( 10-07 replay 5 -> 9 / 21 )
 	c_user_cmd you     = keys;
 	you.m_forward_move  = g_movement.m_user_forward_move_raw;
@@ -377,6 +437,12 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		restore( );
 		return chain( c, out );
 	};
+	// SetupMove reads GetAbsVelocity ( prediction.cpp:781 ): a velocity write needs EFL_DIRTY_ABSVELOCITY or the sim runs the old one
+	const auto set_vel = [ & ]( const c_vector& v ) {
+		local->get_velocity( ) = v;
+		if ( int& eflags = local->get_eflags( ); reinterpret_cast< std::uintptr_t >( &eflags ) != reinterpret_cast< std::uintptr_t >( local ) )
+			eflags |= 1 << 12;
+	};
 	const auto slowed = [ & ]( const c_vector& v ) {
 		if ( !GET_VARIABLE( g_variables.m_wall_climb_prevent_slow, bool ) )
 			return false;
@@ -418,8 +484,18 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		const float sg = start_vel.length_2d( ) >= k_pin_sign_xy ? ( vd < 0.f ? -1.f : 1.f ) : wd < 0.f ? -1.f : 1.f;
 		const c_user_cmd tries[ ] = { keys, with( wall_yaw + sg * 90.f, 30.f, user_duck ), with( wall_yaw - sg * 90.f, 30.f, user_duck ),
 			                          with( wall_yaw, -5.f, user_duck ), with( wall_yaw, -450.f, user_duck ) };
+		// exit memory: tries the server pinned again go last; a failed along shove sends the other side last too ( it flipped you side to
+		// side on the seam: lab noise wiggle 1466 -> 1345 )
+		const unsigned last = m_exit_bad | ( ( m_exit_bad & 6u ) ? 6u : 0u );
+		int order[ 5 ], no = 0;
+		for ( unsigned pass = 0u; pass < 2u; ++pass )
+			for ( int i = 0; i < 5; ++i )
+				if ( ( ( last >> i ) & 1u ) == pass )
+					order[ no++ ] = i;
+		s_count[ wc_exit_mem ] += last != 0u;
 		int pick = -1, first = -1;
-		for ( int i = 0; i < 5 && pick < 0; ++i ) {
+		for ( int oi = 0; oi < 5 && pick < 0; ++oi ) {
+			const int i = order[ oi ];
 			sim_out_t o{ };
 			if ( !sim( tries[ i ], o ) )
 				break;
@@ -443,7 +519,8 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 			return;
 		}
 		send( tries[ pick ] );
-		free_sent = true;
+		free_sent   = true;
+		m_exit_sent = pick, m_exit_cmd = cmd->m_command_number;
 		++s_count[ wc_exit ];
 	};
 
@@ -480,16 +557,30 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 			g_prediction.snapshot_load( slot );
 			bounds = g_prediction.m_real_max_speed;
 		};
+		// pick ( lab spot_pick rule 3 ): a catching spot with the most catching 2u neighbours, ties nearest to `at`. the top score alone was a
+		// knife edge the walk misses by a hair ( lab W eps reach 16 first 1209 -> 1238, reach 32 983 -> 1370 with the rest replay )
+		const auto idx_of  = [ & ]( const float o ) {
+			const int k = static_cast< int >( std::lround( std::fabsf( o ) / k_spot_step ) );
+			return k == 0 ? 0 : o > 0.f ? 2 * k - 1 : 2 * k;
+		};
+		const auto catches = [ & ]( const int i ) { return i >= 0 && i < j.idx && j.score[ i ] > 0; };
+		const auto wide    = [ & ]( const int i ) { return catches( idx_of( at_idx( i ) - k_spot_step ) ) + catches( idx_of( at_idx( i ) + k_spot_step ) ); };
+		const auto pick    = [ & ]( const float at ) {
+			int best = -1;
+			for ( int i = 0; i < j.idx; ++i )
+				if ( catches( i ) && ( best < 0 || wide( i ) > wide( best ) ||
+				                       ( wide( i ) == wide( best ) && std::fabsf( at_idx( i ) - at ) < std::fabsf( at_idx( best ) - at ) ) ) )
+					best = i;
+			return best;
+		};
 		const auto finish = [ & ]( const int score ) {
 			j.score[ j.idx ] = score;
 			j.rolling        = false;
 			if ( ++j.idx >= j.count ) {
 				j.done = true;
-				int best = 0;
-				for ( int i = 1; i < j.count; ++i )
-					best = j.score[ i ] > j.score[ best ] ? i : best;
-				botox_dbg_log( "WC SPOT: n=%d best=%+.0f score=%d here=%d sims=%d slices=%d z=%.2f wall=%.2f,%.2f", j.count, at_idx( best ), j.score[ best ],
-				               j.score[ 0 ], j.sims, j.slices, floor_z, wall_n.m_x, wall_n.m_y );
+				const int best = pick( 0.f );
+				botox_dbg_log( "WC SPOT: n=%d best=%+.0f score=%d wide=%d here=%d sims=%d slices=%d z=%.2f wall=%.2f,%.2f", j.count, best >= 0 ? at_idx( best ) : 0.f,
+				               best >= 0 ? j.score[ best ] : 0, best >= 0 ? wide( best ) : -1, j.score[ 0 ], j.sims, j.slices, floor_z, wall_n.m_x, wall_n.m_y );
 			}
 		};
 		++j.slices;
@@ -509,6 +600,12 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				}
 				local->set_abs_origin( o );
 				local->get_origin( ) = o;
+				// replay at rest along the wall: you jump after the walk there, not with the along speed the job started on ( lab FL_SPOTV0:
+				// W eps first 982 -> 1209, rows 1763 -> 2303 )
+				c_vector v     = local->get_velocity( );
+				const float va = v.m_x * t.m_x + v.m_y * t.m_y;
+				v.m_x -= t.m_x * va, v.m_y -= t.m_y * va;
+				set_vel( v );
 				c_user_cmd jc = keys;
 				jc.m_buttons |= in_jump;
 				step( jc );
@@ -523,6 +620,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 			int score       = -2;
 			float best_d    = FLT_MAX;
 			c_user_cmd pick = keys;
+			bool held[ 2 ]  = { };
 			for ( float m = 0.f; m <= 0.032f && score < 0; m = m > 0.f ? m * 2.f : 5e-4f )
 				for ( int pass = 0; pass < 2 && score < 0; ++pass ) {
 					if ( pass && !GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) )
@@ -534,6 +632,20 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 					++sims, ++j.sims;
 					sim_out_t o{ };
 					read_out( o );
+					// pin catch ( wc's own ): a pin whose zero hold lands over the floor is a climb, not a sticky spot ( lab FL_SPOTPIN W eps 1238 -> 1324 ).
+					// first pin per stance a tick only ( pinned ends = one state ), so a pass stays <= 16 + 2 x k_spot_pin_hold sims
+					if ( !( o.m_flags & fl_onground ) && pinned( o.m_vel ) && !held[ pass ] && pin_catch_on ) {
+						held[ pass ]        = true;
+						const c_user_cmd hc = with( wall_yaw, 0.f, duck );
+						for ( int k = 0; k < k_spot_pin_hold && !( o.m_flags & fl_onground ); ++k ) {
+							step( hc );
+							++sims, ++j.sims;
+							read_out( o );
+						}
+						if ( ( o.m_flags & fl_onground ) && o.m_origin.m_z > floor_z + k_spot_rise )
+							score = 1000 + static_cast< int >( o.m_origin.m_z - floor_z );
+						continue;
+					}
 					if ( o.m_flags & fl_onground ) {
 						if ( o.m_origin.m_z > floor_z + k_spot_rise )
 							score = 1000 + static_cast< int >( o.m_origin.m_z - floor_z );
@@ -555,16 +667,12 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				finish( score );
 		}
 		s_count[ wc_spot_sims ] += j.sims;
-		// walk to the best spot found so far ( ties: nearest to where you are )
+		// walk to the pick so far ( ties: nearest to where you are )
 		const c_vector rel = origin - j.base;
 		const float here   = rel.m_x * t.m_x + rel.m_y * t.m_y;
 		cut                = false;
 		commit_end         = sims + static_cast< int >( std::size( k_spot_along ) );
-		int best = -1;
-		for ( int i = 0; i < j.idx; ++i )
-			if ( j.score[ i ] > 0 && ( best < 0 || j.score[ i ] > j.score[ best ] ||
-			                           ( j.score[ i ] == j.score[ best ] && std::fabsf( at_idx( i ) - here ) < std::fabsf( at_idx( best ) - here ) ) ) )
-				best = i;
+		const int best = pick( here );
 		if ( best < 0 || std::fabsf( at_idx( best ) - here ) <= k_spot_snap )
 			return false;
 		const float target = at_idx( best );
@@ -620,7 +728,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 			botox_dbg_log( "WC STEER: base=%d best=%d target=%.0f along=%.2f cand=%d/%d done=%d sims=%d z=%.2f n=%.2f,%.2f", j.base, j.best, j.target, j.cur, j.cand, j.count,
 			               j.done, j.sims, origin.m_z, wall_n.m_x, wall_n.m_y );
 		}
-		if ( !j.steer || j.steer_left <= 0 || start_pinned || m_holding || you_leave || as_steers || far_pin )
+		if ( !j.steer || j.steer_left <= 0 || start_pinned || m_holding || you_leave || as_steers || far_pin || frozen )
 			return false;
 		if ( std::fabsf( start_vel.m_x * j.t.m_x + start_vel.m_y * j.t.m_y - j.target ) <= k_steer_done ) {
 			j.steer = false;
@@ -657,19 +765,20 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		// lab touch_wall: 4 axis hull traces k_contact out, walls only
 		const auto touch_at = [ & ]( const c_vector& o, c_vector& n ) {
 			const c_vector lo = collideable->get_obb_mins( ), hi = collideable->get_obb_maxs( );
+			bool found = false;
 			for ( int i = 0; i < 4; ++i ) {
 				const float a = deg2rad( static_cast< float >( i * 90 ) );
 				trace_t tr{ };
 				ray_t ray( o, o + c_vector( std::cosf( a ), std::sinf( a ), 0.f ) * k_contact, lo, hi );
 				g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
-				if ( !tr.did_hit( ) || tr.m_start_solid )
+				if ( !tr.did_hit( ) || tr.m_start_solid || std::fabsf( tr.m_plane.m_normal.m_z ) > k_wall_nz || ( found && !tr.m_disp_flags ) )
 					continue;
-				if ( std::fabsf( tr.m_plane.m_normal.m_z ) <= k_wall_nz ) {
-					n = tr.m_plane.m_normal;
+				n     = tr.m_plane.m_normal;
+				found = true;
+				if ( tr.m_disp_flags )
 					return true;
-				}
 			}
-			return false;
+			return found;
 		};
 		const auto finish = [ & ]( const int score ) {
 			j.rolling = false;
@@ -745,36 +854,78 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	// steer job: starts on the first air tick rising past k_rise_vz by the wall ( START = base slot ), runs before
 	// the ladder: 11-03 online log 11 / 12 jobs never finished on the clock the ladder left ( ~95 sims a tick ). lab: a rising tick ladder
 	// short 80..150 sims loses no catches, finished jobs first 267 -> 272, rows 374 -> 387
-	if ( !on_ground && GET_VARIABLE( g_variables.m_wall_climb_seam_steer, bool ) && !m_steer.valid && cmd->m_command_number - m_ground_cmd == 1 &&
-	     start_vel.m_z > k_rise_vz && !start_pinned && !you_leave && !far_pin && !as_steers && g_prediction.snapshot_slots( ) > k_spot_slot_roll ) {
-		restore( );
-		if ( g_prediction.snapshot_save( k_spot_slot_base ) ) {
-			auto& j     = m_steer;
-			j           = { };
-			j.valid     = true;
-			j.start_cmd = cmd->m_command_number;
-			j.t         = c_vector( wall_n.m_y, -wall_n.m_x, 0.f );
-			j.cur       = start_vel.m_x * j.t.m_x + start_vel.m_y * j.t.m_y;
-			j.fwd = keys.m_forward_move, j.side = keys.m_side_move, j.yaw = keys.m_view_point.m_y, j.buttons = keys.m_buttons;
-			const float scale = std::clamp( GET_VARIABLE( g_variables.m_wall_climb_steer_scale, float ), 0.25f, 2.f );
-			for ( const float tg : k_steer_targets )
-				if ( std::fabsf( tg * scale - j.cur ) >= 1.f )
-					j.order[ j.count++ ] = tg * scale;
-			std::stable_sort( j.order, j.order + j.count, [ & ]( const float a, const float b ) { return std::fabsf( a - j.cur ) < std::fabsf( b - j.cur ); } );
-			++s_count[ wc_st_job ];
-		}
+	// job START = base slot, saved by the caller
+	const auto steer_init = [ & ]( const int start_cmd, const c_vector& v ) {
+		auto& j     = m_steer;
+		j           = { };
+		j.valid     = true;
+		j.start_cmd = start_cmd;
+		j.t         = c_vector( wall_n.m_y, -wall_n.m_x, 0.f );
+		j.cur       = v.m_x * j.t.m_x + v.m_y * j.t.m_y;
+		j.fwd = keys.m_forward_move, j.side = keys.m_side_move, j.yaw = keys.m_view_point.m_y, j.buttons = keys.m_buttons;
+		const float scale = std::clamp( GET_VARIABLE( g_variables.m_wall_climb_steer_scale, float ), 0.25f, 2.f );
+		for ( const float tg : k_steer_targets )
+			if ( std::fabsf( tg * scale - j.cur ) >= 1.f )
+				j.order[ j.count++ ] = tg * scale;
+		std::stable_sort( j.order, j.order + j.count, [ & ]( const float a, const float b ) { return std::fabsf( a - j.cur ) < std::fabsf( b - j.cur ); } );
+		++s_count[ wc_st_job ];
+	};
+	// a job started on the jump tick ran off the predicted START: kept only if air tick 1 is that START and the job gates hold, else a fresh job
+	if ( !on_ground && m_steer.valid && m_steer.pre ) {
+		m_steer.pre = false;
+		if ( cmd->m_command_number != m_steer.start_cmd || start_vel.m_z <= k_rise_vz || start_pinned || you_leave || far_pin || frozen || as_steers ||
+		     ( origin - m_steer.pre_org ).length( ) > k_steer_pre_org || ( start_vel - m_steer.pre_vel ).length( ) > k_steer_pre_vel ) {
+			m_steer.valid = false;
+			++s_count[ wc_st_pre_drop ];
+		} else
+			++s_count[ wc_st_pre ];
 	}
-	if ( !on_ground && m_steer.valid && !m_steer.done && cmd->m_command_number < m_steer.start_cmd + k_steer_delay && !start_pinned && !m_holding )
+	if ( !on_ground && GET_VARIABLE( g_variables.m_wall_climb_seam_steer, bool ) && !m_steer.valid && cmd->m_command_number - m_ground_cmd == 1 &&
+	     start_vel.m_z > k_rise_vz && !start_pinned && !you_leave && !far_pin && !frozen && !as_steers && g_prediction.snapshot_slots( ) > k_spot_slot_roll ) {
+		restore( );
+		if ( g_prediction.snapshot_save( k_spot_slot_base ) )
+			steer_init( cmd->m_command_number, start_vel );
+	}
+	if ( !on_ground && m_steer.valid && !m_steer.done && cmd->m_command_number < m_steer.start_cmd + k_steer_delay && !start_pinned && !m_holding && !frozen )
 		steer_job( );
 
-	bool landed = false, held = false, jump_fix = false;
-	const bool steered = !on_ground && steer_air( );
-	if ( !on_ground && !steered ) {
+	bool landed = false, held = false, jump_fix = false, freed = false;
+	int catch_kind = 0; /* cmiss: 1 land, 2 land flip, 3 pin catch */
+	const bool steered = !on_ground && !frozen && steer_air( );
+	if ( frozen ) {
+		// unfreeze: your wish rarely points out ( W into the wall pushed you in ), so directions nearest it first, 30 then full wish ( a fall
+		// 0.24u into a disp lip ), the first that ends unpinned out of solid. lab online stuck runs 197 -> 0, longest pin 137 -> 2 ticks
+		m_spot.valid = false;
+		cut          = false;
+		commit_end   = sims + static_cast< int >( std::size( k_free_wish ) * std::size( k_free_off ) );
+		float wx, wy;
+		world_wish( keys.m_view_point.m_y, keys.m_forward_move, keys.m_side_move, wx, wy );
+		const float wyaw = wx * wx + wy * wy > 1.f ? rad2deg( std::atan2f( wy, wx ) ) : keys.m_view_point.m_y;
+		float got_off = 0.f, got_wish = 0.f;
+		for ( size_t w = 0; w < std::size( k_free_wish ) && !freed && !cut; ++w )
+			for ( size_t k = 0; k < std::size( k_free_off ) && !freed; ++k ) {
+				const c_user_cmd c = with( wyaw + k_free_off[ k ], k_free_wish[ w ] / ( user_duck ? 0.34f : 1.f ), user_duck );
+				sim_out_t o{ };
+				if ( !sim( c, o ) )
+					break;
+				if ( !pinned( o.m_vel ) && !in_solid( o.m_origin, collideable->get_obb_mins( ), collideable->get_obb_maxs( ) ) ) {
+					send( c );
+					freed = free_sent = true;
+					got_off = k_free_off[ k ], got_wish = k_free_wish[ w ];
+				}
+			}
+		s_count[ wc_free ] += freed;
+		branch = freed ? "free" : "frozen";
+		static int s_free_logged = 0;
+		if ( s_free_logged < 64 && ++s_free_logged )
+			botox_dbg_log( "WC FREE: %s off=%.0f wish=%.0f sims=%d org=%.4f,%.4f,%.4f vel=%.3f,%.3f,%.3f yaw=%.2f duck=%d", freed ? "out" : "none", got_off, got_wish, sims,
+			               origin.m_x, origin.m_y, origin.m_z, start_vel.m_x, start_vel.m_y, start_vel.m_z, wyaw, user_duck );
+	} else if ( !on_ground && !steered ) {
 		m_spot.valid = false;
 		const bool was_holding = m_holding;
 		m_holding              = false;
 		s_count[ wc_leave_hang ] += ( start_pinned || was_holding ) && you_leave;
-		if ( ( start_pinned || was_holding ) && !you_leave ) {
+		if ( ( start_pinned || was_holding ) && !you_leave && pin_catch_on ) {
 			const bool hduck = was_holding ? ( m_hold_buttons & in_duck ) != 0 : user_duck;
 			// lab P82 ( 11-05 "don't lose so much horizontal speed" ): a pin zeroes xy and the zero press hold hung there till the lip. your
 			// keys minus the into face part keep your along wish ( ~30 u/s back in a tick ): held first when it lands with no pin on the way.
@@ -815,6 +966,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 					if ( ( o.m_flags & fl_onground ) && o.m_origin.m_z > m_ground_z + k_land_above ) {
 						send( c );
 						landed = held = true;
+						catch_kind = 1;
 						++s_count[ wc_hold_land ];
 						branch = "hold_land";
 					}
@@ -871,7 +1023,8 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 						return 1;
 					}
 					send( c );
-					landed = true;
+					landed     = true;
+					catch_kind = flip ? 2 : 1;
 					++s_count[ wc_land ];
 					s_count[ wc_flip ] += flip;
 					branch = flip ? "land_flip" : "land";
@@ -880,7 +1033,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 					return 1;
 				}
 				if ( pinned( last.m_vel ) ) {
-					if ( pin_tries < k_pin_tries && !you_leave ) {
+					if ( pin_tries < k_pin_tries && !you_leave && pin_catch_on ) {
 						++pin_tries;
 						const bool cd = ( c.m_buttons & in_duck ) != 0;
 						bool hd = cd, lands = hold_lands( with( wall_yaw, 0.f, cd ) );
@@ -893,6 +1046,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 						if ( lands ) {
 							send( c );
 							landed = held = m_holding = true;
+							catch_kind                = 3;
 							m_hold_buttons            = hd ? ( c.m_buttons | in_duck ) : ( c.m_buttons & ~in_duck );
 							++s_count[ wc_pin_catch ];
 							branch = "pin_catch";
@@ -983,7 +1137,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 						vel.m_x -= wall_n.m_x * k_robust_vel;
 						vel.m_y -= wall_n.m_y * k_robust_vel;
 						restore( );
-						local->get_velocity( ) = vel;
+						set_vel( vel );
 						sim_out_t q{ };
 						const bool ok = chain( parks[ p ].c, q ) && !pinned( q.m_vel );
 						if ( ok )
@@ -1018,15 +1172,18 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 					branch = "leave";
 					if ( kpin )
 						exit_pin( );
-				} else if ( have_park && ( kpin || !m_park_off ) ) {
+				} else if ( have_park ) {
 					if ( kok && !kpin && !( k.m_flags & fl_onground ) && face_d( k.m_origin, wall_n ) <= best_d + k_keys_ulp && !( ksnag && !best_snag ) ) {
 						++s_count[ wc_keys ];
 						branch = "keys";
-					} else if ( kok && !kpin && !( k.m_flags & fl_onground ) && best_xy < k.m_vel.length_2d( ) - k_park_keep && !wish_leaves_wall( keys, wall_n ) ) {
+					} else if ( kok && !kpin && !( k.m_flags & fl_onground ) && best_xy < k.m_vel.length_2d( ) - k_park_keep &&
+					            ( !wish_leaves_wall( keys, wall_n ) || best_xy < k_glue_xy ) ) {
 						// park sends ~0 wish: froze w+strafe gain ( 10-08 log u 37 s 32 x10 ) and sat in corners at xy 0. not auto align's push off
-						// ( 10-08 20:40 log: 18 / 40 sent it, wall lost 2-3 ticks )
-						++s_count[ wc_park_keep ];
-						branch = "keys_pk";
+						// ( 10-08 20:40 log: 18 / 40 sent it, wall lost 2-3 ticks ), unless the park is dead on the face: 11-05 14:56 log a pin under
+						// an overhang zeroed 242 u/s, then park held you there 0.2 u/s for the whole fall vs keys 8.4 ( 175 ticks, 0 catches after )
+						const bool glue = wish_leaves_wall( keys, wall_n );
+						++s_count[ glue ? wc_unglue : wc_park_keep ];
+						branch = glue ? "keys_glue" : "keys_pk";
 					} else {
 						send( best_c );
 						++s_count[ wc_park ];
@@ -1036,10 +1193,6 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				} else if ( kpin ) {
 					exit_pin( );
 					branch = "exit";
-				} else if ( have_park ) {
-					++s_count[ wc_no_park ];
-					branch    = "keys_np";
-					free_sent = kok;
 				} else if ( !parks.empty( ) )
 					branch = "keys_rob";
 			}
@@ -1087,6 +1240,17 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				}
 			}
 		}
+		// steer job off the jump tick: the ground tick has the clock spare, the job starts on the predicted first air START and gets one more
+		// slice before the steer ( lab FL_SJUMP 150 )
+		sim_out_t air{ };
+		if ( ( cmd->m_buttons & in_jump ) && GET_VARIABLE( g_variables.m_wall_climb_seam_steer, bool ) && !you_leave &&
+		     g_prediction.snapshot_slots( ) > k_spot_slot_roll && sim( *cmd, air ) && !( air.m_flags & fl_onground ) && air.m_vel.m_z > k_rise_vz &&
+		     !pinned( air.m_vel ) && g_prediction.snapshot_save( k_spot_slot_base ) ) {
+			m_spot.valid = false; /* its base slot is the job's now */
+			steer_init( cmd->m_command_number + 1, air.m_vel );
+			m_steer.pre = true, m_steer.pre_org = air.m_origin, m_steer.pre_vel = air.m_vel;
+			steer_job( );
+		}
 	}
 
 	// visualize: tick 1 = what goes out ( air stuck's cmd when it keeps the steering ), then wc's hold on a catch ( what every catch is
@@ -1104,6 +1268,8 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		const c_vector mid = wall_tr.m_end + c_vector( 0.f, 0.f, ( mins.m_z + maxs.m_z ) * 0.5f );
 		const float off    = face_d( mid, wall_n ) - wall_tr.m_plane.m_distance;
 		m_viz.wall = std::fabsf( off ) <= 32.f ? mid - wall_n * off : mid - wall_n * ( maxs.m_x * ( std::fabsf( wall_n.m_x ) + std::fabsf( wall_n.m_y ) ) );
+		if ( frozen ) /* in solid every trace starts solid: no face, label on you */
+			m_viz.n = c_vector( ), m_viz.wall = origin + c_vector( 0.f, 0.f, ( mins.m_z + maxs.m_z ) * 0.5f );
 		if ( !on_ground ) {
 			const bool catching  = landed || held;
 			const c_user_cmd out = as_steers && !catching && !jump_fix ? as_cmd : *cmd;
@@ -1125,7 +1291,8 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	}
 
 	// wc t: every wall tick. u = end of your cmd, s = end of what wall climb sent ( s.xy < u.xy = it cost speed ). org / vel / yaw
-	// = START + your keys, enough to replay the tick in fl_lab. extra sims, debug log only, not in us=
+	// = START + your keys, enough to replay the tick in fl_lab ( full floats: 11-05 %.4f hid 1e-5 lip windows, FL_RSENT replays what was sent ).
+	// extra sims, debug log only, not in us=
 	if ( GET_VARIABLE( g_variables.m_debug_log, bool ) ) {
 		const auto raw = [ & ]( c_user_cmd c, sim_out_t& out ) {
 			restore( );
@@ -1138,7 +1305,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 			raw( *cmd, s );
 		else
 			s = u;
-		botox_dbg_log( "WC T: %s g=%d n=%.2f,%.2f disp=%d xy=%.1f u=%.1f/%.1f/%d s=%.1f/%.1f/%d fs=%.1f,%.1f->%.3f,%.3f j=%d/%d d=%d/%d sims=%d%s org=%.4f,%.4f,%.4f vel=%.3f,%.3f,%.3f yaw=%.3f gz=%.3f",
+		botox_dbg_log( "WC T: %s g=%d n=%.2f,%.2f disp=%d xy=%.1f u=%.1f/%.1f/%d s=%.1f/%.1f/%d fs=%.9g,%.9g->%.9g,%.9g j=%d/%d d=%d/%d sims=%d%s org=%.9g,%.9g,%.9g vel=%.9g,%.9g,%.9g yaw=%.9g gz=%.3f",
 		               branch, on_ground, wall_n.m_x, wall_n.m_y, disp_wall ? 1 : 0, start_vel.length_2d( ), u.m_vel.length_2d( ), u.m_vel.m_z,
 		               ( u.m_flags & fl_onground ) != 0, s.m_vel.length_2d( ), s.m_vel.m_z, ( s.m_flags & fl_onground ) != 0, keys.m_forward_move, keys.m_side_move,
 		               cmd->m_forward_move, cmd->m_side_move, ( keys.m_buttons & in_jump ) != 0, ( cmd->m_buttons & in_jump ) != 0, user_duck,
@@ -1159,15 +1326,16 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	if ( was_cut )
 		++s_count[ wc_cut ];
 	const bool caught_now = landed || held || jump_fix;
+	// a frozen hull goes nowhere on air stuck's cmd either: the unfreeze takes it like a catch
 	if ( as_steers ) {
-		if ( caught_now ) {
+		if ( caught_now || freed ) {
 			g_air_stuck_owns_cmd = g_air_stuck_authored_view_valid = g_air_stuck_stamp_valid = g_air_stuck_view_forced = false;
 			++s_count[ wc_as_take ];
 		} else
 			*cmd = as_cmd;
 	}
 	m_hit          = landed;
-	m_free_cmd     = free_sent && ( !as_steers || caught_now ) ? cmd->m_command_number : -1;
+	m_free_cmd     = free_sent && ( !as_steers || caught_now || freed ) ? cmd->m_command_number : -1;
 	m_sent_fwd     = cmd->m_forward_move;
 	m_sent_side    = cmd->m_side_move;
 	m_sent_buttons = cmd->m_buttons;
@@ -1188,6 +1356,11 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	}
 	if ( caught_now )
 		m_catch_cmd = cmd->m_command_number;
+	if ( catch_kind ) {
+		m_ck_cmd = cmd->m_command_number, m_ck_kind = catch_kind, m_ck_buttons = cmd->m_buttons;
+		m_ck_org = origin, m_ck_vel = start_vel;
+		m_ck_fwd = cmd->m_forward_move, m_ck_side = cmd->m_side_move, m_ck_yaw = cmd->m_view_point.m_y;
+	}
 	if ( landed || jump_fix )
 		m_act_tick = g_interfaces.m_global_vars_base->m_tick_count;
 }
@@ -1240,14 +1413,14 @@ void n_wall_climb::impl_t::render( )
 
 	poly_draw_object_t poly{ };
 	poly.m_color   = col.get_u32( 0.18f );
-	bool on_screen = true;
+	bool on_screen = nl > 1e-3f;
 	for ( int i = 0; i < 4 && on_screen; i++ )
 		on_screen = g_render.world_to_screen( face[ i ], poly.m_points[ i ] );
 	if ( on_screen ) {
 		poly.m_count = 4;
 		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_poly, std::make_any< poly_draw_object_t >( poly ) );
 	}
-	for ( int i = 0; i < 4; i++ )
+	for ( int i = 0; i < 4 && nl > 1e-3f; i++ )
 		line( face[ i ], face[ ( i + 1 ) % 4 ], color, 1.f );
 	line( m_viz.wall, m_viz.wall + n * 8.f, color, 1.f );
 	label( m_viz.wall + up + c_vector( 0.f, 0.f, 4.f ), std::format( "wc {} {}", m_viz.branch, m_viz.sims ), color );

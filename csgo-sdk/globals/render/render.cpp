@@ -1400,6 +1400,36 @@ void n_render::impl_t::queue_stretch_block_end( )
 	this->m_draw_data.emplace_back( e_draw_type::draw_type_callback, std::make_any< callback_draw_object_t >( callback_draw_object_t{ end } ) );
 }
 
+/* block extent as shown: each vertex clamped to its command's clip rect. raw min / max moved with scissored overflow
+   ( marquee glyphs half past the box edge ) and the pivot with it, the whole panel jittered */
+static bool block_bounds( const n_render::impl_t::stretch_block_t& block, ImVec2& lo, ImVec2& hi )
+{
+	const ImDrawList* list = block.m_list;
+	const int last_vtx     = ImMin( block.m_vertex_end, list->VtxBuffer.Size );
+
+	lo = ImVec2( FLT_MAX, FLT_MAX );
+	hi = ImVec2( -FLT_MAX, -FLT_MAX );
+
+	for ( int c = block.m_command_begin, end = ImMin( block.m_command_end, list->CmdBuffer.Size ); c < end; ++c ) {
+		const ImDrawCmd& cmd = list->CmdBuffer[ c ];
+		if ( cmd.UserCallback )
+			continue;
+
+		const ImVec2 clip_lo( cmd.ClipRect.x, cmd.ClipRect.y ), clip_hi( cmd.ClipRect.z, cmd.ClipRect.w );
+		for ( unsigned int i = 0; i < cmd.ElemCount && cmd.IdxOffset + i < static_cast< unsigned int >( list->IdxBuffer.Size ); ++i ) {
+			const int v = static_cast< int >( cmd.VtxOffset + list->IdxBuffer[ cmd.IdxOffset + i ] );
+			if ( v < block.m_vertex_begin || v >= last_vtx )
+				continue;
+
+			const ImVec2 p = ImClamp( list->VtxBuffer[ v ].pos, clip_lo, clip_hi );
+			lo             = ImMin( lo, p );
+			hi             = ImMax( hi, p );
+		}
+	}
+
+	return lo.x <= hi.x;
+}
+
 static float stretch_pivot( float lo, float hi, float screen_width )
 {
 	const float room = screen_width - ( hi - lo );
@@ -1593,17 +1623,11 @@ static void stretch_overlays( )
 	const float screen_width = center_x * 2.f;
 
 	for ( const auto& block : g_render.m_stretch_blocks ) {
-		float lo = FLT_MAX, hi = -FLT_MAX;
-
-		for ( int v = block.m_vertex_begin, last = ImMin( block.m_vertex_end, block.m_list->VtxBuffer.Size ); v < last; ++v ) {
-			lo = ImMin( lo, block.m_list->VtxBuffer[ v ].pos.x );
-			hi = ImMax( hi, block.m_list->VtxBuffer[ v ].pos.x );
-		}
-
-		if ( lo > hi )
+		ImVec2 lo, hi;
+		if ( !block_bounds( block, lo, hi ) )
 			continue;
 
-		const float pivot = stretch_pivot( lo, hi, screen_width );
+		const float pivot = stretch_pivot( lo.x, hi.x, screen_width );
 
 		stretch_vertices( block.m_list, block.m_vertex_begin, block.m_vertex_end, pivot, scale );
 		stretch_clip_rects( block.m_list, block.m_command_begin, block.m_command_end, pivot, scale, true );
@@ -1786,14 +1810,8 @@ static void dpi_scale_overlays( ImDrawData* draw_data, const ImVec2 screen )
 		ImVector< ImDrawVert >& vertices = block.m_list->VtxBuffer;
 		const int last                   = ImMin( block.m_vertex_end, vertices.Size );
 
-		ImVec2 lo( FLT_MAX, FLT_MAX ), hi( -FLT_MAX, -FLT_MAX );
-
-		for ( int v = block.m_vertex_begin; v < last; ++v ) {
-			lo = ImMin( lo, vertices[ v ].pos );
-			hi = ImMax( hi, vertices[ v ].pos );
-		}
-
-		if ( lo.x > hi.x )
+		ImVec2 lo, hi;
+		if ( !block_bounds( block, lo, hi ) )
 			continue;
 
 		/* pivot x ( 1 - scale ) whole: twin glyphs snapped to whole scaled px land on whole screen px ( <= 0.5 px shift ) */

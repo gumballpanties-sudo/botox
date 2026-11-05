@@ -113,7 +113,10 @@ namespace n_tick
 		}
 
 	public:
-		void start( const float fraction, const float interval_override = 0.f, const e_search id = search_none )
+		/* share < 1 = leave the rest of the cmd clock to a later search ( as clarity vs lumi ); own_clock = the full fraction, no cmd
+		   clock cap ( one rare tick that must not be cut, as pinned START ) */
+		void start( const float fraction, const float interval_override = 0.f, const e_search id = search_none, const float share = 1.f,
+		            const bool own_clock = false )
 		{
 			m_freq  = qpc_freq( );
 			m_start = now( );
@@ -126,11 +129,15 @@ namespace n_tick
 			if ( s_cmd_clock_live ) {
 				if ( id != search_none )
 					s_started_now |= 1u << id;
+				if ( own_clock )
+					return;
 				if ( const int owed = std::popcount( s_hungry_prev & ~s_started_now ); owed > 0 && m_span > left / ( 1 + owed ) ) {
 					left /= 1 + owed;
 					s_fair_cuts++;
 				}
 			}
+			if ( share < 1.f )
+				left = static_cast< long long >( static_cast< double >( left ) * static_cast< double >( std::clamp( share, 0.05f, 1.f ) ) );
 			if ( m_span > left )
 				m_span = left;
 		}

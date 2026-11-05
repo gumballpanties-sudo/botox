@@ -1674,10 +1674,12 @@ void n_menu::impl_t::tab_misc( )
 				"media player settings",
 				[]( ) {
 					auto& position = GET_VARIABLE( g_variables.m_media_player_position, int );
-					if ( position < 0 || position > 5 )
+					if ( position < 0 || position > 7 )
 						position = 0;
-					ImGui::Combo( "position##media player position", &position, "top right\0top left\0top center\0bottom center\0bottom left\0bottom right\0" );
+					ImGui::Combo( "position##media player position", &position,
+					              "top right\0top left\0top center\0bottom center\0bottom left\0bottom right\0center left\0center right\0" );
 
+					ImGui::Checkbox( "lumi layout", &GET_VARIABLE( g_variables.m_media_player_lumi, bool ) );
 					ImGui::Checkbox( "simple", &GET_VARIABLE( g_variables.m_media_player_simple, bool ) );
 					if ( !GET_VARIABLE( g_variables.m_media_player_simple, bool ) ) {
 						ImGui::Checkbox( "cover art", &GET_VARIABLE( g_variables.m_media_player_cover_art, bool ) );
