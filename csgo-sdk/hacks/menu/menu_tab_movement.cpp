@@ -1062,7 +1062,8 @@ void n_menu::impl_t::tab_movement( )
 
 						ImGui::Checkbox( "show pre speed##velocity indicator",
 					                     &GET_VARIABLE( g_variables.m_velocity_indicator_show_pre_speed, bool ) );
-						if ( GET_VARIABLE( g_variables.m_velocity_indicator_show_pre_speed, bool ) ) {
+						if ( GET_VARIABLE( g_variables.m_velocity_indicator_show_pre_speed, bool ) &&
+						     GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamibebra ) {
 							ImGui::Combo( "pre speed position##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_pre_layout, int ),
 							              k_pre_layout_names );
 							ImGui::SliderFloat( "pre speed scale##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_pre_scale, float ), 0.25f,
@@ -1077,8 +1078,10 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "custom color##velocity indicator",
 					                     &GET_VARIABLE( g_variables.m_velocity_indicator_custom_color, bool ) );
 
-						ImGui::Checkbox( "shadow##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_shadow, bool ) );
-						if ( GET_VARIABLE( g_variables.m_velocity_indicator_shadow, bool ) ) {
+						if ( GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamibebra )
+							ImGui::Checkbox( "shadow##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_shadow, bool ) );
+						if ( GET_VARIABLE( g_variables.m_velocity_indicator_shadow, bool ) &&
+						     GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamibebra ) {
 							ImGui::SliderFloat( "shadow blur##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_shadow_blur, float ), 0.f,
 							                    20.f, "%.1f" );
 							if ( GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamidere )
@@ -1088,8 +1091,10 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderInt( "shadow y##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_shadow_y, int ), -10, 10, "%d px" );
 						}
 
-						ImGui::Checkbox( "outline##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_outline, bool ) );
-						if ( GET_VARIABLE( g_variables.m_velocity_indicator_outline, bool ) ) {
+						if ( GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamibebra )
+							ImGui::Checkbox( "outline##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_outline, bool ) );
+						if ( GET_VARIABLE( g_variables.m_velocity_indicator_outline, bool ) &&
+						     GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamibebra ) {
 							ImGui::ColorEdit4( "outline color##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_outline_color, c_color ),
 							                   color_picker_alpha_flags );
 							ImGui::SliderInt( "outline thickness##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_outline_px, int ), 1, 5,
@@ -1129,7 +1134,8 @@ void n_menu::impl_t::tab_movement( )
 
 						ImGui::Checkbox( "show pre speed##stamina indicator",
 					                     &GET_VARIABLE( g_variables.m_stamina_indicator_show_pre_speed, bool ) );
-						if ( GET_VARIABLE( g_variables.m_stamina_indicator_show_pre_speed, bool ) ) {
+						if ( GET_VARIABLE( g_variables.m_stamina_indicator_show_pre_speed, bool ) &&
+						     GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamibebra ) {
 							ImGui::Combo( "pre speed position##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_pre_layout, int ),
 							              k_pre_layout_names );
 							ImGui::SliderFloat( "pre speed scale##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_pre_scale, float ), 0.25f,
@@ -1141,8 +1147,10 @@ void n_menu::impl_t::tab_movement( )
 
 						ImGui::Checkbox( "fade alpha##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_fade_alpha, bool ) );
 
-						ImGui::Checkbox( "shadow##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_shadow, bool ) );
-						if ( GET_VARIABLE( g_variables.m_stamina_indicator_shadow, bool ) ) {
+						if ( GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamibebra )
+							ImGui::Checkbox( "shadow##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_shadow, bool ) );
+						if ( GET_VARIABLE( g_variables.m_stamina_indicator_shadow, bool ) &&
+						     GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamibebra ) {
 							ImGui::SliderFloat( "shadow blur##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_shadow_blur, float ), 0.f,
 							                    20.f, "%.1f" );
 							if ( GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamidere )
@@ -1152,8 +1160,10 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderInt( "shadow y##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_shadow_y, int ), -10, 10, "%d px" );
 						}
 
-						ImGui::Checkbox( "outline##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_outline, bool ) );
-						if ( GET_VARIABLE( g_variables.m_stamina_indicator_outline, bool ) ) {
+						if ( GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamibebra )
+							ImGui::Checkbox( "outline##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_outline, bool ) );
+						if ( GET_VARIABLE( g_variables.m_stamina_indicator_outline, bool ) &&
+						     GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamibebra ) {
 							ImGui::ColorEdit4( "outline color##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_outline_color, c_color ),
 							                   color_picker_alpha_flags );
 							ImGui::SliderInt( "outline thickness##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_outline_px, int ), 1, 5,
@@ -1235,6 +1245,11 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::ColorEdit4( "kami shadow color##keybind indicator", &GET_VARIABLE( g_variables.m_indicator_kami_shadow_color, c_color ),
 							                   color_picker_alpha_flags );
 
+						const bool kamibebra_keys = GET_VARIABLE( g_variables.m_key_indicators_style, int ) == indicator_style_kamibebra;
+						if ( kamibebra_keys )
+							ImGui::ColorEdit4( "detect accent##keybind indicator", &GET_VARIABLE( g_variables.m_indicator_kamibebra_accent, c_color ),
+							                   color_picker_alpha_flags );
+
 						ImGui::ColorEdit4( "keybind colors##keybind color", &GET_VARIABLE( g_variables.m_key_color, c_color ),
 					                       color_picker_alpha_flags );
 
@@ -1245,12 +1260,14 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::ColorEdit4( "in prediction color##keybind predict color", &GET_VARIABLE( g_variables.m_key_color_predict, c_color ),
 						                   color_picker_alpha_flags );
 
-						ImGui::Checkbox( "horizontal layout", &GET_VARIABLE( g_variables.m_key_indicators_horizontal, bool ) );
+						if ( !kamibebra_keys )
+							ImGui::Checkbox( "horizontal layout", &GET_VARIABLE( g_variables.m_key_indicators_horizontal, bool ) );
 
 						ImGui::SliderInt( "spacing##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_spacing, int ), -10, 40, "%d px" );
 
-						ImGui::Checkbox( "shadow##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_shadow, bool ) );
-						if ( GET_VARIABLE( g_variables.m_key_indicators_shadow, bool ) ) {
+						if ( !kamibebra_keys )
+							ImGui::Checkbox( "shadow##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_shadow, bool ) );
+						if ( GET_VARIABLE( g_variables.m_key_indicators_shadow, bool ) && !kamibebra_keys ) {
 							ImGui::SliderFloat( "shadow blur##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_shadow_blur, float ), 0.f, 20.f,
 							                    "%.1f" );
 
@@ -1263,8 +1280,9 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderInt( "shadow y##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_shadow_y, int ), -10, 10, "%d px" );
 						}
 
-						ImGui::Checkbox( "outline##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_outline, bool ) );
-						if ( GET_VARIABLE( g_variables.m_key_indicators_outline, bool ) ) {
+						if ( !kamibebra_keys )
+							ImGui::Checkbox( "outline##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_outline, bool ) );
+						if ( GET_VARIABLE( g_variables.m_key_indicators_outline, bool ) && !kamibebra_keys ) {
 							ImGui::ColorEdit4( "outline color##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_outline_color, c_color ),
 							                   color_picker_alpha_flags );
 							ImGui::SliderInt( "outline thickness##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_outline_px, int ), 1, 5,

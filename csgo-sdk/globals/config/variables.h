@@ -177,10 +177,11 @@ enum e_indicator_style {
 	indicator_style_mitosis,
 	indicator_style_kamidere,
 	indicator_style_squash,
+	indicator_style_kamibebra,
 	indicator_style_max
 };
 
-inline constexpr const char* k_indicator_style_names = "default\0static\0smooth\0mitosis\0kamidere\0squash & stretch\0";
+inline constexpr const char* k_indicator_style_names = "default\0static\0smooth\0mitosis\0kamidere\0squash & stretch\0kamibebra\0";
 
 enum e_smooth_origin {
 	smooth_origin_auto = 0,
@@ -1423,6 +1424,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_velocity_indicator_pre_scale, 1.f );
 		ADD_VARIABLE( int, m_velocity_indicator_pre_align, 0 );
 		ADD_VARIABLE( c_color, m_indicator_kami_shadow_color, c_color( 252, 193, 255, 255 ) );
+		ADD_VARIABLE( c_color, m_indicator_kamibebra_accent, c_color( 252, 194, 255, 255 ) );
 		ADD_VARIABLE( float, m_stamina_indicator_scale, 1.f );
 		ADD_VARIABLE( float, m_key_indicators_scale, 1.f );
 		ADD_VARIABLE( float, m_key_press_scale, 1.f );

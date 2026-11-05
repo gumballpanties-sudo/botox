@@ -78,6 +78,7 @@ enum e_font_names {
 	font_name_cod4_weapon_icon_48, // csgo weapon icon font big enough for the cod4 hud's killfeed / offhand icons
 	font_name_menu_tahoma_9,
 	font_name_menu_tahoma_bd_9,
+	font_name_kamibebra_22,
 	font_name_max
 };
 

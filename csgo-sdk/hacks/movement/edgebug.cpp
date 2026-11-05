@@ -1534,8 +1534,10 @@ void n_edgebug::draw_plan( const c_vector* path, const int count, const int from
 	const int fill_mode    = GET_VARIABLE( g_variables.m_edgebug_visualize_fill, int );
 	const bool projected   = GET_VARIABLE( g_variables.m_edgebug_visualize_projected, bool );
 	const float reach      = GET_VARIABLE( g_variables.m_edgebug_visualize_size, float );
-	constexpr int k_max_pts = 24;
-	const int pts = circle ? k_max_pts : 4;
+	constexpr int k_max_pts = 32; /* = poly_draw_object_t cap, fill shares the ring */
+	/* projected square walks its edges ( 8 a side ) so the outline bends over steps instead of cutting through */
+	const int pts = circle || projected ? k_max_pts : 4;
+	const int per_side = pts / 4;
 	c_vector pad[k_max_pts];
 	for ( int i = 0; i < pts; i++ ) {
 		if ( circle ) {
@@ -1543,23 +1545,35 @@ void n_edgebug::draw_plan( const c_vector* path, const int count, const int from
 			pad[i] = { p.m_x + cosf( a ) * reach, p.m_y + sinf( a ) * reach, p.m_z };
 		}
 		else {
-			const float sx = ( i == 0 || i == 1 ) ? -reach : reach;
-			const float sy = ( i == 1 || i == 2 ) ? reach : -reach;
-			pad[i] = { p.m_x + sx, p.m_y + sy, p.m_z };
+			const int s0 = i / per_side, s1 = ( s0 + 1 ) % 4;
+			const float t = static_cast< float >( i % per_side ) / static_cast< float >( per_side );
+			const auto cx = [ & ]( const int s ) { return s < 2 ? -reach : reach; };
+			const auto cy = [ & ]( const int s ) { return s == 1 || s == 2 ? reach : -reach; };
+			pad[i] = { p.m_x + cx( s0 ) + ( cx( s1 ) - cx( s0 ) ) * t, p.m_y + cy( s0 ) + ( cy( s1 ) - cy( s0 ) ) * t, p.m_z };
 		}
 	}
 	if ( projected ) {
-		/* one down ray per vertex ( 18u up = step height, 64 down ). paint thread, not the search clock. */
+		/* each sample drops onto floor within step height ( 18u ) of the pad. void / in-wall samples take the
+		   neighbour's floor height, never fall to the floor below the lip. paint thread, not the search clock. */
 		c_trace_filter filter( g_ctx.m_local );
-		auto drop = [ & ]( c_vector& v ) {
-			ray_t ray( c_vector( v.m_x, v.m_y, v.m_z + 18.f ), c_vector( v.m_x, v.m_y, v.m_z - 64.f ) );
+		bool hit[k_max_pts];
+		int first = -1;
+		for ( int i = 0; i < pts; i++ ) {
+			ray_t ray( c_vector( pad[i].m_x, pad[i].m_y, p.m_z + 18.f ), c_vector( pad[i].m_x, pad[i].m_y, p.m_z - 18.f ) );
 			trace_t tr;
 			g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
-			if ( tr.did_hit( ) )
-				v.m_z = tr.m_end.m_z + 0.5f;
-		};
-		for ( int i = 0; i < pts; i++ )
-			drop( pad[i] );
+			hit[i] = tr.did_hit( ) && !tr.m_start_solid;
+			if ( hit[i] ) {
+				pad[i].m_z = tr.m_end.m_z + 0.5f;
+				if ( first < 0 )
+					first = i;
+			}
+		}
+		for ( int j = 1; first >= 0 && j < pts; j++ ) {
+			const int i = ( first + j ) % pts;
+			if ( !hit[i] )
+				pad[i].m_z = pad[( i + pts - 1 ) % pts].m_z;
+		}
 	}
 	if ( fill_mode != 0 ) {
 		// one convex poly, never a centre fan: imgui AA-fringes each triangle = bright spokes

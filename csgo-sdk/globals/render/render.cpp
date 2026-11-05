@@ -613,6 +613,8 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 	fonts[ e_font_names::font_name_kamibebra_bold_13 ] =
 		add_donor_font( rubik_medium, sizeof( rubik_medium ), 13.f,
 	                    ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap | ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_LightHinting );
+	fonts[ e_font_names::font_name_kamibebra_22 ] =
+		add_donor_font( rubik_regular, sizeof( rubik_regular ), 22.f, ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap, false );
 
 	fonts[ e_font_names::font_name_cumhacck_35 ] =
 		atlas->AddFontFromMemoryCompressedTTF( verdana_bold_compressed_data, verdana_bold_compressed_size, 35.f, &tahoma_font_config );

@@ -33,6 +33,15 @@ static struct {
 	int ticks = 0, moved = 0;
 } s_lock;
 
+/* flush on the wall, no proven pin: resend the same approach move ( 11-05 online log: 17 server pins on approach cmds the client saw fall,
+   all died 1-5t later on the next in-flight cmd = lumi side flip / fwd 1-5-30 hop ). same cmd after a server pin = kept 35/35 */
+static struct {
+	bool valid = false;
+	float yaw = 0.0f, fwd = 0.0f;
+	c_vector normal{ };
+	int ticks = 0;
+} s_sticky;
+
 static void lock_end( const char* why )
 {
 	if ( s_lock.valid )
@@ -146,12 +155,14 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		s_hold.ticks   = 0;
 		was_stuck      = false;
 		s_expect.valid = false;
+		s_sticky.valid = false;
 		return;
 	}
 	const int move_type = g_ctx.m_local->get_move_type( );
 	if ( move_type == move_type_ladder || move_type == move_type_noclip || move_type == move_type_fly || move_type == move_type_observer ) {
 		was_stuck      = false;
 		s_expect.valid = false;
+		s_sticky.valid = false;
 		return;
 	}
 
@@ -188,6 +199,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	   the final cmd ( 10-30 log: 125/125 live-view re-proofs pinned, <= 18 ulp tries ). zero move: wishvel 0, AirAccelerate returns on
 	   addspeed 0 ( gamemovement.cpp:2028/1985 ) = any view sims the same */
 	const auto publish = [ & ]( const float yaw, const float move, const bool stuck, const float pitch, const bool exact, const float side = 0.0f ) {
+		if ( stuck )
+			s_sticky.valid = false;
 		s_proof                   = { stuck, exact, origin, live_velocity };
 		s_hold.valid              = stuck;
 		s_hold.pitch              = pitch;
@@ -351,6 +364,9 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		return true;
 	};
 
+	bool contact = false;
+	c_vector contact_n{ };
+
 	{
 		c_vector cl_normal{ };
 		bool cl_contact = false;
@@ -368,6 +384,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			cl_ent     = tr.m_hit_entity ? tr.m_hit_entity->get_index( ) : -1;
 			cl_surf    = tr.surface.m_name ? tr.surface.m_name : "";
 		}
+		contact        = cl_contact;
+		contact_n      = cl_normal;
 		bool cl_held   = false;
 		bool cl_parked = false;
 		int cl_rob     = -1;
@@ -564,8 +582,11 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	/* wall, touch scan: 16 headings from last tick's, 1u ray column feet..head reaching 2u past the hull edge.
 	   |nz| <= 0.35 ( slopes / disps count ), must face us; lowest fraction in the column wins */
 	const float extra_reach = std::clamp( GET_VARIABLE( g_variables.m_air_stuck_extra_reach, float ), 0.0f, 32.0f );
+	/* touching ( 0.05u hull contact ): that face is the wall, no line scan. 11-05 offline log: at convex corners the hull touches the edge
+	   ( axial bevel ) while the line scan locked faces 10-15u off ( gap=9.9 / 15.5, normal flipping ) = 4 falls, 0 catches */
+	const bool touch = contact && std::fabsf( contact_n.m_z ) <= 0.35f;
 	/* one box holds every A/B ray below: empty = no wall, skips ~1170 traces ( 4.5 ms/tick ate the cmd clock, eb starved ) */
-	{
+	if ( !touch ) {
 		const float half = std::max( ext_x, ext_y ) + std::max( extra_reach, 0.05f ) + 0.5f;
 		trace_t tr{ };
 		ray_t ray( origin, origin, c_vector( -half, -half, mins.m_z - 1.0f ), c_vector( half, half, maxs.m_z + 1.0f ) );
@@ -573,17 +594,23 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		if ( !tr.did_hit( ) ) {
 			if ( keep_hold( 0 ) )
 				return;
-			start_angle = 0.0f;
-			was_stuck   = false;
+			start_angle    = 0.0f;
+			was_stuck      = false;
+			s_sticky.valid = false;
 			return;
 		}
 	}
-	char scan        = 'A';
-	bool found       = false;
-	c_vector normal{ };
-	float hit_z = 0.0f;
+	char scan        = touch ? 'C' : 'A';
+	bool found       = touch;
+	c_vector normal  = touch ? contact_n : c_vector{ };
+	float hit_z = origin.m_z;
 	int hit_ent = -1;
-	for ( float a = start_angle; a < start_angle + k_pi * 2.0f; a += k_pi / 8.0f ) {
+	if ( touch ) {
+		start_angle = std::atan2( -contact_n.m_y, -contact_n.m_x );
+		if ( start_angle < 0.0f )
+			start_angle += k_pi * 2.0f;
+	}
+	for ( float a = start_angle; !touch && a < start_angle + k_pi * 2.0f; a += k_pi / 8.0f ) {
 		const float ang   = std::fmod( a, k_pi * 2.0f );
 		const float c     = std::cos( ang );
 		const float s     = std::sin( ang );
@@ -652,8 +679,9 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	if ( !found ) {
 		if ( keep_hold( 0 ) )
 			return;
-		start_angle = 0.0f;
-		was_stuck   = false;
+		start_angle    = 0.0f;
+		was_stuck      = false;
+		s_sticky.valid = false;
 		return;
 	}
 	const long long scan_us = scan_clock.used_us( );
@@ -677,12 +705,12 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	c_vector best_end{ };
 	const auto out_of_time = [ & ]( ) { return cands >= 512 || ( cands > 0 && clock.expired( ) ); };
 
-	const auto try_move = [ & ]( const float rel, const float move, const float gap_len ) {
+	const auto try_yaw = [ & ]( const float yaw, const float move, const float gap_len ) {
 		++cands;
 		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 		apply_predicted_state( );
 
-		cmd->m_view_point.m_y = std::remainder( wall_yaw + rel * side, 360.0f );
+		cmd->m_view_point.m_y = yaw;
 		cmd->m_forward_move   = move;
 		cmd->m_side_move      = 0.0f;
 		cmd->m_buttons        = live_buttons;
@@ -725,6 +753,15 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			best_end   = end1;
 		}
 	};
+	const auto try_move = [ & ]( const float rel, const float move, const float gap_len ) { try_yaw( std::remainder( wall_yaw + rel * side, 360.0f ), move, gap_len ); };
+
+	/* sticky first: wins ties, so a pin it proves keeps the cmd the server already has in flight.
+	   online + slow only: offline nothing is in flight, and moving it froze a fwd 1 move that never cut the tangent ( 11-05 log: vxy 186
+	   for 30t, vxy 5 wrong side 75t, plain catches 2-5t ); online server-early pins were all at vxy <= 1.3 */
+	const bool stick_ok = contact && g_interfaces.m_prediction->m_commands_predicted > 0 && live_velocity.length_2d( ) < 2.0f;
+	const bool sticky   = s_sticky.valid && stick_ok && s_sticky.normal.dot_product( normal ) > 0.999f;
+	if ( sticky )
+		try_yaw( s_sticky.yaw, s_sticky.fwd, 32.0f );
 
 	constexpr float k_moves_near[ 3 ] = { 1.0f, 5.0f, 30.0f };
 	for ( const float move : k_moves_near ) {
@@ -752,14 +789,25 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 
 	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 	apply_predicted_state( );
-	botox_dbg_log( "AS: lumi scan=%c n=%.3f,%.3f,%.3f hz=%.1f side=%.0f pin=%d crob=%d/%d gap=%.3f yaw=%.1f fwd=%.0f cand=%d vz=%.2f ent=%d scan_us=%lld us=%lld", scan,
-	               normal.m_x, normal.m_y, normal.m_z, hit_z - origin.m_z, side, best_ticks, best_crob, crob_sims, best_gap, best_yaw, best_move, cands, live_velocity.m_z,
-	               hit_ent, scan_us, clock.used_us( ) );
+	botox_dbg_log( "AS: lumi scan=%c n=%.3f,%.3f,%.3f hz=%.1f side=%.0f pin=%d crob=%d/%d gap=%.3f yaw=%.1f fwd=%.0f cand=%d vz=%.2f ent=%d scan_us=%lld us=%lld stk=%d",
+	               scan, normal.m_x, normal.m_y, normal.m_z, hit_z - origin.m_z, side, best_ticks, best_crob, crob_sims, best_gap, best_yaw, best_move, cands,
+	               live_velocity.m_z, hit_ent, scan_us, clock.used_us( ), sticky ? s_sticky.ticks : -1 );
 	if ( keep_hold( best_ticks ) )
 		return;
+	if ( best_ticks < 3 && sticky ) {
+		++s_sticky.ticks;
+		publish( s_sticky.yaw, s_sticky.fwd, false, live_view.m_x, false );
+		s_expect.valid = false;
+		return;
+	}
 	/* a hold is armed only by the full 3-tick chain; shorter pins go out as the approach move, unarmed */
 	publish( best_yaw, best_move, best_ticks >= 3, live_view.m_x, false );
 	s_expect = { best_ticks >= 3, best_end };
+	if ( best_ticks < 3 ) {
+		s_sticky = { stick_ok, best_yaw, best_move, normal, 0 };
+		if ( stick_ok )
+			botox_dbg_log( "AS: sticky yaw=%.1f fwd=%.0f", best_yaw, best_move );
+	}
 }
 
 void air_stuck_final_stamp( c_user_cmd* cmd )
