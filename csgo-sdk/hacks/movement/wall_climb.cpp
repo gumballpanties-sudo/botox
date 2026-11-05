@@ -74,7 +74,7 @@ namespace
 		wc_land, wc_flip, wc_pin_catch, wc_hold, wc_park, wc_keys, wc_along, wc_own, wc_leave, wc_aa_leave, wc_exit, wc_exit_none, wc_far, wc_rise,
 		wc_scan_cut, wc_cut, wc_div, wc_div_stomp, wc_stomp, wc_yield, wc_ramp, wc_skip, wc_jump_back, wc_jump_strip, wc_as_take, wc_pin_miss, wc_no_park,
 		wc_park_keep, wc_away, wc_robust, wc_spot, wc_spot_sims, wc_hold_land, wc_low, wc_leave_hang, wc_seam, wc_seam_park, wc_pin_flip, wc_st_job, wc_st_pick,
-		wc_st_tick, wc_st_sims, wc_wig, wc_ticks, wc_sims, wc_max
+		wc_st_tick, wc_st_sims, wc_wig, wc_hold_along, wc_ticks, wc_sims, wc_max
 	};
 	int s_count[ wc_max ]{ };
 	long long s_us = 0ll, s_us_worst = 0ll;
@@ -199,11 +199,11 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	if ( const unsigned long long now = GetTickCount64( ); now >= s_log_next ) {
 		s_log_next = now + 1000ull;
 		if ( s_count[ wc_ticks ] || s_count[ wc_yield ] || s_count[ wc_ramp ] || s_count[ wc_skip ] )
-			botox_dbg_log( "WC: land=%d flip=%d pinc=%d hold=%d park=%d keys=%d along=%d own=%d leave=%d aa=%d exit=%d/%d far=%d rise=%d scut=%d cut=%d div=%d/%d stomp=%d yield=%d ramp=%d skip=%d jump back=%d strip=%d as=%d miss=%d np=%d pk=%d away=%d robust=%d spot=%d/%d hland=%d low=%d lhang=%d seam=%d/%d pflip=%d steer=%d/%d/%d ssims=%d wig=%d ticks=%d sims=%d us=%lld worst=%lld",
+			botox_dbg_log( "WC: land=%d flip=%d pinc=%d hold=%d park=%d keys=%d along=%d own=%d leave=%d aa=%d exit=%d/%d far=%d rise=%d scut=%d cut=%d div=%d/%d stomp=%d yield=%d ramp=%d skip=%d jump back=%d strip=%d as=%d miss=%d np=%d pk=%d away=%d robust=%d spot=%d/%d hland=%d low=%d lhang=%d seam=%d/%d pflip=%d steer=%d/%d/%d ssims=%d wig=%d holda=%d ticks=%d sims=%d us=%lld worst=%lld",
 			               s_count[ wc_land ], s_count[ wc_flip ], s_count[ wc_pin_catch ], s_count[ wc_hold ], s_count[ wc_park ], s_count[ wc_keys ],
 			               s_count[ wc_along ], s_count[ wc_own ], s_count[ wc_leave ], s_count[ wc_aa_leave ], s_count[ wc_exit ], s_count[ wc_exit_none ], s_count[ wc_far ],
 			               s_count[ wc_rise ], s_count[ wc_scan_cut ], s_count[ wc_cut ], s_count[ wc_div ], s_count[ wc_div_stomp ], s_count[ wc_stomp ], s_count[ wc_yield ], s_count[ wc_ramp ], s_count[ wc_skip ],
-			               s_count[ wc_jump_back ], s_count[ wc_jump_strip ], s_count[ wc_as_take ], s_count[ wc_pin_miss ], s_count[ wc_no_park ], s_count[ wc_park_keep ], s_count[ wc_away ], s_count[ wc_robust ], s_count[ wc_spot ], s_count[ wc_spot_sims ], s_count[ wc_hold_land ], s_count[ wc_low ], s_count[ wc_leave_hang ], s_count[ wc_seam ], s_count[ wc_seam_park ], s_count[ wc_pin_flip ], s_count[ wc_st_job ], s_count[ wc_st_pick ], s_count[ wc_st_tick ], s_count[ wc_st_sims ], s_count[ wc_wig ], s_count[ wc_ticks ], s_count[ wc_sims ], s_us,
+			               s_count[ wc_jump_back ], s_count[ wc_jump_strip ], s_count[ wc_as_take ], s_count[ wc_pin_miss ], s_count[ wc_no_park ], s_count[ wc_park_keep ], s_count[ wc_away ], s_count[ wc_robust ], s_count[ wc_spot ], s_count[ wc_spot_sims ], s_count[ wc_hold_land ], s_count[ wc_low ], s_count[ wc_leave_hang ], s_count[ wc_seam ], s_count[ wc_seam_park ], s_count[ wc_pin_flip ], s_count[ wc_st_job ], s_count[ wc_st_pick ], s_count[ wc_st_tick ], s_count[ wc_st_sims ], s_count[ wc_wig ], s_count[ wc_hold_along ], s_count[ wc_ticks ], s_count[ wc_sims ], s_us,
 			               s_us_worst );
 		for ( int& c : s_count )
 			c = 0;
@@ -775,9 +775,34 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		m_holding              = false;
 		s_count[ wc_leave_hang ] += ( start_pinned || was_holding ) && you_leave;
 		if ( ( start_pinned || was_holding ) && !you_leave ) {
+			const bool hduck = was_holding ? ( m_hold_buttons & in_duck ) != 0 : user_duck;
+			// lab P82 ( 11-05 "don't lose so much horizontal speed" ): a pin zeroes xy and the zero press hold hung there till the lip. your
+			// keys minus the into face part keep your along wish ( ~30 u/s back in a tick ): held first when it lands with no pin on the way.
+			// online grid: catches same, speed lost -29%, land xy +40%
+			c_user_cmd along = keys;
+			along.m_buttons  = hduck ? ( keys.m_buttons | in_duck ) : ( keys.m_buttons & ~in_duck );
+			float awx, awy;
+			world_wish( keys.m_view_point.m_y, keys.m_forward_move, keys.m_side_move, awx, awy );
+			if ( const float d = awx * wall_n.m_x + awy * wall_n.m_y; d < 0.f )
+				awx -= d * wall_n.m_x, awy -= d * wall_n.m_y;
+			const float ayr      = deg2rad( keys.m_view_point.m_y );
+			along.m_forward_move = awx * std::cosf( ayr ) + awy * std::sinf( ayr );
+			along.m_side_move    = awx * std::sinf( ayr ) - awy * std::cosf( ayr );
+			bool along_ok        = false;
 			restore( );
-			const c_user_cmd hold = with( wall_yaw, 0.f, was_holding ? ( m_hold_buttons & in_duck ) != 0 : user_duck );
-			if ( hold_lands( hold ) ) {
+			for ( int k = 0; k < k_hold_ticks && awx * awx + awy * awy > 1.f; ++k ) {
+				sim_out_t q{ };
+				if ( !chain( along, q ) || ( !( q.m_flags & fl_onground ) && pinned( q.m_vel ) ) )
+					break;
+				if ( q.m_flags & fl_onground ) {
+					along_ok = q.m_origin.m_z > m_ground_z + k_land_above;
+					break;
+				}
+			}
+			s_count[ wc_hold_along ] += along_ok;
+			restore( );
+			const c_user_cmd hold = along_ok ? along : with( wall_yaw, 0.f, hduck );
+			if ( along_ok || hold_lands( hold ) ) {
 				// lab P67: a land now beats one more hang tick ( hang -14%, catches same )
 				const float F  = k_hull_step / ( ipt * airaccel * ipt * friction );
 				const bool hd  = ( hold.m_buttons & in_duck ) != 0;

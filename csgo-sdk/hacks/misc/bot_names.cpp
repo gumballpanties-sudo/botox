@@ -37,10 +37,13 @@ namespace
 		int m_uses          = 0;
 	};
 
-	enum e_field { field_ping, field_rank, field_wins, field_level, field_medal, field_count };
+	enum e_field { field_ping, field_rank, field_wins, field_level, field_medal, field_color, field_count };
 
 	constexpr const char* k_fields[ field_count ] = { "m_iPing", "m_iCompetitiveRanking", "m_iCompetitiveWins", "m_nPersonaDataPublicLevel",
-	                                                  "m_nActiveCoinRank" };
+	                                                  "m_nActiveCoinRank", "m_iCompTeammateColor" };
+
+	/* yellow purple green blue orange; server gives bots -2 (none) */
+	constexpr int k_colors = 5;
 
 	/* coin/pin item def ids, checked against items_game.txt */
 	constexpr int k_medals[] = { 874,  969,  904,  941,  1331, 1332, 1339, 1340, 1341, 1357, 1358, 1359, 1367, 1368, 1369, 1376, 1377,
@@ -70,6 +73,7 @@ namespace
 		bot.m_stats[ field_wins ]  = pick( 10, 600 );
 		bot.m_stats[ field_level ] = pick( 1, 40 );
 		bot.m_stats[ field_medal ] = pick( 0, 2 ) ? k_medals[ pick( 0, static_cast< int >( std::size( k_medals ) ) - 1 ) ] : 0;
+		bot.m_stats[ field_color ] = pick( 0, k_colors - 1 );
 	}
 
 	/* writes go into the LISTEN SERVER's CCSPlayerResource so pov demos and gotv record them. its think (0.1s) puts the real
@@ -89,6 +93,7 @@ namespace
 		void* m_tools                            = nullptr;
 		void* m_resource_vtable                  = nullptr;
 		std::uintptr_t m_offsets[ field_count ]  = { };
+		std::uintptr_t m_team_offset             = 0;
 		std::mutex m_lock;
 		int m_values[ k_max_slots ][ field_count ] = { };
 		uint8_t m_masks[ k_max_slots ]           = { };
@@ -115,6 +120,9 @@ namespace
 			for ( int field = 0; field < field_count; ++field )
 				if ( !std::strcmp( name, k_fields[ field ] ) )
 					s_server.m_offsets[ field ] = offset;
+
+			if ( !std::strcmp( name, "m_iTeam" ) )
+				s_server.m_team_offset = offset;
 		}
 	}
 
@@ -149,8 +157,9 @@ namespace
 				}
 			}
 
-			g_console.print( std::format( "[bot names] server offsets ping {:x} rank {:x} wins {:x} level {:x} medal {:x}", s_server.m_offsets[ 0 ],
-			                              s_server.m_offsets[ 1 ], s_server.m_offsets[ 2 ], s_server.m_offsets[ 3 ], s_server.m_offsets[ 4 ] )
+			g_console.print( std::format( "[bot names] server offsets ping {:x} rank {:x} wins {:x} level {:x} medal {:x} color {:x} team {:x}",
+			                              s_server.m_offsets[ 0 ], s_server.m_offsets[ 1 ], s_server.m_offsets[ 2 ], s_server.m_offsets[ 3 ],
+			                              s_server.m_offsets[ 4 ], s_server.m_offsets[ 5 ], s_server.m_team_offset )
 			                     .c_str( ) );
 		}
 
@@ -419,7 +428,8 @@ void bot_names_frame( )
 
 	const bool fake_ping    = GET_VARIABLE( g_variables.m_bot_names_ping, bool );
 	const bool fake_profile = GET_VARIABLE( g_variables.m_bot_names_profile, bool );
-	if ( fake_ping || fake_profile )
+	const bool fake_color   = GET_VARIABLE( g_variables.m_bot_names_colors, bool );
+	if ( fake_ping || fake_profile || fake_color )
 		server_setup( );
 
 	std::map< std::pair< int, int >, int > wanted;
@@ -447,7 +457,7 @@ void bot_names_frame( )
 		seen.insert( user_id );
 
 		for ( int field = 0; field < field_count && i < 64; ++field )
-			if ( field == field_ping ? fake_ping : fake_profile )
+			if ( field == field_ping ? fake_ping : field == field_color ? fake_color : fake_profile )
 				wanted[ { i + 1, field } ] = bot.m_stats[ field ];
 
 		if ( bot.m_written.empty( ) || std::memcmp( data, bot.m_written.data( ), k_info_size ) != 0 )
@@ -480,10 +490,38 @@ void bot_names_server_write( )
 			break;
 		}
 
-	for ( int index = 1; resource && index < k_max_slots; ++index )
+	if ( !resource )
+		return;
+
+	const auto at = [ resource ]( std::uintptr_t offset, int index ) -> int& { return *reinterpret_cast< int* >( resource + offset + index * sizeof( int ) ); };
+	const auto ours = []( int index, int field ) { return ( s_server.m_masks[ index ] & ( 1 << field ) ) != 0; };
+
+	for ( int index = 1; index < k_max_slots; ++index )
 		for ( int field = 0; field < field_count; ++field )
-			if ( ( s_server.m_masks[ index ] & ( 1 << field ) ) && s_server.m_offsets[ field ] )
-				*reinterpret_cast< int* >( resource + s_server.m_offsets[ field ] + index * sizeof( int ) ) = s_server.m_values[ index ][ field ];
+			if ( field != field_color && ours( index, field ) && s_server.m_offsets[ field ] )
+				at( s_server.m_offsets[ field ], index ) = s_server.m_values[ index ][ field ];
+
+	/* value = bot's rolled preference; first free color on its team from there, humans keep theirs. lower slots resolve first */
+	const auto color_offset = s_server.m_offsets[ field_color ];
+	for ( int index = 1; color_offset && s_server.m_team_offset && index < k_max_slots; ++index ) {
+		if ( !ours( index, field_color ) )
+			continue;
+
+		const int team         = at( s_server.m_team_offset, index );
+		bool used[ k_colors ] = { };
+		for ( int other = 1; other < k_max_slots; ++other ) {
+			if ( other == index || at( s_server.m_team_offset, other ) != team || ( other > index && ours( other, field_color ) ) )
+				continue;
+			if ( const int color = at( color_offset, other ); color >= 0 && color < k_colors )
+				used[ color ] = true;
+		}
+
+		int color = -1;
+		for ( int step = 0; step < k_colors && color < 0; ++step )
+			if ( const int pick = ( s_server.m_values[ index ][ field_color ] + step ) % k_colors; !used[ pick ] )
+				color = pick;
+		at( color_offset, index ) = color;
+	}
 }
 
 void bot_names_randomize( )

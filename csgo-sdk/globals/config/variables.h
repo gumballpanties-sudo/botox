@@ -1659,6 +1659,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_bot_names_no_prefix, true );
 		ADD_VARIABLE( bool, m_bot_names_ping, false );
 		ADD_VARIABLE( bool, m_bot_names_profile, false );
+		ADD_VARIABLE( bool, m_bot_names_colors, false );
 
 		/* custom names, fpsoverlay names tab 1:1 (misc/custom_names.cpp). streamer mode 0 off, 1 team / enemy label,
 		   2 one label (fpsoverlay 2 / 3; its class mode has no cs:go side) -- never masks you. cycle lists: 16 rows +
