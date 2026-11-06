@@ -1836,12 +1836,14 @@ static void dpi_scale_overlays( ImDrawData* draw_data, const ImVec2 screen )
 	draw_data->DisplaySize = screen;
 }
 
-static void render_lists( const ImDrawData* source, ImVector< ImDrawList* >& lists, float fade )
+/* slide = px down; DisplayPos feeds the backend's projection + scissor, so both move, no vertex touched */
+static void render_lists( const ImDrawData* source, ImVector< ImDrawList* >& lists, float fade, float slide = 0.f )
 {
 	if ( lists.empty( ) )
 		return;
 
 	ImDrawData part    = *source;
+	part.DisplayPos.y -= slide;
 	part.CmdLists      = lists.Data;
 	part.CmdListsCount = lists.Size;
 	part.TotalVtxCount = 0;
@@ -2084,14 +2086,18 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& under, cons
 			( menu.empty( ) ? before : after ).push_back( list );
 	}
 
+	/* open slides up into place, close slides down: ease out cubic on the fade clock, whole px keeps text sharp */
+	const float rest  = 1.f - ImSaturate( g_menu.m_anim_progress );
+	const float slide = ImFloor( 12.f * this->m_dpi_scale * rest * rest * rest + 0.5f );
+
 	render_lists( draw_data, before, 1.f );
-	render_lists( draw_data, menu, fade );
+	render_lists( draw_data, menu, fade, slide );
 
 	/* popups on top of menu, each at its own alpha ( ghosts are not in draw_data ) */
 	for ( const auto& popup : popups ) {
 		popup_list.resize( 0 );
 		popup_list.push_back( popup.m_list );
-		render_lists( draw_data, popup_list, popup.m_alpha );
+		render_lists( draw_data, popup_list, popup.m_alpha, slide );
 	}
 
 	render_lists( draw_data, after, 1.f );

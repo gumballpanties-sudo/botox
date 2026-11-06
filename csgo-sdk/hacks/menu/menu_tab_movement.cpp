@@ -901,7 +901,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Label( "solve key" );
 						ImGui::Keybind( "pixel calculator solve key", &GET_VARIABLE( g_variables.m_pixel_calc_solve_key, key_bind_t ) );
 						ImGui::Checkbox( "show point", &GET_VARIABLE( g_variables.m_pixel_calc_show_point, bool ) );
-						ImGui::Combo( "type##pixel calculator type", &GET_VARIABLE( g_variables.m_pixel_calc_type, int ), "pixelsurf\0pixeljump\0" );
+						ImGui::Combo( "type##pixel calculator type", &GET_VARIABLE( g_variables.m_pixel_calc_type, int ), "pixelsurf\0pixeljump\0headbounce\0" );
 						ImGui::Checkbox( "advanced readout##pixel calculator", &GET_VARIABLE( g_variables.m_pixel_calc_advanced_readout, bool ) );
 						ImGui::Label( "allowed jumps" );
 						move_mask_combo( "##pixel calculator jump types", GET_VARIABLE( g_variables.m_pixel_calc_moves, int ) );

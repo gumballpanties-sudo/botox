@@ -48,6 +48,8 @@ namespace n_route
 		if ( point.type == route_pt_texturebug )
 			return point.pos.m_z;
 		if ( point.type == route_pt_headbounce ) {
+			if ( point.hb_win )
+				return point.hb_hi;
 			if ( point.hb_ceiling )
 				return point.pos.m_z;
 			return point.pos.m_z + ( point.snap_type == route_pt_headbounce ? 0.f : 0.03125f );
@@ -1183,6 +1185,7 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 			point.type       = snap_type;
 			point.snap_type  = snap_type;
 			point.hb_ceiling = snap_type == route_pt_headbounce && pf_hb_is_ceiling( snapped );
+			point.hb_win     = snap_type == route_pt_headbounce && !point.hb_ceiling && pf_hb_window( snapped, point.hb_lo, point.hb_hi );
 			if ( head_tb ) {
 				point.allow_stand = false;
 				point.head_tb     = true;

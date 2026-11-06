@@ -6,8 +6,15 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <format>
 
 extern void botox_dbg_log( const char* fmt, ... );
+
+namespace
+{
+	constexpr int k_pc_headbounce = 2;
+	const char* pc_type_name( int type ) { return type == k_pc_headbounce ? "headbounce" : type == 1 ? "pixeljump" : "pixelsurf"; }
+}
 
 void n_movement::impl_t::pixel_calc_render( )
 {
@@ -47,7 +54,7 @@ void n_movement::impl_t::pixel_calc_render( )
 
 	auto* font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
 	if ( font ) {
-		const char* label = "px";
+		const char* label = GET_VARIABLE( g_variables.m_pixel_calc_type, int ) == k_pc_headbounce ? "hb" : "px";
 		ImVec2 text_size  = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.0f, label );
 		text_draw_object_t text;
 		text.m_position = c_vector_2d( screen_pos.m_x - text_size.x * 0.5f, screen_pos.m_y - text_size.y * 0.5f - 1.f );
@@ -72,9 +79,10 @@ void n_movement::impl_t::pixel_calc( c_user_cmd* cmd )
 		data.clear( );
 
 	const bool advanced = GET_VARIABLE( g_variables.m_pixel_calc_advanced_readout, bool );
+	const int calc_type = GET_VARIABLE( g_variables.m_pixel_calc_type, int );
 	const auto added    = [ & ]( float z ) {
 		char buf[ 64 ]{ };
-		sprintf_s( buf, "added %s point at %.2f", GET_VARIABLE( g_variables.m_pixel_calc_type, int ) == 1 ? "pixeljump" : "pixelsurf", z );
+		sprintf_s( buf, "added %s point at %.2f", pc_type_name( calc_type ), z );
 		movement_add_window( 3, buf );
 	};
 
@@ -111,9 +119,12 @@ void n_movement::impl_t::pixel_calc( c_user_cmd* cmd )
 				}
 			};
 
-			try_snap( GET_VARIABLE( g_variables.m_pixel_calc_type, int ) == 1 ? animated_points4 : animated_points );
+			try_snap( calc_type == k_pc_headbounce ? animated_points2 : calc_type == 1 ? animated_points4 : animated_points );
 
-			if ( snap_found ) {
+			/* headbounce z = head window of a finder dot, an aimed ceiling has no seam to read */
+			if ( !snap_found && calc_type == k_pc_headbounce ) {
+				movement_add_window( 3, "calc: no headbounce dot here - scan with the pixel finder and aim at a red dot" );
+			} else if ( snap_found ) {
 				data.point_vec      = best_point;
 				data.normal_pos_vec = c_vector( 0, 0, 1 );
 				data.snapped        = true;
@@ -198,9 +209,21 @@ void n_movement::impl_t::pixel_calc( c_user_cmd* cmd )
 	route_point_t pt;
 	pt.pos         = pv;
 	pt.wall_normal = data.normal_pos_vec;
-	const bool pixeljump = GET_VARIABLE( g_variables.m_pixel_calc_type, int ) == 1;
-	pt.type              = pixeljump ? route_pt_pixeljump : route_pt_pixelsurf;
-	pt.snapped     = data.snapped;
+	const bool pixeljump  = calc_type == 1;
+	const bool headbounce = calc_type == k_pc_headbounce;
+	if ( headbounce && ( !data.snapped || std::none_of( animated_points2.begin( ), animated_points2.end( ), [ & ]( const AnimatedPoint& ap ) {
+		                                      return !ap.is_removing && ap.position == pv;
+	                                      } ) ) ) {
+		fail( "headbounce needs a red finder dot - place the point on one" );
+		return;
+	}
+	pt.type    = headbounce ? route_pt_headbounce : pixeljump ? route_pt_pixeljump : route_pt_pixelsurf;
+	pt.snapped = data.snapped;
+	if ( headbounce ) {
+		pt.snap_type  = route_pt_headbounce;
+		pt.hb_ceiling = pf_hb_is_ceiling( pt.pos );
+		pt.hb_win     = !pt.hb_ceiling && pf_hb_window( pt.pos, pt.hb_lo, pt.hb_hi );
+	}
 	pt.quantized_z = n_route::target_z( pt );
 	if ( pixeljump ) {
 		float gap  = -1.f;
@@ -253,9 +276,10 @@ void n_movement::impl_t::pixel_calc( c_user_cmd* cmd )
 		n_route::solve( in, result );
 		const double seconds = std::chrono::duration< double >( std::chrono::steady_clock::now( ) - clock_start ).count( );
 
-		botox_dbg_log( "[px] %s z %9.4f ( %s%s ) +%d hops -> %lld routes in %.3f s, closest %.4f\n",
-		                   pixeljump ? "pixeljump" : "pixelsurf", pt.quantized_z, data.snapped ? "snapped" : "aimed",
-		                   pt.pj_skin ? ", skin" : "", hops, result.total, seconds,
+		botox_dbg_log( "[px] %s z %9.4f ( %s%s%s%s ) +%d hops -> %lld routes in %.3f s, closest %.4f\n",
+		                   pc_type_name( calc_type ), pt.quantized_z, data.snapped ? "snapped" : "aimed",
+		                   pt.pj_skin ? ", skin" : "", pt.hb_ceiling ? ", ceiling" : "",
+		                   pt.hb_win ? std::format( ", window {:.5f}..{:.5f}", pt.hb_lo, pt.hb_hi ).c_str( ) : "", hops, result.total, seconds,
 		                   result.best_gap < 3.4e38f ? result.best_gap : -1.f );
 
 		if ( result.routes.empty( ) ) {

@@ -204,6 +204,10 @@ struct route_point_t {
 	c_vector ent_offset{ };
 	bool pj_skin = false;
 	bool hb_ceiling = false;
+	/* seam headbounce: finder measured tick start head window [ hb_lo, hb_hi ), target_z = hb_hi */
+	bool hb_win  = false;
+	float hb_lo  = 0.f;
+	float hb_hi  = 0.f;
 	float roof = 3.4e38f;
 	/* head seam tb: solved as ducked pixelsurf at pos, shown as texturebug at the finder dot */
 	bool head_tb = false;
@@ -957,6 +961,7 @@ bool pf_dot_screen( const AnimatedPoint& ap, c_vector_2d& out );
 bool pf_tb_is_head( const c_vector& dot );
 void pf_tb_rise_seam( c_vector& dot );
 bool pf_hb_is_ceiling( const c_vector& dot );
+bool pf_hb_window( const c_vector& dot, float& lo, float& hi );
 struct pf_map_state_t {
 	bool busy = false;
 	int done = 0, total = 0, lines = 0, tb = 0;

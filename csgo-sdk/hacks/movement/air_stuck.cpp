@@ -1,4 +1,5 @@
 #include "movement_internal.h"
+#include "texturebug_common.h"
 #include <algorithm>
 #include <cmath>
 #include <format>
@@ -390,6 +391,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 
 	bool contact = false;
 	c_vector contact_n{ };
+	float contact_d = 0.0f;
 	/* near-axis wall, moving START: clarity's cardinal pin waits for lumi ( 11-05 MARKETWALL n=0.028,-1 logs: clarity moving-START pins
 	   fell 0/9, lumi fwd 5/30 1-tick pins put the server on the pin 10/14, then clarity re-pins from that pinned START 7/7 ) */
 	struct {
@@ -412,6 +414,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
 			cl_contact = tr.did_hit( );
 			cl_normal  = tr.m_plane.m_normal;
+			contact_d  = cl_contact ? n_tb::hull_plane_dist( tr, mins, maxs ) : 0.0f;
 			cl_disp    = tr.m_disp_flags != 0;
 			cl_ent     = tr.m_hit_entity ? tr.m_hit_entity->get_index( ) : -1;
 			cl_surf    = tr.surface.m_name ? tr.surface.m_name : "";
@@ -735,6 +738,10 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		drift_m += 360.0f;
 	const float side    = drift_m < 180.0f ? 1.0f : -1.0f;
 	const float support = GetWallSupportDistance( g_ctx.m_local, c_vector( normal.m_x, normal.m_y, 0.0f ) );
+	/* touch: hull to contact plane at END, no line. 11-06 log: the feet-z gap line missed the wall on every cand ( gap=14.048 / 15.419 ) =
+	   rank dead, first cand ( fwd 1 ) sent 12-23t, no catch; lab near-axis mirage: dead rank 159/190 caught at 3-9t vs 190/190 at 2t */
+	const float hull_off = std::min( normal.m_x * mins.m_x, normal.m_x * maxs.m_x ) + std::min( normal.m_y * mins.m_y, normal.m_y * maxs.m_y ) +
+	                       std::min( normal.m_z * mins.m_z, normal.m_z * maxs.m_z ) - contact_d;
 
 	n_tick::c_sim_budget clock;
 	clock.start( GET_VARIABLE( g_variables.m_air_stuck_budget, float ) * 0.01f, n_tick::engine_interval( ), n_tick::search_as );
@@ -781,9 +788,9 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		}
 
 		const c_vector end = g_ctx.m_local->get_abs_origin( );
-		const trace_t tr   = line( c_vector( end.m_x, end.m_y, hit_z ),
-		                           c_vector( end.m_x - normal.m_x * gap_len, end.m_y - normal.m_y * gap_len, hit_z ), mask_all );
-		const float gap    = tr.m_fraction * gap_len - support;
+		const float gap    = touch ? end.dot_product( normal ) + hull_off
+		                           : line( c_vector( end.m_x, end.m_y, hit_z ), c_vector( end.m_x - normal.m_x * gap_len, end.m_y - normal.m_y * gap_len, hit_z ),
+		                                   mask_all ).m_fraction * gap_len - support;
 		/* 10-30 21:19 log: pin=1 fell 28/28, pin=3 held 3/3; crob only breaks ties */
 		const int crob     = ticks > 0 && ticks >= best_ticks ? catch_rob( crob_sims, ticks > best_ticks ? -1 : best_crob - 1, clock ) : -1;
 

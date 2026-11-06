@@ -456,6 +456,28 @@ namespace
 		return true;
 	}
 
+	/* same jb, duck pressed at an earlier air tick: FinishDuck stamps m_flLastDuckTime there ( cs_gamemovement.cpp:949 ),
+	   so the 0.4 s re-duck gate ( :159 ) opens sooner after the jb = kamidere / lumi "jb + crouch". ticks = early tick
+	   through the band tick, re-flown ducked ( +9 at the duck, then the moves, the game's order ) */
+	bool jumpbug_band_early( n_route::sim_t s, int ticks, bool above, float floor_z, n_route::sim_t& out )
+	{
+		for ( int k = 0; k < ticks; ++k ) {
+			if ( !above && s.z > floor_z - k_dist_eps && s.vz - half_gravity_per_tick( ) < 0.f )
+				above = true;
+			sim_tick( s, false, true, floor_z, above );
+			if ( s.on_ground )
+				return false;
+		}
+		if ( !s.ducked )
+			return false;
+		n_route::sim_t probe = s;
+		sim_tick( probe, true, false, floor_z, true );
+		if ( probe.on_ground || probe.vz <= 0.f )
+			return false;
+		out = s;
+		return true;
+	}
+
 	std::string departure_name( int style, int timing, int delay_ticks, bool ducked_in, bool hold_crouch );
 	std::string arrival_name( int type, bool ducked );
 
@@ -830,7 +852,7 @@ namespace
 	   twin: the crouch-free search stays the pre-crouch one to the node */
 	/* extra = other states + odds ( 0 for a one-state route, so those keys are what they always were ) */
 	struct node_key_t {
-		unsigned int w[ 15 ]{ };
+		unsigned int w[ 17 ]{ };
 		unsigned long long extra = 0;
 		bool operator==( const node_key_t& o ) const { return extra == o.extra && memcmp( w, o.w, sizeof( w ) ) == 0; }
 	};
@@ -852,7 +874,8 @@ namespace
 		                           ( st.on_ground ? 512u : 0u ) | ( jb_ok ? 1024u : 0u );
 		return { { n.bind_mask, static_cast< unsigned int >( n.last_bind ), flags, bits( st.z ), bits( st.vz ), bits( st.stamina ),
 		           bits( st.duck_amount ), bits( st.duck_speed ), bits( since ), bits( duck_recover_since( st ) ), bits( st.fall ),
-		           bits( st.ceiling ), jb_ok ? bits( jb.z ) : 0u, jb_ok ? bits( jb.vz ) : 0u, jb_ok ? bits( jb.stamina ) : 0u } };
+		           bits( st.ceiling ), jb_ok ? bits( jb.z ) : 0u, jb_ok ? bits( jb.vz ) : 0u, jb_ok ? bits( jb.stamina ) : 0u,
+		           jb_ok ? bits( jb.duck_speed ) : 0u, jb_ok ? bits( jb.time - jb.last_duck_time ) : 0u } };
 	}
 	unsigned long long key_hash( const node_key_t& k )
 	{
@@ -1773,6 +1796,10 @@ namespace n_route
 							/* ticks the feet cleared the box top since the last landing: crossing the edge on any of them
 							   lands on the next catch ( 10-10 log: 6/6 tries crossed high, landed the falling tick ) */
 							int clear_ticks = 0;
+							/* first air tick a duck press would go in ( ground points only ): the early-duck jb's start */
+							sim_t s_early{ };
+							int i_early = -1, cur_i = 0;
+							bool early_above = false;
 
 							const auto land_floor = [ & ]( const sim_t& st, const sim_t& st_in, float vz_in, bool held_now ) {
 								node_t made;
@@ -1792,6 +1819,8 @@ namespace n_route
 								made.crouch_only = duck_air && plain_arrived && point.type == route_pt_ground;
 								if ( !held_now && vz_in < 0.f ) {
 									made.jb_ok        = jumpbug_band( st_in, target_z, made.jb, skin );
+									if ( made.jb_ok && i_early >= 0 && i_early < cur_i )
+										jumpbug_band_early( s_early, cur_i - i_early + 1, early_above, target_z, made.jb );
 									made.jb.on_player = made.st.on_player;
 								}
 								constexpr float k_skin_last_push = 0.98f * ( 0.03125f / 16.f - n_route::k_creep_gap );
@@ -1809,6 +1838,13 @@ namespace n_route
 									held = true;
 								if ( armed( ) )
 									above = true;
+								cur_i = i;
+								if ( i_early < 0 && point.type == route_pt_ground && !held && !s.ducked && !s.ducking && !s.on_ground &&
+								     duck_press_lands( s ) ) {
+									s_early     = s;
+									i_early     = i;
+									early_above = above;
+								}
 								const float vz_in = s.vz;
 								/* tick-start hull: a seam catch CLIPS the move ( origin stays ), and the straddle
 								   is the swept hull's. a duck-finishing tick moved 9 on its own: never a catch. */
@@ -1864,13 +1900,14 @@ namespace n_route
 								const bool by_head = point.type == route_pt_headbang || point.type == route_pt_texturebug;
 								const bool hb_rise   = point.type == route_pt_headbounce && !s.on_ground && vz_in - half_g > 0.f;
 								const float hb_head  = z_in + hull_in;
+								const float hb_lo    = point.hb_win ? point.hb_lo : target_z - k_dist_eps;
 								const bool countable = point.type == route_pt_headbounce ? hb_rise
 								                       : by_head ? !s.on_ground : ( point.type == route_pt_pixelsurf ? px_next_down : falling );
 								if ( countable ) {
 									float gap;
 									float px_z = point.type == route_pt_headbounce ? hb_head : s.z;
 									if ( point.type == route_pt_headbounce ) {
-										gap = hb_head < target_z - k_dist_eps ? target_z - k_dist_eps - hb_head
+										gap = hb_head < hb_lo ? hb_lo - hb_head
 										      : hb_head >= target_z          ? hb_head - target_z
 										                                     : 0.f;
 									} else if ( point.type == route_pt_pixelsurf ) {
@@ -2008,7 +2045,7 @@ namespace n_route
 								if ( point.type == route_pt_headbounce ) {
 									if ( !hb_rise || hb_head >= target_z )
 										break;
-									if ( s.ducked != ducked_in || hb_head < target_z - k_dist_eps )
+									if ( s.ducked != ducked_in || hb_head < hb_lo )
 										continue;
 									if ( ( ducked_in && !point.allow_duck ) || ( !ducked_in && !point.allow_stand ) || ( duck_air && !ducked_in ) )
 										break;
@@ -2020,7 +2057,9 @@ namespace n_route
 									made.st.on_ground = false;
 									made.st.fall      = -eb_null;
 									made.cost         = node.cost + leg_cost;
-									push_leg( made, arr_named( point.type, ducked_in ), z_in, -vz_in, 0.f, target_z - hb_head );
+									/* measured window: rank by distance from its middle, edges are one bisect step wide */
+									push_leg( made, arr_named( point.type, ducked_in ), z_in, -vz_in, 0.f,
+									          point.hb_win ? std::fabs( hb_head - ( hb_lo + target_z ) * 0.5f ) : target_z - hb_head );
 									admit( made );
 									made_any = true;
 									break;

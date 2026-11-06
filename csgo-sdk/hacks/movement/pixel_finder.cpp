@@ -46,9 +46,23 @@ static std::vector< c_vector > Points{ };
 static std::vector< c_vector > Point_bounce{ };
 static std::vector< c_vector > Point_bounce_ceil{ };
 
+/* seam window dots: tick start head range that holds, [ lo, hi ) bisected by pf_hb_bisect */
+static std::vector< std::pair< c_vector, std::pair< float, float > > > Point_bounce_win{ };
+
 bool pf_hb_is_ceiling( const c_vector& dot )
 {
 	return std::find( Point_bounce_ceil.begin( ), Point_bounce_ceil.end( ), dot ) != Point_bounce_ceil.end( );
+}
+
+bool pf_hb_window( const c_vector& dot, float& lo, float& hi )
+{
+	for ( const auto& [ d, w ] : Point_bounce_win )
+		if ( d == dot ) {
+			lo = w.first;
+			hi = w.second;
+			return true;
+		}
+	return false;
 }
 static std::vector< c_vector > Point_tb{ };
 static std::vector< c_vector > Point_tb_head{ };
@@ -655,8 +669,39 @@ static int pf_surf( pf_ctx_t& c, const pf_spot_t& sp, float& got, float& slid )
 	return o;
 }
 
-static int pf_hb( pf_ctx_t& c, const pf_spot_t& sp, float& head, bool& ceil, bool& rose, std::string& over_s )
+/* held from sp.o + d with no rise = the seam caught the head at that tick start */
+static bool pf_hb_stays( pf_ctx_t& c, const pf_spot_t& sp, float d )
 {
+	const c_vector at = sp.o + c_vector( 0.f, 0.f, d );
+	float got         = 0.f;
+	return pf_bump( c.cmd, at, c.push, c.fwd, c.side, c.pin, c.dt, got ) == pf_held && got - at.m_z < 0.001f;
+}
+
+/* window edges around the held start ( d 0 ), 12 halvings each = 2.4e-5u. lower out = the control start */
+static bool pf_hb_bisect( pf_ctx_t& c, const pf_spot_t& sp, float& lo, float& hi, bool& open )
+{
+	if ( !pf_hb_stays( c, sp, 0.f ) )
+		return false;
+	float in = 0.f, out = -k_pf_hb_ctrl;
+	for ( int i = 0; i < 12; ++i ) {
+		const float m = ( in + out ) * 0.5f;
+		( pf_hb_stays( c, sp, m ) ? in : out ) = m;
+	}
+	lo = in;
+	open = pf_hb_stays( c, sp, k_pf_hb_ctrl );
+	in = 0.f, out = k_pf_hb_ctrl;
+	for ( int i = 0; !open && i < 12; ++i ) {
+		const float m = ( in + out ) * 0.5f;
+		( pf_hb_stays( c, sp, m ) ? in : out ) = m;
+	}
+	hi = out;
+	return true;
+}
+
+static int pf_hb( pf_ctx_t& c, const pf_spot_t& sp, float& head, bool& ceil, bool& rose, std::string& over_s, bool& win, float& w_lo,
+                  float& w_hi )
+{
+	win       = false;
 	float got = 0.f;
 	const int o = pf_bump( c.cmd, sp.o, c.push, c.fwd, c.side, c.pin, c.dt, got );
 	if ( o != pf_held && o != pf_cut )
@@ -682,6 +727,14 @@ static int pf_hb( pf_ctx_t& c, const pf_spot_t& sp, float& head, bool& ceil, boo
 		return pf_unverified;
 	if ( o == pf_cut && ( !ceil || nz >= -k_pf_hb_nz ) )
 		return pf_unpinned;
+	if ( window ) {
+		float lo = 0.f, hi = 0.f;
+		bool open = false;
+		win = pf_hb_bisect( c, sp, lo, hi, open );
+		w_lo = head + lo;
+		w_hi = head + hi;
+		over_s += win ? std::format( " | holds head {:.5f}..{:.5f}{}", w_lo, w_hi, open ? " OPEN TOP" : "" ) : " | window recheck failed";
+	}
 	return pf_held;
 }
 
@@ -1452,6 +1505,7 @@ void n_movement::impl_t::on_level_init( )
 	Points.clear( );
 	Point_bounce.clear( );
 	Point_bounce_ceil.clear( );
+	Point_bounce_win.clear( );
 	Point_tb.clear( );
 	Point_tb_head.clear( );
 	Point_tb_rise.clear( );
@@ -1477,6 +1531,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 			Points.clear( );
 			Point_bounce.clear( );
 			Point_bounce_ceil.clear( );
+			Point_bounce_win.clear( );
 			Point_tb.clear( );
 			Point_tb_head.clear( );
 			Point_tb_rise.clear( );
@@ -1553,6 +1608,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 		Points.clear( );
 		Point_bounce.clear( );
 		Point_bounce_ceil.clear( );
+		Point_bounce_win.clear( );
 		Point_tb.clear( );
 		Point_tb_head.clear( );
 		Point_tb_rise.clear( );
@@ -1705,9 +1761,10 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 			if ( const int r = ready( true ); r != 1 )
 				return r == 0 ? k_pf_wait : pf_off;
 			float head = 0.f;
-			bool ceil = false, rose = false;
+			bool ceil = false, rose = false, win = false;
+			float w_lo = 0.f, w_hi = 0.f;
 			std::string over_s;
-			const int o = pf_hb( c, sp, head, ceil, rose, over_s );
+			const int o = pf_hb( c, sp, head, ceil, rose, over_s, win, w_lo, w_hi );
 			if ( o == pf_unverified )
 				++s.tb_unverified;
 			if ( o != pf_held )
@@ -1719,6 +1776,8 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 			Point_bounce.push_back( pf_dot( pf_face_pt( c, sp ), head ) );
 			if ( ceil )
 				Point_bounce_ceil.push_back( Point_bounce.back( ) );
+			if ( win )
+				Point_bounce_win.push_back( { Point_bounce.back( ), { w_lo, w_hi } } );
 			botox_dbg_log( "[pf hb] dot head z %.4f | %s %.4f lat %+.1f, over %s", head, h.seam ? "seam" : "edge", h.z, lat, over_s.c_str( ) );
 			return pf_held;
 		}
