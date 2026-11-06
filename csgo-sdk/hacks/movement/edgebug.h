@@ -49,7 +49,12 @@ namespace n_edgebug
 		{
 			m_mouse_x = 0.f;
 			m_donor   = { };
+			m_hw      = { };
 		}
+		/* style 3 hotwheels: hacks/movement/movement.cpp edge_bug / detect_edgebug / fsn / override_mouse_input 1:1 */
+		void hw_post( c_user_cmd* cmd );
+		void hw_frame_start( );
+		void hw_mouse( float* x, float* y );
 		void donor_pre( c_user_cmd* cmd );
 		void donor_post( c_user_cmd* cmd, int style );
 		void donor_frame_start( );
@@ -69,6 +74,13 @@ namespace n_edgebug
 			float forwardmove = 0.f, sidemove = 0.f, yawdelta = 0.f, startingyaw = 0.f;
 			short mousedx = 0;
 		} m_donor;
+		struct hw_t {
+			bool will_edgebug = false, will_fail = false, strafing = false, ducking = false;
+			float yaw_delta = 0.f, starting_yaw = 0.f, side_move = 0.f, forward_move = 0.f, saved_mousedx = 0.f;
+			int ticks_to_stop = 0, last_tick = 0;
+		} m_hw;
+		void hw_reset( );
+		void hw_detect( c_user_cmd* cmd );
 		void donor_reset( );
 		bool donor_check( c_user_cmd* cmd, bool& brk );
 		bool EdgeBugCheck( const edge_context_t& ctx );

@@ -10,6 +10,7 @@
 #include "../../hacks/misc/scaleform/scaleform.h"
 #include "../../hacks/debug/debug.h"
 #include "../../hacks/indicators/indicators.h"
+#include "../../hacks/lua/lua.h"
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
 #include "../../hacks/urt_hud/urt_hud.h"
@@ -77,6 +78,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 			static int frames_restoring = 0;
 
 			if ( !g_ctx.m_eject_restoring.exchange( true ) ) {
+				g_lua.shutdown( );
 				g_misc.on_level_shutdown( );
 				g_misc.on_eject( );
 				g_scaleform.on_eject( );
@@ -180,6 +182,8 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 				g_indicators.on_paint_traverse( );
 			} else
 				g_indicators.m_indicator_data.reset( );
+
+			g_lua.on_paint( );
 		}
 
 		g_render.swap_draw_data( );

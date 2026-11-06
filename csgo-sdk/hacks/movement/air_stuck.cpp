@@ -20,7 +20,7 @@ static struct {
 /* last sent pin, view latched: pins live on wishdir float bits ( AngleVectors + VectorNormalize, gamemovement.cpp:2015-2032 ), so live pitch/yaw must never reach it */
 static struct {
 	bool valid  = false;
-	float pitch = 0.0f, yaw = 0.0f, fwd = 0.0f;
+	float pitch = 0.0f, yaw = 0.0f, fwd = 0.0f, side = 0.0f;
 	int ticks   = 0;
 } s_hold;
 
@@ -214,6 +214,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		s_hold.pitch              = pitch;
 		s_hold.yaw                = yaw;
 		s_hold.fwd                = move;
+		s_hold.side               = side;
 		cmd->m_view_point         = live_view;
 		stamp_rotate( live_view.m_y, yaw, move, side, cmd->m_forward_move, cmd->m_side_move );
 		/* use movement fix off ( ridobebra apply_air_stuck_view ): send the proof cmd as simmed, pin view + raw move, not silent */
@@ -313,7 +314,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		cmd->m_view_point.m_x = s_hold.pitch;
 		cmd->m_view_point.m_y = s_hold.yaw;
 		cmd->m_forward_move   = s_hold.fwd;
-		cmd->m_side_move      = 0.0f;
+		cmd->m_side_move      = s_hold.side;
 		cmd->m_buttons        = live_buttons;
 		g_prediction.begin( g_ctx.m_local, cmd );
 		g_prediction.end( g_ctx.m_local );
@@ -349,7 +350,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		} else if ( held ) {
 			if ( s_hold.ticks++ == 0 )
 				botox_dbg_log( "AS: hold yaw=%.1f fwd=%.4f pitch=%.2f fixed=%d", s_hold.yaw, s_hold.fwd, s_hold.pitch, ( int )fixed );
-			publish( s_hold.yaw, s_hold.fwd, true, s_hold.pitch, true );
+			publish( s_hold.yaw, s_hold.fwd, true, s_hold.pitch, true, s_hold.side );
 			s_expect = { true, end };
 			return;
 		} else
@@ -369,7 +370,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		}
 		const auto latched = s_hold;
 		++s_hold.ticks;
-		publish( latched.yaw, latched.fwd, true, latched.pitch, true );
+		publish( latched.yaw, latched.fwd, true, latched.pitch, true, latched.side );
 		s_expect = { true, ahead_end };
 		return true;
 	};

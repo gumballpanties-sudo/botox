@@ -6,6 +6,7 @@
 #include "../../hacks/animations/animations.h"
 #include "../../hacks/debug/debug.h"
 #include "../../hacks/entity_cache/entity_cache.h"
+#include "../../hacks/lua/lua.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/movement/edgebug.h"
 #include "../../hacks/movement/movement.h"
@@ -30,6 +31,8 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 
 	if ( stage == render_start )
 		g_flip_world.on_render_start( );
+
+	g_lua.on_frame_stage( stage );
 
 	g_misc.on_frame_stage_notify( stage );
 

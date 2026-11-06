@@ -77,13 +77,24 @@ static uint8_t* find_chat_element( )
 	return nullptr;
 }
 
+// scan hits random ints that look like pointers (0x00020030 = reserved, not committed): fault there killed the game
+// through __try under manual map, so never touch memory VirtualQuery hasn't cleared
+static bool readable( const void* at, size_t bytes )
+{
+	MEMORY_BASIC_INFORMATION region{ };
+	const auto address = reinterpret_cast< std::uintptr_t >( at );
+	return address >= 0x10000 && VirtualQuery( at, &region, sizeof( region ) ) && region.State == MEM_COMMIT &&
+	       !( region.Protect & ( PAGE_NOACCESS | PAGE_GUARD ) ) && address + bytes <= reinterpret_cast< std::uintptr_t >( region.BaseAddress ) + region.RegionSize;
+}
+
 static bool history_ends_with( uint8_t* chat, int off, const char* tail, int tail_len )
 {
 	__try {
+		if ( !readable( chat + off, 8 ) )
+			return false;
 		const char* str = *reinterpret_cast< char** >( chat + off );
 		const int size  = *reinterpret_cast< int* >( chat + off + 4 );
-		// small ints in the scan fault every time, and each fault burns a crash witness slot
-		return reinterpret_cast< std::uintptr_t >( str ) >= 0x10000 && size >= tail_len && size < k_history_max && !str[ size ] && !memcmp( str + size - tail_len, tail, tail_len );
+		return size >= tail_len && size < k_history_max && readable( str, size + 1 ) && !str[ size ] && !memcmp( str + size - tail_len, tail, tail_len );
 	} __except ( EXCEPTION_EXECUTE_HANDLER ) {
 		return false;
 	}
@@ -100,9 +111,11 @@ static int find_history_offset( uint8_t* chat, const char* tail, int tail_len )
 static bool patch_history( uint8_t* chat, int off, const char* old_html, int old_len, const char* new_html, int new_len )
 {
 	__try {
+		if ( !readable( chat + off, 8 ) )
+			return false;
 		char* str = *reinterpret_cast< char** >( chat + off );
 		int& size = *reinterpret_cast< int* >( chat + off + 4 );
-		if ( !str || size < old_len || size >= k_history_max || str[ size ] || size + new_len - old_len >= k_history_max )
+		if ( size < old_len || size >= k_history_max || !readable( str, size + 1 ) || str[ size ] || size + new_len - old_len >= k_history_max )
 			return false;
 
 		for ( int at = size - old_len; at >= 0; --at ) {

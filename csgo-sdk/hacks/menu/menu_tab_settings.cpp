@@ -2382,6 +2382,11 @@ int n_menu::impl_t::menu_key( )
 
 void n_menu::impl_t::tab_settings( )
 {
+	if ( this->m_subtab == 1 ) {
+		this->lua_page( );
+		return;
+	}
+
 	menu_columns_begin( );
 
 	if ( menu_group_begin( "config" ) ) {

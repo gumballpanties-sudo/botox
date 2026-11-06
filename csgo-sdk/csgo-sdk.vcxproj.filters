@@ -18,6 +18,10 @@
     <ClCompile Include="dependencies\minhook\src\buffer.c" />
     <ClCompile Include="dependencies\minhook\src\hook.c" />
     <ClCompile Include="dependencies\minhook\src\trampoline.c" />
+    <ClCompile Include="dependencies\lua\lua_unity.cpp" />
+    <ClCompile Include="hacks\lua\lua.cpp" />
+    <ClCompile Include="hacks\lua\lua_api.cpp" />
+    <ClCompile Include="hacks\menu\menu_tab_lua.cpp" />
     <ClCompile Include="hooks\hooks.cpp" />
     <ClCompile Include="hooks\detour_hook\c_detour_hook.cpp" />
     <ClCompile Include="globals\netvars\netvars.cpp" />
@@ -285,6 +289,8 @@
     <ClInclude Include="botox.h" />
     <ClInclude Include="hacks\menu\menu.h" />
     <ClInclude Include="hacks\menu\menu_internal.h" />
+    <ClInclude Include="hacks\lua\lua.h" />
+    <ClInclude Include="hacks\lua\lua_api.h" />
     <ClInclude Include="globals\config\config.h" />
     <ClInclude Include="dependencies\json\detail\conversions\from_json.hpp" />
     <ClInclude Include="dependencies\json\detail\conversions\to_chars.hpp" />

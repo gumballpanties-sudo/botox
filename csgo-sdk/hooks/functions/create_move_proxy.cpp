@@ -5,6 +5,7 @@
 #include "../../hacks/aimbot/aimbot.h"
 #include "../../hacks/aimbot/grenade_aim.h"
 #include "../../hacks/lagcomp/lagcomp.h"
+#include "../../hacks/lua/lua.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/misc/chat_extras.h"
 #include "../../hacks/misc/scaleform/scaleform.h"
@@ -435,6 +436,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		g_skins.deagle_spinner( );
 		gnd_wish_check( "deagle_spinner" );
 
+		g_lua.on_create_move( cmd, &send_packet, true );
+
 		/* pre features may have rewritten it: predict + detect on the exact recorded inputs */
 		g_movement_recorder.apply_playback( cmd );
 
@@ -565,6 +568,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 				}
 		}
 	}
+
+	g_lua.on_create_move( cmd, &send_packet, false );
 
 	cmd->m_view_point.normalize( );
 	cmd->m_view_point.clamp( );

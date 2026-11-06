@@ -16,8 +16,8 @@ inline std::vector< T > get_filled_vector( const T& fill )
 }
 
 struct variable_object_t {
-	variable_object_t( const unsigned int name_hash, const unsigned int type_hash, std::any&& default_value )
-		: m_name_hash( name_hash ), m_type_hash( type_hash ), m_value( std::move( default_value ) ), m_default( m_value )
+	variable_object_t( const char* name, const unsigned int name_hash, const unsigned int type_hash, std::any&& default_value )
+		: m_name( name ), m_name_hash( name_hash ), m_type_hash( type_hash ), m_value( std::move( default_value ) ), m_default( m_value )
 	{
 	}
 
@@ -41,6 +41,7 @@ struct variable_object_t {
 		m_value.emplace< T >( value );
 	}
 
+	const char* m_name       = "";
 	unsigned int m_name_hash = 0x0;
 	unsigned int m_type_hash = 0x0;
 	std::any m_value         = { };
@@ -89,9 +90,9 @@ namespace n_config
 		}
 
 		template< typename T >
-		std::uint32_t add_new_variable( const unsigned int name_hash, const unsigned int type_hash, const T default_value )
+		std::uint32_t add_new_variable( const char* name, const unsigned int name_hash, const unsigned int type_hash, const T default_value )
 		{
-			m_variables.emplace_back( name_hash, type_hash, std::make_any< T >( default_value ) );
+			m_variables.emplace_back( name, name_hash, type_hash, std::make_any< T >( default_value ) );
 			return m_variables.size( ) - 1U;
 		}
 	};
@@ -104,10 +105,11 @@ inline n_config::impl_t g_config{ };
 #define TO_STRING( func ) #func
 #define ADD_VARIABLE( variable_type, variable_name, default_value )                                                                                  \
 	const std::uint32_t variable_name =                                                                                                              \
-		g_config.add_new_variable< variable_type >( HASH_BT( TO_STRING( variable_name ) ), HASH_BT( TO_STRING( variable_type ) ), default_value );
+		g_config.add_new_variable< variable_type >( TO_STRING( variable_name ), HASH_BT( TO_STRING( variable_name ) ),                                \
+		                                            HASH_BT( TO_STRING( variable_type ) ), default_value );
 #define ADD_VARIABLE_VECTOR( variable_type, vector_size, variable_name, default_value )                                                              \
 	const std::uint32_t variable_name = g_config.add_new_variable< std::vector< variable_type > >(                                                   \
-		HASH_BT( TO_STRING( variable_name ) ), HASH_BT( "std::vector<" TO_STRING( variable_type ) ">" ),                                             \
+		TO_STRING( variable_name ), HASH_BT( TO_STRING( variable_name ) ), HASH_BT( "std::vector<" TO_STRING( variable_type ) ">" ),                 \
 		get_filled_vector< variable_type, vector_size >( default_value ) );
 
 #define INVALID_VARIABLE ( std::size_t )( -1 )

@@ -33,6 +33,13 @@
     <ClCompile Include="dependencies\minhook\src\hde\hde64.c" />
     <ClCompile Include="dependencies\minhook\src\hook.c" />
     <ClCompile Include="dependencies\minhook\src\trampoline.c" />
+    <ClCompile Include="dependencies\lua\lua_unity.cpp">
+      <SDLCheck>false</SDLCheck>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="hacks\lua\lua.cpp" />
+    <ClCompile Include="hacks\lua\lua_api.cpp" />
+    <ClCompile Include="hacks\menu\menu_tab_lua.cpp" />
     <ClCompile Include="game\sdk\classes\c_angle.cpp" />
     <ClCompile Include="game\sdk\classes\c_color.cpp" />
     <ClCompile Include="game\sdk\classes\c_key_values.cpp" />
@@ -528,6 +535,8 @@
     <ClInclude Include="botox.h" />
     <ClInclude Include="hacks\menu\menu.h" />
     <ClInclude Include="hacks\menu\menu_internal.h" />
+    <ClInclude Include="hacks\lua\lua.h" />
+    <ClInclude Include="hacks\lua\lua_api.h" />
     <ClInclude Include="globals\netvars\netvars.h" />
     <ClInclude Include="globals\render\render.h" />
     <ClInclude Include="hacks\prediction\prediction.h" />

@@ -1231,6 +1231,10 @@ namespace n_variables
 		ADD_VARIABLE( int, m_edgebug_dna_range, 6 );
 		ADD_VARIABLE( bool, m_edgebug_dna_custom_angle, false );
 		ADD_VARIABLE( float, m_edgebug_dna_angle_limit, 3.f );
+		ADD_VARIABLE( int, m_edgebug_hw_ticks, 32 );
+		ADD_VARIABLE( float, m_edgebug_hw_lock_amt, 0.3f );
+		ADD_VARIABLE( bool, m_edgebug_hw_advanced, false );
+		ADD_VARIABLE( float, m_edgebug_hw_strafe_delta_max, 10.0f );
 		ADD_VARIABLE( bool, m_edgebug_visualize, false );
 		ADD_VARIABLE( c_color, m_edgebug_visualize_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( float, m_edgebug_visualize_thickness, 1.5f );

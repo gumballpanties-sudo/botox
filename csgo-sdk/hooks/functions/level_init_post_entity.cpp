@@ -7,6 +7,7 @@
 #include "../../hacks/aimbot/aimbot.h"
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/visuals/bullets/bullets.h"
+#include "../../hacks/lua/lua.h"
 #include "../hooks.h"
 
 void __fastcall n_detoured_functions::level_init_post_entity( void* ecx, void* edx )
@@ -22,4 +23,6 @@ void __fastcall n_detoured_functions::level_init_post_entity( void* ecx, void* e
 	g_bullets.on_level_init( );
 
 	original( ecx, edx );
+
+	g_lua.on_level_init( );
 }

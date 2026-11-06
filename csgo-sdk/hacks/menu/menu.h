@@ -17,6 +17,7 @@ namespace n_menu
 		void tab_settings( );
 		void player_list_page( );
 		void cvars_page( );
+		void lua_page( );
 		int menu_key( );
 
 		struct faded_list_t {
@@ -49,6 +50,8 @@ namespace n_menu
 
 		int m_selected_visual_config    = 0;
 		char m_visual_config_file[ 32 ] = { };
+
+		int m_selected_lua = 0;
 	};
 }
 
