@@ -424,9 +424,16 @@ void n_lua::impl_t::on_paint( )
 	static unsigned long long next_save = 0ull;
 	if ( const unsigned long long now = GetTickCount64( ); now >= next_save ) {
 		next_save = now + 1000ull;
-		for ( auto& script : this->m_scripts )
-			if ( script->m_state && script->m_dirty )
-				this->save_settings( *script );
+		/* m_dirty is written by the menu under the lock: read it there too */
+		std::vector< script_t* > dirty;
+		{
+			std::lock_guard< std::mutex > lock( this->m_mutex );
+			for ( auto& script : this->m_scripts )
+				if ( script->m_state && script->m_dirty )
+					dirty.push_back( script.get( ) );
+		}
+		for ( script_t* script : dirty )
+			this->save_settings( *script );
 	}
 
 	n_lua_api::s_in_paint = true;

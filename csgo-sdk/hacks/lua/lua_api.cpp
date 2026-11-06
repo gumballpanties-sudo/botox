@@ -2,8 +2,10 @@
 #include <array>
 #include <cstring>
 #include <iterator>
+#include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 
 #include "../../game/sdk/includes/includes.h"
@@ -723,6 +725,54 @@ namespace
 		return 2;
 	}
 
+	/* netvars.cpp keeps a prop only under the class that declares it ( baseclass is skipped ), so
+	   "CCSPlayer->m_iHealth" is not in it: walk the class's recv table and every table below it instead */
+	int recv_offset( recv_table_t* table, const char* prop, const int depth )
+	{
+		if ( !table || depth > 32 )
+			return 0;
+
+		for ( int i = 0; i < table->m_props_count; i++ ) {
+			const recv_prop_t& entry = table->m_props[ i ];
+			if ( !entry.m_var_name )
+				continue;
+			if ( std::strcmp( entry.m_var_name, prop ) == 0 )
+				return entry.m_offset;
+			if ( entry.m_data_table && entry.m_data_table->m_props_count > 0 )
+				if ( const int inner = recv_offset( entry.m_data_table, prop, depth + 1 ) )
+					return inner + entry.m_offset;
+		}
+		return 0;
+	}
+
+	/* game thread only (lua) */
+	int class_netvar( const char* class_name, const char* prop )
+	{
+		static std::unordered_map< std::string, int > s_cache;
+		std::string key = std::string( class_name ) + "->" + prop;
+		if ( const auto it = s_cache.find( key ); it != s_cache.end( ) )
+			return it->second;
+
+		int offset = 0;
+		for ( c_base_client* entry = g_interfaces.m_base_client->get_all_classes( ); entry; entry = entry->m_next )
+			if ( entry->m_network_name && std::strcmp( entry->m_network_name, class_name ) == 0 ) {
+				offset = recv_offset( entry->m_recv_table, prop, 0 );
+				break;
+			}
+
+		s_cache.emplace( std::move( key ), offset );
+		return offset;
+	}
+
+	/* "Class->m_prop" */
+	int netvar_offset( const char* name )
+	{
+		const char* split = std::strstr( name, "->" );
+		if ( !split )
+			return 0;
+		return class_netvar( std::string( name, split ).c_str( ), split + 2 );
+	}
+
 	/* ---- entities: userdata keeps the index, every call re-resolves it ---- */
 
 	void push_entity( lua_State* L, c_base_entity* entity )
@@ -890,9 +940,17 @@ namespace
 		return 1;
 	}
 
+	/* this entity's own class has the prop: a getter bound to a fixed-class offset on any other entity reads past it */
+	bool class_prop( c_base_entity* entity, const char* prop )
+	{
+		c_base_client* client_class = entity->get_client_class( );
+		return client_class && client_class->m_network_name && class_netvar( client_class->m_network_name, prop ) != 0;
+	}
+
 	int l_entity_armor( lua_State* L )
 	{
-		lua_pushinteger( L, check_entity( L )->get_armor( ) );
+		c_base_entity* entity = check_entity( L );
+		lua_pushinteger( L, class_prop( entity, "m_ArmorValue" ) ? entity->get_armor( ) : 0 );
 		return 1;
 	}
 
@@ -920,9 +978,11 @@ namespace
 		return 3;
 	}
 
+	/* get_eye_position = vtable 169, a player slot: anything else gets its origin */
 	int l_entity_eye_position( lua_State* L )
 	{
-		push_vector( L, check_entity( L )->get_eye_position( ) );
+		c_base_entity* entity = check_entity( L );
+		push_vector( L, entity->is_player( ) ? entity->get_eye_position( ) : entity->get_abs_origin( ) );
 		return 3;
 	}
 
@@ -966,25 +1026,48 @@ namespace
 	int l_entity_weapon( lua_State* L )
 	{
 		c_base_entity* entity = check_entity( L );
-		push_entity( L, g_interfaces.m_client_entity_list->get< c_base_entity >( entity->get_active_weapon_handle( ) ) );
+		push_entity( L, class_prop( entity, "m_hActiveWeapon" )
+		                    ? g_interfaces.m_client_entity_list->get< c_base_entity >( entity->get_active_weapon_handle( ) )
+		                    : nullptr );
 		return 1;
 	}
 
 	int l_entity_weapon_id( lua_State* L )
 	{
-		lua_pushinteger( L, check_entity( L )->get_item_definition_index( ) );
+		c_base_entity* entity = check_entity( L );
+		lua_pushinteger( L, class_prop( entity, "m_iItemDefinitionIndex" ) ? entity->get_item_definition_index( ) : -1 );
 		return 1;
 	}
 
+	/* own read, not c_base_entity::get_bone_position: that memcpy's the cache's count into a 128 stack array
+	   and returns row 3 of a 3 row matrix. studio models only ( m_nHitboxSet = C_BaseAnimating ) */
 	int l_entity_bone_position( lua_State* L )
 	{
-		push_vector( L, check_entity( L )->get_bone_position( static_cast< int >( luaL_checkinteger( L, 2 ) ) ) );
+		c_base_entity* entity = check_entity( L );
+		const int bone        = static_cast< int >( luaL_checkinteger( L, 2 ) );
+		if ( bone < 0 || bone >= 128 )
+			return luaL_error( L, "bone %d out of range", bone );
+		if ( !class_prop( entity, "m_nHitboxSet" ) )
+			return 0;
+
+		auto& cache = entity->get_cached_bone_data( );
+		if ( bone >= cache.count( ) || !cache.get_elements( ) )
+			return 0;
+
+		matrix3x4_t matrix{ };
+		if ( !seh_copy( &matrix, &cache.get_elements( )[ bone ], sizeof( matrix ) ) )
+			return 0;
+
+		push_vector( L, matrix.at( 3 ) );
 		return 3;
 	}
 
 	int l_entity_hitbox_position( lua_State* L )
 	{
-		push_vector( L, check_entity( L )->get_hitbox_position( static_cast< int >( luaL_checkinteger( L, 2 ) ) ) );
+		c_base_entity* entity = check_entity( L );
+		if ( !class_prop( entity, "m_nHitboxSet" ) )
+			return 0;
+		push_vector( L, entity->get_hitbox_position( static_cast< int >( luaL_checkinteger( L, 2 ) ) ) );
 		return 3;
 	}
 
@@ -1105,7 +1188,7 @@ namespace
 	unsigned int check_netvar( lua_State* L, const int index )
 	{
 		const char* name          = luaL_checkstring( L, index );
-		const unsigned int offset = g_netvars[ HASH_RT( name ) ].m_offset;
+		const unsigned int offset = static_cast< unsigned int >( netvar_offset( name ) );
 		if ( !offset )
 			luaL_error( L, "no netvar '%s' ( format: \"CCSPlayer->m_iHealth\" )", name );
 		return offset;
@@ -1877,7 +1960,7 @@ namespace
 
 	int l_mem_netvar( lua_State* L )
 	{
-		lua_pushinteger( L, g_netvars[ HASH_RT( luaL_checkstring( L, 1 ) ) ].m_offset );
+		lua_pushinteger( L, netvar_offset( luaL_checkstring( L, 1 ) ) );
 		return 1;
 	}
 

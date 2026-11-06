@@ -76,5 +76,7 @@ unsigned int n_netvars::impl_t::find_in_data_map( data_map_t* map, const unsigne
 
 n_netvars::impl_t::netvar_object_t n_netvars::impl_t::operator[]( unsigned int hash )
 {
-	return props[ hash ];
+	/* find, not []: a miss (lua queries any name) must not insert while other threads read the map */
+	const auto it = props.find( hash );
+	return it != props.end( ) ? it->second : netvar_object_t{ };
 }

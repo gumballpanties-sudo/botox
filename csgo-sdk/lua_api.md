@@ -262,6 +262,9 @@ Against your player, follows game mode / `mp_teammates_are_enemies`. `false` for
 
 #### `entity:health()`
 #### `entity:armor()`
+
+`0` when the entity's class has no armor.
+
 #### `entity:flags()`
 
 Bit field, test with [`flags`](#flags): `me:flags() & flags.onground ~= 0`.
@@ -280,7 +283,7 @@ Bit field, test with [`flags`](#flags): `me:flags() & flags.onground ~= 0`.
 
 #### `entity:eye_position()`
 
-`x, y, z`.
+`x, y, z`. Not a player = its origin.
 
 #### `entity:mins_maxs()`
 
@@ -300,19 +303,19 @@ Player name for players, class name otherwise.
 
 #### `entity:weapon()`
 
-Active weapon entity, or `nil`.
+Active weapon entity, or `nil` (also for entities that cannot hold one).
 
 #### `entity:weapon_id()`
 
-Item definition index (on a weapon entity): `7` ak47, `9` awp, `16` m4a4, `61` usp-s ...
+Item definition index (on a weapon entity): `7` ak47, `9` awp, `16` m4a4, `61` usp-s ... `-1` when the entity's class has none.
 
 #### `entity:bone_position(bone)`
 
-`x, y, z` from the cached bone matrix.
+`x, y, z` from the cached bone matrix. Nothing back when the entity is not a studio model or the bone is not in its cache.
 
 #### `entity:hitbox_position(hitbox)`
 
-`x, y, z` centre of a hitbox (0 = head).
+`x, y, z` centre of a hitbox (0 = head). Nothing back when the entity is not a studio model.
 
 #### `entity:get_prop(netvar, type, extra_offset)`
 
