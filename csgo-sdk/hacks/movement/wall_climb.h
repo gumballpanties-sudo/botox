@@ -63,9 +63,10 @@ namespace n_wall_climb
 
 		/* air ( "steer to seam" ): along wall velocity targets replayed from the first air tick, sliced over k_steer_delay ticks in the
 		   spot slots ( spot is ground only ), the first that lands where your path does not gets steered to. pre = started on the jump
-		   tick off the predicted first air START ( pre_org / pre_vel ), kept only if air tick 1 is there */
+		   tick off the predicted first air START ( pre_org / pre_vel ), kept only if air tick 1 is there. follow ( 11-07 ): the job ticks
+		   and, once a replay landed ( commit ), the rest of the hop send the replay's own step, off = the server left that path */
 		struct steer_job_t {
-			bool valid = false, rolling = false, done = false, decided = false, steer = false, pre = false;
+			bool valid = false, rolling = false, done = false, decided = false, steer = false, pre = false, commit = false, off = false;
 			c_vector pre_org{ }, pre_vel{ };
 			int start_cmd = 0, cand = -1, count = 0, tick = 0, left = 0, steer_left = 0, sims = 0, base = -1, best = -1;
 			float order[ 5 ]{ }, target = 0.f, cur = 0.f;

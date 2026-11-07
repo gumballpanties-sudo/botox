@@ -1112,8 +1112,7 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 		float best_dist = FLT_MAX;
 		c_vector snapped{ };
 		bool snap_found = false;
-		bool head_tb    = false;
-		float head_dot_z = 0.f;
+		pf_tb_t tb{ };
 		std::vector< std::pair< float, float > > near_dots;
 		int snap_type = route_pt_pixelsurf;
 		const auto try_snap = [ & ]( const std::vector< AnimatedPoint >& points, int type ) {
@@ -1145,13 +1144,7 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 			try_snap( animated_points3, route_pt_texturebug );
 			try_snap( animated_points4, route_pt_pixeljump );
 			if ( snap_found && snap_type == route_pt_texturebug )
-				pf_tb_rise_seam( snapped );
-			if ( snap_found && snap_type == route_pt_texturebug && pf_tb_is_head( snapped ) ) {
-				snap_type  = route_pt_pixelsurf;
-				head_dot_z = snapped.m_z;
-				snapped.m_z += pf_head_over( ) - 54.f;
-				head_tb   = true;
-			}
+				pf_tb_info( snapped, tb );
 		}
 
 		{
@@ -1182,15 +1175,14 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 		} else if ( snap_found ) {
 			point.pos       = snapped;
 			point.snapped   = true;
-			point.type       = snap_type;
+			/* feet seam dot = the pixelsurf that held at the marker: solved as one ( target_z: snap_type tb + type ps ) */
+			point.type       = snap_type == route_pt_texturebug && tb.kind == pf_tb_feet ? route_pt_pixelsurf : snap_type;
 			point.snap_type  = snap_type;
 			point.hb_ceiling = snap_type == route_pt_headbounce && pf_hb_is_ceiling( snapped );
 			point.hb_win     = snap_type == route_pt_headbounce && !point.hb_ceiling && pf_hb_window( snapped, point.hb_lo, point.hb_hi );
-			if ( head_tb ) {
-				point.allow_stand = false;
-				point.head_tb     = true;
-				point.mark_z      = head_dot_z;
-			}
+			point.tb_kind    = tb.kind;
+			point.tb_tall    = tb.tall;
+			point.tb_coord   = tb.coord;
 		} else {
 			if ( rc_ray_clip && std::fabs( trace.m_plane.m_normal.m_z ) <= 0.7f ) {
 				c_vector top;
@@ -1255,9 +1247,13 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 		data.map = g_interfaces.m_engine_client->get_level_name_short( );
 		data.drop_solutions( );
 		std::string placed = "route: point " + std::to_string( data.points.size( ) ) + " (" +
-		                     route_point_type_name( route_point_shown_type( point ) ) + ", z " + two_dp( point.quantized_z ) + ")";
-		if ( point.head_tb )
-			placed += " - head seam at " + two_dp( point.mark_z ) + ", solved as a ducked pixelsurf";
+		                     route_point_type_name( point.type ) + ", z " + two_dp( point.quantized_z ) + ")";
+		if ( point.type == route_pt_texturebug )
+			placed += point.tb_kind == pf_tb_rise ? std::string( " - feet cross it rising ( bounce )" )
+			                                      : " - head crosses it falling, brush " +
+			                                            ( point.tb_tall > 0.f ? two_dp( point.tb_tall ) + " tall" : std::string( "unread" ) );
+		else if ( point.snap_type == route_pt_texturebug )
+			placed += " - feet seam, solved as a pixelsurf";
 		if ( on_player )
 			placed += " on a player (follows them)";
 		else if ( clip_top )
@@ -1272,8 +1268,8 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 			placed += " - under a ceiling";
 		movement_add_window( 3, GET_VARIABLE( g_variables.m_route_calc_advanced_readout, bool )
 		                            ? placed
-		                            : "added " + std::string( route_point_type_name( route_point_shown_type( point ) ) ) + " point at " +
-		                                  two_dp( point.head_tb ? point.mark_z : point.quantized_z ) );
+		                            : "added " + std::string( route_point_type_name( point.type ) ) + " point at " +
+		                                  two_dp( point.quantized_z ) );
 		botox_dbg_log( "[rc add] %s | plane n %.2f %.2f %.2f contents 0x%X%s | at %.2f %.2f, hull stand +%.4f\n", placed.c_str( ),
 		               trace.m_plane.m_normal.m_x, trace.m_plane.m_normal.m_y, trace.m_plane.m_normal.m_z,
 		               trace.m_contents, snap_found ? " ( snapped to a finder dot )" : "", point.pos.m_x, point.pos.m_y, stand_up );
@@ -1287,7 +1283,7 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 		float best_dist  = FLT_MAX;
 		for ( std::size_t i = 0; i < data.points.size( ); ++i ) {
 			c_vector_2d screen_pos;
-			if ( !g_render.world_to_screen( route_point_mark( data.points[ i ] ), screen_pos ) )
+			if ( !g_render.world_to_screen( data.points[ i ].pos, screen_pos ) )
 				continue;
 			const float dx = screen_pos.m_x - g_ctx.m_width * 0.5f;
 			const float dy = screen_pos.m_y - g_ctx.m_height * 0.5f;
@@ -1524,7 +1520,7 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 	start.m_z      = in.start_z;
 	job->anchors.push_back( start );
 	for ( const route_point_t& pt : in.points )
-		job->anchors.push_back( route_point_mark( pt ) );
+		job->anchors.push_back( pt.pos );
 
 	job->advanced = GET_VARIABLE( g_variables.m_route_calc_advanced_readout, bool );
 	job->gen      = data.gen;
@@ -1576,7 +1572,7 @@ void n_movement::impl_t::route_calc_render( )
 		                                               static_cast< int >( accent_var.get< 2 >( ) ), alpha )
 		                                          .get_u32( )
 		                                    : c_color( 110, 110, 110, alpha * 160 / 255 ).get_u32( );
-		const auto world_at           = [ & ]( std::size_t i ) { return arc ? data.path[ i ] : route_point_mark( data.points[ i ] ); };
+		const auto world_at           = [ & ]( std::size_t i ) { return arc ? data.path[ i ] : data.points[ i ].pos; };
 		const std::size_t count       = arc ? data.path.size( ) : data.points.size( );
 		c_vector_2d prev{ };
 		bool have_prev = false;
@@ -1617,7 +1613,7 @@ void n_movement::impl_t::route_calc_render( )
 	const unsigned int label_color = c_color( 255, 255, 255, static_cast< int >( 255.f * opacity ) ).get_u32( );
 	for ( std::size_t i = 0; render_points && i < data.points.size( ); ++i ) {
 		c_vector_2d screen_pos;
-		if ( !g_render.world_to_screen( route_point_mark( data.points[ i ] ), screen_pos ) )
+		if ( !g_render.world_to_screen( data.points[ i ].pos, screen_pos ) )
 			continue;
 
 		const float radius = 11.f * std::clamp( GET_VARIABLE( g_variables.m_points_size, float ), 0.25f, 4.f );
@@ -1635,10 +1631,7 @@ void n_movement::impl_t::route_calc_render( )
 		const ImVec2 index_size = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, index.c_str( ) );
 		add_text( font, screen_pos.m_x - index_size.x * 0.5f, screen_pos.m_y - index_size.y * 0.5f - 1.f, index, mark_color );
 
-		std::string label = route_point_type_name( route_point_shown_type( data.points[ i ] ) );
-		const bool head_shown = data.points[ i ].head_tb && data.points[ i ].type == route_pt_pixelsurf;
-		if ( head_shown )
-			label += " (head)";
+		std::string label = route_point_type_name( data.points[ i ].type );
 		const unsigned int styles = data.points[ i ].styles;
 		if ( styles != 0u && styles != n_route::k_all_point_styles )
 			label += " *";
@@ -1646,9 +1639,9 @@ void n_movement::impl_t::route_calc_render( )
 			label += " (off)";
 		if ( data.points[ i ].ent > 0 )
 			label += " (player)";
-		if ( !head_shown && !data.points[ i ].allow_stand )
+		if ( !data.points[ i ].allow_stand )
 			label += " (ducked)";
-		else if ( !head_shown && !data.points[ i ].allow_duck )
+		else if ( !data.points[ i ].allow_duck )
 			label += " (stand)";
 		const float label_w = text_width( font, label );
 		add_text( font, screen_pos.m_x - label_w * 0.5f, screen_pos.m_y - radius - font->FontSize - 3.f, label, label_color );

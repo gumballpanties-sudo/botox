@@ -185,6 +185,14 @@ namespace n_route
 	int move_of( int style, int timing, bool ducked_in );
 }
 
+/* what a cyan finder dot proved: head crosses the seam falling ( pin / ride ), feet cross it rising ( bounce ), feet pixelsurf on it */
+enum : int { pf_tb_head, pf_tb_rise, pf_tb_feet };
+struct pf_tb_t {
+	int kind    = pf_tb_head;
+	float tall  = 0.f;
+	float coord = 0.f;
+};
+
 struct route_point_t {
 	c_vector pos{ };
 	/* origin z the feet must reach, re-derived each solve: pixel = pixel_calc quantise
@@ -209,16 +217,12 @@ struct route_point_t {
 	float hb_lo  = 0.f;
 	float hb_hi  = 0.f;
 	float roof = 3.4e38f;
-	/* head seam tb: solved as ducked pixelsurf at pos, shown as texturebug at the finder dot */
-	bool head_tb = false;
-	float mark_z = 0.f;
+	/* texturebug seam pos.z = brush bottom B. kind = what the finder dot proved ( pf_tb_t ), tall = that brush T - B ( 0 unread ),
+	   coord = origin on the wall normal axis ( ulp source, 0 unread ) */
+	int tb_kind    = pf_tb_head;
+	float tb_tall  = 0.f;
+	float tb_coord = 0.f;
 };
-
-inline c_vector route_point_mark( const route_point_t& p ) { return p.head_tb ? c_vector( p.pos.m_x, p.pos.m_y, p.mark_z ) : p.pos; }
-inline int route_point_shown_type( const route_point_t& p )
-{
-	return p.head_tb && p.type == route_pt_pixelsurf ? route_pt_texturebug : p.type;
-}
 
 namespace n_route
 {
@@ -958,8 +962,8 @@ extern std::vector< AnimatedPoint > animated_points2;
 extern std::vector< AnimatedPoint > animated_points3;
 extern std::vector< AnimatedPoint > animated_points4;
 bool pf_dot_screen( const AnimatedPoint& ap, c_vector_2d& out );
-bool pf_tb_is_head( const c_vector& dot );
-void pf_tb_rise_seam( c_vector& dot );
+/* drawn rise dot -> its seam; false = not a finder tb dot */
+bool pf_tb_info( c_vector& dot, pf_tb_t& out );
 bool pf_hb_is_ceiling( const c_vector& dot );
 bool pf_hb_window( const c_vector& dot, float& lo, float& hi );
 struct pf_map_state_t {
@@ -969,7 +973,6 @@ struct pf_map_state_t {
 /* menu thread safe: atomics only */
 void pf_map_scan_toggle( );
 pf_map_state_t pf_map_scan_get( );
-float pf_head_over( );
 void pf_check_catch( const c_vector& pos, const c_vector& wall_n, float slid, bool ducked );
 void pf_check_trick( const char* kind, const c_vector& pos, bool ducked );
 void movement_add_window( int type, const std::string& info );

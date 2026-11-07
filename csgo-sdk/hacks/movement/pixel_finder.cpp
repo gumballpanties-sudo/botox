@@ -65,12 +65,7 @@ bool pf_hb_window( const c_vector& dot, float& lo, float& hi )
 	return false;
 }
 static std::vector< c_vector > Point_tb{ };
-static std::vector< c_vector > Point_tb_head{ };
-
-bool pf_tb_is_head( const c_vector& dot )
-{
-	return std::find( Point_tb_head.begin( ), Point_tb_head.end( ), dot ) != Point_tb_head.end( );
-}
+static std::vector< std::pair< c_vector, pf_tb_t > > Point_tb_info{ };
 static std::vector< std::pair< c_vector, float > > Point_tb_rise{ };
 
 static std::vector< c_vector > pf_tb_drawn( )
@@ -81,13 +76,19 @@ static std::vector< c_vector > pf_tb_drawn( )
 	return out;
 }
 
-void pf_tb_rise_seam( c_vector& dot )
+bool pf_tb_info( c_vector& dot, pf_tb_t& out )
 {
 	for ( const auto& [ seam, h ] : Point_tb_rise )
 		if ( c_vector( seam.m_x, seam.m_y, seam.m_z - h ) == dot ) {
 			dot = seam;
-			return;
+			break;
 		}
+	for ( const auto& [ d, info ] : Point_tb_info )
+		if ( d == dot ) {
+			out = info;
+			return true;
+		}
+	return false;
 }
 static std::vector< c_vector > Point_pj{ };
 
@@ -291,7 +292,7 @@ static int pf_fall( c_user_cmd* cmd, const c_vector& at, float vz0, float fwd, f
 	return pf_hold_verdict( 0, at.m_z, at.m_z, z, vz, pin, step, ( local->get_flags( ) & fl_onground ) != 0, pf_move_type( local ) == move_type_walk );
 }
 
-float pf_head_over( )
+static float pf_head_over( )
 {
 	const float s = n_tick::engine_interval( ) * 64.f;
 	return k_pf_head_over * s * s;
@@ -404,6 +405,27 @@ static bool pf_depth( const c_vector& col, const c_vector& n, float z, float& ou
 	out               = p.m_x * n.m_x + p.m_y * n.m_y;
 	box               = pf_world_brush( tr ) && ( std::fabs( pn.m_x ) > 0.9999f || std::fabs( pn.m_y ) > 0.9999f );
 	return true;
+}
+
+/* route calc tb info: height T - B of the brush over the seam ( line 0.5u inside the face, texturebug.cpp edge_find ) + origin coord
+   on the normal axis. T - feet sets the ride band floor ulp * D / eps. capped at 256, 0 = no brush there */
+static pf_tb_t pf_tb_make( int kind, const c_vector& face_p, const c_vector& n, float seam, float coord, int& traces )
+{
+	pf_tb_t t;
+	t.kind  = kind;
+	t.coord = coord;
+	const c_vector q = face_p - n * 0.5f;
+	const float a = seam + 0.05f, b = seam + 256.f;
+	trace_t tr;
+	ray_t ray( c_vector( q.m_x, q.m_y, a ), c_vector( q.m_x, q.m_y, b ) );
+	n_tb::c_trace_filter_tb_world_props flt( g_ctx.m_local );
+	g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &flt, &tr );
+	++traces;
+	if ( !tr.m_start_solid )
+		return t;
+	const bool left = !tr.m_all_solid && tr.m_fraction_left_solid > 0.f && tr.m_fraction_left_solid < 1.f;
+	t.tall          = ( left ? a + tr.m_fraction_left_solid * ( b - a ) : b ) - 0.03125f - seam;
+	return t;
 }
 
 /* only a face the hull touches ( <= DIST_EPSILON along its normal ) stopped the head */
@@ -1507,7 +1529,7 @@ void n_movement::impl_t::on_level_init( )
 	Point_bounce_ceil.clear( );
 	Point_bounce_win.clear( );
 	Point_tb.clear( );
-	Point_tb_head.clear( );
+	Point_tb_info.clear( );
 	Point_tb_rise.clear( );
 	Point_pj.clear( );
 	animated_points.clear( );
@@ -1533,7 +1555,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 			Point_bounce_ceil.clear( );
 			Point_bounce_win.clear( );
 			Point_tb.clear( );
-			Point_tb_head.clear( );
+			Point_tb_info.clear( );
 			Point_tb_rise.clear( );
 			Point_pj.clear( );
 			animated_points.clear( );
@@ -1610,7 +1632,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 		Point_bounce_ceil.clear( );
 		Point_bounce_win.clear( );
 		Point_tb.clear( );
-		Point_tb_head.clear( );
+		Point_tb_info.clear( );
 		Point_tb_rise.clear( );
 		Point_pj.clear( );
 		const c_vector end = eye + dir * 6000.f;
@@ -1747,6 +1769,8 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 					++s.tb_unverified;
 				else if ( !pf_near_z( Point_tb, std::floor( got ), 0.05f ) ) {
 					Point_tb.emplace_back( dot.m_x, dot.m_y, std::floor( got ) );
+					Point_tb_info.emplace_back( Point_tb.back( ), pf_tb_make( pf_tb_feet, dot, c.n, std::floor( got ),
+					                                                          std::fabs( c.n.m_x ) > 0.5f ? sp.o.m_x : sp.o.m_y, c.traces ) );
 					++s.tb_seams;
 				}
 			}
@@ -1798,13 +1822,12 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 		if ( o != pf_held )
 			return o;
 		Point_tb.push_back( pf_dot( face_p, h.z ) );
+		const pf_tb_t info = pf_tb_make( head_kind ? pf_tb_head : pf_tb_rise, face_p, c.n, h.z, hull, c.traces );
+		Point_tb_info.emplace_back( Point_tb.back( ), info );
 		if ( head_kind ) {
-			if ( how == 0 ) {
-				Point_tb_head.push_back( Point_tb.back( ) );
-				++s.tb_heads;
-			} else
-				++s.tb_edges;
-			botox_dbg_log( "[pf tb] head dot z %.0f | lat %+.1f, %s, hull %.7f, move %.4f", h.z, lat, pf_edge_how( how, c.dt ).c_str( ), hull, move );
+			++( how == 0 ? s.tb_heads : s.tb_edges );
+			botox_dbg_log( "[pf tb] head dot z %.0f | lat %+.1f, %s, hull %.7f, move %.4f, brush %.3f tall", h.z, lat, pf_edge_how( how, c.dt ).c_str( ), hull,
+			               move, info.tall );
 		} else {
 			const float rh = k_pf_rise[ how - 1 ][ 1 ] * c.dt * 64.f;
 			Point_tb_rise.emplace_back( Point_tb.back( ), rh );

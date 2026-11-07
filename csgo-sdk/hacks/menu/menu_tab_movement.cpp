@@ -112,8 +112,8 @@ static void route_calc_page( )
 
 			for ( std::size_t i = 0; i < route.points.size( ); ++i ) {
 				const std::string row = std::to_string( static_cast< int >( i ) + 1 ) + ". " +
-				                        route_point_type_name( route_point_shown_type( route.points[ i ] ) ) + "   z " +
-				                        std::to_string( static_cast< int >( route_point_mark( route.points[ i ] ).m_z ) ) +
+				                        route_point_type_name( route.points[ i ].type ) + "   z " +
+				                        std::to_string( static_cast< int >( route.points[ i ].pos.m_z ) ) +
 				                        ( route.points[ i ].enabled ? "" : "   (off)" );
 				if ( ImGui::Selectable( row.c_str( ), route.selected_row == static_cast< int >( i ) + 1 ) )
 					route.selected_row = static_cast< int >( i ) + 1;
@@ -162,8 +162,8 @@ static void route_calc_page( )
 				                                                         "edgebug",  "headbang",
 				                                                         "texturebug", "pixeljump",
 				                                                         "headbounce" };
-				int shown                                             = route_point_shown_type( point );
-				if ( ImGui::Combo( "point type", &shown, type_names, route_pt_count ) && shown != route_point_shown_type( point ) ) {
+				int shown                                             = point.type;
+				if ( ImGui::Combo( "point type", &shown, type_names, route_pt_count ) && shown != point.type ) {
 					const bool needs_dot = shown == route_pt_pixelsurf || shown == route_pt_texturebug || shown == route_pt_pixeljump ||
 					                       shown == route_pt_headbounce;
 					const bool dot_ok    = point.snap_type == shown ||
@@ -180,8 +180,7 @@ static void route_calc_page( )
 					} else {
 						if ( point.type != shown )
 							point.has_measured = false;
-						point.type    = shown;
-						point.head_tb = false;
+						point.type = shown;
 						route.drop_solutions( );
 					}
 				}

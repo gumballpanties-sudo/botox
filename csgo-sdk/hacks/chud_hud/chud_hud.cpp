@@ -195,8 +195,12 @@ namespace
 			BYTE data[ 512 ]{ };
 			DWORD name_size = sizeof( name ), data_size = sizeof( data ), type = 0;
 
-			if ( RegEnumValueA( key, index, name, &name_size, nullptr, &type, data, &data_size ) != ERROR_SUCCESS )
+			const auto status = RegEnumValueA( key, index, name, &name_size, nullptr, &type, data, &data_size );
+			if ( status == ERROR_NO_MORE_ITEMS )
 				break;
+
+			if ( status != ERROR_SUCCESS )
+				continue;
 
 			if ( type != REG_SZ )
 				continue;
@@ -528,10 +532,13 @@ namespace
 
 const std::vector< std::string >& n_chud::impl_t::system_fonts( )
 {
-	if ( !m_system_fonts.empty( ) )
+	// rescan so fonts installed while injected show up
+	const auto now = GetTickCount64( );
+	if ( !m_system_fonts.empty( ) && now - m_system_fonts_ms < 3000ull )
 		return m_system_fonts;
 
-	m_system_fonts = m_panorama_fonts;
+	m_system_fonts_ms = now;
+	m_system_fonts    = m_panorama_fonts;
 
 	std::vector< std::string > families;
 
@@ -544,8 +551,12 @@ const std::vector< std::string >& n_chud::impl_t::system_fonts( )
 		char name[ 512 ]{ };
 		DWORD name_size = sizeof( name ), type = 0;
 
-		if ( RegEnumValueA( key, index, name, &name_size, nullptr, &type, nullptr, nullptr ) != ERROR_SUCCESS )
+		const auto status = RegEnumValueA( key, index, name, &name_size, nullptr, &type, nullptr, nullptr );
+		if ( status == ERROR_NO_MORE_ITEMS )
 			break;
+
+		if ( status != ERROR_SUCCESS )
+			continue;
 
 		std::string entry = name;
 
@@ -553,23 +564,22 @@ const std::vector< std::string >& n_chud::impl_t::system_fonts( )
 		if ( paren != std::string::npos )
 			entry.erase( paren );
 
-		static const char* styles[] = { " Bold Italic", " Bold Oblique", " Italic", " Oblique", " Bold", " Regular" };
-
-		bool styled = false;
-		for ( const auto* style : styles ) {
-			const auto length = strlen( style );
-			if ( entry.length( ) > length && entry.compare( entry.length( ) - length, length, style ) == 0 ) {
-				styled = true;
-				break;
-			}
-		}
-
-		if ( styled || entry.empty( ) )
-			continue;
-
 		for ( size_t start = 0; start <= entry.length( ); ) {
 			const auto amp  = entry.find( " & ", start );
 			std::string part = entry.substr( start, amp == std::string::npos ? std::string::npos : amp - start );
+
+			// strip style, never skip: "Foo Regular" / "Foo Bold Italic" only fonts must still list "Foo"
+			static const char* styles[] = { " Regular", " Bold", " Italic", " Oblique" };
+			for ( bool stripped = true; stripped; ) {
+				stripped = false;
+				for ( const auto* style : styles ) {
+					const auto length = strlen( style );
+					if ( part.length( ) > length && _stricmp( part.c_str( ) + part.length( ) - length, style ) == 0 ) {
+						part.erase( part.length( ) - length );
+						stripped = true;
+					}
+				}
+			}
 
 			if ( !part.empty( ) && std::find( families.begin( ), families.end( ), part ) == families.end( ) )
 				families.push_back( part );

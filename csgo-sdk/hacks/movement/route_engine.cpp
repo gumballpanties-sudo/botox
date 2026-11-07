@@ -132,7 +132,9 @@ namespace
 	constexpr float k_hull_duck  = 54.f;
 	float hull_top( const n_route::sim_t& s ) { return s.ducked ? k_hull_duck : k_hull_stand; }
 	constexpr float k_dist_eps = 0.03125f;
-	constexpr int k_tb_max_catches = 6;
+	/* tb ride band floor ( texturebug.cpp edge surf band ): 1.3 ulp * D / eps, never under 0.02 */
+	constexpr float k_tb_ulp_margin = 1.3f;
+	constexpr float k_tb_lo_floor   = 0.02f;
 	constexpr float k_duck_speed = 8.f;
 	constexpr float k_duck_penalty = 2.f;
 	constexpr float k_duck_min     = 1.5f;
@@ -1414,7 +1416,7 @@ namespace n_route
 		enum : int { k_next, k_dead, k_split };
 		const auto point_step = [ & ]( std::deque< node_t >& frontier, const std::size_t p, span_t& span ) -> int {
 			route_point_t point = points[ p ];
-			const int shown_type = route_point_shown_type( point );
+			const int shown_type = point.type;
 			if ( point.type == route_pt_headbounce && point.hb_ceiling )
 				point.type = route_pt_headbang;
 			const bool last            = p + 1 == points.size( );
@@ -1426,6 +1428,23 @@ namespace n_route
 			const bool skin            = point.type == route_pt_pixeljump && point.pj_skin;
 			float px_plane      = 0.f;
 			const bool px_grid  = point.type == route_pt_pixelsurf && pixel_plane( target_z, px_plane );
+			/* texturebug, seam = brush bottom B ( lab edge_probe C ): the head crossing B falling pins at h* = head over B at tick start,
+			   needs h* >= lo = 1.3 ulp * D / eps ( D = brush top - feet ). every later fall is k * g*dt^2, so the ride phase phi =
+			   h* mod g*dt^2 is locked: held iff phi in [ lo, g*dt^2 ). rise dot = the feet crossing B rising, one tick bounce */
+			const bool tb_rise     = point.type == route_pt_texturebug && point.tb_kind == pf_tb_rise;
+			const bool tb_verified = point.snap_type == route_pt_texturebug && point.tb_kind != pf_tb_feet && point.tb_tall > 0.f;
+			const float tb_period  = gravity_per_tick( ) * tick_dt( );
+			float tb_ulp           = 0.f;
+			{
+				/* unread coord: the bigger of x / y, never a smaller ulp than the real one */
+				const float coord = point.tb_coord != 0.f ? point.tb_coord : ( std::max )( std::fabs( point.pos.m_x ), std::fabs( point.pos.m_y ) );
+				int ex            = 0;
+				std::frexp( std::fabs( coord ), &ex );
+				tb_ulp = coord != 0.f ? std::ldexp( 1.f, ex - 24 ) : 0.f;
+			}
+			const auto tb_lo = [ & ]( float feet ) {
+				return ( std::max )( k_tb_ulp_margin * tb_ulp * ( target_z + point.tb_tall - feet ) / k_dist_eps, k_tb_lo_floor );
+			};
 
 			if ( static_cast< int >( p ) > deepest ) {
 				deepest       = static_cast< int >( p );
@@ -1585,7 +1604,8 @@ namespace n_route
 						                     ( in.global_moves & ( 1u << move_of( style_longjump, timing, node_ducked ) ) );
 						const bool duck_air_here = ( node.st.on_ground ? style != style_walk_off : !node_ducked ) &&
 						                           ( point.type == route_pt_pixeljump || point.type == route_pt_headbang ||
-						                             point.type == route_pt_headbounce || point.type == route_pt_ground );
+						                             point.type == route_pt_headbounce || point.type == route_pt_ground ||
+						                             point.type == route_pt_texturebug );
 						const bool can_duck_air  = duck_air_here && ( style != style_minijump || !lj_here );
 						const bool can_duck_late = duck_air_here && style == style_minijump;
 						const bool roof_leg   = point.roof < 3.0e38f && ( point.type == route_pt_ground || point.type == route_pt_pixelsurf ||
@@ -1792,7 +1812,6 @@ namespace n_route
 							bool above = armed( );
 							int creep_ticks = 0;
 							bool lip_missed = false;
-							int tb_catches = 0, tb_first = -1;
 							/* ticks the feet cleared the box top since the last landing: crossing the edge on any of them
 							   lands on the next catch ( 10-10 log: 6/6 tries crossed high, landed the falling tick ) */
 							int clear_ticks = 0;
@@ -1924,10 +1943,7 @@ namespace n_route
 									} else if ( point.type == route_pt_headbang ) {
 										gap = std::fabs( s.z + hull_top( s ) - target_z );
 									} else if ( point.type == route_pt_texturebug ) {
-										const float h = hull_top( s );
-										gap = s.z >= target_z          ? s.z - target_z
-										      : s.z + h <= target_z    ? target_z - ( s.z + h )
-										                               : 0.f;
+										gap = std::fabs( ( tb_rise ? s.z : s.z + hull_top( s ) ) - target_z );
 									} else {
 										gap = std::fabs( s.z - target_z );
 										if ( skin ) {
@@ -1936,8 +1952,9 @@ namespace n_route
 											      : over > n_route::k_skin_hi ? over - n_route::k_skin_hi : 0.f;
 										}
 									}
-									const float report_z =
-										point.type == route_pt_headbang ? s.z + hull_top( s ) : px_z;
+									const float report_z = point.type == route_pt_headbang || ( point.type == route_pt_texturebug && !tb_rise )
+									                           ? s.z + hull_top( s )
+									                           : px_z;
 									if ( gap < r.best_gap ) {
 										r.best_gap  = gap;
 										r.closest_z = report_z;
@@ -1952,7 +1969,8 @@ namespace n_route
 									break;
 								if ( falling && point.type == route_pt_headbang && s.z + k_hull_stand < target_z )
 									break;
-								if ( falling && point.type == route_pt_texturebug && s.z + k_hull_stand < target_z - 1.f )
+								/* tick START past B: this tick's crossing still gets read below */
+								if ( point.type == route_pt_texturebug && ( tb_rise ? s.z < z_in : falling && z_in + k_hull_stand < target_z ) )
 									break;
 								if ( falling && skin && !s.on_ground && s.z + k_duck_delta < target_z + n_route::k_skin_lo )
 									break;
@@ -2068,28 +2086,47 @@ namespace n_route
 								if ( point.type == route_pt_texturebug ) {
 									if ( s.on_ground )
 										break;
+									/* a duck-finishing tick moved 9 on its own: its crossing is not a swept hull's */
 									if ( s.ducked != ducked_in )
 										continue;
-									if ( z_in + k_dist_eps >= target_z || z_in + hull_in - k_dist_eps <= target_z )
+									/* h = tick start head over B ( feet under B rising ), crossed = this move took it through B */
+									const float h      = tb_rise ? target_z - z_in : z_in + hull_in - target_z;
+									const bool crossed = h > 0.f && ( tb_rise ? s.z >= target_z : s.z + hull_in <= target_z );
+									if ( !crossed )
 										continue;
-									if ( ( ducked_in && !point.allow_duck ) || ( !ducked_in && !point.allow_stand ) )
-										continue;
-									if ( tb_first < 0 )
-										tb_first = i;
-									if ( ++tb_catches > k_tb_max_catches )
+									/* one crossing per arc: a refused stance or a pin under the floor falls on past B */
+									if ( ( ducked_in && !point.allow_duck ) || ( !ducked_in && !point.allow_stand ) || ( duck_air && !ducked_in ) )
+										break;
+									/* lo off the crossing tick's feet, like texturebug.cpp band( ) */
+									const float lo = tb_rise ? k_tb_lo_floor : tb_lo( z_in );
+									if ( h < lo )
 										break;
 
 									node_t made;
 									made.st           = s;
-									made.st.z         = z_in;   /* clipped: the move never moved it */
 									made.st.vz        = eb_null;
 									made.st.on_ground = false;
 									made.st.fall      = -eb_null;
-									made.cost         = node.cost + leg_cost + ( i - tb_first );
-									push_leg( made, arr_named( point.type, ducked_in, i - tb_first ), z_in, -vz_in, 0.f, 0.f );
+									made.cost         = node.cost + leg_cost;
+									float rank        = 0.f;
+									int tier          = tb_verified ? 0 : 1;
+									if ( tb_rise ) {
+										/* clipped: the move never moved it. bounce windows are not lab mapped */
+										made.st.z = z_in;
+										tier      = 1;
+									} else {
+										/* falls k * g*dt^2 between re-pins, rides at head = B + phi. out of band = the first pin only */
+										const float phi    = std::fmod( h, tb_period );
+										const bool ride    = phi >= lo && phi < tb_period - 1e-4f;
+										made.st.z          = ride ? target_z + phi - hull_in : z_in;
+										rank               = std::fabs( phi - 0.5f * ( lo + tb_period ) );
+										if ( !ride )
+											tier = 2;
+									}
+									push_leg( made, arr_named( point.type, ducked_in ), made.st.z, -vz_in, 0.f, rank, tier );
 									admit( made );
 									made_any = true;
-									continue;
+									break;
 								}
 
 								if ( point.type == route_pt_edgebug ) {
@@ -2737,7 +2774,7 @@ namespace n_route
 				out.want_z    = point.quantized_z;
 				botox_dbg_log( "[rc miss] %s ( %s ) wants z %.4f - %d departures tried, closest first:\n",
 				               point_label( static_cast< std::size_t >( dead_p ) ).c_str( ),
-				               route_point_type_name( route_point_shown_type( point ) ), point.quantized_z,
+				               route_point_type_name( point.type ), point.quantized_z,
 				               static_cast< int >( dead_misses.count ) );
 				for ( const auto& m : dead_misses.rows ) {
 					botox_dbg_log( "[rc miss]   %s\n", m.second.c_str( ) );

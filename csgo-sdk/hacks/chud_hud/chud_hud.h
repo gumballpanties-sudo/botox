@@ -115,6 +115,7 @@ namespace n_chud
 		int m_old_team = -1;
 
 		std::vector< std::string > m_system_fonts{ };
+		unsigned long long m_system_fonts_ms = 0ull;
 
 		std::vector< std::string > m_panorama_fonts{
 			"Stratum2",         "Stratum2 Bold",    "Stratum2 Black",  "Stratum2 Light",     "Stratum2 Medium",
