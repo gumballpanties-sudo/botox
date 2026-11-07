@@ -6,7 +6,7 @@ Lua 5.4.7 scripting for botox. Scripts can draw, read and change user commands, 
 - [How scripts run](#how-scripts-run)
 - [callbacks](#callbacks) - [ui](#ui) - [render](#render) - [entities](#entities) - [entity](#entity)
 - [cmd](#cmd) - [event](#event) - [engine](#engine) - [globals](#globals) - [cvar](#cvar) - [config](#config)
-- [trace](#trace) - [input](#input) - [mem](#mem) - [client](#client) - [constants](#constants)
+- [trace](#trace) - [fx](#fx) - [input](#input) - [mem](#mem) - [client](#client) - [constants](#constants)
 - [Examples](#examples) - [Limits](#limits)
 
 ---
@@ -543,6 +543,20 @@ Contents bits at a point. `mask` default `masks.all`.
 
 ---
 
+## fx
+
+Real game effects in the world. Only you see them (client side). Call from any callback, they fire once and the game animates them.
+
+#### `fx.particle(name, x, y, z, pitch, yaw, roll)`
+
+Spawns the particle system `name` at the point, angles default `0`. Returns `false` when not in game or the map never precached that system, so try a few names. Names botox death particles use: `weapon_confetti_balloons`, `weapon_confetti_omni`, `weapon_confetti`, `explosion_hegrenade_interior`, `explosion_hegrenade_dirt`, `explosion_basic`, `blood_impact_heavy` (pitch `-90` = sprays up).
+
+#### `fx.sparks(x, y, z, magnitude, trail)`
+
+Metal sparks, always available. `magnitude` and `trail` `1` to `16`, default `1`.
+
+---
+
 ## input
 
 #### `input.is_key_down(vk)`
@@ -779,6 +793,7 @@ Full scripts in [lua_examples/](lua_examples/), copy them into `C:\botox\lua\`:
 | [slow_walk.lua](lua_examples/slow_walk.lua) | create_move cmd editing with a keybind |
 | [kill_feed.lua](lua_examples/kill_feed.lua) | named game event, event:get_player, client.chat, button, ui.text |
 | [raw_access.lua](lua_examples/raw_access.lua) | config, netvars, mem.read, mem.vfunc + mem.call |
+| [edgebug_fx.lua](lua_examples/edgebug_fx.lua) | edgebug detect in pre_prediction, own world particles (spark sim, shockwave rings, pillar) via world_to_screen + poly, engine.exec sound |
 
 ---
 

@@ -51,7 +51,7 @@ struct effect_data_t {
 };
 static_assert( offsetof( effect_data_t, m_flags ) == 0x30 && offsetof( effect_data_t, m_hit_box ) == 0x58, "CEffectData layout" );
 
-static bool dispatch_particle( const char* name, const c_vector& origin, const c_angle& angles )
+bool dispatch_particle( const char* name, const c_vector& origin, const c_angle& angles )
 {
 	using callback_t     = void( __cdecl* )( const effect_data_t& );
 	static auto callback = reinterpret_cast< callback_t >(
@@ -78,6 +78,15 @@ static void* effects( )
 {
 	static void* iface = g_modules[ CLIENT_DLL ].find_interface( "IEffects001" );
 	return iface;
+}
+
+bool dispatch_sparks( const c_vector& origin, const int magnitude, const int trail_length )
+{
+	void* fx = effects( );
+	if ( !fx )
+		return false;
+	g_virtual.call< void >( fx, 3, std::cref( origin ), magnitude, trail_length, static_cast< const c_vector* >( nullptr ) );
+	return true;
 }
 
 /* smoke / soul / bouncy balls: own particles, main thread only ( spawned from fire_event, stepped + queued in paint_traverse ) */

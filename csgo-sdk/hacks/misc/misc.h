@@ -239,6 +239,9 @@ void on_hit_marker( );
 void on_hit_sound( );
 void on_healthshot( int trigger );
 void on_death_particles( int victim_index, int attacker_index );
+/* main thread only. particle = name from the map's ParticleEffectNames table, false = not precached here */
+bool dispatch_particle( const char* name, const c_vector& origin, const c_angle& angles );
+bool dispatch_sparks( const c_vector& origin, int magnitude, int trail_length );
 void kill_effects_paint( );
 void kill_effects_world( const c_vector& origin, const c_angle& angles );
 void kill_effects_capture( IDirect3DDevice9* device );

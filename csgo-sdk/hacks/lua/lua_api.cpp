@@ -12,6 +12,7 @@
 #include "../../globals/includes/includes.h"
 #include "../../globals/logger/logger.h"
 #include "../chat_hud.h"
+#include "../misc/misc.h"
 
 #include "lua_api.h"
 
@@ -1714,6 +1715,24 @@ namespace
 		return 1;
 	}
 
+	/* ---- fx ---- */
+
+	int l_fx_particle( lua_State* L )
+	{
+		const char* name = luaL_checkstring( L, 1 );
+		lua_pushboolean( L, g_interfaces.m_engine_client->is_in_game( ) &&
+		                        dispatch_particle( name, check_vector( L, 2 ), c_angle( opt_float( L, 5, 0.f ), opt_float( L, 6, 0.f ), opt_float( L, 7, 0.f ) ) ) );
+		return 1;
+	}
+
+	int l_fx_sparks( lua_State* L )
+	{
+		const int magnitude = static_cast< int >( std::clamp< lua_Integer >( luaL_optinteger( L, 4, 1 ), 1, 16 ) );
+		const int trail     = static_cast< int >( std::clamp< lua_Integer >( luaL_optinteger( L, 5, 1 ), 1, 16 ) );
+		lua_pushboolean( L, g_interfaces.m_engine_client->is_in_game( ) && dispatch_sparks( check_vector( L, 1 ), magnitude, trail ) );
+		return 1;
+	}
+
 	/* ---- input ---- */
 
 	int l_input_is_key_down( lua_State* L )
@@ -2389,6 +2408,9 @@ void n_lua_api::open( lua_State* L )
 
 	static const luaL_Reg trace[ ] = { { "line", l_trace_line }, { "hull", l_trace_hull }, { "point_contents", l_trace_point_contents }, { nullptr, nullptr } };
 	add_table( L, "trace", trace );
+
+	static const luaL_Reg fx[ ] = { { "particle", l_fx_particle }, { "sparks", l_fx_sparks }, { nullptr, nullptr } };
+	add_table( L, "fx", fx );
 
 	static const luaL_Reg input[ ] = { { "is_key_down", l_input_is_key_down },
 		                               { "mouse_pos", l_input_mouse_pos },
