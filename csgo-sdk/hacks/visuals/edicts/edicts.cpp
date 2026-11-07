@@ -349,8 +349,35 @@ void n_edicts::impl_t::dropped_weapons( )
 	} );
 }
 
+/* CClientLeafSystem m_RenderablesInLeaf (iface = client+0x4e35328, list +0x74, alloc client+0x274ee0): +0x14 free head,
+   +0x1c allocated (grows only while free list empty). 65535 = engine Error "CUtlLinkedList overflow" (11-07 nuke, rain
+   on). each rain particle system takes up to 1024 leaves, so stop with room left */
+static bool leaf_table_near_full( const bool rain )
+{
+	static const auto leaf_system = reinterpret_cast< std::uintptr_t >( g_modules[ CLIENT_DLL ].find_interface( "ClientLeafSystem002" ) );
+	if ( !leaf_system )
+		return false;
+
+	const int allocated   = *reinterpret_cast< const int* >( leaf_system + 0x74 + 0x1c );
+	const bool free_empty = *reinterpret_cast< const int* >( leaf_system + 0x74 + 0x14 ) == 0xffff;
+
+	static int logged_step = 0;
+	if ( allocated / 4096 != logged_step ) {
+		if ( allocated / 4096 > logged_step )
+			g_console.print( std::format( "LEAF: renderable leaf pairs high water {} / 65535, rain {}", allocated, rain ).c_str( ) );
+		logged_step = allocated / 4096;
+	}
+
+	return free_empty && allocated >= 63000;
+}
+
 void n_edicts::impl_t::precipitation( )
 {
+	if ( leaf_table_near_full( m_created ) && GET_VARIABLE( g_variables.m_precipitation, bool ) ) {
+		g_console.print< n_console::log_level::WARNING >( "leaf table almost full (game crashes at 65535), precipitation turned off" );
+		GET_VARIABLE( g_variables.m_precipitation, bool ) = false;
+	}
+
 	if ( !GET_VARIABLE( g_variables.m_precipitation, bool ) ) {
 		this->remove_precipitation( );
 		return;

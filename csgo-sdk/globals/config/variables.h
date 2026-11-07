@@ -782,6 +782,8 @@ namespace n_variables
 		ADD_VARIABLE( key_bind_t, m_third_person_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( float, m_third_person_distance, 100.f );
 		ADD_VARIABLE( bool, m_third_person_collision, true );
+		ADD_VARIABLE( float, m_third_person_offset_side, 0.f );
+		ADD_VARIABLE( float, m_third_person_offset_up, 0.f );
 		ADD_VARIABLE( bool, m_aimbot_fov_circle, false );
 		ADD_VARIABLE( c_color, m_aimbot_fov_circle_color, c_color( 255, 255, 255, 140 ) );
 		ADD_VARIABLE( float, m_aimbot_fov_circle_thickness, 1.f );

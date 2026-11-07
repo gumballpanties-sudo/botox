@@ -398,16 +398,14 @@ void n_screen::impl_t::third_person( const bool restore )
 	if ( !g_interfaces.m_input )
 		return;
 
-	static bool forced = false;
-
 	const bool wanted = !restore && GET_VARIABLE( g_variables.m_third_person, bool ) &&
 	                    g_input.check_input( &GET_VARIABLE( g_variables.m_third_person_key, key_bind_t ) ) && g_ctx.m_local &&
 	                    g_ctx.m_local->is_alive( );
 
 	if ( !wanted ) {
-		if ( forced ) {
+		if ( m_third_person_on ) {
 			g_interfaces.m_input->m_camera_in_third_person = false;
-			forced                                         = false;
+			m_third_person_on                              = false;
 		}
 
 		return;
@@ -438,7 +436,39 @@ void n_screen::impl_t::third_person( const bool restore )
 	g_interfaces.m_input->m_camera_in_third_person = true;
 	g_interfaces.m_input->m_camera_offset          = c_vector( view_angles.m_x, view_angles.m_y, distance );
 
-	forced = true;
+	m_third_person_on = true;
+}
+
+// ClientModeShared::OverrideView laid the camera back along the view; shift it in camera right/up ( c_thirdpersonshoulder math )
+void n_screen::impl_t::on_override_view_post( c_view_setup* setup )
+{
+	if ( !setup || !m_third_person_on || !g_interfaces.m_input->m_camera_in_third_person || !g_ctx.m_local )
+		return;
+
+	const float side = GET_VARIABLE( g_variables.m_third_person_offset_side, float );
+	const float up   = GET_VARIABLE( g_variables.m_third_person_offset_up, float );
+	if ( side == 0.f && up == 0.f )
+		return;
+
+	c_vector right{ }, up_dir{ };
+	g_math.angle_vectors( c_angle( setup->m_angles.m_x, setup->m_angles.m_y, 0.f ), nullptr, &right, &up_dir );
+
+	const c_vector from = setup->m_origin;
+	c_vector to         = from + right * side + up_dir * up;
+
+	if ( GET_VARIABLE( g_variables.m_third_person_collision, bool ) ) {
+		constexpr float hull = 9.f;
+
+		trace_t trace{ };
+		c_trace_filter filter( g_ctx.m_local );
+
+		ray_t ray( from, to, c_vector( -hull, -hull, -hull ), c_vector( hull, hull, hull ) );
+		g_interfaces.m_engine_trace->trace_ray( ray, mask_solid, &filter, &trace );
+
+		to = from + ( to - from ) * trace.m_fraction;
+	}
+
+	setup->m_origin = to;
 }
 
 void n_screen::impl_t::aspect_ratio( const bool restore )

@@ -41,7 +41,7 @@ namespace
 	constexpr int k_refine_wide          = 8;
 	constexpr float k_duck_lift          = 9.f;  /* cs air duck: origin +9 ( cs_gamemovement.cpp:1244 ) */
 	constexpr float k_duck_hull_z        = 54.f;
-	constexpr float k_duck_speed         = 0.34f; /* CS_PLAYER_SPEED_DUCK_MODIFIER, crops air wish too */
+	constexpr float k_duck_margin        = 2.f;  /* crouch: duck once unducked feet are within 2 ticks of fall + this over contact */
 	constexpr int k_align_slides         = 4;
 	constexpr float k_wall_nz            = 0.1f;
 
@@ -142,6 +142,15 @@ namespace
 	{
 		const float g = ab_gravity( );
 		return g > 1.f ? std::max( ( vz + std::sqrt( vz * vz + 2.f * g * drop ) ) / g, 0.f ) : 0.f;
+	}
+
+	/* crouch: air duck = instant feet +9 ( cs_gamemovement.cpp:1427 ) but wish x0.34 ( :1137 ), a third of the brake. brake
+	   unducked, duck once the unducked feet are within 2 ticks of fall over the contact. origin_z = ducked frame ( lifted ) */
+	bool ab_duck_due( const float origin_z, const float vz, const float target_z )
+	{
+		const float t    = 2.f * ab_phys_dt( );
+		const float fall = -vz * t + 0.5f * ab_gravity( ) * t * t;
+		return origin_z - k_duck_lift - target_z <= fall + k_duck_margin;
 	}
 
 	float ab_clip_xy( const c_vector& v, const c_vector& n )
@@ -892,13 +901,20 @@ namespace
 		c_vector land_pos{ }, land_normal{ };
 	};
 
-	ab_verify_t ab_verify( const c_user_cmd* cmd, const n_air::world_t& w, const ab_plan_t& plan, const bool drop_in,
+	ab_verify_t ab_verify( const c_user_cmd* cmd, const n_air::world_t& w, const ab_plan_t& plan, const bool drop_in, const bool lift,
 	                       const n_tick::c_sim_budget& budget, c_vector* path = nullptr, int* path_n = nullptr )
 	{
 		ab_verify_t v;
-		const n_air::engine_t e = n_air::engine_tick( cmd, w );
+		n_air::engine_t e = n_air::engine_tick( cmd, w );
 		if ( !e.valid )
 			return v;
+		/* plans fly the ducked frame: an unducked engine state is 9 under it till the late duck */
+		if ( lift ) {
+			if ( !( g_prediction.backup_data.m_flags & e_flags::fl_ducking ) )
+				e.start.origin.m_z += k_duck_lift;
+			if ( !( g_ctx.m_local->get_flags( ) & e_flags::fl_ducking ) )
+				e.end.origin.m_z += k_duck_lift;
+		}
 
 		v.engine = true;
 		if ( plan.m_first_ok )
@@ -988,7 +1004,7 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 	if ( data.m_jump_owed && jump_on )
 		cmd->m_buttons &= ~in_jump;
 	/* air duck = feet up 9 at once: 9u more fall onto the face, more vz to turn into speed. arm to ground only
-	   ( a held key with no bounce must not crop air strafe to 0.34 ) */
+	   ( a held key with no bounce must not crop air strafe to 0.34 ). armed cmds re-decide it late ( set_duck ) */
 	const bool lumi = GET_VARIABLE( g_variables.m_auto_bounce_mode, int ) == 3;
 	if ( crouch && data.m_jump_owed && !lumi )
 		cmd->m_buttons |= in_duck;
@@ -1066,14 +1082,36 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 		if ( !crouch )
 			cmd->m_buttons &= ~in_duck;
 	};
+	/* unducked feet ride 9 under the plan: anything walkable-ish in their next 2 ticks ( a ramp's high side ) ducks now too */
+	const auto set_duck = [ & ]( const c_vector& target ) {
+		if ( !crouch )
+			return;
+		bool due = ab_duck_due( origin.m_z, velocity.m_z, target.m_z );
+		if ( !due ) {
+			const float t = 2.f * ab_phys_dt( );
+			const c_vector feet( origin.m_x, origin.m_y, origin.m_z - k_duck_lift );
+			c_trace_filter filter( g_ctx.m_local );
+			trace_t tr{ };
+			ray_t ray( feet, c_vector( feet.m_x + velocity.m_x * t, feet.m_y + velocity.m_y * t, feet.m_z + velocity.m_z * t - 0.5f * ab_gravity( ) * t * t ),
+			           mins, maxs );
+			g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
+			due = tr.m_start_solid || ( tr.m_fraction < 1.f && tr.m_plane.m_normal.m_z > k_wall_nz );
+		}
+		if ( due )
+			cmd->m_buttons |= in_duck;
+		else
+			cmd->m_buttons &= ~in_duck;
+	};
 	const float stop_max_ttc = keep_on ? k_sweep_time : 1e9f;
 
 	n_tick::c_sim_budget budget{ };
 	budget.start( k_budget_share, 0.f, n_tick::search_ab );
 
 	n_air::world_t world = n_air::read_world( mins, maxs );
-	if ( crouch )
-		world.duck = k_duck_speed;
+	/* owned cmds fly unducked ( drop in strips it, crouch ducks only the last ~2 ticks ).
+	   ponytail: those last ducked ticks are modelled at full wish, fine while the stop is already done */
+	if ( crouch || drop_in )
+		world.duck = 1.f;
 	g_ab_align        = GET_VARIABLE( g_variables.m_auto_bounce_align, bool );
 	world.wall_slides = g_ab_align ? k_align_slides : 0;
 	world.snap        = k_snap_reach;
@@ -1084,7 +1122,7 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 	const auto verify = [ & ]( const ab_plan_t& p ) {
 		const bool viz = GET_VARIABLE( g_variables.m_auto_bounce_visualize, bool );
 		int n          = 0;
-		const ab_verify_t v = ab_verify( cmd, world, p, drop_in, budget, viz ? data.m_viz : nullptr, &n );
+		const ab_verify_t v = ab_verify( cmd, world, p, drop_in, crouch, budget, viz ? data.m_viz : nullptr, &n );
 		data.m_viz_n      = n;
 		data.m_viz_land   = v.land ? v.land_pos : p.m_target;
 		data.m_viz_normal = v.land ? v.land_normal : p.m_normal;
@@ -1275,6 +1313,7 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 
 		if ( drop_in )
 			lock_input( );
+		set_duck( data.m_target );
 
 		data.m_found    = true;
 		data.m_owns_cmd = true;
@@ -1290,8 +1329,9 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 			data.m_result = v.pred;
 
 		if ( debug )
-			botox_dbg_log( "[ab] HOLD %s ttc=%.3f spd=%.0f vz=%.0f fly=%d/%d eng=%.0f(%d) us=%lld%s\n", data.m_keep ? "KEEP" : drop_in ? "DROP" : "STOP",
-			               ttc_hold, speed_2d, velocity.m_z, flown, refused, v.pred, v.ticks, budget.used_us( ), held_refused ? " REFUSED" : "" );
+			botox_dbg_log( "[ab] HOLD %s ttc=%.3f spd=%.0f vz=%.0f fly=%d/%d eng=%.0f(%d) us=%lld%s%s\n", data.m_keep ? "KEEP" : drop_in ? "DROP" : "STOP",
+			               ttc_hold, speed_2d, velocity.m_z, flown, refused, v.pred, v.ticks, budget.used_us( ), held_refused ? " REFUSED" : "",
+			               ( cmd->m_buttons & in_duck ) ? " DUCK" : "" );
 		return;
 	}
 
@@ -1322,11 +1362,10 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 
 	if ( jump_on )
 		cmd->m_buttons &= ~in_jump;
-	if ( crouch )
-		cmd->m_buttons |= in_duck;
 
 	if ( drop_in )
 		lock_input( );
+	set_duck( plan->m_target );
 
 	data.m_owns_cmd = true;
 
@@ -1342,7 +1381,7 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 		               data.m_entry_speed, speed_2d, dist, want, plan->m_ttc, plan->m_lookahead, plan->m_place, plan->m_aim, g_ab_align ? plan->m_slides : -1,
 		               plan->m_side, plan->m_room, cmd->m_forward_move, cmd->m_side_move,
 		               flown, refused, plan->m_pred, plan->m_pred_ticks, v.pred, v.ticks, v.err, n_air::accel_speed( world ), budget.used_us( ), budget.expired( ) ? " BUDGET" : "",
-		               crouch ? " CROUCH" : "" );
+		               ( cmd->m_buttons & in_duck ) ? " DUCK" : "" );
 }
 
 // visualize: the armed plan's flight from your body to the contact, ring on the face it drops onto. paint thread, one trace

@@ -2196,6 +2196,26 @@ void n_menu::impl_t::tab_misc( )
 				ImVec2( 220.f, -1.f ) );
 		}
 
+		ImGui::Checkbox( "third person", &GET_VARIABLE( g_variables.m_third_person, bool ) );
+		if ( GET_VARIABLE( g_variables.m_third_person, bool ) ) {
+			ImGui::OptionPopup(
+				"third person settings",
+				[ & ]( ) {
+					ImGui::Label( "third person keybind" );
+					ImGui::Keybind( "third person key", &GET_VARIABLE( g_variables.m_third_person_key, key_bind_t ) );
+
+					ImGui::SliderFloat( "distance##third person", &GET_VARIABLE( g_variables.m_third_person_distance, float ), 20.f, 300.f,
+				                        "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+					ImGui::SliderFloat( "offset side##third person", &GET_VARIABLE( g_variables.m_third_person_offset_side, float ), -60.f,
+				                        60.f, "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+					ImGui::SliderFloat( "offset up##third person", &GET_VARIABLE( g_variables.m_third_person_offset_up, float ), -60.f, 60.f,
+				                        "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+
+					ImGui::Checkbox( "wall collision##third person", &GET_VARIABLE( g_variables.m_third_person_collision, bool ) );
+				},
+				ImVec2( 220.f, -1.f ) );
+		}
+
 #ifdef _DEBUG
 		ImGui::Checkbox( "debugger menu", &GET_VARIABLE( g_variables.m_debugger_visual, bool ) );
 #endif

@@ -1155,22 +1155,6 @@ void n_menu::impl_t::tab_visuals( )
 		menu_columns_begin( );
 
 		if ( menu_group_begin( "screen" ) ) {
-			ImGui::Checkbox( "third person", &GET_VARIABLE( g_variables.m_third_person, bool ) );
-			if ( GET_VARIABLE( g_variables.m_third_person, bool ) ) {
-				ImGui::OptionPopup(
-					"third person settings",
-					[ & ]( ) {
-						ImGui::Label( "third person keybind" );
-						ImGui::Keybind( "third person key", &GET_VARIABLE( g_variables.m_third_person_key, key_bind_t ) );
-
-						ImGui::SliderFloat( "distance##third person", &GET_VARIABLE( g_variables.m_third_person_distance, float ), 20.f, 300.f,
-					                        "%.0f u", ImGuiSliderFlags_AlwaysClamp );
-
-						ImGui::Checkbox( "wall collision##third person", &GET_VARIABLE( g_variables.m_third_person_collision, bool ) );
-					},
-					ImVec2( 220.f, -1.f ) );
-			}
-
 			ImGui::Checkbox( "aspect ratio", &GET_VARIABLE( g_variables.m_aspect_ratio_enable, bool ) );
 			if ( GET_VARIABLE( g_variables.m_aspect_ratio_enable, bool ) ) {
 				ImGui::OptionPopup(

@@ -10,6 +10,8 @@ namespace n_screen
 
 		// CViewRender::SetUpView calls IClientModeShared::OverrideView, slot 18
 		void on_override_view( c_view_setup* setup );
+		// after original: camera already laid back, third person shoulder offset goes on top
+		void on_override_view_post( c_view_setup* setup );
 
 		// third person + aspect ratio must land before CalcView; FRAME_RENDER_START is the last stage ahead of it
 		void on_frame_stage_notify( int stage );
@@ -24,6 +26,8 @@ namespace n_screen
 
 		void third_person( bool restore = false );
 		void aspect_ratio( bool restore = false );
+
+		bool m_third_person_on = false;
 	};
 }
 

@@ -12,5 +12,7 @@ void __fastcall n_detoured_functions::override_view( void* ecx, void* edx, c_vie
 
 	original( ecx, edx, setup );
 
+	g_screen.on_override_view_post( setup );
+
 	g_mc_clouds.on_override_view( setup );
 }
