@@ -1,6 +1,7 @@
 #include "menu_internal.h"
 #include "../misc/misc.h"
 #include "../misc/chat_extras.h"
+#include "../misc/minesweeper.h"
 #include "../misc/names_pure.h"
 #include "../network/botox_net.h"
 #include "../../game/sdk/includes/includes.h"
@@ -2167,6 +2168,30 @@ void n_menu::impl_t::tab_misc( )
 				[]( ) {
 					image_path_input( "image url##discord rpc", "https://raw.githubusercontent.com/gumballpanties-sudo/botox-assets/main/misc/KDUzwZf.png", GET_VARIABLE( g_variables.m_discord_rpc_image, std::string ),
 					                  true );
+				},
+				ImVec2( 220.f, -1.f ) );
+		}
+
+		ImGui::Checkbox( "minesweeper", &GET_VARIABLE( g_variables.m_minesweeper, bool ) );
+		if ( GET_VARIABLE( g_variables.m_minesweeper, bool ) ) {
+			ImGui::OptionPopup(
+				"minesweeper settings",
+				[]( ) {
+					ImGui::Checkbox( "night theme##minesweeper", &GET_VARIABLE( g_variables.m_minesweeper_night, bool ) );
+
+					auto& difficulty = GET_VARIABLE( g_variables.m_minesweeper_difficulty, int );
+					if ( difficulty < 0 || difficulty > MsGame::kCustom )
+						difficulty = 1;
+					ImGui::Combo( "board size##minesweeper", &difficulty, "beginner 9x9\0intermediate 16x16\0expert 30x16\0custom\0" );
+
+					if ( difficulty == MsGame::kCustom ) {
+						auto& width  = GET_VARIABLE( g_variables.m_minesweeper_width, int );
+						auto& height = GET_VARIABLE( g_variables.m_minesweeper_height, int );
+						ImGui::SliderInt( "width##minesweeper", &width, MsGame::kMinSide, MsGame::kMaxW );
+						ImGui::SliderInt( "height##minesweeper", &height, MsGame::kMinSide, MsGame::kMaxH );
+						ImGui::SliderInt( "mines##minesweeper", &GET_VARIABLE( g_variables.m_minesweeper_mines, int ), 1,
+						                  MsGame::MaxMines( ImClamp( width, MsGame::kMinSide, MsGame::kMaxW ), ImClamp( height, MsGame::kMinSide, MsGame::kMaxH ) ) );
+					}
 				},
 				ImVec2( 220.f, -1.f ) );
 		}

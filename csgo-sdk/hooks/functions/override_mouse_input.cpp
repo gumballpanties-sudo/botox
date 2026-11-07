@@ -26,10 +26,13 @@ void __fastcall n_detoured_functions::override_mouse_input( void* thisptr, int e
 		g_edgebug.add_mouse_x( *x );
 	const int eb_style      = GET_VARIABLE( g_variables.m_edgebug_style, int );
 	const bool eb_live      = eb_style == 1 ? g_edgebug.donor_live( ) : g_edgebug.m_found;
-	/* hotwheels lock has no toggle: always on while found, its own scale */
-	const bool edgebug_lock = eb_live && ( eb_style == 3 || GET_VARIABLE( g_variables.m_edgebug_mouse_lock, bool ) );
+	/* hotwheels / lobotomy locks have no toggle: always on while found, their own scale */
+	const bool edgebug_lock = eb_live && ( eb_style == 3 || ( eb_style == 4 && !GET_VARIABLE( g_variables.m_edgebug_lob_silent, bool ) ) ||
+	                                       ( eb_style < 3 && GET_VARIABLE( g_variables.m_edgebug_mouse_lock, bool ) ) );
 	if ( edgebug_lock && x && eb_style == 3 )
 		g_edgebug.hw_mouse( x, y );
+	else if ( edgebug_lock && x && eb_style == 4 )
+		g_edgebug.lob_mouse( x );
 	else if ( edgebug_lock && x ) {
 		const float strength = std::clamp( GET_VARIABLE( g_variables.m_edgebug_mouse_lock_strength, float ), 0.f, 100.f ) / 100.f;
 		const int lock_type  = GET_VARIABLE( g_variables.m_edgebug_mouse_lock_type, int );

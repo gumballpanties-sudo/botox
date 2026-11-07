@@ -1,6 +1,7 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../hooks.h"
+#include "../../hacks/skins/skins.h"
 
 #include <cstring>
 
@@ -26,7 +27,7 @@ int __fastcall n_detoured_functions::emit_sound( void* ecx, void* edx, void* fil
 		botox_dbg_log( "SND: %s drop=%d first=%d vol=%.2f pitch=%d flags=%x cur=%.3f", name, drop ? 1 : 0,
 		               g_interfaces.m_prediction->m_is_first_time_predicted ? 1 : 0, volume, pitch, flags, g_interfaces.m_global_vars_base->m_current_time );
 
-	if ( drop )
+	if ( drop || ( !( flags & k_modify_flags ) && n_skins::drop_knife_deploy_sound( sound_entry ? sound_entry : sample, idx ) ) )
 		return 0;
 
 	return original( ecx, edx, filter, idx, channel, sound_entry, sound_entry_hash, sample, volume, seed, attenuation, flags, pitch, origin, direction,

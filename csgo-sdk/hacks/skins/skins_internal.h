@@ -1299,6 +1299,8 @@ struct knife_view_t {
 
 	int m_parity = 0;
 
+	bool m_deploy_armed = false; // one deploy sound per real draw start
+
 	bool m_applied      = false;
 	int m_saved_seq     = 0;
 	float m_saved_time  = 0.f;

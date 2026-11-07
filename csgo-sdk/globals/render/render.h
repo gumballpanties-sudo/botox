@@ -79,6 +79,7 @@ enum e_font_names {
 	font_name_menu_tahoma_9,
 	font_name_menu_tahoma_bd_9,
 	font_name_kamibebra_22,
+	font_name_minesweeper_19, // tahoma bd 19, digits 1-8 only: minesweeper cell numbers (24 px cells)
 	font_name_max
 };
 

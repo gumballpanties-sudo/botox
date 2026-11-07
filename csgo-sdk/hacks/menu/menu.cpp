@@ -3,6 +3,7 @@
 #include "../../globals/includes/includes.h"
 #include "../../globals/logger/logger.h"
 #include "../misc/misc.h"
+#include "../misc/minesweeper.h"
 #include "../misc/scaleform/scaleform.h"
 #include "../chams/chams.h"
 #include "../chud_hud/chud_hud.h"
@@ -530,12 +531,15 @@ float n_menu::impl_t::fade_draw_lists( ImVector< ImDrawList* >& out, ImVector< f
 
 	const float menu_fade = ImSaturate( this->m_anim_progress );
 
-	ImGuiWindow* web = ImGui::FindWindowByName( "Web##websurf" );
+	ImGuiWindow* web          = ImGui::FindWindowByName( "Web##websurf" );
+	ImGuiWindow* minesweeper  = ImGui::FindWindowByName( Minesweeper_WindowName( ) );
 
 	ImGuiContext& g = *GImGui;
 
 	for ( ImGuiWindow* window : g.Windows ) {
-		if ( !window->Active || window->Hidden || !( menu_owns_window( window, root ) || ( web && menu_owns_window( window, web ) ) ) )
+		if ( !window->Active || window->Hidden ||
+		     !( menu_owns_window( window, root ) || ( web && menu_owns_window( window, web ) ) ||
+		        ( minesweeper && menu_owns_window( window, minesweeper ) ) ) )
 			continue;
 
 		ImDrawList* list = window->DrawList;
@@ -918,7 +922,16 @@ void n_menu::impl_t::on_end_scene( )
 
 		ImGui::Unindent( content_indent );
 	}
+	const ImVec2 menu_pos  = ImGui::GetWindowPos( );
+	const ImVec2 menu_size = ImGui::GetWindowSize( );
 	ImGui::End( );
+
+	/* own window, still in the style scope: menu colours + font, fades with the menu (fade_draw_lists) */
+	const MsSettings minesweeper = { &GET_VARIABLE( g_variables.m_minesweeper, bool ),       &GET_VARIABLE( g_variables.m_minesweeper_night, bool ),
+	                                 &GET_VARIABLE( g_variables.m_minesweeper_difficulty, int ), &GET_VARIABLE( g_variables.m_minesweeper_width, int ),
+	                                 &GET_VARIABLE( g_variables.m_minesweeper_height, int ),   &GET_VARIABLE( g_variables.m_minesweeper_mines, int ) };
+	Minesweeper_Draw( minesweeper, g_render.menu_font( true ), g_render.m_fonts[ e_font_names::font_name_minesweeper_19 ], this->m_anim_progress >= 0.999f,
+	                  ImVec2( menu_pos.x + menu_size.x + 10.f, menu_pos.y ) );
 }
 
 void n_menu::impl_t::tab_aimbot( )

@@ -50,7 +50,13 @@ namespace n_edgebug
 			m_mouse_x = 0.f;
 			m_donor   = { };
 			m_hw      = { };
+			m_lob     = { };
 		}
+		/* style 4 lobotomy v2: lobotomyv2-main/hacks/movement/edgebug.cpp 1:1 */
+		void lob_pre( c_user_cmd* cmd );
+		void lob_post( c_user_cmd* cmd );
+		void lob_frame_start( );
+		void lob_mouse( float* x );
 		/* style 3 hotwheels: hacks/movement/movement.cpp edge_bug / detect_edgebug / fsn / override_mouse_input 1:1 */
 		void hw_post( c_user_cmd* cmd );
 		void hw_frame_start( );
@@ -79,6 +85,19 @@ namespace n_edgebug
 			float yaw_delta = 0.f, starting_yaw = 0.f, side_move = 0.f, forward_move = 0.f, saved_mousedx = 0.f;
 			int ticks_to_stop = 0, last_tick = 0;
 		} m_hw;
+		/* donor globals + function statics, one strafe state per donor strafe block */
+		struct lob_strafe_t {
+			float side = 1.f, old_yaw = 0.f;
+		};
+		struct lob_t {
+			c_vector vel_backup{ };
+			c_angle view_backup{ }, new_angle{ }, aim{ }, aim_to{ };
+			bool found = false, ducked = false, brk = false;
+			int ticks = 0, last_type = 0, sec_last_type = 0, hits = 0, eb_tick = 0, pred_ticks = 0, pred_stamp = 0, mouse_offset = 0;
+			lob_strafe_t strafe[ 4 ];
+			predicted_cmd_t cmds[ 128 ];
+		} m_lob;
+		bool lob_check( c_user_cmd* cmd );
 		void hw_reset( );
 		void hw_detect( c_user_cmd* cmd );
 		void donor_reset( );

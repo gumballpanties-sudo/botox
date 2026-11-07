@@ -63,6 +63,23 @@ const char* n_skins::knife_anim_redirect( const char* requested_model )
 	return swap ? donor : nullptr;
 }
 
+/* long donor draw (bayonet 1.167 > server 1.0) runs the knife_hold path; any refire of the same draw's
+   frame-0 event = second deploy sound. knife_hold arms on a real draw start (runs before Simulate) */
+bool n_skins::drop_knife_deploy_sound( const char* name, int source )
+{
+	auto& view = g_knife_view;
+	if ( !name || _stricmp( name, "Weapon_Knife.Deploy" ) != 0 || !view.m_view_model ||
+	     source != g_interfaces.m_engine_client->get_local_player( ) )
+		return false;
+
+	const bool drop     = !view.m_deploy_armed;
+	view.m_deploy_armed = false;
+
+	botox_dbg_log( "KSND: deploy %s seq=%d parity=%d pending=%d own=%d cyc=%.3f", drop ? "DROP" : "play", view.m_view_model->get_sequence( ),
+	               view.m_view_model->get_reset_events_parity( ), view.m_pending ? 1 : 0, view.m_own_clock ? 1 : 0, view.m_cycle );
+	return drop;
+}
+
 const char* n_skins::knife_killfeed_name( )
 {
 	if ( !GET_VARIABLE( WEAPON_VAR( m_knife_enable ), bool ) )
@@ -446,14 +463,18 @@ void n_skins::impl_t::knife_hold( int stage )
 	const float net_time = vm->get_anim_time( );
 
 	if ( view.m_view_model != vm ) {
-		view          = { vm, net_seq, net_time, net_seq, net_time, vm->get_cycle( ) };
-		view.m_parity = vm->get_reset_events_parity( );
+		view                = { vm, net_seq, net_time, net_seq, net_time, vm->get_cycle( ) };
+		view.m_parity       = vm->get_reset_events_parity( );
+		view.m_deploy_armed = true;
 		return;
 	}
 
 	const bool event = net_seq != view.m_net_seq || net_time > view.m_net_time + 0.1f;
 	view.m_net_seq   = net_seq;
 	view.m_net_time  = net_time;
+
+	if ( event && knife_sequence_is( anim_model, net_seq, 0 ) )
+		view.m_deploy_armed = true;
 
 	if ( event ) {
 		if ( knife_sequence_is_idle( anim_model, net_seq ) && view.m_cycle < 0.98f )

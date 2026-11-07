@@ -63,6 +63,7 @@
     <ClCompile Include="hacks\misc\bot_names.cpp" />
     <ClCompile Include="hacks\misc\custom_names.cpp" />
     <ClCompile Include="hacks\misc\chat_extras.cpp" />
+    <ClCompile Include="hacks\misc\minesweeper.cpp" />
     <ClCompile Include="hacks\misc\discord_rpc.cpp" />
     <ClCompile Include="hacks\misc\kill_effects.cpp" />
     <ClCompile Include="hacks\movement\texturebug.cpp" />
@@ -357,6 +358,7 @@
     <ClInclude Include="game\sdk\classes\c_studio_render.h" />
     <ClInclude Include="hacks\misc\misc.h" />
     <ClInclude Include="hacks\misc\chat_extras.h" />
+    <ClInclude Include="hacks\misc\minesweeper.h" />
     <ClInclude Include="hacks\misc\names_pure.h" />
     <ClInclude Include="hacks\misc\spectator_list\spectator_list.h" />
     <ClInclude Include="game\sdk\enums\e_client_frame_stage.h" />

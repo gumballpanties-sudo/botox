@@ -457,7 +457,7 @@ void n_menu::impl_t::tab_movement( )
 					[ & ]( ) {
 						ImGui::Label( "edgebug keybind" );
 						ImGui::Keybind( "edge bug key", &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) );
-						ImGui::Combo( "style##ebstyle", &GET_VARIABLE( g_variables.m_edgebug_style, int ), "botox\0delusional\0dna\0hotwheels\0" );
+						ImGui::Combo( "style##ebstyle", &GET_VARIABLE( g_variables.m_edgebug_style, int ), "botox\0delusional\0dna\0hotwheels\0lobotomy v2\0" );
 						const int style = GET_VARIABLE( g_variables.m_edgebug_style, int );
 						if ( style == 1 ) {
 							ImGui::Checkbox( "mouse fix##ebdelmousefix", &GET_VARIABLE( g_variables.m_edgebug_del_mouse_fix, bool ) );
@@ -485,6 +485,20 @@ void n_menu::impl_t::tab_movement( )
 							if ( GET_VARIABLE( g_variables.m_edgebug_hw_advanced, bool ) )
 								ImGui::SliderFloat( "max strafe delta##ebhwdelta", &GET_VARIABLE( g_variables.m_edgebug_hw_strafe_delta_max, float ), 0.1f, 100.f,
 								                    "%.1f%%" );
+						} else if ( style == 4 ) {
+							ImGui::Checkbox( "advanced search##eblobadv", &GET_VARIABLE( g_variables.m_edgebug_lob_advanced, bool ) );
+							ImGui::Checkbox( "silent edgebug##eblobsilent", &GET_VARIABLE( g_variables.m_edgebug_lob_silent, bool ) );
+							ImGui::Checkbox( "extra advanced search##eblobmega", &GET_VARIABLE( g_variables.m_edgebug_lob_mega, bool ) );
+							if ( GET_VARIABLE( g_variables.m_edgebug_lob_advanced, bool ) ) {
+								ImGui::Checkbox( "autostrafe to edge##eblobas", &GET_VARIABLE( g_variables.m_edgebug_lob_autostrafe, bool ) );
+								if ( !GET_VARIABLE( g_variables.m_edgebug_lob_autostrafe, bool ) ) {
+									ImGui::SliderFloat( "strafe angle##eblobangle", &GET_VARIABLE( g_variables.m_edgebug_lob_strafe_angle, float ), 1.f, 179.f, "%.0f" );
+									ImGui::Combo( "delta scale##eblobdelta", &GET_VARIABLE( g_variables.m_edgebug_lob_delta_type, int ),
+									              "full\0two-fifths\0half\0quarter\0" );
+								}
+							}
+							ImGui::SliderInt( "edgebug ticks##eblobticks", &GET_VARIABLE( g_variables.m_edgebug_lob_ticks, int ), 1, 64 );
+							ImGui::SliderFloat( "edgebug lock##ebloblock", &GET_VARIABLE( g_variables.m_edgebug_lob_lock, float ), 0.f, 10.f, "%.2f" );
 						}
 						if ( style == 0 ) {
 							ImGui::SliderFloat( "edge bug predict time", &GET_VARIABLE( g_variables.m_edgebug_predict_time, float ),
@@ -517,9 +531,9 @@ void n_menu::impl_t::tab_movement( )
 								ImGui::SliderInt( "paths##ebpaths", &GET_VARIABLE( g_variables.m_edgebug_paths, int ), 1, 4 );
 						}
 
-						if ( style != 3 )
+						if ( style < 3 )
 							ImGui::Checkbox( "lock mouse on find", &GET_VARIABLE( g_variables.m_edgebug_mouse_lock, bool ) );
-						if ( style != 3 && GET_VARIABLE( g_variables.m_edgebug_mouse_lock, bool ) ) {
+						if ( style < 3 && GET_VARIABLE( g_variables.m_edgebug_mouse_lock, bool ) ) {
 							ImGui::Combo( "lock type##eblocktype", &GET_VARIABLE( g_variables.m_edgebug_mouse_lock_type, int ),
 							              style == 0 ? "smooth\0full\0" : "static\0full\0" );
 							ImGui::SliderFloat( "lock strength##eblockstr", &GET_VARIABLE( g_variables.m_edgebug_mouse_lock_strength, float ), 0.f,

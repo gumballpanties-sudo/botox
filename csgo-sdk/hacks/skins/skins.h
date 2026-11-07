@@ -30,6 +30,9 @@ namespace n_skins
 
 	const char* knife_killfeed_name( );
 
+	// game thread (emit_sound): true = same knife draw already played its deploy sound
+	bool drop_knife_deploy_sound( const char* name, int source );
+
 	/* listen server shares our vstdlib: LookAtHeldWeapon's RandomInt( 0, 10 ) (lookat01 w10, lookat02 w1) from
 	   server.dll before this GetTickCount64 returns the max = lookat02. one shot */
 	constexpr int k_deagle_lookat_weights = 11;

@@ -782,6 +782,16 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 			tahoma_bold_compressed_data, tahoma_bold_compressed_size, 9.f, &lobotomy_v1_config, atlas->GetGlyphRangesCyrillic( ) );
 	}
 
+	{
+		/* fpsoverlay minesweeper cell numbers: tahoma bold 19, digits 1-8 only */
+		static const ImWchar minesweeper_ranges[] = { '1', '8', 0 };
+		ImFontConfig minesweeper_config = { };
+		minesweeper_config.PixelSnapH   = true;
+
+		fonts[ e_font_names::font_name_minesweeper_19 ] = atlas->AddFontFromMemoryCompressedTTF(
+			tahoma_bold_compressed_data, tahoma_bold_compressed_size, 19.f, &minesweeper_config, minesweeper_ranges );
+	}
+
 	fonts[ e_font_names::font_name_points_montserrat_italic_18 ] = add_donor_font(
 		montserrat_medium_italic, sizeof( montserrat_medium_italic ), 18.f, ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap, false );
 

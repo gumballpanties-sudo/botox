@@ -1235,6 +1235,14 @@ namespace n_variables
 		ADD_VARIABLE( float, m_edgebug_hw_lock_amt, 0.3f );
 		ADD_VARIABLE( bool, m_edgebug_hw_advanced, false );
 		ADD_VARIABLE( float, m_edgebug_hw_strafe_delta_max, 10.0f );
+		ADD_VARIABLE( int, m_edgebug_lob_ticks, 1 );
+		ADD_VARIABLE( bool, m_edgebug_lob_advanced, false );
+		ADD_VARIABLE( bool, m_edgebug_lob_silent, false );
+		ADD_VARIABLE( bool, m_edgebug_lob_mega, false );
+		ADD_VARIABLE( bool, m_edgebug_lob_autostrafe, false );
+		ADD_VARIABLE( float, m_edgebug_lob_strafe_angle, 0.f );
+		ADD_VARIABLE( int, m_edgebug_lob_delta_type, 0 );
+		ADD_VARIABLE( float, m_edgebug_lob_lock, 0.f );
 		ADD_VARIABLE( bool, m_edgebug_visualize, false );
 		ADD_VARIABLE( c_color, m_edgebug_visualize_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( float, m_edgebug_visualize_thickness, 1.5f );
@@ -1840,6 +1848,14 @@ namespace n_variables
 
 		ADD_VARIABLE( bool, m_discord_rpc, false );
 		ADD_VARIABLE( std::string, m_discord_rpc_image, "" );
+
+		/* fpsoverlay minesweeper: difficulty 0..2 presets, 3 = custom width x height, mines */
+		ADD_VARIABLE( bool, m_minesweeper, false );
+		ADD_VARIABLE( bool, m_minesweeper_night, true );
+		ADD_VARIABLE( int, m_minesweeper_difficulty, 1 );
+		ADD_VARIABLE( int, m_minesweeper_width, 20 );
+		ADD_VARIABLE( int, m_minesweeper_height, 20 );
+		ADD_VARIABLE( int, m_minesweeper_mines, 60 );
 
 		ADD_VARIABLE( bool, m_sniper_crosshair, false );
 		ADD_VARIABLE( int, m_sniper_crosshair_style, 0 );
