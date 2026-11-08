@@ -619,6 +619,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			}
 			/* park is unpinned: a doomed hold still pins this tick, lumi decides; a pinned START is never pushed off its pin */
 			if ( cl_parked && !ahead && !start_pinned ) {
+				s_sticky.valid = false;
 				publish( cl_park_yaw, cl_park_fwd, false, live_view.m_x, false );
 				return;
 			}
@@ -805,16 +806,21 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	};
 	const auto try_move = [ & ]( const float rel, const float move, const float gap_len ) { try_yaw( std::remainder( wall_yaw + rel * side, 360.0f ), move, gap_len ); };
 
-	/* sticky first: wins ties, so a pin it proves keeps the cmd the server already has in flight.
-	   online + slow only: offline nothing is in flight, and moving it froze a fwd 1 move that never cut the tangent ( 11-05 log: vxy 186
-	   for 30t, vxy 5 wrong side 75t, plain catches 2-5t ); online server-early pins were all at vxy <= 1.3 */
-	const bool stick_ok = contact && g_interfaces.m_prediction->m_commands_predicted > 0 && live_velocity.length_2d( ) < 2.0f;
-	const bool sticky   = s_sticky.valid && stick_ok && s_sticky.normal.dot_product( normal ) > 0.999f;
+	/* sticky first: a pin it proves wins outright = keeps the cmd the server may already be pinned on ( 11-08 log: client's own fwd 5 pin
+	   replaced the fwd 1 the server took = fell ). online only: offline nothing is in flight. no speed gate ( 11-08: all 17 server catches
+	   on approach cmds came at client vxy 3-205, next cmd differed, 17/17 fell; same cmd kept 82/83 ). window = cp sends, then re-pick:
+	   by then the first copy's ack is in ( pinned = sv lock ), never a long freeze ( 11-05 offline 30-75t, 11-06 sticky-all ) */
+	const int cp        = g_interfaces.m_prediction->m_commands_predicted;
+	const bool stick_ok = contact && cp > 0;
+	const bool sticky   = s_sticky.valid && stick_ok && s_sticky.ticks < std::min( cp, 8 ) && s_sticky.normal.dot_product( normal ) > 0.999f;
 	if ( sticky )
 		try_yaw( s_sticky.yaw, s_sticky.fwd, 32.0f );
+	const bool sticky_pin = sticky && best_ticks >= 3;
 
 	constexpr float k_moves_near[ 3 ] = { 1.0f, 5.0f, 30.0f };
 	for ( const float move : k_moves_near ) {
+		if ( sticky_pin )
+			break;
 		if ( out_of_time( ) )
 			break;
 		for ( float rel = 85.999f; rel < 90.0f; rel += 1.0f ) {
@@ -824,7 +830,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		}
 	}
 
-	if ( best_ticks < k_chain && !out_of_time( ) ) {
+	if ( !sticky_pin && best_ticks < k_chain && !out_of_time( ) ) {
 		constexpr float k_moves_far[ 6 ] = { 1.0f, 5.0f, 30.0f, 60.0f, 90.0f, 120.0f };
 		for ( const float move : k_moves_far ) {
 			if ( out_of_time( ) )

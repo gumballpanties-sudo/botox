@@ -1,6 +1,7 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../../hacks/misc/misc.h"
+#include "../../hacks/movement/movement.h"
 #include "../../hacks/visuals/screen/ambient_occlusion.h"
 #include "../../hacks/visuals/screen/bloom.h"
 #include "../../hacks/visuals/screen/depth_of_field.h"
@@ -22,8 +23,10 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 
 	original( ecx, edx, setup );
 
-	if ( setup )
+	if ( setup ) {
 		kill_effects_world( setup->m_origin, setup->m_angles );
+		floor_level_world( );
+	}
 
 	// inject splash up: no screen pass (their first shader builds stall frames)
 	const bool passes = !boot_screen_active( );

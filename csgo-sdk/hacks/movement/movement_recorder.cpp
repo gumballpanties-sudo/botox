@@ -980,7 +980,7 @@ static void enqueue_text( ImFont* font, const c_vector_2d& pos, const std::strin
 	obj.m_text          = text;
 	obj.m_color         = col;
 	obj.m_outline_color = ImGui::GetColorU32( ImVec4( 0.f, 0.f, 0.f, 1.f ) );
-	obj.m_draw_flags    = static_cast< e_text_flags >( text_flag_outline | text_flag_dropshadow );
+	obj.m_draw_flags    = e_text_flags::text_flag_dropshadow;
 	obj.m_font_size     = font->FontSize * scale;
 	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_text, std::make_any< text_draw_object_t >( obj ) );
 }

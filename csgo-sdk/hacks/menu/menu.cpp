@@ -418,8 +418,14 @@ void save_popup( const char* str_id, bool& open, const ImVec2& window_size, cons
 	}
 }
 
+/* search results: a page's own columns + groups collapse into the result group it is drawn in */
+static bool s_menu_flat = false;
+
 void menu_columns_begin( )
 {
+	if ( s_menu_flat )
+		return;
+
 	const float width = ImFloor( ( ImGui::GetContentRegionAvail( ).x - ImGui::GetStyle( ).ItemSpacing.x ) / 2.f );
 	ImGui::BeginChild( "left column", ImVec2( width, ImGui::GetContentRegionAvail( ).y - menu_bottom_band_height ), false, ImGuiWindowFlags_NoBackground,
 	                   false );
@@ -427,6 +433,9 @@ void menu_columns_begin( )
 
 void menu_columns_next( )
 {
+	if ( s_menu_flat )
+		return;
+
 	ImGui::EndChild( );
 	ImGui::SameLine( );
 	ImGui::BeginChild( "right column", ImVec2( 0.f, ImGui::GetContentRegionAvail( ).y - menu_bottom_band_height ), false, ImGuiWindowFlags_NoBackground,
@@ -435,17 +444,28 @@ void menu_columns_next( )
 
 void menu_columns_end( )
 {
-	ImGui::EndChild( );
+	if ( !s_menu_flat )
+		ImGui::EndChild( );
 }
 
 bool menu_group_begin( const char* name )
 {
+	if ( s_menu_flat ) {
+		ImGui::PushID( name );
+		return true;
+	}
+
 	const float height = ImGui::GetStateStorage( )->GetFloat( ImGui::GetID( name ), 40.f );
 	return ImGui::BeginChild( name, ImVec2( 0.f, height ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse, true );
 }
 
 void menu_group_end( )
 {
+	if ( s_menu_flat ) {
+		ImGui::PopID( );
+		return;
+	}
+
 	ImGuiWindow* const group = ImGui::GetCurrentWindow( );
 
 	/* clipped group skips items, its cursor never moves: keep the old height */
@@ -510,6 +530,7 @@ float n_menu::impl_t::fade_draw_lists( ImVector< ImDrawList* >& out, ImVector< f
 			popup.m_ghost->IdxBuffer = window->DrawList->IdxBuffer;
 			popup.m_ghost->VtxBuffer = window->DrawList->VtxBuffer;
 			popup.m_ghost->Flags     = window->DrawList->Flags;
+			popup.m_ghost_tex_gen    = ImGui_ImplDX9_FontTextureGeneration( );
 		} else if ( !shown || !popup.m_live )
 			popup.m_alpha = shown ? popup.m_alpha - step : 0.f;
 
@@ -561,6 +582,11 @@ float n_menu::impl_t::fade_draw_lists( ImVector< ImDrawList* >& out, ImVector< f
 	}
 
 	for ( popup_fade_t& popup : this->m_popups ) {
+		/* a font / dpi atlas swap since the copy ( config load from this very popup reloads fonts ) freed the ghost's
+		   texture: drawing it rebinds a dead d3d texture = double free, c0000374. drop it, the fade just ends */
+		if ( popup.m_ghost && popup.m_ghost_tex_gen != ImGui_ImplDX9_FontTextureGeneration( ) )
+			IM_DELETE( std::exchange( popup.m_ghost, nullptr ) );
+
 		if ( !popup.m_live && popup.m_ghost )
 			popups.push_back( { popup.m_ghost, menu_fade * popup.m_alpha } );
 
@@ -814,12 +840,81 @@ void n_menu::impl_t::on_end_scene( )
 			return can_click && hovered && ImGui::IsMouseClicked( ImGuiMouseButton_Left );
 		};
 
+		[ & ]( ) {
+			const ImVec2 box_min( tab_x, tab_y );
+			const ImVec2 box_max( tab_x + tab_width, tab_y + tab_height );
+			const bool hovered = ImGui::IsMouseHoveringRect( box_min, box_max );
+
+			if ( ImGui::IsMouseClicked( ImGuiMouseButton_Left ) )
+				this->m_search_focus = can_click && hovered;
+
+			std::size_t length = std::strlen( this->m_search );
+			if ( this->m_search_focus ) {
+				for ( const ImWchar c : ImGui::GetIO( ).InputQueueCharacters ) {
+					if ( c >= 32 && c < 127 && length < sizeof( this->m_search ) - 1 ) {
+						this->m_search[ length++ ] = static_cast< char >( c );
+						this->m_search[ length ]   = '\0';
+					}
+				}
+
+				if ( ImGui::IsKeyPressed( ImGuiKey_Backspace ) && length > 0 ) {
+					length                   = ImGui::GetIO( ).KeyCtrl ? 0 : length - 1;
+					this->m_search[ length ] = '\0';
+				}
+
+				if ( ImGui::IsKeyPressed( ImGuiKey_Escape ) ) {
+					length               = 0;
+					this->m_search[ 0 ]  = '\0';
+					this->m_search_focus = false;
+				}
+
+				if ( ImGui::IsKeyPressed( ImGuiKey_Enter ) )
+					this->m_search_focus = false;
+			}
+
+			auto hovered_text_animation = ImAnimationHelper( ImHashStr( "menu search" ) + ImHashStr( "hovered-text-animation" ), ImGui::GetIO( ).DeltaTime );
+			hovered_text_animation.Update( 2.f, hovered || this->m_search_focus ? 2.f : -2.f, 0.5f );
+
+			draw_list->AddRectFilled( box_min, box_max, ImGui::GetColorU32( ImGuiCol_MenuBand ), rounding );
+			draw_list->AddRect( box_min, box_max, ImGui::GetColorU32( ImGuiCol_MenuOutline ), rounding );
+
+			const ImU32 text_color = ImGui::GetColorU32( ImGuiCol_Text, hovered_text_animation.AnimationData->second );
+
+			if ( length > 0 || this->m_search_focus ) {
+				const ImVec2 field_min( box_min.x + 3.f, box_min.y + 3.f ), field_max( box_max.x - 3.f, box_max.y - 3.f );
+				draw_list->AddRectFilled( field_min, field_max, ImGui::GetColorU32( ImGuiCol_ChildBg ), ImGui::GetStyle( ).FrameRounding );
+				draw_list->AddRect( field_min, field_max, ImGui::GetColorU32( ImGuiCol_MenuOutline ), ImGui::GetStyle( ).FrameRounding );
+			}
+
+			if ( length == 0 && !this->m_search_focus ) {
+				const auto text_size = tab_font->CalcTextSizeA( tab_font->FontSize, FLT_MAX, 0.f, "search" );
+				draw_list->AddText( tab_font, tab_font->FontSize,
+				                    ImVec2( ImFloor( box_min.x + ( tab_width - text_size.x ) / 2.f ), ImFloor( box_min.y + ( tab_height - text_size.y ) / 2.f ) ),
+				                    text_color, "search" );
+			} else {
+				const bool caret     = this->m_search_focus && static_cast< int >( ImGui::GetTime( ) * 2.0 ) % 2 == 0;
+				const auto text_size = tab_font->CalcTextSizeA( tab_font->FontSize, FLT_MAX, 0.f, this->m_search );
+				const float text_x   = ImFloor( ImMin( box_min.x + 6.f, box_max.x - 9.f - text_size.x ) );
+				const float text_y   = ImFloor( box_min.y + ( tab_height - tab_font->FontSize ) / 2.f );
+
+				draw_list->PushClipRect( ImVec2( box_min.x + 3.f, box_min.y ), ImVec2( box_max.x - 3.f, box_max.y ), true );
+				draw_list->AddText( tab_font, tab_font->FontSize, ImVec2( text_x, text_y ), text_color, this->m_search );
+				if ( caret )
+					draw_list->AddLine( ImVec2( text_x + text_size.x + 1.f, text_y ), ImVec2( text_x + text_size.x + 1.f, text_y + tab_font->FontSize ),
+					                    text_color );
+				draw_list->PopClipRect( );
+			}
+
+			tab_y = box_max.y + tab_gap;
+		}( );
+
 		for ( int tab = 0; tab < tab_count; tab++ ) {
 			const menu_tab_t& entry = tabs[ tab ];
 
 			if ( tab_button( entry.m_name, tab == this->m_tab ) ) {
-				this->m_tab    = tab;
-				this->m_subtab = last_page[ tab ];
+				this->m_tab       = tab;
+				this->m_subtab    = last_page[ tab ];
+				this->m_search[ 0 ] = '\0';
 			}
 
 			if ( entry.m_pages.empty( ) )
@@ -865,8 +960,9 @@ void n_menu::impl_t::on_end_scene( )
 				                    page_color, page_name );
 
 				if ( can_click && hovered && ImGui::IsMouseClicked( ImGuiMouseButton_Left ) ) {
-					this->m_subtab   = page;
-					last_page[ tab ] = page;
+					this->m_subtab      = page;
+					last_page[ tab ]    = page;
+					this->m_search[ 0 ] = '\0';
 				}
 
 				tab_y += ( page_height + 1.f ) * open;
@@ -905,20 +1001,14 @@ void n_menu::impl_t::on_end_scene( )
 
 		ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) + 25.f );
 
-		/* own id per page: each page keeps its own column scroll + group heights */
-		ImGui::PushID( this->m_tab * 16 + this->m_subtab );
-
-		switch ( this->m_tab ) {
-		case 0: this->tab_aimbot( ); break;
-		case 1: this->tab_visuals( ); break;
-		case 2: this->tab_movement( ); break;
-		case 3: this->tab_misc( ); break;
-		case 4: this->tab_inventory( ); break;
-		case 5: this->tab_fonts( ); break;
-		case 6: this->tab_settings( ); break;
+		if ( this->m_search[ 0 ] )
+			this->search_page( );
+		else {
+			/* own id per page: each page keeps its own column scroll + group heights */
+			ImGui::PushID( this->m_tab * 16 + this->m_subtab );
+			this->draw_tab( );
+			ImGui::PopID( );
 		}
-
-		ImGui::PopID( );
 
 		ImGui::Unindent( content_indent );
 	}
@@ -932,6 +1022,105 @@ void n_menu::impl_t::on_end_scene( )
 	                                 &GET_VARIABLE( g_variables.m_minesweeper_height, int ),   &GET_VARIABLE( g_variables.m_minesweeper_mines, int ) };
 	Minesweeper_Draw( minesweeper, g_render.menu_font( true ), g_render.m_fonts[ e_font_names::font_name_minesweeper_19 ], this->m_anim_progress >= 0.999f,
 	                  ImVec2( menu_pos.x + menu_size.x + 10.f, menu_pos.y ) );
+}
+
+void n_menu::impl_t::draw_tab( )
+{
+	switch ( this->m_tab ) {
+	case 0: this->tab_aimbot( ); break;
+	case 1: this->tab_visuals( ); break;
+	case 2: this->tab_movement( ); break;
+	case 3: this->tab_misc( ); break;
+	case 4: this->tab_inventory( ); break;
+	case 5: this->tab_fonts( ); break;
+	case 6: this->tab_settings( ); break;
+	}
+}
+
+/* every searchable page drawn through the imgui row filter. a tab with no hits last frame runs in a 1x1 probe ( never
+   clipped, so it still counts ); a tab with hits gets a group. a scrolled-out group skips its items: keep its old state */
+void n_menu::impl_t::search_page( )
+{
+	struct search_tab_t {
+		const char* m_name;
+		int m_tab;
+		std::vector< int > m_pages;
+	};
+
+	/* skipped: calculator, recorder, points, player list, cvars, lua = lists + previews, not rows */
+	static const search_tab_t tabs[ ] = {
+		{ "aimbot", 0, { 0 } },        { "visuals", 1, { 0, 1, 2 } }, { "movement", 2, { 0, 1 } },        { "misc", 3, { 0 } },
+		{ "inventory", 4, { 0, 1 } }, { "fonts", 5, { 0, 1, 2, 3, 4 } }, { "settings", 6, { 0 } },
+	};
+
+	constexpr int tab_count = static_cast< int >( IM_ARRAYSIZE( tabs ) );
+	static bool hits[ tab_count ] = { };
+
+	const int saved_tab    = this->m_tab;
+	const int saved_subtab = this->m_subtab;
+
+	const auto run = [ & ]( const search_tab_t& entry ) {
+		ImGui::SetSearchFilter( this->m_search );
+		s_menu_flat = true;
+
+		for ( const int page : entry.m_pages ) {
+			this->m_tab    = entry.m_tab;
+			this->m_subtab = page;
+			ImGui::PushID( page );
+			this->draw_tab( );
+			ImGui::PopID( );
+		}
+
+		s_menu_flat = false;
+		const bool found = ImGui::GetSearchHits( ) > 0;
+		ImGui::SetSearchFilter( nullptr );
+		return found;
+	};
+
+	bool shown[ tab_count ] = { };
+	std::copy( std::begin( hits ), std::end( hits ), std::begin( shown ) );
+
+	ImGui::PushID( "search" );
+
+	const ImVec2 cursor = ImGui::GetCursorPos( );
+	ImGui::BeginChild( "##search probe", ImVec2( 1.f, 1.f ), false,
+	                   ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoInputs, false );
+	/* zero-area clip: probe counts rows, draws nothing */
+	const ImVec2 probe_pos = ImGui::GetWindowPos( );
+	ImGui::PushClipRect( probe_pos, probe_pos, true );
+	for ( int i = 0; i < tab_count; i++ ) {
+		if ( !shown[ i ] )
+			hits[ i ] = run( tabs[ i ] );
+	}
+	ImGui::PopClipRect( );
+	ImGui::EndChild( );
+	ImGui::SetCursorPos( cursor );
+
+	menu_columns_begin( );
+
+	if ( std::none_of( std::begin( hits ), std::end( hits ), []( const bool hit ) { return hit; } ) )
+		ImGui::TextDisabled( "nothing found" );
+
+	for ( int column = 0; column < 2; column++ ) {
+		if ( column == 1 )
+			menu_columns_next( );
+
+		for ( int i = 0, slot = 0; i < tab_count; i++ ) {
+			if ( !shown[ i ] || slot++ % 2 != column )
+				continue;
+
+			if ( menu_group_begin( tabs[ i ].m_name ) )
+				hits[ i ] = run( tabs[ i ] );
+			menu_group_end( );
+		}
+	}
+
+	menu_columns_end( );
+
+	ImGui::PopID( );
+
+	this->m_tab    = saved_tab;
+	this->m_subtab = saved_subtab;
 }
 
 void n_menu::impl_t::tab_aimbot( )

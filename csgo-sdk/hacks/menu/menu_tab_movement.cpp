@@ -606,6 +606,7 @@ void n_menu::impl_t::tab_movement( )
 					[ & ]( ) {
 						ImGui::Label( "pixel surf keybind" );
 						ImGui::Keybind( "pixel surf key", &GET_VARIABLE( g_variables.m_pixel_surf_key, key_bind_t ) );
+						ImGui::Checkbox( "strafe into wall##pswallstrafe", &GET_VARIABLE( g_variables.m_pixel_surf_wall_strafe, bool ) );
 
 						ImGui::Combo( "detection sound##pssound", &GET_VARIABLE( g_variables.m_pixel_surf_sound, int ),
 					                  "none\0arena switch\0button\0money\0beep\0custom\0" );
@@ -698,18 +699,10 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Label( "auto bounce keybind" );
 						ImGui::Keybind( "auto bounce key", &GET_VARIABLE( g_variables.m_auto_bounce_key, key_bind_t ) );
 
-						ImGui::Combo( "mode##abmode", &GET_VARIABLE( g_variables.m_auto_bounce_mode, int ), "drop in\0keep speed\0stop\0lumi\0" );
-						if ( GET_VARIABLE( g_variables.m_auto_bounce_mode, int ) == 3 ) {
-							ImGui::SliderInt( "rays##ablrays", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_rays, int ), 4, 64 );
-							ImGui::SliderFloat( "radius##ablradius", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_radius, float ), 5.f, 100.f, "%.0f u" );
-							ImGui::SliderFloat( "depth##abldepth", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_depth, float ), 50.f, 4096.f, "%.0f u",
-							                    ImGuiSliderFlags_Logarithmic );
-							ImGui::SliderFloat( "min angle##ablmin", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_min_angle, float ), 5.f, 60.f, "%.0f deg" );
-							ImGui::SliderFloat( "max angle##ablmax", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_max_angle, float ), 20.f, 90.f, "%.0f deg" );
-							ImGui::SliderFloat( "smoothing##ablsmooth", &GET_VARIABLE( g_variables.m_auto_bounce_lumi_smooth, float ), 0.f, 1.f, "%.2f" );
-							ImGui::Checkbox( "auto jump", &GET_VARIABLE( g_variables.m_auto_bounce_jump, bool ) );
-							ImGui::Checkbox( "crouch near face##abcrouch", &GET_VARIABLE( g_variables.m_auto_bounce_crouch, bool ) );
-						} else {
+						auto& ab_mode = GET_VARIABLE( g_variables.m_auto_bounce_mode, int );
+						if ( ab_mode < 0 || ab_mode > 2 )
+							ab_mode = 0;
+						ImGui::Combo( "mode##abmode", &ab_mode, "drop in\0keep speed\0stop\0" );
 						ImGui::SliderFloat( "min speed gain", &GET_VARIABLE( g_variables.m_auto_bounce_min_gain, float ), 0.f, 500.f, "%.0f" );
 						ImGui::SliderFloat( "max sim reach##abreach", &GET_VARIABLE( g_variables.m_auto_bounce_reach, float ), 16.f, 512.f, "%.0f u" );
 						ImGui::Checkbox( "auto jump", &GET_VARIABLE( g_variables.m_auto_bounce_jump, bool ) );
@@ -718,7 +711,6 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "visualize##abviz", &GET_VARIABLE( g_variables.m_auto_bounce_visualize, bool ) );
 						ImGui::ColorEdit4( "visualize color##abvizcolor", &GET_VARIABLE( g_variables.m_auto_bounce_visualize_color, c_color ),
 						                   color_picker_alpha_flags );
-						}
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
@@ -933,6 +925,20 @@ void n_menu::impl_t::tab_movement( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			ImGui::Checkbox( "check floor level", &GET_VARIABLE( g_variables.m_floor_level, bool ) );
+			if ( GET_VARIABLE( g_variables.m_floor_level, bool ) ) {
+				ImGui::OptionPopup(
+					"check floor level settings",
+					[ & ]( ) {
+						ImGui::Label( "toggle key" );
+						ImGui::Keybind( "check floor level key", &GET_VARIABLE( g_variables.m_floor_level_key, key_bind_t ) );
+						if ( ImGui::Button( floor_level_shown( ) ? "clear floor level" : "check floor level##button", ImVec2( -1.f, 15.f ) ) )
+							floor_level_toggle( );
+						ImGui::SliderFloat( "size##floorlevel", &GET_VARIABLE( g_variables.m_floor_level_size, float ), 16.f, 512.f, "%.0f u" );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
 			ImGui::Checkbox( "practice window", &GET_VARIABLE( g_variables.m_practice_window, bool ) );
 			if ( GET_VARIABLE( g_variables.m_practice_window, bool ) ) {
 				ImGui::OptionPopup(
@@ -1087,8 +1093,7 @@ void n_menu::impl_t::tab_movement( )
 
 						ImGui::Checkbox( "show pre speed##velocity indicator",
 					                     &GET_VARIABLE( g_variables.m_velocity_indicator_show_pre_speed, bool ) );
-						if ( GET_VARIABLE( g_variables.m_velocity_indicator_show_pre_speed, bool ) &&
-						     GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamibebra ) {
+						if ( GET_VARIABLE( g_variables.m_velocity_indicator_show_pre_speed, bool ) ) {
 							ImGui::Combo( "pre speed position##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_pre_layout, int ),
 							              k_pre_layout_names );
 							ImGui::SliderFloat( "pre speed scale##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_pre_scale, float ), 0.25f,
@@ -1103,10 +1108,8 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "custom color##velocity indicator",
 					                     &GET_VARIABLE( g_variables.m_velocity_indicator_custom_color, bool ) );
 
-						if ( GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamibebra )
-							ImGui::Checkbox( "shadow##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_shadow, bool ) );
-						if ( GET_VARIABLE( g_variables.m_velocity_indicator_shadow, bool ) &&
-						     GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamibebra ) {
+						ImGui::Checkbox( "shadow##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_shadow, bool ) );
+						if ( GET_VARIABLE( g_variables.m_velocity_indicator_shadow, bool ) ) {
 							ImGui::SliderFloat( "shadow blur##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_shadow_blur, float ), 0.f,
 							                    20.f, "%.1f" );
 							if ( GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamidere )
@@ -1116,10 +1119,8 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderInt( "shadow y##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_shadow_y, int ), -10, 10, "%d px" );
 						}
 
-						if ( GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamibebra )
-							ImGui::Checkbox( "outline##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_outline, bool ) );
-						if ( GET_VARIABLE( g_variables.m_velocity_indicator_outline, bool ) &&
-						     GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) != indicator_style_kamibebra ) {
+						ImGui::Checkbox( "outline##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_outline, bool ) );
+						if ( GET_VARIABLE( g_variables.m_velocity_indicator_outline, bool ) ) {
 							ImGui::ColorEdit4( "outline color##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_outline_color, c_color ),
 							                   color_picker_alpha_flags );
 							ImGui::SliderInt( "outline thickness##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_outline_px, int ), 1, 5,
@@ -1159,8 +1160,7 @@ void n_menu::impl_t::tab_movement( )
 
 						ImGui::Checkbox( "show pre speed##stamina indicator",
 					                     &GET_VARIABLE( g_variables.m_stamina_indicator_show_pre_speed, bool ) );
-						if ( GET_VARIABLE( g_variables.m_stamina_indicator_show_pre_speed, bool ) &&
-						     GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamibebra ) {
+						if ( GET_VARIABLE( g_variables.m_stamina_indicator_show_pre_speed, bool ) ) {
 							ImGui::Combo( "pre speed position##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_pre_layout, int ),
 							              k_pre_layout_names );
 							ImGui::SliderFloat( "pre speed scale##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_pre_scale, float ), 0.25f,
@@ -1172,10 +1172,8 @@ void n_menu::impl_t::tab_movement( )
 
 						ImGui::Checkbox( "fade alpha##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_fade_alpha, bool ) );
 
-						if ( GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamibebra )
-							ImGui::Checkbox( "shadow##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_shadow, bool ) );
-						if ( GET_VARIABLE( g_variables.m_stamina_indicator_shadow, bool ) &&
-						     GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamibebra ) {
+						ImGui::Checkbox( "shadow##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_shadow, bool ) );
+						if ( GET_VARIABLE( g_variables.m_stamina_indicator_shadow, bool ) ) {
 							ImGui::SliderFloat( "shadow blur##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_shadow_blur, float ), 0.f,
 							                    20.f, "%.1f" );
 							if ( GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamidere )
@@ -1185,10 +1183,8 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderInt( "shadow y##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_shadow_y, int ), -10, 10, "%d px" );
 						}
 
-						if ( GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamibebra )
-							ImGui::Checkbox( "outline##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_outline, bool ) );
-						if ( GET_VARIABLE( g_variables.m_stamina_indicator_outline, bool ) &&
-						     GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) != indicator_style_kamibebra ) {
+						ImGui::Checkbox( "outline##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_outline, bool ) );
+						if ( GET_VARIABLE( g_variables.m_stamina_indicator_outline, bool ) ) {
 							ImGui::ColorEdit4( "outline color##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_outline_color, c_color ),
 							                   color_picker_alpha_flags );
 							ImGui::SliderInt( "outline thickness##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_outline_px, int ), 1, 5,
@@ -1252,9 +1248,17 @@ void n_menu::impl_t::tab_movement( )
 
 			ImGui::Checkbox( "keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_enable, bool ) );
 			if ( GET_VARIABLE( g_variables.m_key_indicators_enable, bool ) ) {
+				const bool label_column = GET_VARIABLE( g_variables.m_key_indicators_custom_labels, bool );
 				ImGui::OptionPopup(
 					"keybind indicator settings",
 					[ & ]( ) {
+						/* popup = AlwaysAutoResize -> default table sizing is FixedFit, force stretch */
+						if ( label_column ) {
+							if ( !ImGui::BeginTable( "##keybind indicator columns", 2, ImGuiTableFlags_SizingStretchSame ) )
+								return;
+							ImGui::TableNextColumn( );
+						}
+
 						ImGui::Combo( "style##keybind indicator style", &GET_VARIABLE( g_variables.m_key_indicators_style, int ),
 						              k_indicator_style_names );
 
@@ -1285,14 +1289,12 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::ColorEdit4( "in prediction color##keybind predict color", &GET_VARIABLE( g_variables.m_key_color_predict, c_color ),
 						                   color_picker_alpha_flags );
 
-						if ( !kamibebra_keys )
-							ImGui::Checkbox( "horizontal layout", &GET_VARIABLE( g_variables.m_key_indicators_horizontal, bool ) );
+						ImGui::Checkbox( "horizontal layout", &GET_VARIABLE( g_variables.m_key_indicators_horizontal, bool ) );
 
 						ImGui::SliderInt( "spacing##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_spacing, int ), -10, 40, "%d px" );
 
-						if ( !kamibebra_keys )
-							ImGui::Checkbox( "shadow##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_shadow, bool ) );
-						if ( GET_VARIABLE( g_variables.m_key_indicators_shadow, bool ) && !kamibebra_keys ) {
+						ImGui::Checkbox( "shadow##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_shadow, bool ) );
+						if ( GET_VARIABLE( g_variables.m_key_indicators_shadow, bool ) ) {
 							ImGui::SliderFloat( "shadow blur##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_shadow_blur, float ), 0.f, 20.f,
 							                    "%.1f" );
 
@@ -1305,9 +1307,8 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderInt( "shadow y##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_shadow_y, int ), -10, 10, "%d px" );
 						}
 
-						if ( !kamibebra_keys )
-							ImGui::Checkbox( "outline##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_outline, bool ) );
-						if ( GET_VARIABLE( g_variables.m_key_indicators_outline, bool ) && !kamibebra_keys ) {
+						ImGui::Checkbox( "outline##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_outline, bool ) );
+						if ( GET_VARIABLE( g_variables.m_key_indicators_outline, bool ) ) {
 							ImGui::ColorEdit4( "outline color##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_outline_color, c_color ),
 							                   color_picker_alpha_flags );
 							ImGui::SliderInt( "outline thickness##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_outline_px, int ), 1, 5,
@@ -1345,7 +1346,9 @@ void n_menu::impl_t::tab_movement( )
 						/* per-bind label override; empty = stock label (hint). buffer 16 = 15 chars keeps the
 						   string in MSVC's SSO buffer, so paint_traverse copying mid-edit never hits freed heap */
 						ImGui::Checkbox( "custom labels", &GET_VARIABLE( g_variables.m_key_indicators_custom_labels, bool ) );
-						if ( GET_VARIABLE( g_variables.m_key_indicators_custom_labels, bool ) ) {
+						if ( label_column && GET_VARIABLE( g_variables.m_key_indicators_custom_labels, bool ) ) {
+							ImGui::TableNextColumn( );
+
 							auto&       labels                    = GET_VARIABLE( g_variables.m_key_indicators_labels, std::vector< std::string > );
 							static char buffers[ label_max ][ 16 ] = { };
 
@@ -1365,8 +1368,11 @@ void n_menu::impl_t::tab_movement( )
 								ImGui::PopID( );
 							}
 						}
+
+						if ( label_column )
+							ImGui::EndTable( );
 					},
-					ImVec2( 220.f, -1.f ) );
+					ImVec2( label_column ? 440.f : 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "keystroke indicators", &GET_VARIABLE( g_variables.m_key_press_indicator, bool ) );

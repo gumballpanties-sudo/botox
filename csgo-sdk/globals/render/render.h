@@ -319,6 +319,8 @@ namespace n_render
 		std::shared_mutex m_font_mutex = { };
 
 		ImFont *m_fonts[ e_font_names::font_name_max ]{ }, *m_custom_fonts[ e_custom_font_names::custom_font_name_max ]{ };
+		int m_custom_text_flags[ e_custom_font_names::custom_font_name_max ]{ }; /* e_text_flags per custom font, render thread */
+		ImFont* m_custom_outline[ e_custom_font_names::custom_font_name_max ]{ };  /* stroked twin per custom font, render thread */
 
 		/* menu style fonts: set only while the menu window draws, verdana pair otherwise */
 		int m_menu_font_slots[ 2 ] = { e_font_names::font_name_verdana_11, e_font_names::font_name_verdana_bd_11 };

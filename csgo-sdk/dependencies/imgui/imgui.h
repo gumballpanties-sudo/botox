@@ -656,6 +656,9 @@ namespace ImGui
 	IMGUI_API float GetRowFrameWidth( );  // frame left -> frame right
 	IMGUI_API void Label( const char* fmt, ... ) IM_FMTARGS( 1 ); // text row on the frame column
 	IMGUI_API void IndentRow( ); // one nesting step for the row that follows (what a checkbox opens up)
+	IMGUI_API void SetSearchFilter( const char* query ); // null / "" = off. on = labelled rows outside popups hide unless they match
+	IMGUI_API int GetSearchHits( );                      // rows matched since the filter was set
+	IMGUI_API bool IsSearchHidden( );                    // the filter hid the current row: skip hand-drawn extras tied to it
 
 	// Widgets: Main
 	// - Most widgets return true when the value has been changed or when pressed/selected

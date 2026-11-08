@@ -216,6 +216,76 @@ void ImGui::IndentRow( )
 	window->DC.IsSetPos = true;
 }
 
+static char s_search[ 64 ]   = { };
+static bool s_search_hidden  = true;
+static int s_search_hits     = 0;
+
+static int search_fold( const char* text, const char* end, char* out, const int out_size )
+{
+	int n = 0;
+	for ( const char* p = text; p < end && *p && n < out_size - 1; ++p ) {
+		if ( *p != ' ' )
+			out[ n++ ] = ( *p >= 'A' && *p <= 'Z' ) ? static_cast< char >( *p + 32 ) : *p;
+	}
+	out[ n ] = '\0';
+	return n;
+}
+
+void ImGui::SetSearchFilter( const char* query )
+{
+	const char* const text = query ? query : "";
+	search_fold( text, text + strlen( text ), s_search, IM_ARRAYSIZE( s_search ) );
+	s_search_hidden = true;
+	s_search_hits   = 0;
+}
+
+int ImGui::GetSearchHits( )
+{
+	return s_search_hits;
+}
+
+bool ImGui::IsSearchHidden( )
+{
+	return s_search[ 0 ] && s_search_hidden && !( GImGui->CurrentWindow->RootWindow->Flags & ( ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip ) );
+}
+
+/* true = skip the widget. attached ( cog, keybind, unlabelled swatch / box ) follows the row before it */
+static bool search_skip( const char* label, const char* end = nullptr, const bool attached = false )
+{
+	if ( !s_search[ 0 ] )
+		return false;
+
+	ImGuiContext& g     = *GImGui;
+	ImGuiWindow* window = g.CurrentWindow;
+	if ( window->RootWindow->Flags & ( ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip ) )
+		return false;
+
+	if ( !end )
+		end = ImGui::FindRenderedTextEnd( label );
+
+	char folded[ 256 ];
+	if ( attached || search_fold( label, end, folded, IM_ARRAYSIZE( folded ) ) == 0 )
+		return s_search_hidden;
+
+	const bool was_hidden = s_search_hidden;
+	s_search_hidden       = !strstr( folded, s_search );
+	if ( s_search_hidden )
+		return true;
+
+	++s_search_hits;
+
+	/* SameLine after a skipped row points at the last shown row: start a fresh line instead */
+	if ( was_hidden && window->DC.IsSameLine ) {
+		window->DC.CursorPos.x            = IM_FLOOR( window->Pos.x + window->DC.Indent.x + window->DC.ColumnsOffset.x );
+		window->DC.CursorPos.y            = IM_FLOOR( window->DC.CursorPosPrevLine.y + window->DC.PrevLineSize.y + g.Style.ItemSpacing.y );
+		window->DC.CurrLineSize.y         = 0.f;
+		window->DC.CurrLineTextBaseOffset = 0.f;
+		window->DC.IsSameLine             = false;
+	}
+
+	return false;
+}
+
 void ImGui::Label( const char* fmt, ... )
 {
 	ImGuiWindow* window = GetCurrentWindow( );
@@ -232,6 +302,8 @@ void ImGui::TextEx( const char* text, const char* text_end, ImGuiTextFlags flags
 {
 	ImGuiWindow* window = GetCurrentWindow( );
 	if ( window->SkipItems )
+		return;
+	if ( text && search_skip( text, text_end ? text_end : text + strlen( text ) ) )
 		return;
 	ImGuiContext& g = *GImGui;
 
@@ -760,6 +832,8 @@ bool ImGui::ButtonEx( const char* label, const ImVec2& size_arg, ImGuiButtonFlag
 	ImGuiWindow* window = GetCurrentWindow( );
 	if ( window->SkipItems )
 		return false;
+	if ( search_skip( label ) )
+		return false;
 
 	ImGuiContext& g         = *GImGui;
 	const ImGuiStyle& style = g.Style;
@@ -852,6 +926,8 @@ bool ImGui::InvisibleButton( const char* str_id, const ImVec2& size_arg, ImGuiBu
 	ImGuiContext& g     = *GImGui;
 	ImGuiWindow* window = GetCurrentWindow( );
 	if ( window->SkipItems )
+		return false;
+	if ( search_skip( str_id, nullptr, true ) )
 		return false;
 
 	// Cannot use zero-size for InvisibleButton(). Unlike Button() there is not way to fallback using the label size.
@@ -1228,6 +1304,8 @@ bool ImGui::Checkbox( const char* label, bool* v )
 	ImGuiWindow* window = GetCurrentWindow( );
 	if ( window->SkipItems )
 		return false;
+	if ( search_skip( label ) )
+		return false;
 
 	ImGuiContext& g         = *GImGui;
 	const ImGuiStyle& style = g.Style;
@@ -1463,6 +1541,9 @@ constexpr const char* cog_icon = "\xef\x80\x93";
 
 void ImGui::OptionPopup( const char* str_id, const std::function< void( ) >& function, const ImVec2& window_size )
 {
+	if ( search_skip( str_id, nullptr, true ) )
+		return;
+
 	ImGuiContext& g         = *GImGui;
 	const ImGuiStyle& style = g.Style;
 
@@ -1565,6 +1646,8 @@ void ImGui::Dummy( const ImVec2& size )
 {
 	ImGuiWindow* window = GetCurrentWindow( );
 	if ( window->SkipItems )
+		return;
+	if ( search_skip( "", nullptr, true ) )
 		return;
 
 	const ImRect bb( window->DC.CursorPos, window->DC.CursorPos + size );
@@ -1818,6 +1901,8 @@ bool ImGui::BeginCombo( const char* label, const char* preview_value, ImGuiCombo
 	ImGuiWindow* window = GetCurrentWindow( );
 	if ( window->SkipItems )
 		return false;
+	if ( search_skip( label ) )
+		return false;
 
 	IM_ASSERT( ( flags & ( ImGuiComboFlags_NoArrowButton | ImGuiComboFlags_NoPreview ) ) !=
 	           ( ImGuiComboFlags_NoArrowButton | ImGuiComboFlags_NoPreview ) ); // Can't use both flags together
@@ -2055,6 +2140,8 @@ bool ImGui::Keybind( const char* label, key_bind_t* key_data, bool has_style )
 {
 	ImGuiWindow* window = ImGui::GetCurrentWindow( );
 	if ( window->SkipItems )
+		return false;
+	if ( search_skip( label, nullptr, true ) )
 		return false;
 
 	ImGuiContext& g = *GImGui;
@@ -3673,6 +3760,8 @@ bool ImGui::SliderScalar( const char* label, ImGuiDataType data_type, void* p_da
 	ImGuiWindow* window = GetCurrentWindow( );
 	if ( window->SkipItems )
 		return false;
+	if ( search_skip( label ) )
+		return false;
 
 	ImGuiContext& g         = *GImGui;
 	const ImGuiStyle& style = g.Style;
@@ -4870,6 +4959,9 @@ bool ImGui::InputTextEx( const char* label, const char* hint, char* buf, int buf
 	// rendering land on a shifted rect (box flickered for 1 frame and reverted).
 	const bool merged_item = ( flags & ImGuiInputTextFlags_MergedItem ) != 0;
 
+	if ( !merged_item && search_skip( label ) )
+		return false;
+
 	if ( !merged_item )
 		SetCursorPosY( ImGui::GetCursorPos( ).y + 10.f );
 
@@ -5879,6 +5971,8 @@ bool ImGui::ColorEdit4( const char* label, float col[ 4 ], ImGuiColorEditFlags f
 {
 	ImGuiWindow* window = GetCurrentWindow( );
 	if ( window->SkipItems )
+		return false;
+	if ( search_skip( label ) )
 		return false;
 
 	PushStyleVar( ImGuiStyleVar_::ImGuiStyleVar_FramePadding, ImVec2( 2, 2 ) );
@@ -7303,6 +7397,8 @@ bool ImGui::BeginListBox( const char* label, const ImVec2& size_arg )
 	ImGuiContext& g     = *GImGui;
 	ImGuiWindow* window = GetCurrentWindow( );
 	if ( window->SkipItems )
+		return false;
+	if ( search_skip( label ) )
 		return false;
 
 	// spans the shared frame column, the caller only decides the height

@@ -53,14 +53,17 @@ static int s_sent_cmd = -1;
 static c_vector s_sent_org{ }, s_sent_vel{ };
 
 // Auto-align also uses this yaw helper. Texturebug itself uses predicted inputs.
-float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, const float cap )
+/* dir = along-wall side to strafe toward ( your keys ); null or ~straight into wall = velocity side */
+float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, const float cap, const c_vector* dir )
 {
-	if ( vel.length_2d( ) < 1.f )
-		return FLT_MAX;
 	const float nl = std::sqrt( n.m_x * n.m_x + n.m_y * n.m_y );
 	const float nx = n.m_x / nl, ny = n.m_y / nl;
 	float tx = -ny, ty = nx;
-	if ( tx * vel.m_x + ty * vel.m_y < 0.f ) {
+	const float dt = dir ? tx * dir->m_x + ty * dir->m_y : 0.f;
+	const bool by_dir = dir && std::fabsf( dt ) > 0.1f * dir->length_2d( );
+	if ( !by_dir && vel.length_2d( ) < 1.f )
+		return FLT_MAX;
+	if ( ( by_dir ? dt : tx * vel.m_x + ty * vel.m_y ) < 0.f ) {
 		tx = -tx;
 		ty = -ty;
 	}

@@ -2,7 +2,10 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../../dependencies/imgui/imgui.h"
+#include "../visuals/screen/render_queue.h"
+#include "../visuals/screen/stream_guard.h"
 #include <algorithm>
+#include <atomic>
 #include <cfloat>
 #include <chrono>
 #include <cmath>
@@ -302,4 +305,264 @@ void n_movement::impl_t::dist_calc_render( )
 	for ( int i = 0; i < 3; i++ )
 		add_text( mid.m_x - text_w( lines[ i ] ) * 0.5f, mid.m_y + 8.f + i * ( font->FontSize + 2.f ), lines[ i ],
 		          i == 0 ? white : std::strstr( lines[ i ], ": yes" ) ? accent_u32 : grey );
+}
+
+/* ---- floor level ---- */
+
+constexpr int k_floor_level_n = 49;
+
+static std::atomic< bool > s_floor_level_click{ false }, s_floor_level_shown{ false };
+
+void floor_level_toggle( )
+{
+	s_floor_level_click = true;
+}
+
+bool floor_level_shown( )
+{
+	return s_floor_level_shown;
+}
+
+static std::string floor_level_readout( const float lo, const float hi, const float mean )
+{
+	char buf[ 96 ]{ };
+	sprintf_s( buf, "lowest: %.3f, highest: %.3f, mean: %.3f", lo, hi, mean );
+	return buf;
+}
+
+void n_movement::impl_t::floor_level( c_user_cmd* cmd )
+{
+	auto& data        = m_floor_level_data;
+	const char* level = g_interfaces.m_engine_client->get_level_name_short( );
+	if ( !level )
+		return;
+	if ( !data.map.empty( ) && data.map != level )
+		data = { };
+	s_floor_level_shown = data.on;
+
+	static bool prev = false;
+	const bool down  = GET_VARIABLE( g_variables.m_floor_level, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_floor_level_key, key_bind_t ) );
+	const bool press = ( down && !prev ) | s_floor_level_click.exchange( false );
+	prev             = down;
+	if ( !press || !cmd || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) )
+		return;
+
+	if ( data.on ) {
+		data                = { };
+		s_floor_level_shown = false;
+		return;
+	}
+
+	c_angle cam{ };
+	g_interfaces.m_engine_client->get_view_angles( cam );
+	const c_vector eye     = g_ctx.m_local->get_eye_position( );
+	const c_vector forward = c_vector::fromAngle( c_vector( cam.m_x, cam.m_y, 0.f ) );
+	c_trace_filter fil( g_ctx.m_local );
+	trace_t tr;
+	ray_t ray( eye, eye + forward * 8192.f );
+	g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &fil, &tr );
+	if ( !tr.did_hit( ) || tr.m_plane.m_normal.m_z < 0.7f ) {
+		movement_add_window( 3, "floor level: aim at a floor" );
+		return;
+	}
+
+	constexpr int n    = k_floor_level_n;
+	const float radius = std::clamp( GET_VARIABLE( g_variables.m_floor_level_size, float ), 16.f, 512.f );
+	const float step   = 2.f * radius / ( n - 1 );
+	const float x0 = tr.m_end.m_x - radius, y0 = tr.m_end.m_y - radius;
+	std::vector< float > zs( n * n, NAN );
+	data.center = tr.m_end;
+	data.lo     = FLT_MAX;
+	data.hi     = -FLT_MAX;
+	double sum  = 0.0;
+	int count   = 0;
+	for ( int i = 0; i < n; i++ ) {
+		for ( int j = 0; j < n; j++ ) {
+			const float x = x0 + j * step, y = y0 + i * step;
+			trace_t t;
+			/* point rays slip through brush seams and hit the void below, a tiny hull does not */
+			ray_t down_ray( c_vector( x, y, tr.m_end.m_z + 64.f ), c_vector( x, y, tr.m_end.m_z - 64.f ), c_vector( -0.25f, -0.25f, 0.f ),
+			                c_vector( 0.25f, 0.25f, 0.f ) );
+			g_interfaces.m_engine_trace->trace_ray( down_ray, mask_playersolid, &fil, &t );
+			if ( t.m_start_solid || !t.did_hit( ) || t.m_plane.m_normal.m_z < 0.7f )
+				continue;
+			const float z     = t.m_end.m_z;
+			zs[ i * n + j ] = z;
+			data.lo         = std::min( data.lo, z );
+			data.hi         = std::max( data.hi, z );
+			sum += z;
+			count++;
+		}
+	}
+	if ( !count ) {
+		data = { };
+		movement_add_window( 3, "floor level: no floor under the aim" );
+		return;
+	}
+	data.mean = static_cast< float >( sum / count );
+
+	/* low red -> mid blue -> high green */
+	const float span = data.hi - data.lo;
+	const auto color = [ & ]( const float z ) {
+		constexpr float k_stops[ 3 ][ 3 ] = { { 255.f, 40.f, 40.f }, { 40.f, 90.f, 255.f }, { 40.f, 230.f, 60.f } };
+		const float t  = span < 0.01f ? 0.5f : ( z - data.lo ) / span;
+		const int s    = t < 0.5f ? 0 : 1;
+		const float a  = t < 0.5f ? t * 2.f : t * 2.f - 1.f;
+		const auto mix = [ & ]( const int c ) { return static_cast< unsigned long >( k_stops[ s ][ c ] + ( k_stops[ s + 1 ][ c ] - k_stops[ s ][ c ] ) * a ); };
+		return ( 170ul << 24 ) | ( mix( 0 ) << 16 ) | ( mix( 1 ) << 8 ) | mix( 2 );
+	};
+	auto mesh = std::make_shared< std::vector< floor_level_vertex_t > >( );
+	mesh->reserve( ( n - 1 ) * ( n - 1 ) * 6 );
+	for ( int i = 0; i + 1 < n; i++ ) {
+		for ( int j = 0; j + 1 < n; j++ ) {
+			const int idx[ 4 ] = { i * n + j, i * n + j + 1, ( i + 1 ) * n + j + 1, ( i + 1 ) * n + j };
+			if ( std::isnan( zs[ idx[ 0 ] ] ) || std::isnan( zs[ idx[ 1 ] ] ) || std::isnan( zs[ idx[ 2 ] ] ) || std::isnan( zs[ idx[ 3 ] ] ) )
+				continue;
+			const auto [ lo, hi ] = std::minmax( { zs[ idx[ 0 ] ], zs[ idx[ 1 ] ], zs[ idx[ 2 ] ], zs[ idx[ 3 ] ] } );
+			/* steeper than walkable = wall or step edge, leave a gap instead of a vertical sheet */
+			if ( hi - lo > 2.f * step )
+				continue;
+			/* 0.25u lift: flush with the floor it z-fights */
+			for ( const int k : { idx[ 0 ], idx[ 1 ], idx[ 2 ], idx[ 0 ], idx[ 2 ], idx[ 3 ] } )
+				mesh->push_back( { x0 + ( k % n ) * step, y0 + ( k / n ) * step, zs[ k ] + 0.25f, color( zs[ k ] ) } );
+		}
+	}
+	data.mesh           = std::move( mesh );
+	data.on             = true;
+	data.map            = level;
+	s_floor_level_shown = true;
+	movement_add_window( 3, floor_level_readout( data.lo, data.hi, data.mean ) );
+}
+
+void n_movement::impl_t::floor_level_render( )
+{
+	const auto& data = m_floor_level_data;
+	if ( !GET_VARIABLE( g_variables.m_floor_level, bool ) || !data.on || !g_ctx.m_local )
+		return;
+
+	auto* font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
+	c_vector_2d mid{ };
+	if ( !font || !g_render.world_to_screen( data.center, mid ) )
+		return;
+	text_draw_object_t text;
+	text.m_text       = floor_level_readout( data.lo, data.hi, data.mean );
+	text.m_font       = font;
+	text.m_position   = c_vector_2d( mid.m_x - font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, text.m_text.c_str( ) ).x * 0.5f, mid.m_y + 8.f );
+	text.m_color      = c_color( 255, 255, 255, 255 ).get_u32( );
+	text.m_draw_flags = text_flag_dropshadow;
+	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_text, std::make_any< text_draw_object_t >( text ) );
+}
+
+using floor_level_mesh_t = std::vector< n_movement::impl_t::floor_level_vertex_t >;
+static_assert( sizeof( n_movement::impl_t::floor_level_vertex_t ) == 16, "D3DFVF_XYZ | D3DFVF_DIFFUSE layout" );
+
+/* render thread, fixed function like web on surface: scene depth from DoPostScreenSpaceEffects hides it behind walls / viewmodel */
+static void floor_level_draw( const floor_level_mesh_t& mesh, const D3DMATRIX& proj )
+{
+	IDirect3DDevice9* device = g_interfaces.m_direct_device;
+	if ( !device || mesh.empty( ) )
+		return;
+
+	static constexpr D3DRENDERSTATETYPE k_states[] = { D3DRS_ZENABLE,         D3DRS_ZWRITEENABLE,     D3DRS_ZFUNC,           D3DRS_ALPHABLENDENABLE,
+	                                                   D3DRS_SRCBLEND,        D3DRS_DESTBLEND,        D3DRS_ALPHATESTENABLE, D3DRS_CULLMODE,
+	                                                   D3DRS_LIGHTING,        D3DRS_FOGENABLE,        D3DRS_STENCILENABLE,   D3DRS_COLORWRITEENABLE,
+	                                                   D3DRS_SRGBWRITEENABLE, D3DRS_SCISSORTESTENABLE, D3DRS_CLIPPLANEENABLE, D3DRS_FILLMODE,
+	                                                   D3DRS_SEPARATEALPHABLENDENABLE };
+	static constexpr D3DTEXTURESTAGESTATETYPE k_stages[] = { D3DTSS_COLOROP, D3DTSS_COLORARG1, D3DTSS_ALPHAOP, D3DTSS_ALPHAARG1 };
+	DWORD states[ std::size( k_states ) ]{ }, stages[ std::size( k_stages ) ]{ }, stage1[ 2 ]{ }, fvf = 0;
+	D3DMATRIX world{ }, view{ }, old_proj{ };
+	IDirect3DVertexShader9* vs        = nullptr;
+	IDirect3DPixelShader9* ps         = nullptr;
+	IDirect3DVertexDeclaration9* decl = nullptr;
+	IDirect3DBaseTexture9* texture    = nullptr;
+	n_stream_guard::state_t streams{ };
+
+	for ( std::size_t i = 0; i < std::size( k_states ); i++ )
+		device->GetRenderState( k_states[ i ], &states[ i ] );
+	for ( std::size_t i = 0; i < std::size( k_stages ); i++ )
+		device->GetTextureStageState( 0, k_stages[ i ], &stages[ i ] );
+	device->GetTextureStageState( 1, D3DTSS_COLOROP, &stage1[ 0 ] );
+	device->GetTextureStageState( 1, D3DTSS_ALPHAOP, &stage1[ 1 ] );
+	device->GetTransform( D3DTS_WORLD, &world );
+	device->GetTransform( D3DTS_VIEW, &view );
+	device->GetTransform( D3DTS_PROJECTION, &old_proj );
+	device->GetVertexShader( &vs );
+	device->GetPixelShader( &ps );
+	device->GetVertexDeclaration( &decl );
+	device->GetFVF( &fvf );
+	device->GetTexture( 0, &texture );
+	streams.capture( device );
+
+	static const D3DMATRIX k_identity = { 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f };
+	device->SetVertexShader( nullptr );
+	device->SetPixelShader( nullptr );
+	device->SetFVF( D3DFVF_XYZ | D3DFVF_DIFFUSE );
+	device->SetTexture( 0, nullptr );
+	device->SetTransform( D3DTS_WORLD, &k_identity );
+	device->SetTransform( D3DTS_VIEW, &k_identity );
+	device->SetTransform( D3DTS_PROJECTION, &proj );
+	device->SetRenderState( D3DRS_ZENABLE, D3DZB_TRUE );
+	device->SetRenderState( D3DRS_ZWRITEENABLE, FALSE );
+	device->SetRenderState( D3DRS_ZFUNC, D3DCMP_LESSEQUAL );
+	device->SetRenderState( D3DRS_ALPHABLENDENABLE, TRUE );
+	device->SetRenderState( D3DRS_SRCBLEND, D3DBLEND_SRCALPHA );
+	device->SetRenderState( D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA );
+	device->SetRenderState( D3DRS_ALPHATESTENABLE, FALSE );
+	device->SetRenderState( D3DRS_CULLMODE, D3DCULL_NONE );
+	device->SetRenderState( D3DRS_LIGHTING, FALSE );
+	device->SetRenderState( D3DRS_FOGENABLE, FALSE );
+	device->SetRenderState( D3DRS_STENCILENABLE, FALSE );
+	device->SetRenderState( D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE );
+	device->SetRenderState( D3DRS_SRGBWRITEENABLE, FALSE );
+	device->SetRenderState( D3DRS_SCISSORTESTENABLE, FALSE );
+	device->SetRenderState( D3DRS_CLIPPLANEENABLE, 0 );
+	device->SetRenderState( D3DRS_FILLMODE, D3DFILL_SOLID );
+	device->SetRenderState( D3DRS_SEPARATEALPHABLENDENABLE, FALSE );
+	device->SetTextureStageState( 0, D3DTSS_COLOROP, D3DTOP_SELECTARG1 );
+	device->SetTextureStageState( 0, D3DTSS_COLORARG1, D3DTA_DIFFUSE );
+	device->SetTextureStageState( 0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1 );
+	device->SetTextureStageState( 0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE );
+	device->SetTextureStageState( 1, D3DTSS_COLOROP, D3DTOP_DISABLE );
+	device->SetTextureStageState( 1, D3DTSS_ALPHAOP, D3DTOP_DISABLE );
+
+	device->DrawPrimitiveUP( D3DPT_TRIANGLELIST, static_cast< UINT >( mesh.size( ) / 3 ), mesh.data( ), sizeof( mesh[ 0 ] ) );
+
+	for ( std::size_t i = 0; i < std::size( k_states ); i++ )
+		device->SetRenderState( k_states[ i ], states[ i ] );
+	for ( std::size_t i = 0; i < std::size( k_stages ); i++ )
+		device->SetTextureStageState( 0, k_stages[ i ], stages[ i ] );
+	device->SetTextureStageState( 1, D3DTSS_COLOROP, stage1[ 0 ] );
+	device->SetTextureStageState( 1, D3DTSS_ALPHAOP, stage1[ 1 ] );
+	device->SetTransform( D3DTS_WORLD, &world );
+	device->SetTransform( D3DTS_VIEW, &view );
+	device->SetTransform( D3DTS_PROJECTION, &old_proj );
+	device->SetTexture( 0, texture );
+	device->SetVertexShader( vs );
+	device->SetPixelShader( ps );
+	if ( decl )
+		device->SetVertexDeclaration( decl );
+	else
+		device->SetFVF( fvf );
+	streams.restore( device );
+	for ( IUnknown* held : std::initializer_list< IUnknown* >{ vs, ps, decl, texture } )
+		if ( held )
+			held->Release( );
+}
+
+/* DoPostScreenSpaceEffects ( main thread ): mesh is immutable once built, job owns a ref */
+void floor_level_world( )
+{
+	const auto& data = g_movement.m_floor_level_data;
+	if ( !GET_VARIABLE( g_variables.m_floor_level, bool ) || !data.on || !data.mesh || data.mesh->empty( ) || !g_interfaces.m_engine_client )
+		return;
+
+	const view_matrix_t& m = g_interfaces.m_engine_client->get_world_to_screen_matrix( );
+	D3DMATRIX proj{ };
+	for ( int r = 0; r < 4; r++ )
+		for ( int c = 0; c < 4; c++ )
+			proj.m[ r ][ c ] = m.data[ c ][ r ];
+
+	auto job = [ mesh = data.mesh, proj ] { floor_level_draw( *mesh, proj ); };
+	if ( !n_render_queue::submit( job ) )
+		job( );
 }

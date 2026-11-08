@@ -30,7 +30,8 @@ enum ImGuiFreeTypeBuilderFlags {
 	ImGuiFreeTypeBuilderFlags_Oblique     = 1 << 6, // Styling: Should we slant the font, emulating italic style?
 	ImGuiFreeTypeBuilderFlags_Monochrome  = 1 << 7, // Disable anti-aliasing. Combine this with MonoHinting for best results!
 	ImGuiFreeTypeBuilderFlags_LoadColor   = 1 << 8, // Enable FreeType color-layered glyphs
-	ImGuiFreeTypeBuilderFlags_Bitmap      = 1 << 9  // Enable FreeType bitmap glyphs
+	ImGuiFreeTypeBuilderFlags_Bitmap      = 1 << 9, // Enable FreeType bitmap glyphs
+	ImGuiFreeTypeBuilderFlags_Stroke      = 1 << 10 // botox: glyph = its 1px outer stroke (FT_Stroker), advance unchanged. outline twin font
 };
 
 namespace ImGuiFreeType

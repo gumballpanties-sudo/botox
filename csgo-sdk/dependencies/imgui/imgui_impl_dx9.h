@@ -23,6 +23,8 @@ void ImGui_ImplDX9_RenderDrawDataFaded( ImDrawData* draw_data, float alpha );
 void ImGui_ImplDX9_DestroyFontsTexture( );
 // botox: one more D3DFMT_A8 texture ( render.cpp dpi font twins ) that takes its colour from the vertex, null = none
 void ImGui_ImplDX9_SetTwinTextureA8( void* texture );
+// botox: changes whenever the font or twin texture is swapped / released. a draw list kept across frames is stale once it moves
+unsigned int ImGui_ImplDX9_FontTextureGeneration( );
 // botox: font texture in stages ( render.cpp reload ). stage: any thread, cpu only, null = no pixels. step: render
 // thread, 1 done / 0 more frames / -1 failed. install: render thread, io.Fonts already = the staged atlas, frees the stage
 struct ImFontAtlas;

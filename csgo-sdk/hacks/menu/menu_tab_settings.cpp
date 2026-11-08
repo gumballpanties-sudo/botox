@@ -748,7 +748,7 @@ void n_menu::impl_t::tab_fonts( )
 			ImGui::SliderInt( "size", &GET_VARIABLE( settings_var, font_setting_t ).m_size, 0, 50, "%d" );
 
 			ImGui::MultiCombo( "font flags", GET_VARIABLE( flags_var, std::vector< bool > ),
-			                   { "no hinting", "no autohint", "force autohint", "light hinting", "monohinting", "bold", "oblique", "monochrome" },
+			                   { "no antialias", "dropshadow", "outline", "monospace", "bold" },
 			                   GET_VARIABLE( flags_var, std::vector< bool > ).size( ) );
 
 			if ( ImGui::Button( "reset to default", ImVec2( -1.f, 15.f ) ) )
@@ -1006,6 +1006,8 @@ void n_menu::impl_t::player_list_page( )
 static bool icon_button( const char* id, const int icon, const float height )
 {
 	const bool pressed = ImGui::Button( id, ImVec2( 16.f, height ) );
+	if ( ImGui::IsSearchHidden( ) )
+		return false;
 	const ImVec2 min = ImGui::GetItemRectMin( ), max = ImGui::GetItemRectMax( );
 	const float cx = ImFloor( ( min.x + max.x ) * 0.5f ) + 0.5f, cy = ImFloor( ( min.y + max.y ) * 0.5f ) + 0.5f;
 	const ImU32 color = ImGui::GetColorU32( ImGuiCol_Text );
@@ -2249,9 +2251,11 @@ void n_menu::impl_t::tab_misc( )
 			ImGui::TextDisabled( "no buttons" );
 
 		/* line spans frame edges (bb + 2 px) */
-		const ImVec2 line = ImGui::GetCursorScreenPos( );
-		ImGui::GetWindowDrawList( )->AddLine( ImVec2( line.x - 2.f, line.y ), ImVec2( line.x + ImGui::GetContentRegionAvail( ).x + 2.f, line.y ),
-		                                      ImGui::GetColorU32( ImGuiCol_Separator ) );
+		if ( !ImGui::IsSearchHidden( ) ) {
+			const ImVec2 line = ImGui::GetCursorScreenPos( );
+			ImGui::GetWindowDrawList( )->AddLine( ImVec2( line.x - 2.f, line.y ), ImVec2( line.x + ImGui::GetContentRegionAvail( ).x + 2.f, line.y ),
+			                                      ImGui::GetColorU32( ImGuiCol_Separator ) );
+		}
 		ImGui::Dummy( ImVec2( 0.f, 1.f ) );
 
 		if ( remove >= 0 ) {

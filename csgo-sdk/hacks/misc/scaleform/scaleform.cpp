@@ -1013,31 +1013,68 @@ static const c_color k_stock_hud_colors[ 12 ] = { c_color( 0xe8, 0xe8, 0xe8 ), c
 	                                              c_color( 0xff, 0x71, 0x24 ), c_color( 0xff, 0xf7, 0x24 ), c_color( 0x3e, 0xff, 0x24 ),
 	                                              c_color( 0x24, 0xff, 0x90 ), c_color( 0xff, 0x79, 0x99 ), c_color( 0xd5, 0xe2, 0x86 ) };
 
+/* css hsv-transform( col, 0, sat, val ) 1:1 (csshelpers.cpp BParseColor + mathlib RGBtoHSV/HSVtoRGB):
+   runs in LINEAR space, int truncation. gamma-space math made icons (val 0.18) near black */
+static float srgb_to_linear( float x )
+{
+	x = std::clamp( x, 0.f, 1.f );
+	return x <= 0.04045f ? x / 12.92f : powf( ( x + 0.055f ) / 1.055f, 2.4f );
+}
+
+static float linear_to_srgb( float x )
+{
+	x = std::clamp( x, 0.f, 1.f );
+	return x <= 0.0031308f ? x * 12.92f : 1.055f * powf( x, 1.f / 2.4f ) - 0.055f;
+}
+
 static c_color hsv_transform( const c_color& input, const float saturation_scale, const float value_scale )
 {
-	const float r = input[ 0 ] / 255.f, g = input[ 1 ] / 255.f, b = input[ 2 ] / 255.f;
+	const float r = srgb_to_linear( input[ 0 ] / 255.f ), g = srgb_to_linear( input[ 1 ] / 255.f ), b = srgb_to_linear( input[ 2 ] / 255.f );
 
 	const float high = std::max( r, std::max( g, b ) );
 	const float low  = std::min( r, std::min( g, b ) );
-	const float span = high - low;
 
-	float hue = 0.f;
-	if ( span > 0.f ) {
-		if ( high == r )
-			hue = 60.f * fmodf( ( g - b ) / span, 6.f );
-		else if ( high == g )
-			hue = 60.f * ( ( b - r ) / span + 2.f );
-		else
-			hue = 60.f * ( ( r - g ) / span + 4.f );
+	float v = high, s = high != 0.f ? ( high - low ) / high : 0.f, h = -1.f;
+	if ( s != 0.f ) {
+		const float d = high - low;
+		h             = r == high ? ( g - b ) / d : g == high ? 2.f + ( b - r ) / d : 4.f + ( r - g ) / d;
+		h *= 60.f;
+		if ( h < 0.f )
+			h += 360.f;
 	}
 
-	if ( hue < 0.f )
-		hue += 360.f;
+	h = fmodf( h, 360.f );
+	if ( h < 0.f )
+		h += 360.f;
+	s = std::min( s * saturation_scale, 1.f );
+	v = std::min( v * value_scale, 1.f );
 
-	const float saturation = high > 0.f ? std::clamp( ( span / high ) * saturation_scale, 0.f, 1.f ) : 0.f;
-	const float value      = std::clamp( high * value_scale, 0.f, 1.f );
+	float out[ 3 ] = { v, v, v };
+	if ( s != 0.f ) {
+		const float hue = ( h == 360.f ? 0.f : h ) / 60.f;
+		const int i     = static_cast< int >( hue );
+		const float f   = hue - i;
+		const float p = v * ( 1.f - s ), q = v * ( 1.f - s * f ), t = v * ( 1.f - s * ( 1.f - f ) );
+		const float table[ 6 ][ 3 ] = { { v, t, p }, { q, v, p }, { p, v, t }, { p, q, v }, { t, p, v }, { v, p, q } };
+		for ( int k = 0; k < 3; k++ )
+			out[ k ] = table[ std::clamp( i, 0, 5 ) ][ k ];
+	}
 
-	return c_color::from_hsb( hue / 360.f, saturation, value, input[ 3 ] / 255.f );
+	return c_color( static_cast< int >( linear_to_srgb( out[ 0 ] ) * 255.f ), static_cast< int >( linear_to_srgb( out[ 1 ] ) * 255.f ),
+	                static_cast< int >( linear_to_srgb( out[ 2 ] ) * 255.f ), static_cast< int >( input[ 3 ] ) );
+}
+
+// CCSGO_HudRadar::Show: #D3E798 at cl_hud_color 0, else GetBGHudTextColor( 0.5 bright, 0.85 sat ) = hsv-transform( c, 0, 0.85, 0.5 )
+static c_color radar_location_wash( const bool custom, const c_color& chosen )
+{
+	if ( custom )
+		return hsv_transform( chosen, 0.85f, 0.5f );
+
+	const int value = g_convars.int_or( HASH_BT( "cl_hud_color" ), 0 );
+	if ( value == 0 )
+		return c_color( 0xd3, 0xe7, 0x98 );
+
+	return hsv_transform( k_stock_hud_colors[ ( value > 0 && value <= 11 ) ? value : 0 ], 0.85f, 0.5f );
 }
 
 static const char* k_xhair_color = R"js(
@@ -1068,7 +1105,7 @@ static const char* k_hud_color = R"js(
 // iife: a top-level var is a CSGOHud global, every run overwrote gen -> no old loop ever stopped
 (function() { try {
     var cp = $.GetContextPanel();
-    var col = ${color}, bg = ${bgcolor}, blend = ${dashblend};
+    var col = ${color}, bg = ${bgcolor}, blend = ${dashblend}, dashwash = ${dashwash};
 
     // one try per write: a rejected value aborts the rest of the script
     var paint = function( cls, prop, value ) {
@@ -1076,11 +1113,20 @@ static const char* k_hud_color = R"js(
             try { p.style[ prop ] = value; } catch(e) {}
     };
 
+    /* stock css = wash-color-fast. washColor after it overwrote the SAME property with the slow
+       flag. null on the alias throws (JSPanelStyleSet) -> clear through the base name */
+    var setwash = function( p, value ) {
+        if ( value === null ) { try { p.style.washColor = null; } catch(e) {} return; }
+        try { p.style.washColorFast = value; } catch(e) { try { p.style.washColor = value; } catch(e2) {} }
+    };
+
+    // stock hudhealtharmor.css '.hud-HA--critical .hud-HA-icon--health' red outranks the class wash
+    var ha = cp.FindChildTraverse( 'HudHealthArmor' );
+    var crit = !${moi} && ha && ha.BHasClass( 'hud-HA--critical' );
+
     var wash = function( cls, value ) {
-        for ( var p of cp.FindChildrenWithClassTraverse( cls ) ) {
-            try { p.style.washColorFast = value; } catch(e) {}
-            try { p.style.washColor = value; } catch(e) {}
-        }
+        for ( var p of cp.FindChildrenWithClassTraverse( cls ) )
+            setwash( p, crit && p.BHasClass( 'hud-HA-icon--health' ) ? null : value );
     };
 
     paint( 'cl-hud-color', 'color', col );
@@ -1089,13 +1135,13 @@ static const char* k_hud_color = R"js(
     wash( 'WeaponPanel-apply-hud-color', col );
     wash( 'WeaponPanel-apply-hud-color-bg', bg );
 
-    /* radar location text ("Bombsite A") is a hard #d3e798 in hudradar.css with NO hud-colour
-       class, so it never moved. the pack's base js also washes it SRGBAdditive, which ADDS the
-       text onto the world behind the plate -> over a bright wall any hex saturates to white, so
-       the colour never read. normal blend while we own it, pack's additive back when off. */
+    /* radar location text: stock = white label + CCSGO_HudRadar::Show wash, GetBGHudTextColor( 0.5 bright,
+       0.85 sat ) of the hud colour, #D3E798 at cl_hud_color 0. the pack's base js washes it SRGBAdditive,
+       which ADDS the text onto the world -> saturates to white over bright walls. normal blend while we own it */
     var dash = cp.FindChildTraverse('DashboardLabel');
     if ( dash ) {
-        try { dash.style.color = col; } catch(e) {}
+        try { dash.style.color = null; } catch(e) {}
+        setwash( dash, dashwash );
         try { dash.style.S2MixBlendMode = blend; } catch(e) {}
     }
 
@@ -1129,10 +1175,8 @@ static const char* k_hud_color = R"js(
 
             var set = function( p, w, s, keep_wash, fill, op ) {
                 if ( !p ) return;
-                if ( !keep_wash ) {
-                    try { p.style.washColorFast = w; } catch(e) {}
-                    try { p.style.washColor = w; } catch(e) {}
-                }
+                if ( !keep_wash )
+                    setwash( p, w );
                 try { p.style.saturation = s; } catch(e) {}
                 try { p.style.opacity = op; } catch(e) {}
                 for ( var l of p.FindChildrenWithClassTraverse( 'ProgressBarLeft' ) )
@@ -1212,19 +1256,25 @@ try {
             continue;
         }
 
-        var row = icon, selected = false;
+        var row = icon, stock = false;
 
-        // icon -> weapon-selection-item-icon -> weapon-selection-item, with slack
+        /* icon -> weapon-selection-item-icon -> weapon-selection-item, with slack. stock css rules that
+           outrank '.csgo-hud--cl-hud-color-N .weapon-selection-item-icon-main': --selected (white) and
+           --bomb:not(--fade-ok) (color-icon-bomb, additive) -> hand those to the css. opacity is css too */
         for ( var up = 0; up < 6 && row; up++ ) {
-            if ( row.BHasClass('weapon-selection-item--selected') ) { selected = true; break; }
+            if ( row.BHasClass('weapon-selection-item--selected') ||
+                 ( row.BHasClass('weapon-selection-item--bomb') && !row.BHasClass('weapon-selection-item--fade-ok') ) ) { stock = true; break; }
+            if ( row.BHasClass('weapon-selection-item') ) break;
             row = row.GetParent();
         }
 
-        var wash = selected ? '#FFFFFFFF' : '${iconcolor}';
+        try { icon.style.opacity = null; } catch(e) {}
+        if ( stock ) {
+            try { icon.style.washColor = null; } catch(e) {}
+            continue;
+        }
 
-        try { icon.style.washColorFast = wash; } catch(e) {}
-        icon.style.washColor = wash;
-        icon.style.opacity = selected ? '1.0' : '0.92';
+        try { icon.style.washColorFast = custom; } catch(e) { try { icon.style.washColor = custom; } catch(e2) {} }
     }
 } catch(e) {}
 )js";
@@ -1351,6 +1401,7 @@ void n_scaleform::impl_t::hud_color( )
 	const bool classic = GET_VARIABLE( g_variables.m_scaleform, bool ) && GET_VARIABLE( g_variables.m_scaleform_style, int ) != 0 &&
 	                     !g_ctx.m_eject_restoring;
 	replace_str( js, "${dashblend}", enabled ? "'normal'" : classic ? "'SRGBAdditive'" : "null" );
+	replace_str( js, "${dashwash}", "'" + panorama_hex( radar_location_wash( enabled, chosen ) ) + "'" );
 	replace_str( js, "${moi}", moi ? "true" : "false" );
 
 	run_on( m_hud_color_root, js.c_str( ) );

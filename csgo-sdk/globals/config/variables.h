@@ -65,15 +65,12 @@ enum e_skybox_type {
 	skybox_max
 };
 
-enum e_free_type_font_flags : int {
-	font_flag_nohinting = 0,
-	font_flag_noautohint,
-	font_flag_forceautohint,
-	font_flag_lighthinting,
-	font_flag_monohinting,
+enum e_font_flags : int {
+	font_flag_no_antialias = 0,
+	font_flag_dropshadow,
+	font_flag_outline,
+	font_flag_monospace,
 	font_flag_bold,
-	font_flag_oblique,
-	font_flag_monochrome,
 	font_flag_max
 };
 
@@ -1082,6 +1079,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_pixel_surf_fix, false );
 		ADD_VARIABLE( int, m_pixel_surf_predict_ticks, 12 );
 		ADD_VARIABLE( bool, m_pixel_surf_stay, false );
+		ADD_VARIABLE( bool, m_pixel_surf_wall_strafe, true );
 		ADD_VARIABLE( bool, m_tung_surf, false );
 		ADD_VARIABLE( key_bind_t, m_tung_surf_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_tung_surf_y6, false );
@@ -1313,12 +1311,6 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_auto_bounce_align, false );
 		ADD_VARIABLE( bool, m_auto_bounce_visualize, false );
 		ADD_VARIABLE( c_color, m_auto_bounce_visualize_color, c_color( 120, 200, 255, 255 ) );
-		ADD_VARIABLE( int, m_auto_bounce_lumi_rays, 16 );
-		ADD_VARIABLE( float, m_auto_bounce_lumi_radius, 20.f );
-		ADD_VARIABLE( float, m_auto_bounce_lumi_depth, 1024.f );
-		ADD_VARIABLE( float, m_auto_bounce_lumi_min_angle, 10.f );
-		ADD_VARIABLE( float, m_auto_bounce_lumi_max_angle, 60.f );
-		ADD_VARIABLE( float, m_auto_bounce_lumi_smooth, 0.5f );
 
 		ADD_VARIABLE( bool, m_bouncee_assist, false );
 		ADD_VARIABLE( key_bind_t, m_bounce_assist_key, key_bind_t( 0, 1 ) );
@@ -1387,6 +1379,9 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_route_calc_pinned, false );
 		ADD_VARIABLE( bool, m_dist_calc, false );
 		ADD_VARIABLE( key_bind_t, m_dist_calc_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( bool, m_floor_level, false );
+		ADD_VARIABLE( key_bind_t, m_floor_level_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( float, m_floor_level_size, 128.f );
 		ADD_VARIABLE( bool, m_detections, false );
 		ADD_VARIABLE_VECTOR( bool, e_detection_types::detect_max, m_detection_types, false );
 		ADD_VARIABLE( std::string, m_detection_label, "botox" );
@@ -1987,13 +1982,13 @@ namespace n_variables
 
 		ADD_VARIABLE_VECTOR( bool, e_log_types::log_type_max, m_log_types, false );
 
-		ADD_VARIABLE_VECTOR( bool, e_free_type_font_flags::font_flag_max, m_indicator_font_flags, false );
+		ADD_VARIABLE_VECTOR( bool, e_font_flags::font_flag_max, m_indicator_font_flags, false );
 		ADD_VARIABLE( font_setting_t, m_indicator_font_settings, font_setting_t( "Verdanab", 29 ) );
 
-		ADD_VARIABLE_VECTOR( bool, e_free_type_font_flags::font_flag_max, m_esp_font_flags, false );
+		ADD_VARIABLE_VECTOR( bool, e_font_flags::font_flag_max, m_esp_font_flags, false );
 		ADD_VARIABLE( font_setting_t, m_esp_font_settings, font_setting_t( "Verdanab", 11 ) );
 
-		ADD_VARIABLE_VECTOR( bool, e_free_type_font_flags::font_flag_max, m_net_graph_font_flags, false );
+		ADD_VARIABLE_VECTOR( bool, e_font_flags::font_flag_max, m_net_graph_font_flags, false );
 		ADD_VARIABLE( font_setting_t, m_net_graph_font_settings, font_setting_t( "lucon", 14 ) );
 
 		ADD_VARIABLE( bool, m_debug_log, false );

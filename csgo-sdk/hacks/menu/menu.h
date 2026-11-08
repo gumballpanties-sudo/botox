@@ -18,6 +18,8 @@ namespace n_menu
 		void player_list_page( );
 		void cvars_page( );
 		void lua_page( );
+		void search_page( );
+		void draw_tab( );
 		int menu_key( );
 
 		struct faded_list_t {
@@ -31,6 +33,7 @@ namespace n_menu
 			float m_alpha;
 			bool m_live;
 			ImDrawList* m_ghost;
+			unsigned int m_ghost_tex_gen; /* ImGui_ImplDX9_FontTextureGeneration at the copy: moved = its texture ids are freed */
 		};
 
 		float fade_draw_lists( ImVector< ImDrawList* >& out, ImVector< faded_list_t >& popups );
@@ -42,6 +45,9 @@ namespace n_menu
 
 		int m_tab    = 0;
 		int m_subtab = 0;
+
+		char m_search[ 64 ]  = { };
+		bool m_search_focus = false;
 
 		float m_anim_progress = 0.f;
 

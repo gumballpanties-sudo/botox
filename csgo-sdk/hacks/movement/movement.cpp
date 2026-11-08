@@ -388,6 +388,7 @@ void n_movement::impl_t::on_create_move_pre( )
 			this->pixel_calc( g_ctx.m_cmd );
 			this->route_calc( g_ctx.m_cmd );
 			this->dist_calc( g_ctx.m_cmd );
+			this->floor_level( g_ctx.m_cmd );
 		}
 		if ( move_type == e_move_types::move_type_ladder )
 			this->ladder_glide( g_ctx.m_cmd );
@@ -505,6 +506,7 @@ void n_movement::impl_t::on_create_move_pre( )
 			this->pixel_calc( g_ctx.m_cmd );
 			this->route_calc( g_ctx.m_cmd );
 			this->dist_calc( g_ctx.m_cmd );
+			this->floor_level( g_ctx.m_cmd );
 			gnd_wish_check( "calc" );
 			this->fast_ladder( g_ctx.m_cmd );
 			this->ladder_glide( g_ctx.m_cmd );
@@ -719,6 +721,7 @@ void n_movement::impl_t::on_paint_traverse( )
 	this->pixelsurf_assist_render( );
 	this->pixel_calc_render( );
 	this->route_calc_render( );
+	this->floor_level_render( );
 	this->dist_calc_render( );
 	g_edgebug.render( );
 	g_edge_skip.render( );
@@ -3391,7 +3394,7 @@ void n_movement::impl_t::strafe_optimizer_mouse( float* x )
 	*x -= add / m_yaw;
 }
 
-float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, float cap );
+float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, float cap, const c_vector* dir );
 
 static bool ps_wall_ahead( const int n, c_vector* normal = nullptr )
 {
@@ -3526,10 +3529,11 @@ void n_movement::impl_t::pixel_surf( float  )
 		constexpr float k_leave_dot = 0.5f;
 		if ( len > 0.01f && ( wish.m_x * n.m_x + wish.m_y * n.m_y ) / len > k_leave_dot )
 			return 0;
-		/* strafing into the face = 450 at the best along-wall strafe yaw ( wall eats the into part ), only if it keeps the pin */
+		/* strafing into the face = 450 at the best along-wall strafe yaw ( wall eats the into part ), toward the side your
+		   keys point along the wall ( straight in = velocity side ), only if it keeps the pin */
 		constexpr float k_gain_dot = 0.25f;
-		if ( len > 0.01f && -( wish.m_x * n.m_x + wish.m_y * n.m_y ) / len > k_gain_dot ) {
-			const float gy = tb_wallstrafe_yaw( n, g_prediction.backup_data.m_velocity, g_convars.float_or( HASH_BT( "sv_air_max_wishspeed" ), 30.f ) );
+		if ( GET_VARIABLE( g_variables.m_pixel_surf_wall_strafe, bool ) && len > 0.01f && -( wish.m_x * n.m_x + wish.m_y * n.m_y ) / len > k_gain_dot ) {
+			const float gy = tb_wallstrafe_yaw( n, g_prediction.backup_data.m_velocity, g_convars.float_or( HASH_BT( "sv_air_max_wishspeed" ), 30.f ), &wish );
 			if ( gy != FLT_MAX ) {
 				set_move_toward_yaw( cmd, gy, 450.f );
 				if ( keeps_pin( ) ) {

@@ -727,7 +727,6 @@ namespace n_movement
 			float m_last_speed = 0.f;
 			bool m_jump_owed = false;
 			int m_refused    = 0;
-			float m_lumi_hold_until = 0.f; /* lumi mode: dead stop over the face -> hands off till this curtime */
 			static constexpr int k_viz_max = 300;
 			c_vector m_viz[ k_viz_max ]{ };
 			int m_viz_n = 0;
@@ -758,7 +757,6 @@ namespace n_movement
 				m_last_vz    = 0.f;
 				m_last_speed = 0.f;
 				m_jump_owed  = false;
-				m_lumi_hold_until = 0.f;
 			}
 		} m_auto_bounce_data;
 
@@ -858,6 +856,20 @@ namespace n_movement
 		} m_dist_calc_data;
 		void dist_calc( c_user_cmd* cmd );
 		void dist_calc_render( );
+
+		struct floor_level_vertex_t {
+			float x, y, z;
+			unsigned long color;
+		};
+		struct floor_level_t {
+			bool on = false;
+			std::shared_ptr< const std::vector< floor_level_vertex_t > > mesh{ };
+			c_vector center{ };
+			float lo = 0.f, hi = 0.f, mean = 0.f;
+			std::string map{ };
+		} m_floor_level_data;
+		void floor_level( c_user_cmd* cmd );
+		void floor_level_render( );
 
 		void on_create_move_pre( );
 		void on_create_move_post( );
@@ -973,6 +985,9 @@ struct pf_map_state_t {
 /* menu thread safe: atomics only */
 void pf_map_scan_toggle( );
 pf_map_state_t pf_map_scan_get( );
+void floor_level_toggle( );
+bool floor_level_shown( );
+void floor_level_world( );
 void pf_check_catch( const c_vector& pos, const c_vector& wall_n, float slid, bool ducked );
 void pf_check_trick( const char* kind, const c_vector& pos, bool ducked );
 void movement_add_window( int type, const std::string& info );

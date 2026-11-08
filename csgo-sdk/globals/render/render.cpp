@@ -22,6 +22,9 @@
 #include <unordered_map>
 #include <utility>
 
+#include <ft2build.h>
+#include FT_FREETYPE_H
+
 #include "korean_common_ranges.h"
 
 extern char g_ft_build_fail[ 160 ];
@@ -50,6 +53,8 @@ struct font_set_t {
 	ImFontAtlas* m_atlas = nullptr;
 	ImFont* m_fonts[ e_font_names::font_name_max ]{ };
 	ImFont* m_custom_fonts[ e_custom_font_names::custom_font_name_max ]{ };
+	int m_custom_text_flags[ e_custom_font_names::custom_font_name_max ]{ };
+	ImFont* m_custom_outline[ e_custom_font_names::custom_font_name_max ]{ };
 	float m_build_ms = 0.f;
 	void* m_stage    = nullptr;
 	int m_upload_fails = 0;
@@ -68,6 +73,7 @@ struct indicator_font_set_t {
 	int m_count          = 0;
 	float m_scales[ 4 ]{ };
 	ImFont* m_fonts[ 4 ]{ };
+	ImFont* m_outline[ 4 ]{ };
 	std::vector< unsigned char > m_data{ };
 	float m_build_ms = 0.f;
 };
@@ -394,34 +400,57 @@ namespace
 	}
 }
 
-static void add_font_flags( const std::vector< bool >& font_flags, ImFontConfig& font_config )
+/* widest digit advance in em: the monospace cell, numbers stay tabular. 0 = unreadable file */
+static float widest_digit_em( const std::string& path )
 {
-	if ( font_flags.size( ) < e_free_type_font_flags::font_flag_max )
+	FT_Library library = nullptr;
+	if ( FT_Init_FreeType( &library ) )
+		return 0.f;
+
+	float em     = 0.f;
+	FT_Face face = nullptr;
+	if ( !FT_New_Face( library, path.c_str( ), 0, &face ) ) {
+		if ( face->units_per_EM )
+			for ( char c = '0'; c <= '9'; ++c )
+				if ( !FT_Load_Char( face, c, FT_LOAD_NO_SCALE ) )
+					em = std::max( em, static_cast< float >( face->glyph->advance.x ) / face->units_per_EM );
+
+		FT_Done_Face( face );
+	}
+
+	FT_Done_FreeType( library );
+	return em;
+}
+
+static void add_font_flags( const std::vector< bool >& font_flags, ImFontConfig& font_config, const std::string& path, const float size )
+{
+	if ( font_flags.size( ) < e_font_flags::font_flag_max )
 		return;
 
-	if ( font_flags[ e_free_type_font_flags::font_flag_nohinting ] )
-		font_config.FontBuilderFlags += 1;
+	if ( font_flags[ e_font_flags::font_flag_no_antialias ] )
+		font_config.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_Monochrome | ImGuiFreeTypeBuilderFlags_MonoHinting;
 
-	if ( font_flags[ e_free_type_font_flags::font_flag_noautohint ] )
-		font_config.FontBuilderFlags += 2;
+	const bool bold = font_flags[ e_font_flags::font_flag_bold ];
+	if ( bold )
+		font_config.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_Bold;
 
-	if ( font_flags[ e_free_type_font_flags::font_flag_forceautohint ] )
-		font_config.FontBuilderFlags += 4;
+	/* imgui centres each glyph in the fixed cell; PixelSnapH floors that shift to whole px (half px = blurry glyphs).
+	   synthetic bold widens each glyph by ~size / 24 */
+	if ( font_flags[ e_font_flags::font_flag_monospace ] )
+		if ( const float em = widest_digit_em( path ); em > 0.f ) {
+			font_config.GlyphMinAdvanceX = font_config.GlyphMaxAdvanceX = std::round( em * size + ( bold ? size / 24.f : 0.f ) );
+			font_config.PixelSnapH                                       = true;
+		}
+}
 
-	if ( font_flags[ e_free_type_font_flags::font_flag_lighthinting ] )
-		font_config.FontBuilderFlags += 8;
+/* dropshadow / outline = draw time looks, text( ) reads them per font */
+static int font_text_flags( const std::vector< bool >& font_flags )
+{
+	if ( font_flags.size( ) < e_font_flags::font_flag_max )
+		return e_text_flags::text_flag_none;
 
-	if ( font_flags[ e_free_type_font_flags::font_flag_monohinting ] )
-		font_config.FontBuilderFlags += 16;
-
-	if ( font_flags[ e_free_type_font_flags::font_flag_bold ] )
-		font_config.FontBuilderFlags += 32;
-
-	if ( font_flags[ e_free_type_font_flags::font_flag_oblique ] )
-		font_config.FontBuilderFlags += 64;
-
-	if ( font_flags[ e_free_type_font_flags::font_flag_monochrome ] )
-		font_config.FontBuilderFlags += 128;
+	return ( font_flags[ e_font_flags::font_flag_dropshadow ] ? e_text_flags::text_flag_dropshadow : 0 ) |
+	       ( font_flags[ e_font_flags::font_flag_outline ] ? e_text_flags::text_flag_outline : 0 );
 }
 
 /* merge system fallback fonts into the last added font so non-ascii names render, not '?'. call right
@@ -821,18 +850,25 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 
 	auto reload_custom_font = [ & ]( const std::vector< bool >& font_flags, const font_setting_t& font_setting, const int slot,
 	                                 ImFont* const fallback_font, const e_glyph_tier tier ) {
-		ImFontConfig font_config = { };
-		add_font_flags( font_flags, font_config );
-
 		const std::string font_path = g_fonts.find_path( font_setting.m_name );
+
+		ImFontConfig font_config = { };
+		add_font_flags( font_flags, font_config, font_path, static_cast< float >( font_setting.m_size ) );
 
 		ImFont* const font = ( font_setting.m_size > 0 && std::filesystem::exists( font_path ) )
 		                          ? atlas->AddFontFromFileTTF( font_path.c_str( ), static_cast< float >( font_setting.m_size ), &font_config )
 		                          : nullptr;
 
+		/* fallback = a stock font other text shares: no looks on it */
 		if ( font ) {
 			merge_extended_glyphs( atlas, static_cast< float >( font_setting.m_size ), font_config.FontBuilderFlags, tier );
-			set.m_custom_fonts[ slot ] = font;
+			set.m_custom_fonts[ slot ]      = font;
+			set.m_custom_text_flags[ slot ] = font_text_flags( font_flags );
+
+			/* after the merges (they join the last added font): stroked twin for outlines, base latin only */
+			ImFontConfig outline_config = font_config;
+			outline_config.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_Stroke;
+			set.m_custom_outline[ slot ] = atlas->AddFontFromFileTTF( font_path.c_str( ), static_cast< float >( font_setting.m_size ), &outline_config );
 		}
 		else
 			set.m_custom_fonts[ slot ] = fallback_font;
@@ -920,6 +956,8 @@ void n_render::impl_t::install_fonts( font_set_t* set )
 		io.Fonts = set->m_atlas;
 		std::ranges::copy( set->m_fonts, this->m_fonts );
 		std::ranges::copy( set->m_custom_fonts, this->m_custom_fonts );
+		std::ranges::copy( set->m_custom_text_flags, this->m_custom_text_flags );
+		std::ranges::copy( set->m_custom_outline, this->m_custom_outline );
 	}
 
 	const ImFont* const ind = this->m_custom_fonts[ e_custom_font_names::custom_font_name_indicator ];
@@ -966,13 +1004,10 @@ static bool build_indicator_fonts( indicator_font_set_t& set, const indicator_fo
 	set.m_count = request.m_count;
 	std::ranges::copy( request.m_scales, set.m_scales );
 
-	ImFontConfig config = { };
+	const std::string path = request.m_name.empty( ) ? std::string( ) : g_fonts.find_path( request.m_name );
 
 	if ( !request.m_name.empty( ) ) {
-		add_font_flags( request.m_flags, config );
-		config.FontDataOwnedByAtlas = false;
-
-		std::ifstream file( g_fonts.find_path( request.m_name ), std::ios::binary | std::ios::ate );
+		std::ifstream file( path, std::ios::binary | std::ios::ate );
 		const std::streamoff size = file ? static_cast< std::streamoff >( file.tellg( ) ) : 0;
 		if ( size <= 0 )
 			return false;
@@ -986,9 +1021,18 @@ static bool build_indicator_fonts( indicator_font_set_t& set, const indicator_fo
 	for ( int i = 0; i < set.m_count; ++i ) {
 		const float size = std::max( request.m_base_size * set.m_scales[ i ], 1.f );
 
-		set.m_fonts[ i ] = set.m_data.empty( )
-		                       ? atlas->AddFontFromMemoryCompressedTTF( verdana_bold_compressed_data, verdana_bold_compressed_size, size )
-		                       : atlas->AddFontFromMemoryTTF( set.m_data.data( ), static_cast< int >( set.m_data.size( ) ), size, &config );
+		if ( set.m_data.empty( ) ) {
+			set.m_fonts[ i ] = atlas->AddFontFromMemoryCompressedTTF( verdana_bold_compressed_data, verdana_bold_compressed_size, size );
+			continue;
+		}
+
+		ImFontConfig config = { };
+		add_font_flags( request.m_flags, config, path, size );
+		config.FontDataOwnedByAtlas = false;
+		set.m_fonts[ i ] = atlas->AddFontFromMemoryTTF( set.m_data.data( ), static_cast< int >( set.m_data.size( ) ), size, &config );
+
+		config.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_Stroke;
+		set.m_outline[ i ] = atlas->AddFontFromMemoryTTF( set.m_data.data( ), static_cast< int >( set.m_data.size( ) ), size, &config );
 	}
 
 	return ImGuiFreeType::BuildFontAtlas( atlas, 0x0 );
@@ -2338,6 +2382,43 @@ bool n_render::impl_t::world_to_screen( const c_vector& origin, c_vector_2d& scr
 	return true;
 }
 
+/* outline = the stroked twin's glyphs laid out on the base font's advances (ImFont::RenderText layout), so a
+   glyph the twin lacks (merged cjk etc) only loses its outline, never shifts the rest */
+static void add_stroked_text( ImDrawList* draw_list, const ImFont* base, const ImFont* twin, const float size, const ImVec2 pos, const ImU32 col,
+                              const char* text )
+{
+	const float scale = size / base->FontSize;
+	const float x0 = IM_FLOOR( pos.x );
+	float x = x0, y = IM_FLOOR( pos.y );
+
+	for ( const char *s = text, *end = text + std::strlen( text ); s < end; ) {
+		unsigned int c = static_cast< unsigned char >( *s );
+		if ( c < 0x80 )
+			s += 1;
+		else {
+			s += ImTextCharFromUtf8( &c, s, end );
+			if ( !c )
+				break;
+		}
+
+		if ( c == '\n' ) {
+			x = x0;
+			y += size;
+			continue;
+		}
+		if ( c == '\r' )
+			continue;
+
+		if ( const ImFontGlyph* const glyph = twin->FindGlyphNoFallback( static_cast< ImWchar >( c ) ); glyph && glyph->Visible ) {
+			draw_list->PrimReserve( 6, 4 );
+			draw_list->PrimRectUV( ImVec2( x + glyph->X0 * scale, y + glyph->Y0 * scale ), ImVec2( x + glyph->X1 * scale, y + glyph->Y1 * scale ),
+			                       ImVec2( glyph->U0, glyph->V0 ), ImVec2( glyph->U1, glyph->V1 ), col );
+		}
+
+		x += base->GetCharAdvance( static_cast< ImWchar >( c ) ) * scale;
+	}
+}
+
 void n_render::impl_t::text( ImDrawList* draw_list, ImFont* font, const c_vector_2d& position, const std::string& text, const unsigned int& color,
                              const unsigned int& outline_color, e_text_flags draw_flags, float font_size )
 {
@@ -2349,14 +2430,36 @@ void n_render::impl_t::text( ImDrawList* draw_list, ImFont* font, const c_vector
 	if ( font_size <= 0.f )
 		font_size = font->FontSize;
 
+	/* custom font flags pick the look over the caller's */
+	int font_flags      = 0;
+	const ImFont* twin  = nullptr;
+	for ( int slot = 0; slot < e_custom_font_names::custom_font_name_max; ++slot )
+		if ( font == this->m_custom_fonts[ slot ] ) {
+			font_flags = this->m_custom_text_flags[ slot ];
+			twin       = this->m_custom_outline[ slot ];
+		}
+
+	if ( const indicator_font_set_t* const set = this->m_indicator_fonts )
+		for ( int i = 0; i < set->m_count; ++i )
+			if ( font == set->m_fonts[ i ] ) {
+				font_flags = this->m_custom_text_flags[ e_custom_font_names::custom_font_name_indicator ];
+				twin       = set->m_outline[ i ];
+			}
+
+	if ( font_flags )
+		draw_flags = static_cast< e_text_flags >( font_flags );
+
 	draw_list->PushTextureID( font->ContainerAtlas->TexID );
 
 	if ( draw_flags & e_text_flags::text_flag_dropshadow )
 		draw_list->AddText( font, font_size, ImVec2( position.m_x + 1.f, position.m_y + 1.f ), outline_color, text.c_str( ) );
-	else if ( draw_flags & e_text_flags::text_flag_outline ) {
-		draw_list->AddText( font, font_size, ImVec2( position.m_x + 1.f, position.m_y - 1.f ), outline_color, text.c_str( ) );
-		draw_list->AddText( font, font_size, ImVec2( position.m_x - 1.f, position.m_y + 1.f ), outline_color, text.c_str( ) );
-	}
+	if ( ( draw_flags & e_text_flags::text_flag_outline ) && twin && twin->ContainerAtlas == font->ContainerAtlas )
+		add_stroked_text( draw_list, font, twin, font_size, ImVec2( position.m_x, position.m_y ), outline_color, text.c_str( ) );
+	else if ( draw_flags & e_text_flags::text_flag_outline ) /* stock font, no twin: 1px ring, all 8 sides */
+		for ( int dy = -1; dy <= 1; ++dy )
+			for ( int dx = -1; dx <= 1; ++dx )
+				if ( dx || dy )
+					draw_list->AddText( font, font_size, ImVec2( position.m_x + dx, position.m_y + dy ), outline_color, text.c_str( ) );
 
 	draw_list->AddText( font, font_size, ImVec2( position.m_x, position.m_y ), color, text.c_str( ) );
 

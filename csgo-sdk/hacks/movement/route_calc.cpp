@@ -647,8 +647,16 @@ namespace
 				int used = 0;
 				for ( int i = 0; i < g_rec.tail_n && used < 80; ++i )
 					used += sprintf_s( tail + used, sizeof( tail ) - used, "%.3f ", g_rec.tail[ i ] );
-				botox_dbg_log( "[rc rec]   -> apex %9.3f land %9.3f fall %6.1f stam %5.2f duck %d | last ticks %s\n",
-				                   g_rec.apex, z, -g_rec.prev_vz, stam, ducking ? 1 : 0, tail );
+				/* tick before already 0..2 over this floor yet no catch = hull short of the edge then: a late edge cross
+				   ( no jb possible, the route's hover landing never happened ) */
+				trace_t ft{ };
+				ft.m_fraction = 1.f;
+				if ( local->get_collideable( ) )
+					hull_trace( local->get_origin( ) + c_vector( 0.f, 0.f, 2.f ), local->get_origin( ) - c_vector( 0.f, 0.f, 2.f ), ft );
+				const float prev_over = ft.m_fraction < 1.f && !ft.m_start_solid ? g_rec.prev_z - ft.m_end.m_z : -1.f;
+				botox_dbg_log( "[rc rec]   -> apex %9.3f land %9.3f fall %6.1f stam %5.2f duck %d | last ticks %s| prev over floor %.3f%s\n",
+				                   g_rec.apex, z, -g_rec.prev_vz, stam, ducking ? 1 : 0, tail, prev_over,
+				                   prev_over > 0.f && prev_over <= 2.f ? " LATE EDGE" : "" );
 				log_wall_ground( "land" );
 			}
 		}

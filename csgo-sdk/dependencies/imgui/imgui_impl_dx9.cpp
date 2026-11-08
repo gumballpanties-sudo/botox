@@ -42,7 +42,15 @@ static int g_VertexBufferSize = 5000, g_IndexBufferSize = 10000;
 // after a Reset in a 2.7 gb 32 bit csgo -> TexID null -> every glyph a solid block until a retry got through
 static bool g_FontTextureA8 = false;
 static LPDIRECT3DTEXTURE9 g_TwinTextureA8 = NULL;
-void ImGui_ImplDX9_SetTwinTextureA8( void* texture ) { g_TwinTextureA8 = ( LPDIRECT3DTEXTURE9 )texture; }
+// botox: bumped on every font / twin texture swap or release. a list kept past its frame ( menu popup ghost ) checks it
+static unsigned int g_FontTextureGeneration = 0;
+unsigned int ImGui_ImplDX9_FontTextureGeneration( ) { return g_FontTextureGeneration; }
+// render.cpp sets null right before every twin ( dpi ) texture release, argb fallback included
+void ImGui_ImplDX9_SetTwinTextureA8( void* texture )
+{
+	g_TwinTextureA8 = ( LPDIRECT3DTEXTURE9 )texture;
+	++g_FontTextureGeneration;
+}
 // botox: font texture levels ( 100 / 50 / 25 % ), the dpi scale's floor is 25 %
 static const int k_font_mip_levels = 3;
 void botox_dbg_log( const char* fmt, ... ); // globals/logger/debug_log.cpp
@@ -502,6 +510,7 @@ void ImGui_ImplDX9_DestroyFontsTexture( )
 		g_FontTexture->Release( );
 		g_FontTexture                = nullptr;
 		ImGui::GetIO( ).Fonts->TexID = nullptr;
+		++g_FontTextureGeneration;
 	} // We copied g_pFontTextureView to io.Fonts->TexID so let's clear that as well.
 }
 
@@ -757,6 +766,7 @@ void ImGui_ImplDX9_InstallFontsTexture( void* stage )
 
 	if ( g_FontTexture )
 		g_FontTexture->Release( );
+	++g_FontTextureGeneration;
 	g_FontTexture   = s->tex;
 	g_FontTextureA8 = s->a8;
 	s->tex          = NULL;
@@ -809,6 +819,7 @@ void ImGui_ImplDX9_InvalidateDeviceObjects( )
 		g_FontTexture->Release( );
 		g_FontTexture                = NULL;
 		ImGui::GetIO( ).Fonts->TexID = NULL;
+		++g_FontTextureGeneration;
 	} // We copied g_pFontTextureView to io.Fonts->TexID so let's clear that as well.
 	// botox: a half uploaded reload texture is DEFAULT pool too, its next step starts over
 	if ( g_UploadingStage ) {
