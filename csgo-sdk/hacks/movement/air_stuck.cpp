@@ -35,10 +35,11 @@ static struct {
 } s_lock;
 
 /* flush on the wall, no proven pin: resend the same approach move ( 11-05 online log: 17 server pins on approach cmds the client saw fall,
-   all died 1-5t later on the next in-flight cmd = lumi side flip / fwd 1-5-30 hop ). same cmd after a server pin = kept 35/35 */
+   all died 1-5t later on the next in-flight cmd = lumi side flip / fwd 1-5-30 hop ). same cmd after a server pin = kept 35/35.
+   side: a lock move carries one */
 static struct {
 	bool valid = false;
-	float yaw = 0.0f, fwd = 0.0f;
+	float yaw = 0.0f, fwd = 0.0f, side = 0.0f;
 	c_vector normal{ };
 	int ticks = 0;
 } s_sticky;
@@ -103,9 +104,15 @@ static void as_sync( c_user_cmd* cmd, const bool armed )
 	const bool match  = d.m_x == 0.0f && d.m_y == 0.0f && d.m_z == 0.0f && dv.m_x == 0.0f && dv.m_y == 0.0f && dv.m_z == 0.0f;
 	const c_user_cmd* const a = g_interfaces.m_input->get_user_cmd( ack );
 	const bool sv_pinned      = sv_velocity.m_x == 0.0f && sv_velocity.m_y == 0.0f && sv_velocity.m_z == g_prediction.get_engine_target_predict_z_velocity( );
-	if ( !sv_pinned )
+	if ( !sv_pinned ) {
+		/* fell on an older in-flight cmd, the lock's own copies still coming = keep sending the caught move ( 11-08 16:24 log: 11/24 lock
+		   deaths = next cmd differed, lock copy re-pinned at 34897 then a fresh pick knocked it off ). fell on the lock cmd = re-pick */
+		if ( s_lock.valid && ( a->m_forward_move != s_lock.fwd || a->m_side_move != s_lock.side || a->m_view_point.m_y != s_lock.view.m_y ) ) {
+			s_sticky = { true, s_lock.view.m_y, s_lock.fwd, s_lock.side, s_sticky.normal, 0 };
+			botox_dbg_log( "AS: sticky lock yaw=%.1f fwd=%.4f side=%.4f", s_lock.view.m_y, s_lock.fwd, s_lock.side );
+		}
 		lock_end( "fell" );
-	else if ( !match || s_lock.valid ) {
+	} else if ( !match || s_lock.valid ) {
 		if ( !s_lock.valid ) {
 			s_lock.ticks = s_lock.moved = 0;
 			botox_dbg_log( "AS: sv lock ack=%d cmd=%.4f/%.4f v=%.4f/%.4f", ack, a->m_forward_move, a->m_side_move, a->m_view_point.m_x, a->m_view_point.m_y );
@@ -382,9 +389,13 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			return false;
 		const int n = s_last.resent + 1;
 		botox_dbg_log( "AS: resend n=%d yaw=%.1f fwd=%.4f side=%.4f", n, s_last.yaw, s_last.fwd, s_last.side );
+		/* resend = same move, unproven: keeps the sticky ( 11-08 16:24 log: server took resend 101.1 fwd 1 at 34917, sticky was dropped, a fresh pick fell ) */
+		const auto stk = s_sticky;
 		publish( s_last.yaw, s_last.fwd, true, s_last.pitch, false, s_last.side );
 		s_last.resent = n;
 		s_proof.valid = false;
+		s_sticky      = stk;
+		s_sticky.ticks += s_sticky.valid;
 		s_expect      = { true, origin };
 		return true;
 	};
@@ -753,17 +764,18 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	float best_gap   = FLT_MAX;
 	float best_yaw   = wall_yaw;
 	float best_move  = 0.0f;
+	float best_side  = 0.0f;
 	c_vector best_end{ };
 	const auto out_of_time = [ & ]( ) { return cands >= 512 || ( cands > 0 && clock.expired( ) ); };
 
-	const auto try_yaw = [ & ]( const float yaw, const float move, const float gap_len ) {
+	const auto try_yaw = [ & ]( const float yaw, const float move, const float gap_len, const float side_move = 0.0f ) {
 		++cands;
 		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 		apply_predicted_state( );
 
 		cmd->m_view_point.m_y = yaw;
 		cmd->m_forward_move   = move;
-		cmd->m_side_move      = 0.0f;
+		cmd->m_side_move      = side_move;
 		cmd->m_buttons        = live_buttons;
 
 		g_prediction.begin( g_ctx.m_local, cmd );
@@ -801,6 +813,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			best_gap   = gap;
 			best_yaw   = cmd->m_view_point.m_y;
 			best_move  = move;
+			best_side  = side_move;
 			best_end   = end1;
 		}
 	};
@@ -808,13 +821,14 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 
 	/* sticky first: a pin it proves wins outright = keeps the cmd the server may already be pinned on ( 11-08 log: client's own fwd 5 pin
 	   replaced the fwd 1 the server took = fell ). online only: offline nothing is in flight. no speed gate ( 11-08: all 17 server catches
-	   on approach cmds came at client vxy 3-205, next cmd differed, 17/17 fell; same cmd kept 82/83 ). window = cp sends, then re-pick:
-	   by then the first copy's ack is in ( pinned = sv lock ), never a long freeze ( 11-05 offline 30-75t, 11-06 sticky-all ) */
+	   on approach cmds came at client vxy 3-205, next cmd differed, 17/17 fell; same cmd kept 82/83 ). window = 3 cp sends, then re-pick:
+	   a catch on copy k survives only if the next cp copies match = 1 in cp+1 at a cp window ( 11-08 16:24 log: 11/24 locks died to the
+	   next cmd differing ), ~2/3 at 3 cp. capped k_chain, never a long freeze ( 11-05 offline 30-75t, 11-06 sticky-all ) */
 	const int cp        = g_interfaces.m_prediction->m_commands_predicted;
 	const bool stick_ok = contact && cp > 0;
-	const bool sticky   = s_sticky.valid && stick_ok && s_sticky.ticks < std::min( cp, 8 ) && s_sticky.normal.dot_product( normal ) > 0.999f;
+	const bool sticky   = s_sticky.valid && stick_ok && s_sticky.ticks < std::min( cp * 3, k_chain ) && s_sticky.normal.dot_product( normal ) > 0.999f;
 	if ( sticky )
-		try_yaw( s_sticky.yaw, s_sticky.fwd, 32.0f );
+		try_yaw( s_sticky.yaw, s_sticky.fwd, 32.0f, s_sticky.side );
 	const bool sticky_pin = sticky && best_ticks >= 3;
 
 	constexpr float k_moves_near[ 3 ] = { 1.0f, 5.0f, 30.0f };
@@ -860,15 +874,15 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		return;
 	if ( best_ticks < 3 && sticky ) {
 		++s_sticky.ticks;
-		publish( s_sticky.yaw, s_sticky.fwd, false, live_view.m_x, false );
+		publish( s_sticky.yaw, s_sticky.fwd, false, live_view.m_x, false, s_sticky.side );
 		s_expect.valid = false;
 		return;
 	}
 	/* a hold is armed only by the full 3-tick chain; shorter pins go out as the approach move, unarmed */
-	publish( best_yaw, best_move, best_ticks >= 3, live_view.m_x, false );
+	publish( best_yaw, best_move, best_ticks >= 3, live_view.m_x, false, best_side );
 	s_expect = { best_ticks >= 3, best_end };
 	if ( best_ticks < 3 ) {
-		s_sticky = { stick_ok, best_yaw, best_move, normal, 0 };
+		s_sticky = { stick_ok, best_yaw, best_move, best_side, normal, 0 };
 		if ( stick_ok )
 			botox_dbg_log( "AS: sticky yaw=%.1f fwd=%.0f", best_yaw, best_move );
 	}

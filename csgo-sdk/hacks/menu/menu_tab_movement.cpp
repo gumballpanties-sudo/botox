@@ -528,7 +528,7 @@ void n_menu::impl_t::tab_movement( )
 
 							ImGui::Checkbox( "mouse steer##ebsteer", &GET_VARIABLE( g_variables.m_edgebug_mouse_steer, bool ) );
 							if ( GET_VARIABLE( g_variables.m_edgebug_mouse_steer, bool ) )
-								ImGui::SliderInt( "paths##ebpaths", &GET_VARIABLE( g_variables.m_edgebug_paths, int ), 1, 4 );
+								ImGui::SliderInt( "paths##ebpaths", &GET_VARIABLE( g_variables.m_edgebug_paths, int ), 1, 8 );
 						}
 
 						if ( style < 3 )

@@ -118,7 +118,7 @@ namespace n_edgebug
 		predicted_cmd_t m_predicted_cmds[k_predicted_cmd_max];
 		predicted_cmd_t m_run_cmds[k_predicted_cmd_max];
 		int m_replay_hits = 0;
-		static constexpr int k_plan_max = 4;
+		static constexpr int k_plan_max = 8;
 		struct plan_t {
 			predicted_cmd_t cmds[k_predicted_cmd_max];
 			int ticks = 0, variant = 0, fam = 0;

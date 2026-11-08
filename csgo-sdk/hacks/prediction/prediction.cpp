@@ -67,8 +67,10 @@ void n_prediction::impl_t::begin( c_base_entity* local, c_user_cmd* cmd, const b
 	const int stripped_fire = real_command ? 0 : ( cmd->m_buttons & ( in_attack | in_second_attack ) );
 	cmd->m_buttons &= ~stripped_fire;
 
-	/* and must not aim: set_local_view_angles writes pl.v_angle (= EyeAngles), restore after probes */
-	const c_angle saved_view = local->get_view_angles( ) ? *local->get_view_angles( ) : c_angle{ };
+	/* and must not aim: set_local_view_angles writes pl.v_angle (= EyeAngles), restore after probes.
+	   view punch too: a probe that lands sets ROLL = ( fall - 580 ) * 0.013 ( gamemovement.cpp:4432 ) = tilted screen that decays */
+	const c_angle saved_view  = local->get_view_angles( ) ? *local->get_view_angles( ) : c_angle{ };
+	const c_angle saved_punch = local->get_view_punch( );
 
 	*local->get_current_command( ) = cmd;
 	local->get_last_command( )     = *cmd;
@@ -133,8 +135,11 @@ void n_prediction::impl_t::begin( c_base_entity* local, c_user_cmd* cmd, const b
 	g_interfaces.m_prediction->m_is_first_time_predicted = old_is_first_prediction;
 	cmd->m_buttons |= stripped_fire;
 
-	if ( !real_command && local->get_view_angles( ) )
-		*local->get_view_angles( ) = saved_view;
+	if ( !real_command ) {
+		if ( local->get_view_angles( ) )
+			*local->get_view_angles( ) = saved_view;
+		local->get_view_punch( ) = saved_punch;
+	}
 }
 void n_prediction::impl_t::end( c_base_entity* local ) const
 {
