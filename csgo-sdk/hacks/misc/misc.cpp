@@ -1949,11 +1949,29 @@ void n_misc::impl_t::update_clantag( )
 	if ( !tag.empty( ) )
 		tag += ' ';
 
-	if ( tag == last_sent || tag.length( ) > 32 )
+	if ( tag.length( ) > 32 )
 		return;
+
+	/* engine re-sends its cl_clanid tag on full connect + every team change ( c_cs_player.cpp TeamChange,
+	   cl_main.cpp CL_FullyConnected ); first load it lands after ours, so resend while the server echo differs */
+	static double last_send = 0.0;
+	if ( tag == last_sent ) {
+		static const unsigned int clan_offset = g_netvars[ HASH_BT( "CCSPlayerResource->m_szClan" ) ].m_offset;
+
+		const int local_index = g_interfaces.m_engine_client->get_local_player( );
+		const auto resource   = find_player_resource( );
+		if ( time - last_send < 2.0 || !clan_offset || !resource || local_index <= 0 || local_index > 64 )
+			return;
+
+		/* char[ 65 ][ MAX_CLAN_TAG_LENGTH 16 ], server keeps 15 bytes, pool is case-insensitive */
+		const char* echo = reinterpret_cast< const char* >( resource ) + clan_offset + local_index * 16;
+		if ( !_strnicmp( echo, tag.c_str( ), 15 ) )
+			return;
+	}
 
 	set_clan_tag( tag.c_str( ), tag.c_str( ) );
 	last_sent = tag;
+	last_send = time;
 	cleared   = false;
 }
 
