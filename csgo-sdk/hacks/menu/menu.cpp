@@ -9,6 +9,7 @@
 #include "../chud_hud/chud_hud.h"
 #include "../movement/movement.h"
 #include "../skins/skins.h"
+#include "../visuals/players/esp_preview.h"
 #include "../visuals/screen/color_curve.h"
 #include "../visuals/screen/resolution_spoof.h"
 
@@ -554,13 +555,14 @@ float n_menu::impl_t::fade_draw_lists( ImVector< ImDrawList* >& out, ImVector< f
 
 	ImGuiWindow* web          = ImGui::FindWindowByName( "Web##websurf" );
 	ImGuiWindow* minesweeper  = ImGui::FindWindowByName( Minesweeper_WindowName( ) );
+	ImGuiWindow* esp_preview  = ImGui::FindWindowByName( "botox-esp-preview" );
 
 	ImGuiContext& g = *GImGui;
 
 	for ( ImGuiWindow* window : g.Windows ) {
 		if ( !window->Active || window->Hidden ||
 		     !( menu_owns_window( window, root ) || ( web && menu_owns_window( window, web ) ) ||
-		        ( minesweeper && menu_owns_window( window, minesweeper ) ) ) )
+		        ( minesweeper && menu_owns_window( window, minesweeper ) ) || ( esp_preview && menu_owns_window( window, esp_preview ) ) ) )
 			continue;
 
 		ImDrawList* list = window->DrawList;
@@ -1016,12 +1018,58 @@ void n_menu::impl_t::on_end_scene( )
 	const ImVec2 menu_size = ImGui::GetWindowSize( );
 	ImGui::End( );
 
+	float side_x = menu_pos.x + menu_size.x + 10.f;
+
+	/* own window right of the menu while visuals > esp is open, menu band look */
+	if ( this->m_tab == 1 && this->m_subtab == 0 && !this->m_search[ 0 ] && GET_VARIABLE( g_variables.m_players_preview, bool ) ) {
+		const float padding = ImGui::GetStyle( ).WindowPadding.x;
+		const ImVec2 size( n_esp_preview::k_width + padding * 2.f, menu_band_height + n_esp_preview::k_height + padding * 2.f );
+
+		ImGui::SetNextWindowPos( ImVec2( side_x, menu_pos.y ), ImGuiCond_Always );
+		ImGui::SetNextWindowSize( size, ImGuiCond_Always );
+
+		if ( ImGui::Begin( "botox-esp-preview", nullptr,
+		                   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+		                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+		                       ( this->m_anim_progress < 0.999f ? ImGuiWindowFlags_NoInputs : 0 ) ) ) {
+			ImDrawList* const draw_list = ImGui::GetWindowDrawList( );
+			const ImVec2 position       = ImGui::GetWindowPos( );
+
+			/* window clip is inset by the padding: open it to the edges like the menu band */
+			ImGui::PushClipRect( position, ImVec2( position.x + size.x, position.y + menu_band_height ), false );
+			draw_list->AddRectFilled( position, ImVec2( position.x + size.x, position.y + menu_band_height ), ImGui::GetColorU32( ImGuiCol_MenuBand ),
+			                          ImGui::GetStyle( ).WindowRounding, ImDrawFlags_RoundCornersTop );
+			RenderFadedGradientLine( draw_list, ImVec2( position.x, position.y + menu_band_height - 1.f ), ImVec2( size.x, 1.f ),
+			                         ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ) );
+			ImGui::PopClipRect( );
+
+			ImFont* const title_font = g_render.menu_font( true );
+			const char* const title  = "esp preview";
+			const ImVec2 title_size  = title_font->CalcTextSizeA( title_font->FontSize, FLT_MAX, 0.f, title );
+			draw_list->AddText( title_font, title_font->FontSize,
+			                    ImVec2( position.x + ( size.x - title_size.x ) * 0.5f, position.y + ( menu_band_height - title_size.y ) * 0.5f ),
+			                    ImGui::GetColorU32( ImGuiCol_Text ), title );
+
+			ImGui::SetCursorPos( ImVec2( padding, menu_band_height + padding ) );
+			g_esp_preview.draw_body( );
+
+			// window outline like the menu's, last so nothing covers it
+			ImGui::PushClipRect( position, ImVec2( position.x + size.x, position.y + size.y ), false );
+			draw_list->AddRect( position, ImVec2( position.x + size.x, position.y + size.y ), ImGui::GetColorU32( ImGuiCol_MenuWindowOutline ),
+			                    ImGui::GetStyle( ).WindowRounding );
+			ImGui::PopClipRect( );
+		}
+		ImGui::End( );
+
+		side_x += size.x + 10.f;
+	}
+
 	/* own window, still in the style scope: menu colours + font, fades with the menu (fade_draw_lists) */
 	const MsSettings minesweeper = { &GET_VARIABLE( g_variables.m_minesweeper, bool ),       &GET_VARIABLE( g_variables.m_minesweeper_night, bool ),
 	                                 &GET_VARIABLE( g_variables.m_minesweeper_difficulty, int ), &GET_VARIABLE( g_variables.m_minesweeper_width, int ),
 	                                 &GET_VARIABLE( g_variables.m_minesweeper_height, int ),   &GET_VARIABLE( g_variables.m_minesweeper_mines, int ) };
 	Minesweeper_Draw( minesweeper, g_render.menu_font( true ), g_render.m_fonts[ e_font_names::font_name_minesweeper_19 ], this->m_anim_progress >= 0.999f,
-	                  ImVec2( menu_pos.x + menu_size.x + 10.f, menu_pos.y ) );
+	                  ImVec2( side_x, menu_pos.y ) );
 }
 
 void n_menu::impl_t::draw_tab( )

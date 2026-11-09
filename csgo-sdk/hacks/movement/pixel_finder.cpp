@@ -1064,7 +1064,9 @@ static void pf_recheck_tricks( )
 constexpr float k_pm_stride      = 32.f;
 constexpr int k_pm_max_samples   = 512;
 constexpr int k_pm_refine        = 3;
-constexpr float k_pm_world       = 16400.f;
+constexpr float k_pm_world       = 16384.f;
+constexpr float k_pm_tile        = 2048.f;
+constexpr int k_pm_arm_tries     = 4;
 constexpr ImU32 k_pm_col[ 2 ]    = { IM_COL32( 255, 255, 255, 255 ), IM_COL32( 255, 120, 40, 255 ) };
 enum { pm_ps, pm_tb, pm_kinds };
 
@@ -1080,7 +1082,7 @@ static struct {
 	int sample = 0, samples = 0;
 	pm_run_t run[ pm_kinds ];
 	bool tb     = false;
-	int buttons = 0, arm_fails = 0;
+	int buttons = 0, arm_fails = 0, arm_logs = 0;
 	int brushes = 0, cells = 0, no_wall = 0, voids = 0, hits[ pm_kinds ]{ }, arm_skips = 0, sims = 0, traces = 0;
 	long long used_us = 0, next_qpc = 0, start_qpc = 0;
 } s_pm;
@@ -1166,20 +1168,34 @@ static bool pm_point_unusable( const c_vector& p )
 	return s_pm_outside_ok == 1 && pm_seh_outside( p );
 }
 
+/* GetBrushesInAABB walks the tree through CM_BoxLeafnums' 1024 slot node ring ( cmodel.cpp NODELIST_MAX ). one whole-world box
+   overflows it and the walk quits early: de_nuke gave 3016 of its 6579 brushes ( offline sim of the same walk matches the log ).
+   330 installed csgo / tf2 / css maps: 64 lose brushes as one box, 2048u tiles lose none, worst ring peak 524 ( tools/pf_map_tiles_check.py ).
+   ponytail: fixed grid, halve k_pm_tile if a map ever fails that check */
 static void pm_build( )
 {
 	s_pm.seams.clear( );
 	s_pm.brushes = 0;
-	c_brush_query q{ };
-	const int n = pm_seh_query( c_vector( -k_pm_world, -k_pm_world, -k_pm_world ), c_vector( k_pm_world, k_pm_world, k_pm_world ), q );
-	const int max_sides = q.m_max_brush_sides;
 	std::vector< unsigned int > ids;
-	if ( n > 0 && n < ( 1 << 20 ) ) {
-		ids.resize( static_cast< size_t >( n ) );
-		if ( !pm_seh_copy( q, ids.data( ), n ) )
-			ids.clear( );
-	}
-	pm_seh_release( q );
+	int max_sides = 6;
+	bool fault    = false;
+	for ( float x = -k_pm_world; x < k_pm_world && !fault; x += k_pm_tile )
+		for ( float y = -k_pm_world; y < k_pm_world && !fault; y += k_pm_tile )
+			for ( float z = -k_pm_world; z < k_pm_world && !fault; z += k_pm_tile ) {
+				c_brush_query q{ };
+				const int n = pm_seh_query( c_vector( x, y, z ), c_vector( x + k_pm_tile, y + k_pm_tile, z + k_pm_tile ), q );
+				fault       = n < 0;
+				if ( n > 0 && n < ( 1 << 20 ) ) {
+					const size_t at = ids.size( );
+					ids.resize( at + static_cast< size_t >( n ) );
+					if ( !pm_seh_copy( q, ids.data( ) + at, n ) )
+						ids.resize( at );
+					max_sides = ( std::max )( max_sides, q.m_max_brush_sides );
+				}
+				pm_seh_release( q );
+			}
+	std::sort( ids.begin( ), ids.end( ) );
+	ids.erase( std::unique( ids.begin( ), ids.end( ) ), ids.end( ) );
 	std::vector< brush_side_info_t > sides( static_cast< size_t >( std::clamp( max_sides, 6, 1024 ) ) );
 	std::vector< n_pm::plane_t > planes;
 	for ( const unsigned int id : ids ) {
@@ -1200,25 +1216,108 @@ static void pm_build( )
 			break;
 	}
 	n_pm::merge( s_pm.seams );
-	if ( n < 0 )
+	if ( fault )
 		botox_dbg_log( "[pmap] GetBrushesInAABB faulted, slot / signature wrong on this build" );
 }
 
-/* a surf rides a brush top with the wall carrying on above it; startsolid = another brush in front, not this wall */
+/* a surf rides a brush top with the wall carrying on above it; startsolid = another brush in front, not this wall.
+   leaning walls ( k_max_nz 0.7 ): ray centred where the face IS at that height ( s.lean per unit up ), and the normal
+   test on xy directions -- a leaning face's 3d normal has a short xy part and never passed dot > 0.9 */
 static bool pm_wall_above( const n_pm::seam_t& s, const c_vector& at )
 {
 	const c_vector n( s.nx, s.ny, 0.f );
 	n_tb::c_trace_filter_tb_world_props flt( g_ctx.m_local );
 	for ( const float up : { 2.f, 6.f, 16.f } ) {
-		const c_vector mid = at + c_vector( 0.f, 0.f, up );
+		const c_vector mid = at + c_vector( 0.f, 0.f, up ) - n * ( s.lean * up );
 		trace_t tr;
 		ray_t ray( mid + n * 8.f, mid - n * 8.f );
 		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &flt, &tr );
 		if ( tr.m_start_solid || tr.m_fraction >= 1.f )
 			continue;
-		if ( tr.m_plane.m_normal.m_x * s.nx + tr.m_plane.m_normal.m_y * s.ny <= 0.9f )
+		const float hl = std::hypot( tr.m_plane.m_normal.m_x, tr.m_plane.m_normal.m_y );
+		if ( hl < 0.1f || ( tr.m_plane.m_normal.m_x * s.nx + tr.m_plane.m_normal.m_y * s.ny ) / hl <= 0.9f )
 			continue;
 		return true;
+	}
+	return false;
+}
+
+/* ---- 3d skybox: its own BSP area ( m_skybox3d.area, 255 = none ), real brushwork with real top edges, lines in the void.
+   engine client LevelLeafCount 42 / GetBSPTreeQuery 43 / GetLeavesArea 60 ( unsigned short leaves ) -- HLAE
+   IVEngineClient_014_csgo + fatality IEngineClient count, 43 already live here. ISpatialQuery 0 LeafCount, 1
+   EnumerateLeavesAtPoint. trusted once: tree LeafCount has to equal LevelLeafCount, else gate off -1 = could not ask */
+struct pm_leaf_catch_t {
+	virtual bool enumerate_leaf( int leaf, std::intptr_t ctx )
+	{
+		*reinterpret_cast< int* >( ctx ) = leaf;
+		return false;
+	}
+};
+static pm_leaf_catch_t s_pm_leaf_catch;
+static int s_pm_area_ok = -1;
+static int s_pm_sky_n   = 0; /* seams dropped as skybox, last build */
+
+static int pm_seh_area( const c_vector& p )
+{
+	void* const eng = g_interfaces.m_engine_client;
+	if ( !eng )
+		return -1;
+	__try {
+		void** ve = *reinterpret_cast< void*** >( eng );
+		void* q   = reinterpret_cast< void*( __thiscall* )( void* ) >( ve[ 43 ] )( eng );
+		if ( !q )
+			return -1;
+		void** vq = *reinterpret_cast< void*** >( q );
+		if ( s_pm_area_ok < 0 ) {
+			const int tree = reinterpret_cast< int( __thiscall* )( void* ) >( vq[ 0 ] )( q );
+			const int lvl  = reinterpret_cast< int( __thiscall* )( void* ) >( ve[ 42 ] )( eng );
+			s_pm_area_ok   = ( tree > 0 && tree == lvl ) ? 1 : 0;
+			botox_dbg_log( "[pmap] BSP area query self-check: tree leaves %d, level leaves %d -> %s", tree, lvl, s_pm_area_ok ? "ok" : "MISMATCH, skybox gate off" );
+		}
+		if ( s_pm_area_ok != 1 )
+			return -1;
+		int leaf = -1;
+		reinterpret_cast< bool( __thiscall* )( void*, const c_vector&, void*, std::intptr_t ) >( vq[ 1 ] )( q, p, &s_pm_leaf_catch,
+		                                                                                              reinterpret_cast< std::intptr_t >( &leaf ) );
+		if ( leaf < 0 || leaf > 0xFFFF )
+			return -1;
+		unsigned short l16 = static_cast< unsigned short >( leaf );
+		return reinterpret_cast< int( __thiscall* )( void*, unsigned short*, int ) >( ve[ 60 ] )( eng, &l16, 1 );
+	} __except ( EXCEPTION_EXECUTE_HANDLER ) {
+		return -1;
+	}
+}
+
+/* armed only when the player's own spot is a real area that is NOT the sky's ( noclip in the skybox = gate off ) */
+static int pm_sky_area( )
+{
+	static const unsigned int off = g_netvars[ HASH_BT( "CBasePlayer->m_skybox3d.area" ) ].m_offset;
+	if ( !off || !g_ctx.m_local ) {
+		botox_dbg_log( "[pmap] skybox gate off: m_skybox3d.area netvar %s", off ? "ok, no local" : "NOT FOUND" );
+		return -1;
+	}
+	const int sky = *reinterpret_cast< const int* >( reinterpret_cast< std::uintptr_t >( g_ctx.m_local ) + off );
+	if ( sky < 0 || sky >= 255 ) {
+		botox_dbg_log( "[pmap] skybox gate off: sky area %d ( 255 = map has no 3d sky )", sky );
+		return -1;
+	}
+	const int own = pm_seh_area( g_ctx.m_local->get_origin( ) + c_vector( 0.f, 0.f, 40.f ) );
+	if ( own <= 0 || own == sky ) { /* area 0 = solid / outside, never where you stand */
+		botox_dbg_log( "[pmap] skybox gate off: sky area %d, your area %d", sky, own );
+		return -1;
+	}
+	return sky;
+}
+
+/* the two spots a hull riding the seam occupies ( at the edge, pm_gate's hip spot ), at three points. the sky area is sealed,
+   so any hit = the whole seam is skybox. a spot buried in a brush is a solid leaf ( area 0 ), never mistaken for sky */
+static bool pm_seam_in_sky( const n_pm::seam_t& s, int sky )
+{
+	const c_vector n( s.nx, s.ny, 0.f );
+	for ( const float t : { 0.15f, 0.5f, 0.85f } ) {
+		const c_vector at = pm_at( s, t );
+		if ( pm_seh_area( at + n * 4.f + c_vector( 0.f, 0.f, 4.f ) ) == sky || pm_seh_area( at + n * 26.f + c_vector( 0.f, 0.f, 36.f ) ) == sky )
+			return true;
 	}
 	return false;
 }
@@ -1315,6 +1414,13 @@ static void pm_scan( c_user_cmd* cmd )
 		pm_clear_lines( );
 		const long long t0 = n_tick::qpc_now( );
 		pm_build( );
+		/* after the merge: a row of skybox brushes is one lookup set, not eight */
+		s_pm_sky_n = 0;
+		if ( const int sky = pm_sky_area( ); sky >= 0 ) {
+			const size_t before = s_pm.seams.size( );
+			std::erase_if( s_pm.seams, [ & ]( const n_pm::seam_t& s ) { return pm_seam_in_sky( s, sky ); } );
+			s_pm_sky_n = static_cast< int >( before - s_pm.seams.size( ) );
+		}
 		/* nearest first: the lines around you show up in seconds, not at the end */
 		const c_vector me = g_ctx.m_local->get_origin( );
 		std::sort( s_pm.seams.begin( ), s_pm.seams.end( ),
@@ -1332,8 +1438,8 @@ static void pm_scan( c_user_cmd* cmd )
 		s_pm_total            = static_cast< int >( s_pm.seams.size( ) );
 		s_pm_busy             = !s_pm.seams.empty( );
 		const char* const map = g_interfaces.m_engine_client->get_level_name_short( );
-		botox_dbg_log( "[pmap] %s: %d brush(es) -> %d seam(s) in %.1f ms, stride %.0f, refine %d, texturebugs %s", map ? map : "?", brushes,
-		               static_cast< int >( s_pm.seams.size( ) ), build_ms, k_pm_stride, k_pm_refine, s_pm.tb ? "on" : "off" );
+		botox_dbg_log( "[pmap] %s: %d brush(es) -> %d seam(s) ( %d skybox dropped ) in %.1f ms, stride %.0f, refine %d, texturebugs %s", map ? map : "?",
+		               brushes, static_cast< int >( s_pm.seams.size( ) ), s_pm_sky_n, build_ms, k_pm_stride, k_pm_refine, s_pm.tb ? "on" : "off" );
 		if ( !s_pm_busy )
 			movement_add_window( 3.f, "pixel finder: no brush walls found on this map" );
 	}
@@ -1348,14 +1454,21 @@ static void pm_scan( c_user_cmd* cmd )
 	const int kinds                = s_pm.tb ? pm_kinds : 1;
 	pm_validate_outside( g_ctx.m_local->get_origin( ) + c_vector( 0.f, 0.f, 40.f ) );
 
+	/* the arm only sets the duck state, every probe places the hull itself. a cell's own arm spot ( 40u out ) can be inside
+	   something, and a refusal used to hold that cell for k_pf_arm_tries 128 chunks: with texturebugs on ( their arm runs on every
+	   axial seam, not only where a surf spot held ) the scan crawled 3 seams/s and never finished. fallback = where you stand */
+	const c_vector home = g_ctx.m_local->get_origin( );
 	bool armed = false, arm_ok = false, armed_duck = true;
 	const auto ready = [ & ]( bool duck, const c_vector& arm_at ) -> int {
 		if ( !armed || armed_duck != duck ) {
 			if ( !armed )
 				g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-			armed          = true;
-			armed_duck     = duck;
-			arm_ok         = pf_arm( cmd, arm_at, s_pm.buttons, duck );
+			armed      = true;
+			armed_duck = duck;
+			arm_ok     = pf_arm( cmd, arm_at, s_pm.buttons, duck ) || pf_arm( cmd, home, s_pm.buttons, duck );
+			if ( !arm_ok && duck && ++s_pm.arm_logs <= 3 )
+				botox_dbg_log( "[pmap] duck arm refused at %.0f %.0f %.0f and at you %.0f %.0f %.0f ( seam %d )", arm_at.m_x, arm_at.m_y, arm_at.m_z, home.m_x,
+				               home.m_y, home.m_z, static_cast< int >( s_pm.seam ) );
 			cmd->m_buttons = pf_buttons( s_pm.buttons, duck );
 		}
 		return arm_ok ? 1 : duck ? 0 : -1;
@@ -1405,7 +1518,7 @@ static void pm_scan( c_user_cmd* cmd )
 			bool refused = false;
 			for ( int k = 0; k < kinds; ++k )
 				refused |= ( hit[ k ] = probe( k, sm, at ) ) < 0;
-			if ( refused && ++s_pm.arm_fails <= k_pf_arm_tries )
+			if ( refused && ++s_pm.arm_fails <= k_pm_arm_tries )
 				break;
 			if ( refused )
 				++s_pm.arm_skips;
@@ -1463,6 +1576,10 @@ static void pm_render( )
 		ImU32 col;
 	};
 	std::vector< seg_t > segs;
+	/* max visible distance: nearest point of the line to you, so skybox seams stay hidden */
+	const float max_dist = GET_VARIABLE( g_variables.m_pixel_finder_map_max_dist, float );
+	const bool cull      = max_dist > 0.f && g_ctx.m_local;
+	const c_vector eye   = cull ? g_ctx.m_local->get_origin( ) : c_vector( 0.f, 0.f, 0.f );
 	/* tb last: on a seam that is both, orange stays visible */
 	for ( int k = 0; k < pm_kinds; ++k ) {
 		const std::vector< c_vector >& lines = s_pm_lines[ k ];
@@ -1472,6 +1589,11 @@ static void pm_render( )
 			const float len    = dir.length( );
 			if ( len < 0.01f )
 				continue;
+			if ( cull ) {
+				const float t = std::clamp( ( eye - a ).dot_product( dir ) / ( len * len ), 0.f, 1.f );
+				if ( eye.dist_to( a + dir * t ) > max_dist )
+					continue;
+			}
 			const float fade = ( std::min )( 48.f, len * 0.34f );
 			for ( float da = 0.f; da < len - 0.001f; ) {
 				const bool fine = ( std::min )( da, len - da ) < fade + 6.f;

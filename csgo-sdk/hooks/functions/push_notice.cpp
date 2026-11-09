@@ -1,3 +1,4 @@
+#include <chrono>
 #include <format>
 #include <string>
 #include "../../game/sdk/includes/includes.h"
@@ -11,19 +12,24 @@
 #include "../../hacks/urt_hud/urt_hud.h"
 #include "../hooks.h"
 
+extern void botox_dbg_log( const char* fmt, ... );
+
+// one hud walk: tags only ever land on AlertText labels, so the same list clears the old tag
 static const char* k_tag_eb = R"js(
 (function () {
     try {
-        var root = $.GetContextPanel();
-        var old = root.FindChildrenWithClassTraverse('BotoxEbLine');
-        for (var i = 0; i < old.length; ++i)
-            old[i].RemoveClass('BotoxEbLine');
-        var lines = root.FindChildrenWithClassTraverse('AlertText');
-        for (var j = 0; j < lines.length; ++j) {
-            var p = lines[j].GetParent();
-            if (p && p.BHasClass('AlertHidden') && lines[j].text.indexOf('edgebugged') !== -1) {
-                lines[j].AddClass('BotoxEbLine');
-                break;
+        var lines = $.GetContextPanel().FindChildrenWithClassTraverse('AlertText');
+        var tagged = false;
+        for (var i = 0; i < lines.length; ++i) {
+            var l = lines[i];
+            if (l.BHasClass('BotoxEbLine'))
+                l.RemoveClass('BotoxEbLine');
+            if (tagged)
+                continue;
+            var p = l.GetParent();
+            if (p && p.BHasClass('AlertHidden') && l.text.indexOf('edgebugged') !== -1) {
+                l.AddClass('BotoxEbLine');
+                tagged = true;
             }
         }
     } catch (e) {}
@@ -235,27 +241,48 @@ void __fastcall n_detoured_functions::push_notice( void* ecx, void* edx, const c
 		static std::string history_line;
 		static int history_off = -1;
 
+		const auto ms_since = []( const std::chrono::steady_clock::time_point at ) {
+			return std::chrono::duration< double, std::milli >( std::chrono::steady_clock::now( ) - at ).count( );
+		};
+
 		const std::string message = detection_html( event );
 		if ( chained && alive && hud && !n_cod4_hud::enabled( ) ) {
-			std::string js = k_restack_eb;
+			const auto t_js = std::chrono::steady_clock::now( );
+			std::string js  = k_restack_eb;
 			replace_js( js, "${html}", message );
 			ui->run_script( hud, js.c_str( ), "panorama/layout/hud/hud.xml", 8, 10, false, false );
+			const double js_ms = ms_since( t_js );
 
-			uint8_t* chat = history_off >= 0 ? find_chat_element( ) : nullptr;
-			if ( chat && patch_history( chat, history_off, history_line.c_str( ), static_cast< int >( history_line.length( ) ), message.c_str( ),
-			                            static_cast< int >( message.length( ) ) ) )
+			const auto t_hist  = std::chrono::steady_clock::now( );
+			uint8_t* chat      = history_off >= 0 ? find_chat_element( ) : nullptr;
+			const bool patched = chat && patch_history( chat, history_off, history_line.c_str( ), static_cast< int >( history_line.length( ) ),
+			                                            message.c_str( ), static_cast< int >( message.length( ) ) );
+			if ( patched )
 				history_line = message;
+			botox_dbg_log( "EBS: restack js=%.2f hist=%.2f patched=%d off=%d", js_ms, ms_since( t_hist ), patched ? 1 : 0, history_off );
 			return;
 		}
 
+		const auto t_fwd = std::chrono::steady_clock::now( );
 		forward( message.c_str( ), static_cast< int >( message.length( ) ), message.c_str( ) );
-		history_line = message;
+		history_line        = message;
+		const double fwd_ms = ms_since( t_fwd );
+
+		// one scan per chat element: a miss kept history_off at -1 and rescanned 0x800 ( VirtualQuery each ) on every fresh eb
+		static uint8_t* history_chat = nullptr;
+		const auto t_hist            = std::chrono::steady_clock::now( );
 		if ( history_off < 0 )
-			if ( uint8_t* chat = find_chat_element( ) )
-				history_off = find_history_offset( chat, message.c_str( ), static_cast< int >( message.length( ) ) );
-		line_time = hud ? now : -1.f;
+			if ( uint8_t* chat = find_chat_element( ); chat && chat != history_chat ) {
+				history_chat = chat;
+				history_off  = find_history_offset( chat, message.c_str( ), static_cast< int >( message.length( ) ) );
+			}
+		const double hist_ms = ms_since( t_hist );
+
+		line_time       = hud ? now : -1.f;
+		const auto t_js = std::chrono::steady_clock::now( );
 		if ( hud )
 			ui->run_script( hud, k_tag_eb, "panorama/layout/hud/hud.xml", 8, 10, false, false );
+		botox_dbg_log( "EBS: fresh fwd=%.2f hist=%.2f js=%.2f off=%d hud=%d", fwd_ms, hist_ms, ms_since( t_js ), history_off, hud ? 1 : 0 );
 		return;
 	}
 	case HASH_BT( CHAT_TOKEN_TEXTUREBUG ):

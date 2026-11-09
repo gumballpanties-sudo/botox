@@ -315,6 +315,7 @@ void n_hooks::impl_t::release_render_resources( )
 	g_true_motion_blur.on_device_lost( );
 	g_bloom.on_device_lost( );
 	g_player_stencil.on_device_lost( );
+	g_preview_stencil.on_device_lost( );
 	g_depth_source.on_device_lost( );
 	g_weapon_sheen.on_device_lost( );
 	g_lsd_chams.on_device_lost( );

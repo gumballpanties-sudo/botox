@@ -1,9 +1,15 @@
 #pragma once
 #include "../../../game/sdk/classes/c_vector.h"
+#include "../../../game/sdk/structs/bounding_box_t.h"
+#include "../../../game/sdk/structs/matrix_t.h"
+#include <string>
 #include <vector>
 
 class c_base_entity;
 class c_weapon_data;
+struct draw_object_t;
+struct studiohdr_t;
+struct IDirect3DTexture9;
 
 enum e_padding_direction {
 	padding_direction_left = 0,
@@ -22,6 +28,61 @@ struct damage_number_t {
 
 namespace n_players
 {
+	struct hitbox_capsule_t {
+		c_vector m_a   = { };
+		c_vector m_b   = { };
+		float m_radius = 0.f;
+	};
+
+	/* null matrix = game camera ( g_render.world_to_screen ), else world_to_projection mapped onto a width x height box */
+	struct projector_t {
+		const view_matrix_t* m_matrix = nullptr;
+		float m_width = 0.f, m_height = 0.f;
+
+		bool operator( )( const c_vector& world, c_vector_2d& screen ) const;
+	};
+
+	/* everything draw_player reads, gathered from the entity ( players( ) ) or made up ( esp preview ) */
+	struct esp_player_t {
+		float m_alpha = 1.f;
+		bounding_box_t m_box{ };
+
+		std::string m_name = { };
+		bool m_bot         = false;
+		int m_health       = 0;
+		float m_health_factor = 0.f; /* animated health / max */
+		bool m_visible     = false;
+		bool m_god         = false;
+		float m_distance   = 0.f;
+
+		c_weapon_data* m_weapon_data = nullptr;
+		short m_item_definition_index = 0;
+		float m_ammo_factor = 0.f;
+
+		bool m_flags[ 16 ] = { }; /* e_player_flags row shown */
+		int m_money        = 0;
+
+		bool m_has_obb      = false;
+		c_vector m_obb_mins = { }, m_obb_maxs = { };
+		matrix3x4_t m_frame = { };
+
+		/* bone parts: m_studio null ( dormant / shared ) skips skeleton, hitboxes, trail, head avatar */
+		studiohdr_t* m_studio                  = nullptr;
+		const matrix3x4_t* m_bones             = nullptr;
+		const matrix3x4_t* m_backtrack_bones   = nullptr; /* oldest record, skeleton type 1 */
+		std::vector< hitbox_capsule_t > m_capsules = { };
+		std::vector< c_vector > m_trail        = { };     /* head per valid record */
+
+		IDirect3DTexture9* m_avatar = nullptr;
+		bool m_has_head             = false;
+		c_vector m_head = { }, m_view_right = { };
+		float m_head_radius = 0.f;
+	};
+
+	void draw_player( const esp_player_t& player, const projector_t& w2s, std::vector< draw_object_t >& out );
+
+	std::vector< hitbox_capsule_t > hitbox_capsules( studiohdr_t* studio, int hitbox_set, const matrix3x4_t* matrices, int bone_count );
+
 	struct impl_t {
 		void on_paint_traverse( );
 
@@ -35,11 +96,7 @@ namespace n_players
 
 		void hitboxes_on_hurt( int victim );
 
-		struct hitbox_capsule_t {
-			c_vector m_a   = { };
-			c_vector m_b   = { };
-			float m_radius = 0.f;
-		};
+		using hitbox_capsule_t = n_players::hitbox_capsule_t;
 
 		struct hit_hitboxes_t {
 			std::vector< hitbox_capsule_t > m_capsules = { };

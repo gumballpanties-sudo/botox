@@ -3,6 +3,8 @@
 #include <d3d9.h>
 #include <vector>
 
+#include "../players/players.h"
+
 namespace n_player_stencil
 {
 	struct impl_t {
@@ -10,8 +12,15 @@ namespace n_player_stencil
 
 		bool glow_enabled( ) const;
 
+		// outline, glow or inner glow would run
+		bool wanted( ) const;
+
 		// main thread, right after the original DoPostScreenSpaceEffects ( = RenderGlowEffects )
 		void after_glow( );
+
+		/* main thread, esp preview: the bound target's depth-stencil holds glow refs. bones = inner glow capsules seen through
+		   world_to_screen, scale = target px per screen px ( radius / thickness ) */
+		void after_glow( const view_matrix_t& world_to_screen, const std::vector< n_players::hitbox_capsule_t >& bones, float scale );
 
 		// d3d thread, before Reset / on unload: everything here is D3DPOOL_DEFAULT
 		void on_device_lost( );
@@ -24,6 +33,8 @@ namespace n_player_stencil
 			float m_visible[ 4 ]   = { };
 			float m_invisible[ 4 ] = { };
 			float m_thickness      = 1.f;
+			float m_outline_wave[ 4 ]       = { };
+			float m_outline_wave_color[ 4 ] = { };
 
 			float m_glow_visible[ 4 ]         = { };
 			float m_glow_invisible[ 4 ]       = { };
@@ -48,6 +59,8 @@ namespace n_player_stencil
 
 		bool glow_wanted( ) const;
 		bool inner_enabled( ) const;
+
+		void run( const view_matrix_t* world_to_screen, const std::vector< n_players::hitbox_capsule_t >* given, float scale );
 
 		// render thread when queued, else calling thread. draw returns whether the column passes ran
 		void execute( const settings_t& settings );
@@ -90,3 +103,6 @@ namespace n_player_stencil
 }
 
 inline n_player_stencil::impl_t g_player_stencil{ };
+
+/* own targets: the preview target is smaller than the screen, one shared set would rebuild twice a frame */
+inline n_player_stencil::impl_t g_preview_stencil{ };

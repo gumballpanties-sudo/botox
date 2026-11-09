@@ -2189,14 +2189,15 @@ void n_render::impl_t::on_release( )
 
 void n_render::impl_t::draw_cached_data( )
 {
-	const auto draw_list = ImGui::GetBackgroundDrawList( );
-
 	std::unique_lock< std::shared_mutex > lock( this->m_mutex );
 
-	if ( this->m_thread_safe_draw_data.empty( ) )
-		return;
+	if ( !this->m_thread_safe_draw_data.empty( ) )
+		this->draw_objects( ImGui::GetBackgroundDrawList( ), this->m_thread_safe_draw_data );
+}
 
-	for ( const draw_object_t& data : this->m_thread_safe_draw_data ) {
+void n_render::impl_t::draw_objects( ImDrawList* draw_list, const std::vector< draw_object_t >& objects )
+{
+	for ( const draw_object_t& data : objects ) {
 		switch ( data.m_type ) {
 		case e_draw_type::draw_type_text: {
 			const auto* obj = std::any_cast< text_draw_object_t >( &data.m_obj );
@@ -2489,7 +2490,8 @@ void n_render::impl_t::rect( ImDrawList* draw_list, const c_vector_2d& min, cons
 		                    rounding > 0.f ? rounding + offset : 0.f, corner_rounding_flags, outline_thickness );
 }
 
-void n_render::impl_t::corner_rect( float x1, float y1, float x2, float y2, const unsigned int& color, float thickness, float rounding )
+void n_render::impl_t::corner_rect( float x1, float y1, float x2, float y2, const unsigned int& color, float thickness, float rounding,
+                                    std::vector< draw_object_t >* out )
 {
 	int w = x2 - x1;
 	int h = y2 - y1;
@@ -2506,7 +2508,7 @@ void n_render::impl_t::corner_rect( float x1, float y1, float x2, float y2, cons
 	corners.m_color     = color;
 	corners.m_thickness = thickness;
 
-	this->m_draw_data.emplace_back( e_draw_type::draw_type_corner_rect, std::make_any< corner_rect_draw_object_t >( corners ) );
+	( out ? *out : this->m_draw_data ).emplace_back( e_draw_type::draw_type_corner_rect, std::make_any< corner_rect_draw_object_t >( corners ) );
 }
 
 void n_render::impl_t::copy_and_convert( const uint8_t* rgba_data, uint8_t* out, const size_t size )

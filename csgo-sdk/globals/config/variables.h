@@ -549,6 +549,11 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_players_stencil_vis_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( c_color, m_players_stencil_invis_color, c_color( 114, 155, 221, 255 ) );
 		ADD_VARIABLE( float, m_players_stencil_thickness, 1.5f );
+		ADD_VARIABLE( bool, m_players_stencil_wave, false );
+		ADD_VARIABLE( c_color, m_players_stencil_wave_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( float, m_players_stencil_wave_speed, 0.5f );
+		ADD_VARIABLE( float, m_players_stencil_wave_size, 0.35f );
+		ADD_VARIABLE( float, m_players_stencil_wave_strength, 0.8f );
 		ADD_VARIABLE( bool, m_inner_glow, false );
 		ADD_VARIABLE( c_color, m_inner_glow_vis_color, c_color( 255, 255, 255, 200 ) );
 		ADD_VARIABLE( c_color, m_inner_glow_invis_color, c_color( 114, 155, 221, 200 ) );
@@ -557,6 +562,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_inner_glow_bones, true );
 		ADD_VARIABLE( float, m_inner_glow_bone_width, 50.f );
 		ADD_VARIABLE( bool, m_players_backtrack_trail, false );
+		ADD_VARIABLE( bool, m_players_preview, false );
 		ADD_VARIABLE( bool, m_players_avatar, false );
 		ADD_VARIABLE( float, m_players_avatar_size, 14.f );
 		ADD_VARIABLE( int, m_players_avatar_position, 1 );
@@ -1335,6 +1341,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_pixel_finder_headbounces, true );
 		ADD_VARIABLE( bool, m_pixel_finder_pixeljumps, true );
 		ADD_VARIABLE( bool, m_pixel_finder_map_lines, true );
+		ADD_VARIABLE( float, m_pixel_finder_map_max_dist, 0.f ); /* 0 = no limit; skybox seams sit far out */
 		ADD_VARIABLE( bool, m_pixel_finder_map_texturebugs, false );
 		ADD_VARIABLE( bool, m_pixel_surf_assist_brokehop, false );
 		ADD_VARIABLE( float, m_pixel_surf_assist_ground_angle_limit, 2.5f );

@@ -85,6 +85,7 @@
     <ClCompile Include="hacks\misc\misc.cpp" />
     <ClCompile Include="hacks\misc\spectator_list\spectator_list.cpp" />
     <ClCompile Include="hacks\visuals\players\players.cpp" />
+    <ClCompile Include="hacks\visuals\players\esp_preview.cpp" />
     <ClCompile Include="hacks\aimbot\aimbot.cpp" />
     <ClCompile Include="hacks\aimbot\grenade_aim.cpp" />
     <ClCompile Include="hacks\skins\skins.cpp" />
@@ -366,6 +367,7 @@
     <ClInclude Include="game\sdk\structs\bounding_box_t.h" />
     <ClInclude Include="game\sdk\enums\e_class_ids.h" />
     <ClInclude Include="hacks\visuals\players\players.h" />
+    <ClInclude Include="hacks\visuals\players\esp_preview.h" />
     <ClInclude Include="hacks\aimbot\aimbot.h" />
     <ClInclude Include="hacks\aimbot\grenade_aim.h" />
     <ClInclude Include="hacks\skins\skins.h" />

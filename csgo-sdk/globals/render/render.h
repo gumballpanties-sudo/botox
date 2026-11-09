@@ -307,6 +307,7 @@ namespace n_render
 		void on_release( );
 
 		void draw_cached_data( );
+		void draw_objects( ImDrawList* draw_list, const std::vector< draw_object_t >& objects );
 
 		bool world_to_screen( const c_vector& origin, c_vector_2d& screen );
 
@@ -363,7 +364,8 @@ namespace n_render
 		           const unsigned int& outline_color, bool filled, float rounding, int corner_rounding_flags, float thickness,
 		           unsigned int outline_flags, float outline_thickness = 1.f );
 
-		void corner_rect( float x1, float y1, float x2, float y2, const unsigned int& color, float thickness = 1.f, float rounding = 0.f );
+		void corner_rect( float x1, float y1, float x2, float y2, const unsigned int& color, float thickness = 1.f, float rounding = 0.f,
+		                  std::vector< draw_object_t >* out = nullptr );
 
 		void copy_and_convert( const uint8_t* rgba_data, uint8_t* out, const size_t size );
 		IDirect3DTexture9* steam_image( CSteamID steam_id );

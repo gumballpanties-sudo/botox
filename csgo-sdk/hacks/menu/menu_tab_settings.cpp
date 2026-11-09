@@ -1497,7 +1497,7 @@ void n_menu::impl_t::tab_misc( )
 						ImGui::Combo( "type##spectatorlist lumi type", &type, "default\0new\0interwebz\0" );
 					}
 
-					if ( style == 1 || style == 2 || style == 3 || style == 15 || style == 22 || style == 23 || style == 24 || style == 26 || style == 28 ||
+					if ( style == 1 || style == 2 || style == 3 || style == 4 || style == 15 || style == 22 || style == 23 || style == 24 || style == 26 || style == 28 ||
 					     style == 29 || style == 30 || style == 31 || style == 32 || style == 33 || ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 1 ) )
 						ImGui::Checkbox( "show targets##spectatorlist targets",
 						                 &GET_VARIABLE( g_variables.m_spectators_list_show_target, bool ) );

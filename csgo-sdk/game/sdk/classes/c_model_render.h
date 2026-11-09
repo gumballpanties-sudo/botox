@@ -20,4 +20,9 @@ public:
 	{
 		g_virtual.call< void >( this, 10, instance );
 	}
+
+	void suppress_engine_lighting( bool suppress )
+	{
+		g_virtual.call< void >( this, 24, suppress );
+	}
 };

@@ -74,6 +74,7 @@ namespace n_perf
 		zone_paint_grenade,
 		zone_paint_world,
 		zone_paint_bots,
+		zone_paint_preview,
 		zone_end_scene,
 		zone_overlay,
 		zone_avatars,
@@ -89,7 +90,7 @@ namespace n_perf
 		static const char* names[ zone_max ] = { "cmd",     "cm.pred",  "cm.mv_pre", "cm.mv_post", "cm.eb",     "cm.aim",  "cm.lagcomp",
 			                                     "cm.chud", "cm.scale", "cm.misc",   "cm.pf",      "cm.as",      "cm.tung",    "cm.det",    "cm.tb",      "cm.fm",   "cm.ab",
 			                                     "cm.ps",   "cm.es",    "paint",    "pt.players", "pt.misc", "pt.movement", "pt.melt",
-			                                     "pt.rec",  "pt.mc",    "pt.kfx",   "pt.ind",     "pt.edicts", "pt.gren",   "pt.world",  "pt.bots",
+			                                     "pt.rec",  "pt.mc",    "pt.kfx",   "pt.ind",     "pt.edicts", "pt.gren",   "pt.world",  "pt.bots",  "pt.preview",
 			                                     "endscene", "overlay", "avatars",   "screenpass", "drawmodel", "framestage" };
 		return id >= 0 && id < zone_max ? names[ id ] : "?";
 	}

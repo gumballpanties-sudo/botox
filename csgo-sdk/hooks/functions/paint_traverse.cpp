@@ -22,6 +22,7 @@
 #include "../../hacks/visuals/edicts/edicts.h"
 #include "../../hacks/visuals/grenade/grenade_path.h"
 #include "../../hacks/visuals/players/dormancy/dormancy.h"
+#include "../../hacks/visuals/players/esp_preview.h"
 #include "../../hacks/visuals/players/players.h"
 #include "../../hacks/visuals/screen/resolution_spoof.h"
 #include "../../utilities/perf/perf_watch.h"
@@ -82,6 +83,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 				g_misc.on_level_shutdown( );
 				g_misc.on_eject( );
 				g_scaleform.on_eject( );
+				g_esp_preview.on_eject( );
 				g_chud.on_createmove( );
 				g_edicts.fog( true );
 				g_edicts.skybox_fog( true );
@@ -127,6 +129,9 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 					g_players.on_paint_traverse( );
 				}
 			}
+
+			// main menu too: own render target, only while the menu shows the box
+			g_esp_preview.on_paint_traverse( );
 
 			const auto blur = []( ImDrawList* ) { g_menu.draw_background_blur( ); };
 			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_callback, std::make_any< callback_draw_object_t >( callback_draw_object_t{ blur } ) );

@@ -194,23 +194,10 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 	     g_interfaces.m_model_render->is_forced_material_override( ) )
 		return original( ecx, edx, context, state, info, custom_bone_to_world );
 
-	const auto& visible_layers   = GET_VARIABLE( g_variables.m_chams_visible_layers, std::vector< int > );
-	const auto& visible_colors   = GET_VARIABLE( g_variables.m_chams_visible_colors, std::vector< c_color > );
-	const auto& visible_darks    = GET_VARIABLE( g_variables.m_chams_visible_dark_colors, std::vector< c_color > );
-	const auto& occluded_layers  = GET_VARIABLE( g_variables.m_chams_occluded_layers, std::vector< int > );
-	const auto& occluded_colors  = GET_VARIABLE( g_variables.m_chams_occluded_colors, std::vector< c_color > );
-	const auto& occluded_darks   = GET_VARIABLE( g_variables.m_chams_occluded_dark_colors, std::vector< c_color > );
-	const auto& backtrack_layers = GET_VARIABLE( g_variables.m_chams_backtrack_layers, std::vector< int > );
-	const auto& backtrack_colors = GET_VARIABLE( g_variables.m_chams_backtrack_colors, std::vector< c_color > );
-	const auto& backtrack_darks  = GET_VARIABLE( g_variables.m_chams_backtrack_dark_colors, std::vector< c_color > );
-	const auto& sound_layers     = GET_VARIABLE( g_variables.m_chams_sound_layers, std::vector< int > );
-	const auto& sound_colors     = GET_VARIABLE( g_variables.m_chams_sound_colors, std::vector< c_color > );
-	const auto& sound_darks      = GET_VARIABLE( g_variables.m_chams_sound_dark_colors, std::vector< c_color > );
-
-	const bool draw_visible   = n_chams::impl_t::has_layers( visible_layers );
-	const bool draw_occluded  = n_chams::impl_t::has_layers( occluded_layers );
-	const bool draw_backtrack = !enemy_ragdoll && n_chams::impl_t::has_layers( backtrack_layers );
-	const bool draw_sound     = !enemy_ragdoll && n_chams::impl_t::has_layers( sound_layers );
+	const bool draw_visible   = n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_visible_layers, std::vector< int > ) );
+	const bool draw_occluded  = n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_occluded_layers, std::vector< int > ) );
+	const bool draw_backtrack = !enemy_ragdoll && n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_backtrack_layers, std::vector< int > ) );
+	const bool draw_sound     = !enemy_ragdoll && n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_sound_layers, std::vector< int > ) );
 
 	if ( !draw_visible && !draw_occluded && !draw_backtrack && !draw_sound )
 		return original( ecx, edx, context, state, info, custom_bone_to_world );
@@ -225,40 +212,23 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 
 	const float esp_gate = enemy_ragdoll ? 1.f : g_sound_esp.player_gate( player );
 
-	if ( draw_sound ) {
-		const float sound_alpha = g_sound_esp.alpha( info.entity_index, GET_VARIABLE( g_variables.m_chams_sound_duration, float ),
-		                                             GET_VARIABLE( g_variables.m_chams_sound_fade, bool ) );
-
-		if ( sound_alpha > 0.f )
-			g_chams.draw_layers( sound_layers, sound_colors, sound_darks, true, sound_alpha, draw_live );
-	}
-
-	/* translucent two tone ghosts lay depth (prepass vs own inner parts): drawn after the live model so they blend over it, not cut it */
-	const bool backtrack_late = draw_backtrack && !GET_VARIABLE( g_variables.m_chams_backtrack_xqz, bool ) &&
-	                            std::find( backtrack_layers.begin( ), backtrack_layers.end( ), n_chams::chams_material_two_tone ) != backtrack_layers.end( );
+	const float sound_alpha = draw_sound ? g_sound_esp.alpha( info.entity_index, GET_VARIABLE( g_variables.m_chams_sound_duration, float ),
+	                                                          GET_VARIABLE( g_variables.m_chams_sound_fade, bool ) )
+	                                     : 0.f;
 
 	const auto draw_backtrack_records = [ & ]( ) {
 		const int backtrack_type = GET_VARIABLE( g_variables.m_chams_backtrack_type, int );
 
 		/* not const: m_matrix must decay to a mutable matrix3x4_t*. skipped in aimbot-record mode */
 		auto* oldest_record = backtrack_type == 2 ? nullptr : g_lagcomp.oldest_record( info.entity_index );
-		const bool xqz      = GET_VARIABLE( g_variables.m_chams_backtrack_xqz, bool );
 		const unsigned int anim_key = HASH_RT( model_name ) + static_cast< unsigned int >( info.entity_index ) * 0x9E3779B9U;
-
-		const bool gradient = GET_VARIABLE( g_variables.m_chams_backtrack_gradient, bool );
 
 		/* records are network pose, model is interpolated behind it: newer ones would draw in front */
 		const float model_time = g_lagcomp.model_time( );
 
-		const auto draw_record = [ & ]( matrix3x4_t* record_matrix, float alpha_scale ) {
-			alpha_scale *= esp_gate;
-
-			if ( !record_matrix || alpha_scale <= 0.f )
-				return;
-
-			g_chams.draw_layers( backtrack_layers, backtrack_colors, backtrack_darks, xqz, alpha_scale, [ & ]( ) {
-				original( ecx, edx, context, state, info, record_matrix );
-			} );
+		const auto draw_record = [ & ]( matrix3x4_t* record_matrix, const float alpha_scale ) {
+			if ( record_matrix )
+				g_chams.draw_backtrack_ghost( [ & ]( ) { original( ecx, edx, context, state, info, record_matrix ); }, alpha_scale * esp_gate );
 		};
 
 		switch ( backtrack_type ) {
@@ -304,25 +274,9 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 							           return a->m_sim_time > b->m_sim_time;
 						           } );
 
-					/* ghost cap thins, never shortens: newest + oldest always, rest evenly spaced */
-					const int max_ghosts =
-						std::clamp( GET_VARIABLE( g_variables.m_chams_backtrack_max_ghosts, int ), 2, n_lagcomp::impl_t::max_records );
-					const int drawn_count = record_count < max_ghosts ? record_count : max_ghosts;
-
-					for ( int pick = drawn_count - 1; pick >= 0; pick-- ) {
-						const int i = drawn_count > 1 ? static_cast< int >( static_cast< float >( pick ) *
-						                                                        static_cast< float >( record_count - 1 ) /
-						                                                        static_cast< float >( drawn_count - 1 ) +
-						                                                    0.5f )
-						                              : 0;
-
-						float tick_scale = 1.f;
-
-						if ( gradient && record_count > 1 )
-							tick_scale = 1.f - static_cast< float >( i ) / static_cast< float >( record_count - 1 );
-
+					n_chams::impl_t::for_each_ghost( record_count, n_lagcomp::impl_t::max_records, [ & ]( const int i, const float tick_scale ) {
 						draw_record( ranked[ i ]->m_matrix, alpha_animation.AnimationData->second * tick_scale );
-					}
+					} );
 				}
 			}
 			break;
@@ -339,21 +293,5 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 		}
 	};
 
-	if ( draw_backtrack && !backtrack_late )
-		draw_backtrack_records( );
-
-	if ( draw_occluded && esp_gate > 0.f )
-		g_chams.draw_layers( occluded_layers, occluded_colors, occluded_darks, true, esp_gate, draw_live );
-
-	if ( draw_visible && esp_gate > 0.f )
-		g_chams.draw_layers( visible_layers, visible_colors, visible_darks, false, 1.f, draw_live );
-	else
-		draw_live( );
-
-	if ( backtrack_late )
-		draw_backtrack_records( );
-
-	g_interfaces.m_model_render->forced_material_override( nullptr );
-
-	n_chams::impl_t::reset_original_color( );
+	g_chams.draw_player( draw_live, draw_backtrack_records, draw_backtrack, esp_gate, sound_alpha );
 }

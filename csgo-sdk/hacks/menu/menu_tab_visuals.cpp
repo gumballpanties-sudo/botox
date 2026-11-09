@@ -32,6 +32,7 @@ void n_menu::impl_t::tab_visuals( )
 		menu_columns_begin( );
 
 		if ( menu_group_begin( "players" ) ) {
+			ImGui::Checkbox( "esp preview", &GET_VARIABLE( g_variables.m_players_preview, bool ) );
 			ImGui::Checkbox( "players", &GET_VARIABLE( g_variables.m_players, bool ) );
 			if ( GET_VARIABLE( g_variables.m_players, bool ) ) {
 				ImGui::OptionPopup(
@@ -407,6 +408,18 @@ void n_menu::impl_t::tab_visuals( )
 					                       &GET_VARIABLE( g_variables.m_players_stencil_invis_color, c_color ), color_picker_alpha_flags );
 						ImGui::SliderFloat( "thickness##player stencil", &GET_VARIABLE( g_variables.m_players_stencil_thickness, float ), 0.5f, 8.f,
 					                        "%.1f px", ImGuiSliderFlags_AlwaysClamp );
+
+						ImGui::Checkbox( "accent wave##player stencil", &GET_VARIABLE( g_variables.m_players_stencil_wave, bool ) );
+						if ( GET_VARIABLE( g_variables.m_players_stencil_wave, bool ) ) {
+							ImGui::ColorEdit4( "wave color##player stencil wave", &GET_VARIABLE( g_variables.m_players_stencil_wave_color, c_color ),
+							                   color_picker_no_alpha_flags );
+							ImGui::SliderFloat( "wave speed##player stencil wave", &GET_VARIABLE( g_variables.m_players_stencil_wave_speed, float ), 0.05f,
+							                    4.f, "%.2fx", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "wave size##player stencil wave", &GET_VARIABLE( g_variables.m_players_stencil_wave_size, float ), 0.05f,
+							                    2.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "wave strength##player stencil wave", &GET_VARIABLE( g_variables.m_players_stencil_wave_strength, float ),
+							                    0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+						}
 					},
 					ImVec2( 220.f, -1.f ) );
 			}

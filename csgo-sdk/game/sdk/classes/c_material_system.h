@@ -209,10 +209,43 @@ public:
 		return g_virtual.call< void >( this, 202, override_enable, color_write );
 	}
 
-	// the no-argument overload: saves the current target + viewport so pop puts them back
+	/* the no-argument overload: saves the current target + viewport so pop puts them back. 4 overloads reversed:
+	   116 = ( rt, depth, x, y, w, h ), 119 = ( ); ret sizes checked on CMatRenderContext + queued vtables */
 	void push_render_target_and_viewport( )
 	{
-		return g_virtual.call< void >( this, 116 );
+		return g_virtual.call< void >( this, 119 );
+	}
+
+	void release( )
+	{
+		return g_virtual.call< void >( this, 1 );
+	}
+
+	void bind_local_cubemap( c_texture* texture )
+	{
+		return g_virtual.call< void >( this, 5, texture );
+	}
+
+	// c_vector_4d[ 6 ]
+	void set_ambient_light_cube( const void* cube )
+	{
+		return g_virtual.call< void >( this, 18, cube );
+	}
+
+	void set_lighting_origin( const float x, const float y, const float z )
+	{
+		return g_virtual.call< void >( this, 158, x, y, z );
+	}
+
+	/* hdr exposure ( map auto exposure lives here in game ): 154 set( const Vector& ), 155 get = hidden out pointer */
+	void set_tone_mapping_scale_linear( const float* scale )
+	{
+		return g_virtual.call< void >( this, 154, scale );
+	}
+
+	void get_tone_mapping_scale_linear( float* out )
+	{
+		g_virtual.call< void >( this, 155, out );
 	}
 
 	void pop_render_target_and_viewport( )
@@ -278,5 +311,18 @@ public:
 	c_material_render_context* get_render_context( )
 	{
 		return g_virtual.call< c_material_render_context* >( this, 115 );
+	}
+
+	int get_back_buffer_format( )
+	{
+		return g_virtual.call< int >( this, 36 );
+	}
+
+	/* panorama build: no Begin/EndRenderTargetAllocation gate ( cmaterialsystem.cpp PANORAMA_ENABLE ), allowed after startup.
+	   size_mode 0 = RT_SIZE_NO_CHANGE, depth 0 = MATERIAL_RT_DEPTH_SHARED */
+	c_texture* create_named_render_target_texture_ex( const char* name, const int width, const int height, const int size_mode, const int format,
+	                                                  const int depth, const unsigned int texture_flags, const unsigned int render_target_flags )
+	{
+		return g_virtual.call< c_texture* >( this, 97, name, width, height, size_mode, format, depth, texture_flags, render_target_flags );
 	}
 };

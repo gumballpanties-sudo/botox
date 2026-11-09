@@ -48,6 +48,7 @@ long __stdcall n_detoured_functions::reset( IDirect3DDevice9* device, D3DPRESENT
 	g_true_motion_blur.on_device_lost( );
 	g_bloom.on_device_lost( );
 	g_player_stencil.on_device_lost( );
+	g_preview_stencil.on_device_lost( );
 
 	g_depth_source.on_device_lost( );
 	g_weapon_sheen.on_device_lost( );

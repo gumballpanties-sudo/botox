@@ -889,6 +889,8 @@ void n_menu::impl_t::tab_movement( )
 							pf_map_scan_toggle( );
 						ImGui::Checkbox( "map texturebugs", &GET_VARIABLE( g_variables.m_pixel_finder_map_texturebugs, bool ) );
 						ImGui::Checkbox( "show map lines", &GET_VARIABLE( g_variables.m_pixel_finder_map_lines, bool ) );
+						float& pm_max = GET_VARIABLE( g_variables.m_pixel_finder_map_max_dist, float );
+						ImGui::SliderFloat( "max visible distance", &pm_max, 0.f, 8192.f, pm_max <= 0.f ? "no limit" : "%.0f u", ImGuiSliderFlags_AlwaysClamp );
 						if ( ms.busy || ms.lines > 0 || ms.tb > 0 )
 							ImGui::TextDisabled( "seam %d / %d   %d surf%s   %d tb line%s", ms.done, ms.total, ms.lines, ms.lines == 1 ? "" : "s", ms.tb,
 							                     ms.tb == 1 ? "" : "s" );

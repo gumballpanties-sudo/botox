@@ -139,10 +139,14 @@ static const char k_columns_shader[] =
 	"sampler2D s0:register(s0);"
 	"float4 c0:register(c0);"
 	"float4 c1:register(c1);"
-	"float4 c2:register(c2);" COLUMN_DISTANCE_FN
+	"float4 c2:register(c2);"
+	"float4 c12:register(c12);"
+	"float4 c13:register(c13);" COLUMN_DISTANCE_FN
 	"float4 main(float2 uv:TEXCOORD0):COLOR0{"
 	"float3 k=dist(uv);"
 	"float4 col=lerp(c2,c1,saturate(0.5+0.5*(k.y-k.x)));"
+	"float w=0.5+0.5*cos(6.2831853*((uv.x*c0.y/c0.x+uv.y)*c12.z-c12.y));"
+	"col.rgb=lerp(col.rgb,c13.rgb,w*w*w*c12.w*c12.x);"
 	"return float4(col.rgb,col.a*saturate(c0.w+1.0-min(k.x,k.y))*(1.0-k.z));}";
 
 bool n_player_stencil::impl_t::enabled( ) const
@@ -164,6 +168,11 @@ bool n_player_stencil::impl_t::inner_enabled( ) const
 bool n_player_stencil::impl_t::glow_enabled( ) const
 {
 	return this->glow_wanted( ) && this->m_glow_live;
+}
+
+bool n_player_stencil::impl_t::wanted( ) const
+{
+	return this->enabled( ) || this->glow_wanted( ) || this->inner_enabled( );
 }
 
 bool n_player_stencil::impl_t::ensure_shaders( IDirect3DDevice9* device )
@@ -189,19 +198,31 @@ bool n_player_stencil::impl_t::ensure_shaders( IDirect3DDevice9* device )
 		return shader != nullptr;
 	};
 
-	if ( !compile( k_fill_shader, sizeof( k_fill_shader ) - 1, this->m_fill_shader ) ||
-	     !compile( k_rows_shader, sizeof( k_rows_shader ) - 1, this->m_rows_shader ) ||
-	     !compile( k_blur_shader, sizeof( k_blur_shader ) - 1, this->m_blur_shader ) ||
-	     !compile( k_glow_shader, sizeof( k_glow_shader ) - 1, this->m_glow_shader ) ||
-	     !compile( k_columns_shader, sizeof( k_columns_shader ) - 1, this->m_columns_shader ) ||
-	     !compile( k_inner_shader, sizeof( k_inner_shader ) - 1, this->m_inner_shader ) ||
-	     !compile( k_capsule_shader, sizeof( k_capsule_shader ) - 1, this->m_capsule_shader ) ||
-	     !compile( k_bone_shader, sizeof( k_bone_shader ) - 1, this->m_bone_shader ) ) {
-		g_console.print< n_console::log_level::WARNING >( "player stencil: shader failed — outline off, glow back to engine halo" );
-		this->m_failed = true;
+	/* one compile per call ( ~frame ): eight at once hitched the frame glow first turned on. columns last = the done flag above */
+	const struct {
+		const char* m_source;
+		size_t m_size;
+		IDirect3DPixelShader9*& m_shader;
+	} shaders[ ] = {
+		{ k_fill_shader, sizeof( k_fill_shader ) - 1, this->m_fill_shader },          { k_rows_shader, sizeof( k_rows_shader ) - 1, this->m_rows_shader },
+		{ k_blur_shader, sizeof( k_blur_shader ) - 1, this->m_blur_shader },          { k_glow_shader, sizeof( k_glow_shader ) - 1, this->m_glow_shader },
+		{ k_inner_shader, sizeof( k_inner_shader ) - 1, this->m_inner_shader },       { k_capsule_shader, sizeof( k_capsule_shader ) - 1, this->m_capsule_shader },
+		{ k_bone_shader, sizeof( k_bone_shader ) - 1, this->m_bone_shader },          { k_columns_shader, sizeof( k_columns_shader ) - 1, this->m_columns_shader },
+	};
+
+	for ( const auto& shader : shaders ) {
+		if ( shader.m_shader )
+			continue;
+
+		if ( !compile( shader.m_source, shader.m_size, shader.m_shader ) ) {
+			g_console.print< n_console::log_level::WARNING >( "player stencil: shader failed — outline off, glow back to engine halo" );
+			this->m_failed = true;
+		}
+
+		break;
 	}
 
-	return !this->m_failed;
+	return !this->m_failed && this->m_columns_shader;
 }
 
 void n_player_stencil::impl_t::release_targets( )
@@ -280,6 +301,17 @@ bool n_player_stencil::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE
 
 void n_player_stencil::impl_t::after_glow( )
 {
+	this->run( nullptr, nullptr, 1.f );
+}
+
+void n_player_stencil::impl_t::after_glow( const view_matrix_t& world_to_screen, const std::vector< n_players::hitbox_capsule_t >& bones,
+                                           const float scale )
+{
+	this->run( &world_to_screen, &bones, scale );
+}
+
+void n_player_stencil::impl_t::run( const view_matrix_t* world_to_screen, const std::vector< n_players::hitbox_capsule_t >* given, const float scale )
+{
 	settings_t settings{ };
 	settings.m_outline = this->enabled( );
 	settings.m_glow    = this->glow_wanted( );
@@ -298,11 +330,13 @@ void n_player_stencil::impl_t::after_glow( )
 	rgba( settings.m_inner_visible, GET_VARIABLE( g_variables.m_inner_glow_vis_color, c_color ) );
 	rgba( settings.m_inner_invisible, GET_VARIABLE( g_variables.m_inner_glow_invis_color, c_color ) );
 	settings.m_inner_reach[ 0 ] = std::clamp( GET_VARIABLE( g_variables.m_inner_glow_intensity, float ), 0.25f, 4.f );
-	settings.m_inner_reach[ 2 ] = std::clamp( GET_VARIABLE( g_variables.m_inner_glow_size, float ), k_min_glow_radius, k_max_glow_radius );
-	settings.m_inner_bones      = settings.m_inner && GET_VARIABLE( g_variables.m_inner_glow_bones, bool );
+	/* blur loops stop at 32 taps */
+	settings.m_inner_reach[ 2 ] =
+		std::min( std::clamp( GET_VARIABLE( g_variables.m_inner_glow_size, float ), k_min_glow_radius, k_max_glow_radius ) * scale, 31.f );
+	settings.m_inner_bones = settings.m_inner && GET_VARIABLE( g_variables.m_inner_glow_bones, bool );
 
-	if ( settings.m_inner_bones && g_ctx.m_local ) {
-		const view_matrix_t& m = g_interfaces.m_engine_client->get_world_to_screen_matrix( );
+	if ( settings.m_inner_bones && ( given || g_ctx.m_local ) ) {
+		const view_matrix_t& m = world_to_screen ? *world_to_screen : g_interfaces.m_engine_client->get_world_to_screen_matrix( );
 		const float focal      = std::sqrt( m[ 1 ][ 0 ] * m[ 1 ][ 0 ] + m[ 1 ][ 1 ] * m[ 1 ][ 1 ] + m[ 1 ][ 2 ] * m[ 1 ][ 2 ] );
 		const float width      = std::clamp( GET_VARIABLE( g_variables.m_inner_glow_bone_width, float ), 10.f, 150.f ) / 100.f;
 
@@ -315,7 +349,23 @@ void n_player_stencil::impl_t::after_glow( )
 			return true;
 		};
 
-		g_entity_cache.enumerate( e_enumeration_type::type_players, [ & ]( c_base_entity* entity ) {
+		const auto add_capsule = [ & ]( const c_vector& a, const c_vector& b, const float radius ) {
+			settings_t::capsule_t capsule{ };
+			float wa = 0.f, wb = 0.f;
+
+			if ( !project( a, capsule.m_a, wa ) || !project( b, capsule.m_b, wb ) )
+				return;
+
+			capsule.m_sigma[ 0 ] = radius * width * focal / wa;
+			capsule.m_sigma[ 1 ] = radius * width * focal / wb;
+			settings.m_capsules.push_back( capsule );
+		};
+
+		if ( given ) {
+			for ( const auto& capsule : *given )
+				add_capsule( capsule.m_a, capsule.m_b, capsule.m_radius );
+		} else
+			g_entity_cache.enumerate( e_enumeration_type::type_players, [ & ]( c_base_entity* entity ) {
 			if ( !entity || entity == g_ctx.m_local || !entity->is_alive( ) || entity->is_dormant( ) || !g_ctx.m_local->is_enemy( entity ) ||
 			     g_sound_esp.player_gate( entity ) <= 0.f )
 				return;
@@ -334,23 +384,15 @@ void n_player_stencil::impl_t::after_glow( )
 				if ( !box || box->m_radius <= 0.f || box->m_bone < 0 || box->m_bone >= bone_count )
 					continue;
 
-				settings_t::capsule_t capsule{ };
-				float wa = 0.f, wb = 0.f;
-
-				if ( !project( g_math.vector_transform( box->m_bb_min, matrices[ box->m_bone ] ), capsule.m_a, wa ) ||
-				     !project( g_math.vector_transform( box->m_bb_max, matrices[ box->m_bone ] ), capsule.m_b, wb ) )
-					continue;
-
-				capsule.m_sigma[ 0 ] = box->m_radius * width * focal / wa;
-				capsule.m_sigma[ 1 ] = box->m_radius * width * focal / wb;
-				settings.m_capsules.push_back( capsule );
+				add_capsule( g_math.vector_transform( box->m_bb_min, matrices[ box->m_bone ] ),
+				             g_math.vector_transform( box->m_bb_max, matrices[ box->m_bone ] ), box->m_radius );
 			}
 		} );
 	}
 
 	rgba( settings.m_visible, GET_VARIABLE( g_variables.m_players_stencil_vis_color, c_color ) );
 	rgba( settings.m_invisible, GET_VARIABLE( g_variables.m_players_stencil_invis_color, c_color ) );
-	settings.m_thickness = std::clamp( GET_VARIABLE( g_variables.m_players_stencil_thickness, float ), 0.5f, k_max_thickness );
+	settings.m_thickness = std::min( std::clamp( GET_VARIABLE( g_variables.m_players_stencil_thickness, float ), 0.5f, k_max_thickness ) * scale, 31.f );
 
 	const bool gradient = GET_VARIABLE( g_variables.m_glow_gradient, bool );
 	rgba( settings.m_glow_visible, GET_VARIABLE( g_variables.m_glow_vis_color, c_color ) );
@@ -365,8 +407,11 @@ void n_player_stencil::impl_t::after_glow( )
 	settings.m_gradient[ 1 ] = 1.f / std::max( 1.f - start, 1e-3f );
 
 	const bool additive      = !GET_VARIABLE( g_variables.m_glow_normal_blend, bool );
-	settings.m_gradient[ 2 ] = additive ? k_engine_glow_radius
-	                                    : std::clamp( GET_VARIABLE( g_variables.m_glow_thickness, float ), k_min_glow_radius, k_max_glow_radius );
+	settings.m_gradient[ 2 ] =
+		std::min( ( additive ? k_engine_glow_radius
+	                         : std::clamp( GET_VARIABLE( g_variables.m_glow_thickness, float ), k_min_glow_radius, k_max_glow_radius ) ) *
+	                  scale,
+	              31.f );
 	settings.m_gradient[ 3 ] = additive ? 1.f : 0.f;
 
 	// real_time: keeps moving in pause / freezetime. phase kept in 0..1 so float precision never runs out
@@ -380,6 +425,15 @@ void n_player_stencil::impl_t::after_glow( )
 		settings.m_wave[ 2 ]  = 1.f / std::clamp( GET_VARIABLE( g_variables.m_glow_wave_size, float ), 0.05f, 4.f );
 		settings.m_wave[ 3 ]  = std::clamp( GET_VARIABLE( g_variables.m_glow_wave_strength, float ), 0.f, 1.f );
 		rgba( settings.m_wave_color, GET_VARIABLE( g_variables.m_glow_wave_color, c_color ) );
+	}
+
+	if ( GET_VARIABLE( g_variables.m_players_stencil_wave, bool ) ) {
+		const float phase             = std::fmod( now * GET_VARIABLE( g_variables.m_players_stencil_wave_speed, float ), 1.f );
+		settings.m_outline_wave[ 0 ]  = 1.f;
+		settings.m_outline_wave[ 1 ]  = phase < 0.f ? phase + 1.f : phase;
+		settings.m_outline_wave[ 2 ]  = 1.f / std::clamp( GET_VARIABLE( g_variables.m_players_stencil_wave_size, float ), 0.05f, 4.f );
+		settings.m_outline_wave[ 3 ]  = std::clamp( GET_VARIABLE( g_variables.m_players_stencil_wave_strength, float ), 0.f, 1.f );
+		rgba( settings.m_outline_wave_color, GET_VARIABLE( g_variables.m_players_stencil_wave_color, c_color ) );
 	}
 
 	if ( GET_VARIABLE( g_variables.m_glow_pulse, bool ) ) {
@@ -440,7 +494,7 @@ bool n_player_stencil::impl_t::draw( IDirect3DDevice9* device, IDirect3DSurface9
 	D3DVIEWPORT9 old_viewport{ };
 	RECT old_scissor{ };
 	DWORD fvf = 0;
-	float old_constants[ 12 ][ 4 ]{ };
+	float old_constants[ 14 ][ 4 ]{ };
 
 	constexpr D3DRENDERSTATETYPE k_states[ ] = { D3DRS_STENCILENABLE,   D3DRS_TWOSIDEDSTENCILMODE, D3DRS_STENCILFUNC,      D3DRS_STENCILREF,
 		                                         D3DRS_STENCILMASK,     D3DRS_STENCILWRITEMASK,    D3DRS_STENCILFAIL,      D3DRS_STENCILZFAIL,
@@ -484,7 +538,7 @@ bool n_player_stencil::impl_t::draw( IDirect3DDevice9* device, IDirect3DSurface9
 	device->GetFVF( &fvf );
 	device->GetViewport( &old_viewport );
 	device->GetScissorRect( &old_scissor );
-	device->GetPixelShaderConstantF( 0, old_constants[ 0 ], 12 );
+	device->GetPixelShaderConstantF( 0, old_constants[ 0 ], 14 );
 	device->GetTexture( 0, &old_texture );
 
 	for ( size_t i = 0; i < std::size( k_states ); ++i ) {
@@ -543,6 +597,8 @@ bool n_player_stencil::impl_t::draw( IDirect3DDevice9* device, IDirect3DSurface9
 	device->SetPixelShaderConstantF( 9, settings.m_wave_color, 1 );
 	device->SetPixelShaderConstantF( 10, settings.m_inner_visible, 1 );
 	device->SetPixelShaderConstantF( 11, settings.m_inner_invisible, 1 );
+	device->SetPixelShaderConstantF( 12, settings.m_outline_wave, 1 );
+	device->SetPixelShaderConstantF( 13, settings.m_outline_wave_color, 1 );
 
 	device->SetRenderTarget( 0, this->m_msaa_surface ? this->m_msaa_surface : this->m_mask_surface );
 	device->Clear( 0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_ARGB( 0, 0, 0, 0 ), 1.f, 0 );
@@ -683,7 +739,7 @@ bool n_player_stencil::impl_t::draw( IDirect3DDevice9* device, IDirect3DSurface9
 	device->SetViewport( &old_viewport );
 	device->SetScissorRect( &old_scissor );
 
-	device->SetPixelShaderConstantF( 0, old_constants[ 0 ], 12 );
+	device->SetPixelShaderConstantF( 0, old_constants[ 0 ], 14 );
 	device->SetPixelShader( old_pixel_shader );
 	device->SetVertexShader( old_vertex_shader );
 

@@ -17,6 +17,8 @@ namespace n_pm
 		float z  = 0.f;
 		float ax = 0.f, ay = 0.f;
 		float bx = 0.f, by = 0.f;
+		/* face moves INTO the brush per unit up ( nz / |n.xy| ): 0 plumb, > 0 leans back, < 0 overhang. wall-above ray follows it */
+		float lean = 0.f;
 		float len( ) const
 		{
 			const float dx = bx - ax, dy = by - ay;
@@ -24,7 +26,9 @@ namespace n_pm
 		}
 	};
 
-	constexpr float k_max_nz  = 0.2f;
+	/* the crosshair finder's own bound. was 0.2: the edge is the face cut by the FLAT top, so it is level whatever the face
+	   does below it, and 0.2 threw away every leaning wall / overhang. past 0.7 = floor, its edge is a ledge */
+	constexpr float k_max_nz  = 0.7f;
 	constexpr float k_min_len = 12.f;
 	constexpr float k_max_len = 8192.f;
 
@@ -84,8 +88,9 @@ namespace n_pm
 
 		out.nx = nx;
 		out.ny = ny;
-		out.z  = z_top;
-		out.ax = px + tx * smin;
+		out.z    = z_top;
+		out.lean = w.nz / len2;
+		out.ax   = px + tx * smin;
 		out.ay = py + ty * smin;
 		out.bx = px + tx * smax;
 		out.by = py + ty * smax;
@@ -109,7 +114,9 @@ namespace n_pm
 	{
 		auto key = []( const seam_t& s ) {
 			const float d = s.nx * s.ax + s.ny * s.ay;
-			return std::array< long, 4 >{ std::lround( s.nx * 100.f ), std::lround( s.ny * 100.f ), std::lround( d * 2.f ), std::lround( s.z * 64.f ) };
+			/* lean too: same edge line, different wall above it ( plumb vs leaning ) = two runs */
+			return std::array< long, 5 >{ std::lround( s.nx * 100.f ), std::lround( s.ny * 100.f ), std::lround( d * 2.f ), std::lround( s.z * 64.f ),
+				                          std::lround( s.lean * 100.f ) };
 		};
 		auto proj = []( const seam_t& s, float x, float y ) { return s.ny * x - s.nx * y; };
 

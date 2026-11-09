@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -501,6 +502,76 @@ namespace n_chams
 			}
 
 			g_interfaces.m_model_render->forced_material_override( nullptr );
+		}
+
+		template< typename t_draw_pass >
+		void draw_backtrack_ghost( t_draw_pass draw_pass, const float alpha_scale )
+		{
+			if ( alpha_scale <= 0.f )
+				return;
+
+			this->draw_layers( GET_VARIABLE( g_variables.m_chams_backtrack_layers, std::vector< int > ),
+			                   GET_VARIABLE( g_variables.m_chams_backtrack_colors, std::vector< c_color > ),
+			                   GET_VARIABLE( g_variables.m_chams_backtrack_dark_colors, std::vector< c_color > ),
+			                   GET_VARIABLE( g_variables.m_chams_backtrack_xqz, bool ), alpha_scale, draw_pass );
+		}
+
+		/* ghost cap thins, never shortens: newest + oldest always, rest evenly spaced. fn( i, tick_scale ) oldest first,
+		   i = index into newest-first records */
+		template< typename t_fn >
+		static void for_each_ghost( const int record_count, const int max_records, t_fn fn )
+		{
+			const int max_ghosts  = std::clamp( GET_VARIABLE( g_variables.m_chams_backtrack_max_ghosts, int ), 2, max_records );
+			const int drawn_count = record_count < max_ghosts ? record_count : max_ghosts;
+			const bool gradient   = GET_VARIABLE( g_variables.m_chams_backtrack_gradient, bool );
+
+			for ( int pick = drawn_count - 1; pick >= 0; pick-- ) {
+				const int i = drawn_count > 1 ? static_cast< int >( static_cast< float >( pick ) * static_cast< float >( record_count - 1 ) /
+				                                                        static_cast< float >( drawn_count - 1 ) +
+				                                                    0.5f )
+				                              : 0;
+
+				fn( i, gradient && record_count > 1 ? 1.f - static_cast< float >( i ) / static_cast< float >( record_count - 1 ) : 1.f );
+			}
+		}
+
+		/* enemy pass order, live hook + esp preview. sound_alpha <= 0 = no sound pass. translucent two tone ghosts lay depth
+		   ( prepass vs own inner parts ): drawn after the live model so they blend over it, not cut it */
+		template< typename t_live, typename t_backtrack >
+		void draw_player( t_live draw_live, t_backtrack draw_backtrack_records, const bool draw_backtrack, const float esp_gate,
+		                  const float sound_alpha )
+		{
+			const auto& visible_layers   = GET_VARIABLE( g_variables.m_chams_visible_layers, std::vector< int > );
+			const auto& occluded_layers  = GET_VARIABLE( g_variables.m_chams_occluded_layers, std::vector< int > );
+			const auto& backtrack_layers = GET_VARIABLE( g_variables.m_chams_backtrack_layers, std::vector< int > );
+
+			if ( sound_alpha > 0.f )
+				this->draw_layers( GET_VARIABLE( g_variables.m_chams_sound_layers, std::vector< int > ),
+				                   GET_VARIABLE( g_variables.m_chams_sound_colors, std::vector< c_color > ),
+				                   GET_VARIABLE( g_variables.m_chams_sound_dark_colors, std::vector< c_color > ), true, sound_alpha, draw_live );
+
+			const bool backtrack_late = draw_backtrack && !GET_VARIABLE( g_variables.m_chams_backtrack_xqz, bool ) &&
+			                            std::find( backtrack_layers.begin( ), backtrack_layers.end( ), chams_material_two_tone ) != backtrack_layers.end( );
+
+			if ( draw_backtrack && !backtrack_late )
+				draw_backtrack_records( );
+
+			if ( has_layers( occluded_layers ) && esp_gate > 0.f )
+				this->draw_layers( occluded_layers, GET_VARIABLE( g_variables.m_chams_occluded_colors, std::vector< c_color > ),
+				                   GET_VARIABLE( g_variables.m_chams_occluded_dark_colors, std::vector< c_color > ), true, esp_gate, draw_live );
+
+			if ( has_layers( visible_layers ) && esp_gate > 0.f )
+				this->draw_layers( visible_layers, GET_VARIABLE( g_variables.m_chams_visible_colors, std::vector< c_color > ),
+				                   GET_VARIABLE( g_variables.m_chams_visible_dark_colors, std::vector< c_color > ), false, 1.f, draw_live );
+			else
+				draw_live( );
+
+			if ( backtrack_late )
+				draw_backtrack_records( );
+
+			g_interfaces.m_model_render->forced_material_override( nullptr );
+
+			reset_original_color( );
 		}
 	};
 };
