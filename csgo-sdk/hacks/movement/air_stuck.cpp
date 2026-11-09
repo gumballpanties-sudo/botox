@@ -61,7 +61,7 @@ static void lock_end( const char* why )
 /* online the engine keeps its own START while the server's END differs < 0.0625u / 0.5u/s ( cl_pred_optimize 2, c_baseentity.cpp:656/681,
    prediction.cpp:1681 ); pins are exact floats, so armed = full re-predict off the server snapshot every packet ( offline already is ).
    log: server END of the acked cmd vs the START we built on */
-static void as_sync( c_user_cmd* cmd, const bool armed )
+static void as_sync( c_user_cmd* cmd, const bool armed, const bool hold_armed )
 {
 	static auto cl_pred_optimize = g_interfaces.m_convar->find_var( "cl_pred_optimize" );
 	g_prediction.sync_arm( n_prediction::impl_t::k_sync_as, armed );
@@ -104,6 +104,9 @@ static void as_sync( c_user_cmd* cmd, const bool armed )
 	const bool match  = d.m_x == 0.0f && d.m_y == 0.0f && d.m_z == 0.0f && dv.m_x == 0.0f && dv.m_y == 0.0f && dv.m_z == 0.0f;
 	const c_user_cmd* const a = g_interfaces.m_input->get_user_cmd( ack );
 	const bool sv_pinned      = sv_velocity.m_x == 0.0f && sv_velocity.m_y == 0.0f && sv_velocity.m_z == g_prediction.get_engine_target_predict_z_velocity( );
+	/* client holds a proven pin from this pinned START ( 1 sim re-proof per tick ): the server keeping it is not a lock. 11-09 log: 2 locks
+	   latched an OLDER approach cmd while the server kept the hold 4-5 acks ( dv=0 ), the lock copies then knocked it off */
+	const bool holding = hold_armed && velocity.m_x == 0.0f && velocity.m_y == 0.0f && velocity.m_z == g_prediction.get_engine_target_predict_z_velocity( );
 	if ( !sv_pinned ) {
 		/* fell on an older in-flight cmd, the lock's own copies still coming = keep sending the caught move ( 11-08 16:24 log: 11/24 lock
 		   deaths = next cmd differed, lock copy re-pinned at 34897 then a fresh pick knocked it off ). fell on the lock cmd = re-pick */
@@ -112,7 +115,7 @@ static void as_sync( c_user_cmd* cmd, const bool armed )
 			botox_dbg_log( "AS: sticky lock yaw=%.1f fwd=%.4f side=%.4f", s_lock.view.m_y, s_lock.fwd, s_lock.side );
 		}
 		lock_end( "fell" );
-	} else if ( !match || s_lock.valid ) {
+	} else if ( !holding && ( !match || s_lock.valid ) ) {
 		if ( !s_lock.valid ) {
 			s_lock.ticks = s_lock.moved = 0;
 			botox_dbg_log( "AS: sv lock ack=%d cmd=%.4f/%.4f v=%.4f/%.4f", ack, a->m_forward_move, a->m_side_move, a->m_view_point.m_x, a->m_view_point.m_y );
@@ -162,7 +165,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	const bool feature = GET_VARIABLE( g_variables.m_air_stuck, bool );
 	const bool key     = g_input.check_input( &GET_VARIABLE( g_variables.m_air_stuck_key, key_bind_t ) );
 	const bool alive   = g_ctx.m_local && g_ctx.m_local->is_alive( );
-	as_sync( cmd, feature && key && alive );
+	as_sync( cmd, feature && key && alive, hold_armed );
 
 	if ( !feature || !key || !alive || ( g_ctx.m_local->get_flags( ) & fl_onground ) ) {
 		if ( hold_armed )
@@ -400,6 +403,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		return true;
 	};
 
+	const int cp = g_interfaces.m_prediction->m_commands_predicted;
 	bool contact = false;
 	c_vector contact_n{ };
 	float contact_d = 0.0f;
@@ -630,6 +634,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			}
 			/* park is unpinned: a doomed hold still pins this tick, lumi decides; a pinned START is never pushed off its pin */
 			if ( cl_parked && !ahead && !start_pinned ) {
+				/* never latch the park as sticky: 11-09 17:07 log, park fwd 42 straight in resent 16t = 7 walls 19-60t, 0 pins, 0 server catches
+				   ( 11-06 sticky-all failed the same way ); lumi's per-tick pick is what the server catches */
 				s_sticky.valid = false;
 				publish( cl_park_yaw, cl_park_fwd, false, live_view.m_x, false );
 				return;
@@ -824,7 +830,6 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	   on approach cmds came at client vxy 3-205, next cmd differed, 17/17 fell; same cmd kept 82/83 ). window = 3 cp sends, then re-pick:
 	   a catch on copy k survives only if the next cp copies match = 1 in cp+1 at a cp window ( 11-08 16:24 log: 11/24 locks died to the
 	   next cmd differing ), ~2/3 at 3 cp. capped k_chain, never a long freeze ( 11-05 offline 30-75t, 11-06 sticky-all ) */
-	const int cp        = g_interfaces.m_prediction->m_commands_predicted;
 	const bool stick_ok = contact && cp > 0;
 	const bool sticky   = s_sticky.valid && stick_ok && s_sticky.ticks < std::min( cp * 3, k_chain ) && s_sticky.normal.dot_product( normal ) > 0.999f;
 	if ( sticky )
