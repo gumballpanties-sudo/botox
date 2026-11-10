@@ -20,6 +20,7 @@ extern void CorrectMovement( c_user_cmd* cmd, c_angle wish_angle, c_angle old_an
 extern void botox_dbg_log( const char* fmt, ... );
 extern bool botox_is_ladder_trace( const trace_t& tr );
 extern bool g_air_stuck_owned_prev_tick;
+extern bool g_air_stuck_axis;
 extern bool g_edge_surf_active;
 bool edge_surf_local( );
 
@@ -383,8 +384,9 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	   phase can hold */
 	const bool edge_on         = GET_VARIABLE( g_variables.m_edge_surf, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) &&
 	                     !edge_surf_local( );
+	/* g_air_stuck_axis: air stuck key on an exact-axis wall this tick = our ride is its catch ( air_stuck.cpp 11-10 ) */
 	const bool armed           = ( ( GET_VARIABLE( g_variables.m_texture_bug, bool ) &&
-	                       g_input.check_input( &GET_VARIABLE( g_variables.m_texture_bug_key, key_bind_t ) ) ) || edge_on ) &&
+	                       g_input.check_input( &GET_VARIABLE( g_variables.m_texture_bug_key, key_bind_t ) ) ) || edge_on || g_air_stuck_axis ) &&
 	                   local && local->is_alive( );
 	/* START must be the server's END: the shift ( dn ) is START - our sim of the sent cmd, blind under opt 2 */
 	g_prediction.sync_arm( n_prediction::impl_t::k_sync_tb, armed );
@@ -431,7 +433,8 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	const float div_vz           = div_ok ? vel.m_z - s_sent_vel.m_z : 0.f;
 
 	const c_user_cmd in = *cmd;
-	const bool wallstrafe_enabled = GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool );
+	/* under the air stuck key ( g_air_stuck_axis ) the player wants to stop: never a 450 wallstrafe along the wall */
+	const bool wallstrafe_enabled = GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool ) && !g_air_stuck_axis;
 	int sims            = 0;
 	/* rising START: a pin here is a head bounce ( seam / ceiling face clipped the rise ), one tick, never a ride.
 	   START vz == -pin exactly lands on the pin with no contact */
@@ -1060,7 +1063,7 @@ void n_texturebug::impl_t::head_bounce( c_user_cmd* cmd )
 		return;
 	if ( !cmd || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) )
 		return;
-	const bool wallstrafe_enabled = GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool );
+	const bool wallstrafe_enabled = GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool ) && !g_air_stuck_axis;
 	if ( m_hit || m_hs_hit || m_hb_hit )
 		return;
 	if ( ( g_prediction.backup_data.m_flags & fl_onground ) || g_prediction.backup_data.m_move_type != e_move_types::move_type_walk )

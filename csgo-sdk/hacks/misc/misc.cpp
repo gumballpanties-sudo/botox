@@ -25,6 +25,7 @@
 #include "../lagcomp/lagcomp.h"
 #include "../menu/menu.h"
 #include "../movement/movement.h"
+#include "../visuals/old_mods.h"
 
 // never open a second logger on this file
 extern void botox_dbg_log( const char* fmt, ... );
@@ -4071,6 +4072,10 @@ void n_misc::impl_t::performance( bool restore )
 
 	for ( auto& knob : knobs ) {
 		if ( !knob.m_convar && !( knob.m_convar = g_convars[ HASH_RT( knob.m_name ) ] ) )
+			continue;
+
+		// old csgo mods drain the material queue for a model reload, restores it itself
+		if ( g_old_mods.m_serial && !std::strcmp( knob.m_name, "mat_queue_mode" ) )
 			continue;
 
 		if ( !enabled || !GET_VARIABLE( knob.m_variable, bool ) ) {

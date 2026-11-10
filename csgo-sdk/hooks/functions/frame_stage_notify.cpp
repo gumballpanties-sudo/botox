@@ -16,6 +16,7 @@
 #include "../../hacks/chams/chams.h"
 #include "../../hacks/visuals/bullets/bullets.h"
 #include "../../hacks/visuals/edicts/edicts.h"
+#include "../../hacks/visuals/old_mods.h"
 #include "../../hacks/visuals/players/sound_esp/sound_esp.h"
 #include "../../hacks/visuals/screen/flip_world.h"
 #include "../../hacks/visuals/screen/screen.h"
@@ -46,6 +47,7 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 	if ( stage == e_client_frame_stage::start ) {
 		Web_MainTick( );
 		discord_rpc_frame( );
+		g_old_mods.on_frame( );
 	}
 
 	if ( !g_interfaces.m_engine_client->is_connected_safe( ) ) {

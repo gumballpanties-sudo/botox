@@ -3,8 +3,17 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <vector>
 #include "../../utilities/perf/perf_watch.h"
 #include "../aimbot/aimbot.h"
+
+/* 11-10 rewrite ( lab tools/wc_engine/as_catch_lab.cpp policy H, runs/asc5_h_* ): a pin is TryPlayerMove with every bump at
+   fraction 0 on ONE wall plane ( gamemovement.cpp:3507 allFraction == 0 ). that happens when the START reads d1 = fl( p.n ) - D > 0
+   ( not startsolid, cmodel.cpp:1569 ) while the END of the clipped tangent move rounds to d2 <= 0 on the engine's float grid
+   ( coords ~1000-2000 -> 6e-5..2.4e-4 steps ). both are plain float arithmetic, so the catch is solved, not searched:
+   park = next START on the xy float lattice whose tangent sweep predicts the most crossings ( 1 cmd, 0 sims ),
+   pin  = the predicted crossing move, verified by <= 4 x 2 sims ( tick 1 + the fixed point from ( 0, 0, pin ) ), then held
+   as a fixed point ( 1 sim / tick ). no fan, no ladder, no bisection. silent: cmd keeps your view, the move is rotated in. */
 
 static struct {
 	bool valid = false;
@@ -21,6 +30,9 @@ static struct {
 /* last sent pin, view latched: pins live on wishdir float bits ( AngleVectors + VectorNormalize, gamemovement.cpp:2015-2032 ), so live pitch/yaw must never reach it */
 static struct {
 	bool valid  = false;
+	/* vz on the pin, xy still moving: the only hold some walls give ( 11-10 nuke crane: full stops never continue, vz-pins do ).
+	   held while vz stays pinned, xy braked toward 0 each tick, sim-verified = converges to a standstill */
+	bool vzpin  = false;
 	float pitch = 0.0f, yaw = 0.0f, fwd = 0.0f, side = 0.0f;
 	int ticks   = 0;
 } s_hold;
@@ -32,24 +44,31 @@ static struct {
 	c_angle view{ };
 	float fwd = 0.0f, side = 0.0f;
 	int ticks = 0, moved = 0;
+	c_vector origin{ }; /* the server's END of the acked cmd = where it is pinned; a fixed point is solved from here ( 16:01 log: copies of a
+	                       straight-in park fell at t=1 61/70, no tangent = nothing rounds ) */
 } s_lock;
 
-/* flush on the wall, no proven pin: resend the same approach move ( 11-05 online log: 17 server pins on approach cmds the client saw fall,
-   all died 1-5t later on the next in-flight cmd = lumi side flip / fwd 1-5-30 hop ). same cmd after a server pin = kept 35/35.
-   side: a lock move carries one */
+/* last park cmd: online the server pins on it ( 11-10 10:58 log: 5/5 cycles `sv lock ack` = the park cmd, same cmd next kept 16/16,
+   a different one 1/5 ), but the client learns cp ticks later and has already sent its own pin = knocked off. so the cp in-flight
+   cmds after a park repeat it. not the 11-09 "park sticky" ( straight-in bisect, no tangent, 0 server pins ): this park keeps the
+   tangent speed, which is what rounds across */
 static struct {
 	bool valid = false;
-	float yaw = 0.0f, fwd = 0.0f, side = 0.0f;
-	c_vector normal{ };
-	int ticks = 0;
-} s_sticky;
+	int cmd = -1, ticks = 0;
+	float yaw = 0.0f, fwd = 0.0f;
+} s_park;
 
-/* last cmd we sent ( pin frame ). START pinned by it + nothing re-proves = resend it: same cmd after a server pin = kept 35/35 ( 11-04
-   online ); 11-05 09:20 offline log: 2 lumi 1-tick pins the server took were lost to a fresh approach move the next tick */
+/* every cmd we publish. START pinned by it with no armed hold ( an unproven press pinned on a seam: 11-10 11:31 nuke crane, fwd 1 at 86
+   deg pinned twice, lost next tick to a fresh fan ) = replay it: proven -> hold, else resend */
 static struct {
-	int cmd = -1, resent = 0;
+	bool valid = false;
+	int cmd    = -1;
 	float pitch = 0.0f, yaw = 0.0f, fwd = 0.0f, side = 0.0f;
 } s_last;
+
+/* consecutive ticks the plane model predicted crossings the engine refused ( lab PREDBAD: first bump moves 0.0005u = a neighbouring
+   coplanar brush an ulp off the probe's plane ). the model is a hint: after 2 misses the engine-verified fan owns this contact */
+static int s_miss_streak = 0;
 
 static void lock_end( const char* why )
 {
@@ -108,22 +127,17 @@ static void as_sync( c_user_cmd* cmd, const bool armed, const bool hold_armed )
 	   latched an OLDER approach cmd while the server kept the hold 4-5 acks ( dv=0 ), the lock copies then knocked it off */
 	const bool holding = hold_armed && velocity.m_x == 0.0f && velocity.m_y == 0.0f && velocity.m_z == g_prediction.get_engine_target_predict_z_velocity( );
 	if ( !sv_pinned ) {
-		/* fell on an older in-flight cmd, the lock's own copies still coming = keep sending the caught move ( 11-08 16:24 log: 11/24 lock
-		   deaths = next cmd differed, lock copy re-pinned at 34897 then a fresh pick knocked it off ). fell on the lock cmd = re-pick */
-		if ( s_lock.valid && ( a->m_forward_move != s_lock.fwd || a->m_side_move != s_lock.side || a->m_view_point.m_y != s_lock.view.m_y ) ) {
-			s_sticky = { true, s_lock.view.m_y, s_lock.fwd, s_lock.side, s_sticky.normal, 0 };
-			botox_dbg_log( "AS: sticky lock yaw=%.1f fwd=%.4f side=%.4f", s_lock.view.m_y, s_lock.fwd, s_lock.side );
-		}
 		lock_end( "fell" );
 	} else if ( !holding && ( !match || s_lock.valid ) ) {
 		if ( !s_lock.valid ) {
 			s_lock.ticks = s_lock.moved = 0;
 			botox_dbg_log( "AS: sv lock ack=%d cmd=%.4f/%.4f v=%.4f/%.4f", ack, a->m_forward_move, a->m_side_move, a->m_view_point.m_x, a->m_view_point.m_y );
 		}
-		s_lock.valid = true;
-		s_lock.view  = a->m_view_point;
-		s_lock.fwd   = a->m_forward_move;
-		s_lock.side  = a->m_side_move;
+		s_lock.valid  = true;
+		s_lock.view   = a->m_view_point;
+		s_lock.fwd    = a->m_forward_move;
+		s_lock.side   = a->m_side_move;
+		s_lock.origin = sv_origin;
 	}
 	if ( match ) {
 		++ok;
@@ -149,11 +163,126 @@ static void stamp_rotate( const float view_yaw, const float yaw, const float fwd
 	out_side          = sin_d * fwd + cos_d * side;
 }
 
+/* ---- the engine's float geometry ( cmodel.cpp:1553-1566, coll.cpp mirror ), n.z == 0 walls ---- */
+namespace n_as_h
+{
+	struct plane_t {
+		c_vector n{ };
+		float dist = 0.0f;
+	};
+	struct hull_t {
+		c_vector ext{ }, off{ }; /* ( maxs - mins ) * 0.5, ( mins + maxs ) * 0.5: Ray_t::Init */
+	};
+	static float dotv( const c_vector& a, const c_vector& b ) { return a.m_x * b.m_x + a.m_y * b.m_y + a.m_z * b.m_z; }
+	/* d1 of a hull-trace START at ray centre p: Dot( p, n ) - ( plane.dist + DotProductAbs( n, extents ) ) */
+	static float eng_dp( const c_vector& p, const plane_t& P, const hull_t& H )
+	{
+		float dist = std::fabsf( P.n.m_x * H.ext.m_x ) + std::fabsf( P.n.m_y * H.ext.m_y ) + std::fabsf( P.n.m_z * H.ext.m_z );
+		dist       = P.dist + dist;
+		return ( p.m_x * P.n.m_x + p.m_y * P.n.m_y + p.m_z * P.n.m_z ) - dist;
+	}
+	static float eng_d( const c_vector& origin, const plane_t& P, const hull_t& H ) { return eng_dp( origin + H.off, P, H ); }
+	/* d at the END of a free move: end = VectorMA( origin, dt, v ); ray p2 = ( origin + off ) + ( end - origin ) */
+	static float d_after( const c_vector& origin, const plane_t& P, const hull_t& H, const c_vector& v, const float dt )
+	{
+		const c_vector p1 = origin + H.off;
+		const c_vector end( origin.m_x + v.m_x * dt, origin.m_y + v.m_y * dt, origin.m_z + v.m_z * dt );
+		return eng_dp( p1 + ( end - origin ), P, H );
+	}
+	/* exact distance ( double ) and the float grid it is read on: q = ulp of the dot sum, J = half the product ulps */
+	static double true_d( const c_vector& origin, const plane_t& P, const hull_t& H )
+	{
+		const double D = ( double )P.dist + ( double )H.ext.m_x * std::fabs( ( double )P.n.m_x ) + ( double )H.ext.m_y * std::fabs( ( double )P.n.m_y );
+		return ( ( double )origin.m_x + H.off.m_x ) * P.n.m_x + ( ( double )origin.m_y + H.off.m_y ) * P.n.m_y - D;
+	}
+	static float ulp( float v )
+	{
+		v = std::fabsf( v );
+		return std::nextafterf( v, FLT_MAX ) - v;
+	}
+	static float grid_q( const c_vector& origin, const plane_t& P, const hull_t& H )
+	{
+		const c_vector p = origin + H.off;
+		return ulp( p.m_x * P.n.m_x + p.m_y * P.n.m_y );
+	}
+	/* StartGravity + AirAccelerate ( gamemovement.cpp:2293 ) for yaw / fwd, side 0 */
+	struct accel_t {
+		float dt, airaccel, max_wish, friction, max_speed, grav_half;
+	};
+	static c_vector accel_w( const c_vector& vel, const c_vector& w, const float fwd, const accel_t& A, float* a_out = nullptr )
+	{
+		c_vector v = vel;
+		v.m_z -= A.grav_half;
+		const float ws      = std::min( fwd, A.max_speed );
+		const float wishspd = std::min( ws, A.max_wish );
+		const float add     = wishspd - dotv( v, w );
+		float a             = 0.0f;
+		if ( add > 0.0f ) {
+			a = std::min( A.airaccel * ws * A.dt * A.friction, add );
+			v.m_x += a * w.m_x;
+			v.m_y += a * w.m_y;
+		}
+		if ( a_out )
+			*a_out = a;
+		return v;
+	}
+	static c_vector accel( const c_vector& vel, const float yaw, const float fwd, const accel_t& A, float* a_out = nullptr )
+	{
+		const float r = deg2rad( yaw );
+		return accel_w( vel, c_vector( std::cos( r ), std::sin( r ), 0.0f ), fwd, A, a_out );
+	}
+	static c_vector clip( const c_vector& v, const c_vector& n )
+	{
+		const float b = dotv( v, n );
+		return c_vector( v.m_x - n.m_x * b, v.m_y - n.m_y * b, v.m_z - n.m_z * b );
+	}
+	struct cand_t {
+		float yaw, fwd, a;
+		int score; /* 2 = tick 1 + fixed point both predicted, 1 = tick 1 only */
+	};
+	/* pin candidates from a START: tangent wish ( leaned 5 deg in so bump 1 hits ) whose clipped END rounds across the plane.
+	   out = nullptr counts only ( park scoring ). START must read d > 0, else it is startsolid, not a pin */
+	static int build( const c_vector& origin, const c_vector& vel, const plane_t& P, const hull_t& H, const accel_t& A, const float pin_vz, const float fwd_cap,
+	                  const float step, std::vector< cand_t >* out, const int cap )
+	{
+		const float da = eng_d( origin, P, H );
+		if ( da <= 0.0f )
+			return 0;
+		int found = 0;
+		const c_vector pinned( 0.0f, 0.0f, pin_vz );
+		const float coef = A.airaccel * A.dt * A.friction;
+		for ( int s = 0; s < 2 && found < cap; ++s ) {
+			const float sg = s ? -1.0f : 1.0f;
+			const c_vector t( -P.n.m_y * sg, P.n.m_x * sg, 0.0f );
+			const c_vector w( t.m_x * 0.9961947f - P.n.m_x * 0.0871557f, t.m_y * 0.9961947f - P.n.m_y * 0.0871557f, 0.0f );
+			const float y = rad2deg( std::atan2( w.m_y, w.m_x ) );
+			/* trig hoisted: the verify sim uses y, the emulation uses w ( same direction, ~1e-7 apart, far below the grid ) */
+			for ( float a_want = step; a_want <= 30.0f && found < cap; a_want += step ) {
+				const float f = a_want / coef;
+				if ( f > fwd_cap )
+					break;
+				float a           = 0.0f;
+				const c_vector v1 = accel_w( vel, w, f, A, &a );
+				if ( a <= 0.0f || dotv( v1, P.n ) * A.dt > -da * 2.0f )
+					continue;
+				if ( d_after( origin, P, H, clip( v1, P.n ), A.dt ) > 0.0f )
+					continue;
+				++found;
+				if ( out ) {
+					const c_vector v2 = accel_w( pinned, w, f, A );
+					const bool fixd   = dotv( v2, P.n ) < 0.0f && d_after( origin, P, H, clip( v2, P.n ), A.dt ) <= 0.0f;
+					out->push_back( { y, f, a, fixd ? 2 : 1 } );
+				}
+			}
+		}
+		return found;
+	}
+}
+
 void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 {
 	PERF_ZONE( zone_cmd_air_stuck );
-	static float start_angle = 0.0f;
-	static bool was_stuck    = false;
+	static bool was_stuck = false;
 
 	s_proof.valid = false;
 	const bool hold_armed = s_hold.valid;
@@ -173,63 +302,76 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		s_hold.ticks   = 0;
 		was_stuck      = false;
 		s_expect.valid = false;
-		s_sticky.valid = false;
 		return;
 	}
 	const int move_type = g_ctx.m_local->get_move_type( );
 	if ( move_type == move_type_ladder || move_type == move_type_noclip || move_type == move_type_fly || move_type == move_type_observer ) {
 		was_stuck      = false;
 		s_expect.valid = false;
-		s_sticky.valid = false;
 		return;
 	}
 
-	n_tick::c_sim_budget scan_clock;
-	scan_clock.start( 0.9f, n_tick::engine_interval( ) );
+	n_tick::c_sim_budget clock;
+	clock.start( GET_VARIABLE( g_variables.m_air_stuck_budget, float ) * 0.01f, n_tick::engine_interval( ), n_tick::search_as );
 
-	constexpr float k_pi          = 3.14159265358979323846f;
-	const c_vector origin         = g_ctx.m_local->get_abs_origin( );
-	const c_vector live_velocity  = g_ctx.m_local->get_velocity( ); /* not backup_data: stale one cmd behind on choked/hitched cmds */
-	const c_angle live_view       = cmd->m_view_point;
-	const int live_buttons        = cmd->m_buttons;
-	const float live_fwd          = cmd->m_forward_move;
-	const float live_side         = cmd->m_side_move;
-	const auto mins               = g_ctx.m_local->get_collideable( )->get_obb_mins( );
-	const auto maxs               = g_ctx.m_local->get_collideable( )->get_obb_maxs( );
-	const float ext_x             = std::max( std::fabsf( mins.m_x ), std::fabsf( maxs.m_x ) );
-	const float ext_y             = std::max( std::fabsf( mins.m_y ), std::fabsf( maxs.m_y ) );
+	/* probes run with m_bounds_max_speed as the move's max speed ( prediction.cpp:118 ) = the trace leaf-list bounds; the real run uses
+	   m_real_max_speed. unset ( 0 ) the sim sees a tighter brush list than the engine: 11-10 13:13 log, 55 rescues verified pinned and
+	   fell live on bullet ticks. same bounds as texturebug / wall climb, cleared on every exit */
+	struct bounds_guard_t {
+		bounds_guard_t( ) { g_prediction.m_bounds_max_speed = g_prediction.m_real_max_speed; }
+		~bounds_guard_t( ) { g_prediction.m_bounds_max_speed = 0.f; }
+	} bounds_guard;
 
+	const c_vector origin        = g_ctx.m_local->get_abs_origin( );
+	const c_vector live_velocity = g_ctx.m_local->get_velocity( ); /* not backup_data: stale one cmd behind on choked/hitched cmds */
+	const c_angle live_view      = cmd->m_view_point;
+	const int live_buttons       = cmd->m_buttons;
+	const float live_fwd         = cmd->m_forward_move;
+	const float live_side        = cmd->m_side_move;
+	const auto mins              = g_ctx.m_local->get_collideable( )->get_obb_mins( );
+	const auto maxs              = g_ctx.m_local->get_collideable( )->get_obb_maxs( );
 	c_trace_filter_trace_type_everything_filter_props filter;
-	const auto line = [ & ]( const c_vector& from, const c_vector& to, const unsigned int mask ) {
-		trace_t tr{ };
-		ray_t ray( from, to );
-		g_interfaces.m_engine_trace->trace_ray( ray, mask, &filter, &tr );
-		return tr;
-	};
 
 	const auto apply_predicted_state = [ & ]( ) noexcept {
 		g_ctx.m_local->set_abs_origin( origin );
 		g_ctx.m_local->get_origin( )   = origin;
 		g_ctx.m_local->get_velocity( ) = live_velocity;
 	};
+	const auto restore = [ & ]( ) {
+		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
+		apply_predicted_state( );
+		cmd->m_view_point   = live_view;
+		cmd->m_forward_move = live_fwd;
+		cmd->m_side_move    = live_side;
+		cmd->m_buttons      = live_buttons;
+	};
 
-	/* silent: the sent cmd always keeps your view; the proven move ( pin yaw frame ) is rotated into it and air_stuck_shot_proof re-proves
-	   the final cmd ( 10-30 log: 125/125 live-view re-proofs pinned, <= 18 ulp tries ). zero move: wishvel 0, AirAccelerate returns on
-	   addspeed 0 ( gamemovement.cpp:2028/1985 ) = any view sims the same */
+	/* how the move goes on the wire: silent angles, always. the pin view itself is the cmd view on every tick no bullet leaves = the
+	   proven bits exactly, your camera is the engine view ( silent_view keeps a forced view, fake_pov records the engine view ) so
+	   turning cannot break a pin; a bullet tick sends your real view with the move rotated in ( the shot goes where you aim ) and
+	   air_stuck_shot_proof re-proves it. "use movement fix" off = forced on bullet ticks too ( the shot view is then the pin view ).
+	   zero move: wishvel 0 = any view sims the same */
+	/* bullet = a GUN fires this tick ( shot_leaves is true for any non-gun: a knife swing needs no real view, 13:23 log "falls off
+	   when i swing my knife" ). mutable: a bullet tick with no proven rotated pin falls back to the forced pin and delays the shot */
+	const bool gun = [ & ] {
+		const auto active = g_interfaces.m_client_entity_list->get< c_base_entity >( g_ctx.m_local->get_active_weapon_handle( ) );
+		const auto data   = active ? g_interfaces.m_weapon_system->get_weapon_data( active->get_item_definition_index( ) ) : nullptr;
+		return data && data->is_gun( );
+	}( );
+	const bool bullet = ( live_buttons & ( in_attack | in_second_attack ) ) && gun && g_aimbot.shot_leaves( );
+	bool send_forced  = !bullet || !GET_VARIABLE( g_variables.m_movement_fix, bool );
 	const auto publish = [ & ]( const float yaw, const float move, const bool stuck, const float pitch, const bool exact, const float side = 0.0f ) {
-		if ( stuck )
-			s_sticky.valid = false;
-		s_last                    = { cmd->m_command_number, 0, pitch, yaw, move, side };
+		s_last                    = { true, cmd->m_command_number, pitch, yaw, move, side };
 		s_proof                   = { stuck, exact, origin, live_velocity };
 		s_hold.valid              = stuck;
+		s_hold.vzpin              = false;
 		s_hold.pitch              = pitch;
 		s_hold.yaw                = yaw;
 		s_hold.fwd                = move;
 		s_hold.side               = side;
 		cmd->m_view_point         = live_view;
 		stamp_rotate( live_view.m_y, yaw, move, side, cmd->m_forward_move, cmd->m_side_move );
-		/* use movement fix off ( ridobebra apply_air_stuck_view ): send the proof cmd as simmed, pin view + raw move, not silent */
-		g_air_stuck_view_forced = !GET_VARIABLE( g_variables.m_movement_fix, bool );
+		g_air_stuck_view_forced = send_forced;
 		if ( g_air_stuck_view_forced ) {
 			cmd->m_view_point.m_x = pitch;
 			cmd->m_view_point.m_y = yaw;
@@ -254,45 +396,112 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 
 	const float pin_vz    = g_prediction.get_engine_target_predict_z_velocity( );
 	const auto vel_pinned = [ pin_vz ]( const c_vector& v ) { return v.m_x == 0.0f && v.m_y == 0.0f && v.m_z == pin_vz; };
-	const auto pinned     = [ ]( ) { return g_prediction.is_target_predict_z_velocity( g_ctx.m_local->get_velocity( ).m_z, 0.05f ); };
 	const auto pin_held   = [ & ]( ) {
 		return !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk && vel_pinned( g_ctx.m_local->get_velocity( ) );
 	};
-	/* the server ( offline: START == server ) zeroed us last tick */
-	const bool start_pinned = vel_pinned( live_velocity );
-
-	/* pins ranked by how long the move keeps pinning; a repeat ( END == START ) is a fixed point = holds for good = k_chain.
-	   k_ahead = ticks a held pin is replayed ahead, a fall inside it = search early from the still-pinned START */
-	constexpr int k_chain = 16;
-	constexpr int k_ahead = 4;
-	const auto bits_eq    = [ ]( const c_vector& a, const c_vector& b ) { return a.m_x == b.m_x && a.m_y == b.m_y && a.m_z == b.m_z; };
-
-	/* server rounding != ours: a moving-START catch only ports if its first tick pins from START +-1 ulp on every origin / velocity axis
-	   ( 10-10 offline log: 71/83 sim-proven catches fell, pinned-START ones all held ). early out once it cannot beat `need` */
-	constexpr int k_crob  = 12;
-	const auto catch_rob = [ & ]( int& sims, const int need, const n_tick::c_sim_budget& clk ) {
-		int n = 0;
-		for ( int k = 0; k < k_crob && n + k_crob - k > need && !( k > 0 && clk.expired( ) ); ++k ) {
-			c_vector o = origin, v = live_velocity;
-			c_vector& w = k < 6 ? o : v;
-			const int a = ( k % 6 ) >> 1;
-			float& c    = a == 0 ? w.m_x : a == 1 ? w.m_y : w.m_z;
-			c           = std::nextafter( c, ( k & 1 ) ? FLT_MAX : -FLT_MAX );
-			g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-			g_ctx.m_local->set_abs_origin( o );
-			g_ctx.m_local->get_origin( )   = o;
-			g_ctx.m_local->get_velocity( ) = v;
-			g_prediction.begin( g_ctx.m_local, cmd );
-			g_prediction.end( g_ctx.m_local );
-			++sims;
-			n += pin_held( );
+	const auto same_o = [ ]( const c_vector& a, const c_vector& b ) { return a.m_x == b.m_x && a.m_y == b.m_y && a.m_z == b.m_z; };
+	/* vz exactly on the pin, airborne, xy free ( ridobebra's accept ) */
+	const auto vz_held = [ & ]( ) {
+		return !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk && g_ctx.m_local->get_velocity( ).m_z == pin_vz;
+	};
+	const bool start_vzpin = live_velocity.m_z == pin_vz && !vel_pinned( live_velocity );
+	/* one engine tick of ( yaw, fwd ) from the live START; true = still pinned at the same origin ( fixed point ).
+	   simmed in the SENT form: forced = the pin frame ( silent angles / movement fix off ), else your live view with the move rotated in.
+	   11-10 12:20 log: the pin-frame sim said the hold falls 88 ticks in a row while the engine kept the live-view cmd pinned */
+	bool send_fix       = !send_forced;
+	const auto sim_pins = [ & ]( const float yaw, const float fwd, const float pitch, int& sims ) {
+		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
+		apply_predicted_state( );
+		if ( send_fix ) {
+			cmd->m_view_point = live_view;
+			stamp_rotate( live_view.m_y, yaw, fwd, 0.0f, cmd->m_forward_move, cmd->m_side_move );
+		} else {
+			cmd->m_view_point.m_x = pitch;
+			cmd->m_view_point.m_y = yaw;
+			cmd->m_forward_move   = fwd;
+			cmd->m_side_move      = 0.0f;
 		}
-		return n;
+		cmd->m_buttons        = live_buttons;
+		g_prediction.begin( g_ctx.m_local, cmd );
+		g_prediction.end( g_ctx.m_local );
+		++sims;
+		return pin_held( ) && same_o( g_ctx.m_local->get_abs_origin( ), origin );
+	};
+	const auto sim_again = [ & ]( int& sims ) {
+		g_prediction.begin( g_ctx.m_local, cmd );
+		g_prediction.end( g_ctx.m_local );
+		++sims;
+		return pin_held( ) && same_o( g_ctx.m_local->get_abs_origin( ), origin );
+	};
+	/* one tick of an exact sent move ( fwd / side bits as they go on the wire, your live view ) */
+	const auto sim_raw = [ & ]( const float f, const float s, int& sims ) {
+		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
+		apply_predicted_state( );
+		cmd->m_view_point   = live_view;
+		cmd->m_forward_move = f;
+		cmd->m_side_move    = s;
+		cmd->m_buttons      = live_buttons;
+		g_prediction.begin( g_ctx.m_local, cmd );
+		g_prediction.end( g_ctx.m_local );
+		++sims;
+		return pin_held( ) && same_o( g_ctx.m_local->get_abs_origin( ), origin );
+	};
+	/* turning / shooting broke the replay: the rotated move's float bits changed. shot_proof's ladder around the rotated move in the
+	   live view ( +-6 ulp side, +-3 ulp fwd, magnitude +-j/16 ) finds the same pin again 394/399 times ( 12:37 log ). true = published,
+	   in the LIVE frame ( stamp yaw = live yaw ) so final_stamp / shot_proof pass the exact bits through */
+	const auto hold_rescue = [ & ]( const float yaw, const float fwd, const float side, int& sims ) {
+		if ( !send_fix )
+			return false;
+		float rot_f = 0.0f, rot_s = 0.0f;
+		stamp_rotate( live_view.m_y, yaw, fwd, side, rot_f, rot_s );
+		const auto ulp = [ ]( float x, int k ) {
+			for ( ; k > 0; --k )
+				x = std::nextafter( x, FLT_MAX );
+			for ( ; k < 0; ++k )
+				x = std::nextafter( x, -FLT_MAX );
+			return x;
+		};
+		float f = 0.0f, s = 0.0f;
+		bool got   = false;
+		int tries  = 0;
+		const auto attempt = [ & ]( const float af, const float as ) {
+			if ( got || tries >= 40 || ( tries > 0 && clock.expired( ) ) )
+				return;
+			++tries;
+			if ( sim_raw( af, as, sims ) ) {
+				got = true;
+				f   = af;
+				s   = as;
+			}
+		};
+		for ( int k = 1; k <= 6; ++k ) {
+			attempt( rot_f, ulp( rot_s, k ) );
+			attempt( rot_f, ulp( rot_s, -k ) );
+		}
+		for ( int k = 1; k <= 3; ++k ) {
+			attempt( ulp( rot_f, k ), rot_s );
+			attempt( ulp( rot_f, -k ), rot_s );
+		}
+		for ( int j = 1; j <= 8; ++j )
+			for ( const float m : { 1.0f + j / 16.0f, 1.0f - j / 16.0f } ) {
+				float mf = 0.0f, ms = 0.0f;
+				stamp_rotate( live_view.m_y, yaw, fwd * m, side * m, mf, ms );
+				attempt( mf, ms );
+			}
+		restore( );
+		if ( !got )
+			return false;
+		botox_dbg_log( "AS: hold rescue t=%d yaw=%.1f fwd=%.4f -> live %.4f/%.4f tries=%d", s_hold.ticks, yaw, fwd, f, s, tries );
+		++s_hold.ticks;
+		publish( live_view.m_y, f, true, live_view.m_x, true, s );
+		s_expect = { true, origin };
+		return true;
 	};
 
-	/* server pinned, our sim can't prove its pins ( it predicts the fall ) = resend the server's cmd, no client proof / search.
-	   silent: exact wire cmd while your view is still, else rotated ( `moved=` ) */
-	if ( s_lock.valid ) {
+	/* server pinned where our sim predicts a fall. a fixed point solved from the server's own origin ( world diagonal walls, below )
+	   beats copying its cmd; the copy stays the fallback ( 16:01 log: 61/70 copies of a straight-in park fell at t=1 ) */
+	const bool lock_tick = s_lock.valid;
+	const auto lock_copy = [ & ]( const char* why ) {
 		s_expect.valid = false;
 		s_hold.ticks   = 0;
 		publish( s_lock.view.m_y, s_lock.fwd, true, s_lock.view.m_x, true, s_lock.side );
@@ -300,597 +509,488 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		s_hold.valid  = false;
 		++s_lock.ticks;
 		s_lock.moved += !g_air_stuck_view_forced && ( live_view.m_x != s_lock.view.m_x || live_view.m_y != s_lock.view.m_y );
-		return;
-	}
+		botox_dbg_log( "AS: lock copy t=%d why=%s", s_lock.ticks, why );
+	};
+	/* one tick from an arbitrary START ( the server's pinned origin ), velocity written with the abs-velocity cache dirtied */
+	const auto sim_at = [ & ]( const c_vector& o, const c_vector& v, const float yaw, const float fwd, int& sims ) {
+		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
+		g_ctx.m_local->set_abs_origin( o );
+		g_ctx.m_local->get_origin( )   = o;
+		g_ctx.m_local->get_velocity( ) = v;
+		if ( int& eflags = g_ctx.m_local->get_eflags( ); reinterpret_cast< std::uintptr_t >( &eflags ) != reinterpret_cast< std::uintptr_t >( g_ctx.m_local ) )
+			eflags |= 1 << 12;
+		if ( send_fix ) {
+			cmd->m_view_point = live_view;
+			stamp_rotate( live_view.m_y, yaw, fwd, 0.0f, cmd->m_forward_move, cmd->m_side_move );
+		} else {
+			cmd->m_view_point.m_x = live_view.m_x;
+			cmd->m_view_point.m_y = yaw;
+			cmd->m_forward_move   = fwd;
+			cmd->m_side_move      = 0.0f;
+		}
+		cmd->m_buttons = live_buttons;
+		g_prediction.begin( g_ctx.m_local, cmd );
+		g_prediction.end( g_ctx.m_local );
+		++sims;
+		return pin_held( ) && same_o( g_ctx.m_local->get_abs_origin( ), o );
+	};
 
 	/* last tick sent a proven pin that did not hold: d = real START - our sim end */
 	if ( s_expect.valid ) {
 		s_expect.valid = false;
-		if ( !g_prediction.is_target_predict_z_velocity( live_velocity.m_z, 0.05f ) ) {
+		if ( !vel_pinned( live_velocity ) ) {
 			const c_vector d = origin - s_expect.origin;
 			botox_dbg_log( "AS: lost d=%.6f,%.6f,%.6f vel=%.3f,%.3f,%.3f cp=%d", d.m_x, d.m_y, d.m_z, live_velocity.m_x, live_velocity.m_y, live_velocity.m_z,
 			               g_interfaces.m_prediction->m_commands_predicted );
 		}
 	}
 
-	/* hold: START pinned by last tick's pin = replay it in the latched view, 1 sim proves this tick ( clarity + lumi; was 0 sims / a full fan ).
-	   break = search below from this still-pinned START, never send a cmd that falls.
-	   ahead = pins now, replay falls within k_ahead ticks: search now, keep the hold unless a pin that lasts longer turns up */
-	bool ahead  = false;
-	int ahead_h = 0;
-	c_vector ahead_end{ };
-	if ( hold_armed && vel_pinned( live_velocity ) ) {
-		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-		apply_predicted_state( );
-		cmd->m_view_point.m_x = s_hold.pitch;
-		cmd->m_view_point.m_y = s_hold.yaw;
-		cmd->m_forward_move   = s_hold.fwd;
-		cmd->m_side_move      = s_hold.side;
-		cmd->m_buttons        = live_buttons;
-		g_prediction.begin( g_ctx.m_local, cmd );
-		g_prediction.end( g_ctx.m_local );
-		const c_vector end = g_ctx.m_local->get_abs_origin( );
-		const bool held    = !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk &&
-		                  vel_pinned( g_ctx.m_local->get_velocity( ) );
-		const bool fixed   = end.m_x == origin.m_x && end.m_y == origin.m_y && end.m_z == origin.m_z;
-		int held_for       = held ? k_ahead + 1 : 0;
-		if ( held && !fixed ) {
-			c_vector prev = end;
-			for ( int t = 0; t < k_ahead; ++t ) {
-				g_prediction.begin( g_ctx.m_local, cmd );
-				g_prediction.end( g_ctx.m_local );
-				if ( !pin_held( ) ) {
-					held_for = t + 1;
-					break;
-				}
-				if ( bits_eq( g_ctx.m_local->get_abs_origin( ), prev ) )
-					break;
-				prev = g_ctx.m_local->get_abs_origin( );
+	/* vz-pin hold: vz still on the pin. candidates = the held cmd + brakes against the xy drift; keep the one that keeps vz pinned with
+	   the least xy ( a full stop wins outright ). nothing keeps vz = break, search */
+	if ( hold_armed && s_hold.vzpin && ( start_vzpin || vel_pinned( live_velocity ) ) ) {
+		int sims = 0;
+		const float vxy0 = live_velocity.length_2d( );
+		const float dyaw = vxy0 > 0.01f ? rad2deg( std::atan2( -live_velocity.m_y, -live_velocity.m_x ) ) : s_hold.yaw; /* against the drift */
+		struct { float yaw, fwd; } cands[ 7 ] = { { s_hold.yaw, s_hold.fwd }, { dyaw, 5.0f }, { dyaw, 30.0f }, { dyaw, 120.0f }, { dyaw, 450.0f }, { dyaw, 1.0f }, { s_hold.yaw, 0.0f } };
+		float best_xy = FLT_MAX, b_yaw = 0.0f, b_fwd = 0.0f;
+		bool b_full = false;
+		for ( const auto& c : cands ) {
+			if ( sims > 0 && clock.expired( ) )
+				break;
+			const bool full = sim_pins( c.yaw, c.fwd, s_hold.pitch, sims );
+			if ( !full && !vz_held( ) )
+				continue;
+			const float xy = full ? 0.0f : g_ctx.m_local->get_velocity( ).length_2d( );
+			if ( xy < best_xy ) {
+				best_xy = xy;
+				b_yaw   = c.yaw;
+				b_fwd   = c.fwd;
+				b_full  = full;
 			}
+			if ( full )
+				break;
 		}
-		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-		apply_predicted_state( );
-		cmd->m_view_point   = live_view;
-		cmd->m_forward_move = live_fwd;
-		cmd->m_side_move    = live_side;
-		if ( held && held_for <= k_ahead ) {
-			ahead     = true;
-			ahead_h   = held_for;
-			ahead_end = end;
-			botox_dbg_log( "AS: hold ahead t=%d h=%d yaw=%.1f fwd=%.4f", s_hold.ticks, held_for, s_hold.yaw, s_hold.fwd );
-		} else if ( held ) {
+		restore( );
+		if ( best_xy < FLT_MAX ) {
+			if ( s_hold.ticks++ == 0 || ( s_hold.ticks & 15 ) == 0 )
+				botox_dbg_log( "AS: hold vzpin t=%d yaw=%.2f fwd=%.2f xy=%.2f -> %.2f full=%d sims=%d", s_hold.ticks, b_yaw, b_fwd, vxy0, best_xy, ( int )b_full, sims );
+			publish( b_yaw, b_fwd, true, s_hold.pitch, b_full );
+			s_hold.vzpin = !b_full;
+			if ( !b_full )
+				s_proof.valid = false;
+			s_expect = { b_full, origin };
+			return;
+		}
+		botox_dbg_log( "AS: hold vzpin break t=%d xy=%.2f sims=%d", s_hold.ticks, vxy0, sims );
+	}
+	/* hold: START pinned by last tick's pin = replay it in the latched view, 1 sim proves the fixed point */
+	else if ( hold_armed && vel_pinned( live_velocity ) ) {
+		int sims        = 0;
+		const bool held = sim_pins( s_hold.yaw, s_hold.fwd, s_hold.pitch, sims );
+		restore( );
+		if ( !held && hold_rescue( s_hold.yaw, s_hold.fwd, s_hold.side, sims ) )
+			return;
+		/* bullet tick, nothing proven in your view: keep the forced pin ( proven frame ) and fire next tick instead ( 13:23 log: 46 rescues
+		   + 9 unproven shot proofs fell; a bullet one tick late is invisible, a lost stuck is not ) */
+		if ( !held && bullet && send_fix ) {
+			send_forced = true;
+			send_fix    = false;
+			const bool forced_held = sim_pins( s_hold.yaw, s_hold.fwd, s_hold.pitch, sims );
+			restore( );
+			if ( forced_held ) {
+				++s_hold.ticks;
+				botox_dbg_log( "AS: shot held t=%d yaw=%.1f fwd=%.4f sims=%d", s_hold.ticks, s_hold.yaw, s_hold.fwd, sims );
+				publish( s_hold.yaw, s_hold.fwd, true, s_hold.pitch, true, s_hold.side );
+				cmd->m_buttons &= ~( in_attack | in_second_attack );
+				g_air_stuck_stamp_buttons = cmd->m_buttons;
+				s_expect = { true, origin };
+				return;
+			}
+			send_forced = false;
+			send_fix    = true;
+		}
+		if ( held ) {
 			if ( s_hold.ticks++ == 0 )
-				botox_dbg_log( "AS: hold yaw=%.1f fwd=%.4f pitch=%.2f fixed=%d", s_hold.yaw, s_hold.fwd, s_hold.pitch, ( int )fixed );
+				botox_dbg_log( "AS: hold yaw=%.1f fwd=%.4f pitch=%.2f fixed=1", s_hold.yaw, s_hold.fwd, s_hold.pitch );
 			publish( s_hold.yaw, s_hold.fwd, true, s_hold.pitch, true, s_hold.side );
-			s_expect = { true, end };
+			s_expect = { true, origin };
 			return;
-		} else
-			botox_dbg_log( "AS: hold break t=%d yaw=%.1f fwd=%.4f pitch=%.2f b=%x", s_hold.ticks, s_hold.yaw, s_hold.fwd, s_hold.pitch, live_buttons );
+		}
+		/* ONLINE ( cp > 0 ): START still pinned = the server kept our cmd; only the client's re-predicted START moved 1-2 ulps so the replay
+		   reads a fall ( 11-10 10:31 log: `hold break t=0` then a NEW pin from the pinned START knocked the server off 36/45, same cmd kept
+		   10/13 ). resend the hold unproven. OFFLINE the START is the truth: a failed replay means the same cmd falls, search again from
+		   this pinned START instead ( 11-10 11:49 nuke crane: 3 one-tick pins, each blindly resent, each `lost` ) */
+		/* 16:01 online log: blind replays of the held / last cmd from a pinned START fell 12/12 and 43/43 - a straight-in cmd has no
+		   tangent to round. online too the pinned START now gets the fixed-point solve below; `pinned resend` stays the last resort */
+		botox_dbg_log( "AS: hold break t=%d yaw=%.1f fwd=%.4f pitch=%.2f b=%x pinned=%d cp=%d", s_hold.ticks, s_hold.yaw, s_hold.fwd, s_hold.pitch, live_buttons,
+		               ( int )vel_pinned( live_velocity ), g_interfaces.m_prediction->m_commands_predicted );
 	}
-	if ( !ahead )
-		s_hold.ticks = 0;
-
-	/* search result vs the doomed hold: true = hold sent ( search found nothing that pins longer ) */
-	const auto keep_hold = [ & ]( const int ticks ) {
-		if ( !ahead )
-			return false;
-		if ( ticks > ahead_h ) {
-			botox_dbg_log( "AS: ahead swap t=%d h=%d to=%d", s_hold.ticks, ahead_h, ticks );
-			s_hold.ticks = 0;
-			return false;
-		}
-		const auto latched = s_hold;
-		++s_hold.ticks;
-		publish( latched.yaw, latched.fwd, true, latched.pitch, true, latched.side );
-		s_expect = { true, ahead_end };
-		return true;
-	};
-
-	/* pinned START, no proven re-pin: the cmd that pinned it beats any fresh unproven move. armed, so a sim-held replay becomes a hold */
-	const auto resend = [ & ]( ) {
-		if ( !start_pinned || s_last.cmd != cmd->m_command_number - 1 )
-			return false;
-		const int n = s_last.resent + 1;
-		botox_dbg_log( "AS: resend n=%d yaw=%.1f fwd=%.4f side=%.4f", n, s_last.yaw, s_last.fwd, s_last.side );
-		/* resend = same move, unproven: keeps the sticky ( 11-08 16:24 log: server took resend 101.1 fwd 1 at 34917, sticky was dropped, a fresh pick fell ) */
-		const auto stk = s_sticky;
-		publish( s_last.yaw, s_last.fwd, true, s_last.pitch, false, s_last.side );
-		s_last.resent = n;
-		s_proof.valid = false;
-		s_sticky      = stk;
-		s_sticky.ticks += s_sticky.valid;
-		s_expect      = { true, origin };
-		return true;
-	};
-
-	const int cp = g_interfaces.m_prediction->m_commands_predicted;
-	bool contact = false;
-	c_vector contact_n{ };
-	float contact_d = 0.0f;
-	/* near-axis wall, moving START: clarity's cardinal pin waits for lumi ( 11-05 MARKETWALL n=0.028,-1 logs: clarity moving-START pins
-	   fell 0/9, lumi fwd 5/30 1-tick pins put the server on the pin 10/14, then clarity re-pins from that pinned START 7/7 ) */
-	struct {
-		bool valid = false;
-		float yaw = 0.f, fwd = 0.f, pitch = 0.f;
-		int ticks = 0;
-		c_vector end{ };
-	} cl_defer;
-
-	{
-		c_vector cl_normal{ };
-		bool cl_contact = false;
-		bool cl_disp    = false;
-		int cl_ent      = -1;
-		const char* cl_surf = "";
-		for ( int i = 0; i < 4 && !cl_contact; ++i ) {
-			const float a = deg2rad( static_cast< float >( i * 90 ) );
-			trace_t tr{ };
-			ray_t ray( origin, c_vector( origin.m_x + std::cos( a ) * 0.05f, origin.m_y + std::sin( a ) * 0.05f, origin.m_z ), mins, maxs );
-			g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
-			cl_contact = tr.did_hit( );
-			cl_normal  = tr.m_plane.m_normal;
-			contact_d  = cl_contact ? n_tb::hull_plane_dist( tr, mins, maxs ) : 0.0f;
-			cl_disp    = tr.m_disp_flags != 0;
-			cl_ent     = tr.m_hit_entity ? tr.m_hit_entity->get_index( ) : -1;
-			cl_surf    = tr.surface.m_name ? tr.surface.m_name : "";
-		}
-		contact        = cl_contact;
-		contact_n      = cl_normal;
-		bool cl_held   = false;
-		bool cl_parked = false;
-		int cl_rob     = -1;
-		int cl_crob    = -1;
-		int cl_score   = -1;
-		int cl_ticks   = 0;
-		int cl_pins    = 0;
-		float cl_yaw = 0.f, cl_fwd = 0.f, cl_pitch = 0.f;
-		c_vector cl_end{ };
-		float cl_park_yaw = 0.f, cl_park_fwd = 0.f, cl_park_gap = -1.f;
-
-		/* exact-axis brush: the cardinal ladder never pins there ( 10-30 21:19 log 0/61 ticks, lab 0% ) while lumi's tangent fan does
-		   ( 3/3 pin=3 held ) and was starved to cand=1 behind it = leave lumi the whole clock */
-		const bool cl_axis = cl_contact && cl_normal.m_z == 0.0f && ( std::fabsf( cl_normal.m_x ) == 1.0f || std::fabsf( cl_normal.m_y ) == 1.0f );
-		if ( cl_axis )
-			botox_dbg_log( "AS: clarity axis n=%.3f,%.3f vz=%.3f", cl_normal.m_x, cl_normal.m_y, live_velocity.m_z );
-		if ( cl_contact && !cl_axis && cl_normal.m_z == 0.0f ) {
-			const float wall_yaw = rad2deg( std::atan2( -cl_normal.m_y, -cl_normal.m_x ) );
-			const float base     = std::roundf( wall_yaw / 90.0f ) * 90.0f;
-			const float off      = std::remainder( wall_yaw - base, 360.0f );
-			const bool cl_near   = std::fabsf( off ) < 10.0f;
-
-			int cl_sims = 0;
-			n_tick::c_sim_budget cl_clock;
-			/* 0.6 of the cmd clock ( 0.4 near-axis ): 11-05 09:20 log, clarity ate it all and lumi ran cand=1 every other tick while its pins
-			   were the ones the server took. pinned START = own clock, the whole slider: re-pins there took 97-176 sims at 45 us/sim and the
-			   3 misses had 28-81 ( 09:48 log ) */
-			constexpr float k_cl_share = 0.6f;
-			cl_clock.start( GET_VARIABLE( g_variables.m_air_stuck_budget, float ) * 0.01f, n_tick::engine_interval( ), n_tick::search_as,
-			                start_pinned ? 1.0f : cl_near ? 0.4f : k_cl_share, start_pinned );
-			const float yaws[ 2 ] = { std::remainder( base + ( off > 0.0f ? 90.0f : -90.0f ), 360.0f ), std::remainder( base, 360.0f ) };
-			const int first_yaw   = off == 0.0f ? 1 : 0;
-
-			static auto sv_airaccelerate = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
-			const float airaccel         = sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.0f;
-			const float ipt              = n_tick::engine_interval( );
-			const float duck_mul         = ( live_buttons & in_duck ) ? 0.34f : 1.0f;
-			const float step = ( 0.03125f / ( airaccel * ipt * g_ctx.m_local->get_surface_friction( ) * duck_mul * ipt ) ) / 100.0f;
-
-			/* server float noise != ours ( online: near-axis pins die after 1 rtt ): prefer a pin that survives 1 ulp of origin each way */
-			constexpr int k_rob  = 6;
-			constexpr int k_rank = k_crob * ( k_rob + 1 ) + k_rob + 1; /* one more pinned tick outranks any robustness */
-			constexpr int k_best = ( k_chain + 1 ) * k_rank - 1;
-			const auto robust = [ & ]( ) {
-				const c_vector base = g_ctx.m_local->get_abs_origin( );
-				int n               = 0;
-				for ( int k = 0; k < k_rob; ++k ) {
-					c_vector o = base;
-					float& c   = k < 2 ? o.m_x : k < 4 ? o.m_y : o.m_z;
-					c          = std::nextafter( c, ( k & 1 ) ? FLT_MAX : -FLT_MAX );
-					g_ctx.m_local->set_abs_origin( o );
-					g_ctx.m_local->get_origin( )   = o;
-					g_ctx.m_local->get_velocity( ) = c_vector( 0.0f, 0.0f, pin_vz );
-					/* EFL_DIRTY_ABSVELOCITY: SetupMove reads GetAbsVelocity ( prediction.cpp:781 ), else a fallen k-1 sim's END leaks in */
-					if ( int& eflags = g_ctx.m_local->get_eflags( ); reinterpret_cast< std::uintptr_t >( &eflags ) != reinterpret_cast< std::uintptr_t >( g_ctx.m_local ) )
-						eflags |= 1 << 12;
-					bool held = true;
-					for ( int t = 0; t < 2 && held; ++t ) {
-						g_prediction.begin( g_ctx.m_local, cmd );
-						g_prediction.end( g_ctx.m_local );
-						++cl_sims;
-						held = !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk &&
-						       vel_pinned( g_ctx.m_local->get_velocity( ) );
-					}
-					n += held;
-				}
-				return n;
-			};
-
-			/* i = 0 once: a zero-move pin is view-free ( turn / shoot / silent all sim the same ), it wins ties */
-			for ( int y = first_yaw; y < 2 && cl_score < k_best; ++y ) {
-				for ( int i = y == first_yaw ? 0 : 1; i <= 100 && cl_score < k_best && !( cl_sims > 0 && cl_clock.expired( ) ); ++i ) {
-					const float fwd = static_cast< float >( i ) * step;
-					g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-					apply_predicted_state( );
-					cmd->m_view_point     = live_view;
-					cmd->m_view_point.m_y = yaws[ y ];
-					cmd->m_forward_move   = fwd;
-					cmd->m_side_move      = 0.0f;
-					cmd->m_buttons = live_buttons;
-
-					int ticks = 0;
-					c_vector end0{ };
-					for ( int t = 0; t < k_chain; ++t ) {
-						const c_vector from = g_ctx.m_local->get_abs_origin( );
-						g_prediction.begin( g_ctx.m_local, cmd );
-						g_prediction.end( g_ctx.m_local );
-						++cl_sims;
-						if ( t == 0 )
-							end0 = g_ctx.m_local->get_abs_origin( );
-						const bool ok = !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk &&
-						                vel_pinned( g_ctx.m_local->get_velocity( ) );
-						if ( !ok )
-							break;
-						++ticks;
-						if ( t > 0 && bits_eq( g_ctx.m_local->get_abs_origin( ), from ) ) {
-							ticks = k_chain;
-							break;
-						}
-					}
-					if ( ticks < 6 )
-						continue;
-					++cl_pins;
-					const int base = ticks * k_rank;
-					if ( base + k_rank - 1 <= cl_score )
-						continue;
-					const int rob = robust( );
-					if ( base + k_crob * ( k_rob + 1 ) + rob <= cl_score )
-						continue;
-					const int rem   = cl_score - base;
-					const int crob  = catch_rob( cl_sims, rem < rob ? -1 : ( rem - rob ) / ( k_rob + 1 ), cl_clock );
-					const int score = base + crob * ( k_rob + 1 ) + rob;
-					if ( score > cl_score ) {
-						cl_held  = true;
-						cl_ticks = ticks;
-						cl_score = score;
-						cl_rob   = rob;
-						cl_crob  = crob;
-						cl_yaw   = yaws[ y ];
-						cl_fwd   = fwd;
-						cl_pitch = live_view.m_x;
-						cl_end   = end0;
-					}
-				}
-			}
-
-			constexpr float k_park_gap   = 0.01f;
-			constexpr float k_park_probe = 0.05f;
-			if ( !cl_held && !cl_disp ) {
-				const auto hull_hits = [ & ]( const float d ) {
-					trace_t tr{ };
-					ray_t ray( origin, origin - cl_normal * d, mins, maxs );
-					g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
-					return tr.did_hit( ) || tr.m_start_solid;
-				};
-				if ( hull_hits( k_park_probe ) ) {
-					float glo = 0.f, ghi = k_park_probe;
-					for ( int i = 0; i < 24; ++i ) {
-						const float mid = ( glo + ghi ) * 0.5f;
-						( hull_hits( mid ) ? ghi : glo ) = mid;
-					}
-					cl_park_gap = glo;
-				}
-				if ( cl_park_gap > k_park_gap ) {
-					const float start_d = origin.m_x * cl_normal.m_x + origin.m_y * cl_normal.m_y;
-					float lo = 1.17549435e-38f, hi = step * 100.f, best_d = FLT_MAX;
-					bool best_pinned = false;
-					for ( int i = 0; i < 16; ++i ) {
-						const float mid = ( lo + hi ) * 0.5f;
-						g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-						apply_predicted_state( );
-						cmd->m_view_point = live_view;
-						stamp_rotate( live_view.m_y, wall_yaw, mid, 0.f, cmd->m_forward_move, cmd->m_side_move );
-						cmd->m_buttons = live_buttons;
-						g_prediction.begin( g_ctx.m_local, cmd );
-						g_prediction.end( g_ctx.m_local );
-						++cl_sims;
-						const c_vector o = g_ctx.m_local->get_abs_origin( );
-						const float d    = o.m_x * cl_normal.m_x + o.m_y * cl_normal.m_y;
-						const bool back  = start_d <= d;
-						if ( !back && d < best_d && !( g_ctx.m_local->get_flags( ) & fl_onground ) ) {
-							best_d      = d;
-							best_pinned = vel_pinned( g_ctx.m_local->get_velocity( ) );
-							cl_park_fwd = mid;
-							cl_parked   = true;
-						}
-						( back ? hi : lo ) = mid;
-					}
-					if ( best_pinned )
-						cl_parked = false;
-					cl_park_yaw = wall_yaw;
-				}
-			}
-			g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-			apply_predicted_state( );
-			cmd->m_view_point   = live_view;
-			cmd->m_forward_move = live_fwd;
-			cmd->m_side_move    = live_side;
-			cmd->m_buttons      = live_buttons;
-
-			botox_dbg_log( "AS: clarity %s n=%.3f,%.3f yaw=%.0f fwd=%.4f sims=%d vz=%.3f vxy=%.1f gap=%.5f t=%d disp=%d rob=%d crob=%d np=%d cp=%d ent=%d surf=%s us=%lld",
-			               cl_held ? "pin" : cl_parked ? "park" : "miss", cl_normal.m_x, cl_normal.m_y,
-			               cl_parked ? cl_park_yaw : cl_yaw, cl_parked ? cl_park_fwd : cl_fwd, cl_sims, live_velocity.m_z, live_velocity.length_2d( ), cl_park_gap,
-			               cl_ticks, ( int )cl_disp, cl_rob, cl_crob, cl_pins, g_interfaces.m_prediction->m_commands_predicted, cl_ent, cl_surf, cl_clock.used_us( ) );
-			if ( cl_held ) {
-				if ( keep_hold( cl_ticks ) )
-					return;
-				if ( cl_near && !start_pinned ) {
-					cl_defer = { true, cl_yaw, cl_fwd, cl_pitch, cl_ticks, cl_end };
-					botox_dbg_log( "AS: clarity defer off=%.1f", off );
-				} else {
-					publish( cl_yaw, cl_fwd, true, cl_pitch, true );
-					s_expect = { true, cl_end };
-					return;
-				}
-			}
-			/* park is unpinned: a doomed hold still pins this tick, lumi decides; a pinned START is never pushed off its pin */
-			if ( cl_parked && !ahead && !start_pinned ) {
-				/* never latch the park as sticky: 11-09 17:07 log, park fwd 42 straight in resent 16t = 7 walls 19-60t, 0 pins, 0 server catches
-				   ( 11-06 sticky-all failed the same way ); lumi's per-tick pick is what the server catches */
-				s_sticky.valid = false;
-				publish( cl_park_yaw, cl_park_fwd, false, live_view.m_x, false );
-				return;
-			}
+	s_hold.ticks = 0;
+	/* pinned START, no armed hold: the last cmd ( unproven press / park / resend ) pinned us. replay it before anything new
+	   ( 11-10 11:31 nuke crane: the engine pinned on the fallback press twice, both lost next tick to a fresh fan ) */
+	if ( !hold_armed && vel_pinned( live_velocity ) && s_last.valid && s_last.cmd == cmd->m_command_number - 1 ) {
+		int sims         = 0;
+		const bool held  = sim_pins( s_last.yaw, s_last.fwd, s_last.pitch, sims );
+		const bool fixed = held && sim_again( sims );
+		restore( );
+		botox_dbg_log( "AS: catch last yaw=%.2f fwd=%.4f held=%d fixed=%d cp=%d", s_last.yaw, s_last.fwd, ( int )held, ( int )fixed, g_interfaces.m_prediction->m_commands_predicted );
+		if ( held ) {
+			publish( s_last.yaw, s_last.fwd, true, s_last.pitch, true, s_last.side );
+			s_expect = { true, origin };
+			return;
 		}
 	}
+	/* vz-pinned START with no armed hold ( the last press / park did it ): take it as a vz-pin hold from here */
+	if ( !hold_armed && start_vzpin && s_last.valid && s_last.cmd == cmd->m_command_number - 1 ) {
+		int sims = 0;
+		sim_pins( s_last.yaw, s_last.fwd, s_last.pitch, sims );
+		const bool keep = vz_held( );
+		restore( );
+		botox_dbg_log( "AS: catch vzpin yaw=%.2f fwd=%.4f keep=%d vxy=%.1f", s_last.yaw, s_last.fwd, ( int )keep, live_velocity.length_2d( ) );
+		if ( keep ) {
+			publish( s_last.yaw, s_last.fwd, true, s_last.pitch, false, s_last.side );
+			s_hold.vzpin  = true;
+			s_proof.valid = false;
+			return;
+		}
+	}
+	/* a pinned START whose cmd does not re-pin ( offline ) = the one tick that matters most: the whole candidate family, no rotation */
+	const bool pinned_search = vel_pinned( live_velocity ) || start_vzpin;
 
-	/* wall, touch scan: 16 headings from last tick's, 1u ray column feet..head reaching 2u past the hull edge.
-	   |nz| <= 0.35 ( slopes / disps count ), must face us; lowest fraction in the column wins */
-	const float extra_reach = std::clamp( GET_VARIABLE( g_variables.m_air_stuck_extra_reach, float ), 0.0f, 32.0f );
-	/* touching ( 0.05u hull contact ): that face is the wall, no line scan. 11-05 offline log: at convex corners the hull touches the edge
-	   ( axial bevel ) while the line scan locked faces 10-15u off ( gap=9.9 / 15.5, normal flipping ) = 4 falls, 0 catches */
-	const bool touch = contact && std::fabsf( contact_n.m_z ) <= 0.35f;
-	/* one box holds every A/B ray below: empty = no wall, skips ~1170 traces ( 4.5 ms/tick ate the cmd clock, eb starved ) */
-	if ( !touch ) {
-		const float half = std::max( ext_x, ext_y ) + std::max( extra_reach, 0.05f ) + 0.5f;
+	/* wall: touching ( 4 cardinal 0.05u hull traces, clarity find_wall_cardinal4 ), else the nearest vertical face within reach:
+	   along this tick's travel + 8 compass probes of `extra reach` ( grazing = still caught ) */
+	using namespace n_as_h;
+	const float reach = std::clamp( GET_VARIABLE( g_variables.m_air_stuck_extra_reach, float ), 0.5f, 32.0f );
+	trace_t best_tr{ };
+	bool found      = false;
+	bool touching   = false;
+	float best_frac = 2.0f;
+	const auto probe = [ & ]( const c_vector& dir, const float len, const bool touch ) {
 		trace_t tr{ };
-		ray_t ray( origin, origin, c_vector( -half, -half, mins.m_z - 1.0f ), c_vector( half, half, maxs.m_z + 1.0f ) );
+		ray_t ray( origin, c_vector( origin.m_x + dir.m_x * len, origin.m_y + dir.m_y * len, origin.m_z ), mins, maxs );
 		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
-		if ( !tr.did_hit( ) ) {
-			if ( keep_hold( 0 ) || resend( ) )
-				return;
-			start_angle    = 0.0f;
-			was_stuck      = false;
-			s_sticky.valid = false;
+		if ( !tr.did_hit( ) || tr.m_plane.m_normal.m_z != 0.0f )
 			return;
-		}
-	}
-	char scan        = touch ? 'C' : 'A';
-	bool found       = touch;
-	c_vector normal  = touch ? contact_n : c_vector{ };
-	float hit_z = origin.m_z;
-	int hit_ent = -1;
-	if ( touch ) {
-		start_angle = std::atan2( -contact_n.m_y, -contact_n.m_x );
-		if ( start_angle < 0.0f )
-			start_angle += k_pi * 2.0f;
-	}
-	for ( float a = start_angle; !touch && a < start_angle + k_pi * 2.0f; a += k_pi / 8.0f ) {
-		const float ang   = std::fmod( a, k_pi * 2.0f );
-		const float c     = std::cos( ang );
-		const float s     = std::sin( ang );
-		const float reach = std::min( ext_x / std::max( std::fabsf( c ), 1e-6f ), ext_y / std::max( std::fabsf( s ), 1e-6f ) ) +
-		                    std::clamp( extra_reach, 0.05f, 2.0f );
-		float best_frac   = 1.0f;
-
-		for ( float z = origin.m_z + mins.m_z; z <= origin.m_z + maxs.m_z; z += 1.0f ) {
-			const trace_t tr =
-				line( c_vector( origin.m_x, origin.m_y, z ), c_vector( origin.m_x + c * reach, origin.m_y + s * reach, z ), mask_playersolid );
-			const c_vector& n = tr.m_plane.m_normal;
-			if ( tr.m_fraction < 1.0f && std::fabsf( n.m_z ) <= 0.35f && n.m_x * c + n.m_y * s <= -0.1f && tr.m_fraction < best_frac ) {
-				found     = true;
-				best_frac = tr.m_fraction;
-				normal    = n;
-				hit_z     = tr.m_end.m_z;
-				hit_ent   = tr.m_hit_entity ? tr.m_hit_entity->get_index( ) : -1;
-			}
-		}
-		if ( found ) {
-			start_angle = a;
-			break;
-		}
-	}
-
-	if ( !found && extra_reach > 2.0f ) {
-		scan               = 'B';
-		const float radius = std::max( ext_x, ext_y ) + extra_reach;
-		const float z0     = origin.m_z + mins.m_z + 2.0f;
-		const float dz     = ( ( origin.m_z + maxs.m_z - 2.0f ) - z0 ) / 6.0f;
-		int best_hits      = 0;
-		float best_frac    = 1.0f;
-
-		for ( float a = 0.0f; a < k_pi * 2.0f; a += k_pi / 16.0f ) {
-			const float c = std::cos( a );
-			const float s = std::sin( a );
-			int hits      = 0;
-			float frac    = 1.0f;
-			c_vector n_a{ };
-			float z_a = 0.0f;
-			int e_a   = -1;
-
-			for ( int i = 0; i < 7; ++i ) {
-				const float z = static_cast< float >( i ) * dz + z0;
-				const trace_t tr =
-					line( c_vector( origin.m_x, origin.m_y, z ), c_vector( origin.m_x + c * radius, origin.m_y + s * radius, z ), mask_playersolid );
-				if ( tr.m_fraction < 1.0f && std::fabsf( tr.m_plane.m_normal.m_z ) <= 0.08f && ( ++hits == 1 || tr.m_fraction < frac ) ) {
-					frac = tr.m_fraction;
-					n_a  = tr.m_plane.m_normal;
-					z_a  = tr.m_end.m_z;
-					e_a  = tr.m_hit_entity ? tr.m_hit_entity->get_index( ) : -1;
-				}
-			}
-			if ( hits > 0 && ( !found || hits > best_hits || ( hits == best_hits && frac < best_frac ) ) ) {
-				found       = true;
-				start_angle = a;
-				best_hits   = hits;
-				best_frac   = frac;
-				normal      = n_a;
-				hit_z       = z_a;
-				hit_ent     = e_a;
-			}
-		}
-	}
-
-	if ( !found ) {
-		if ( keep_hold( 0 ) || resend( ) )
+		const float frac = tr.m_start_solid ? 0.0f : tr.m_fraction * len;
+		if ( found && frac >= best_frac )
 			return;
-		start_angle    = 0.0f;
-		was_stuck      = false;
-		s_sticky.valid = false;
-		return;
-	}
-	const long long scan_us = scan_clock.used_us( );
-
-	const float wall_yaw = rad2deg( std::atan2( -normal.m_y, -normal.m_x ) );
-	float drift_m = std::fmod( rad2deg( std::atan2( live_velocity.m_y, live_velocity.m_x ) ) - wall_yaw + 180.0f, 360.0f );
-	if ( drift_m < 0.0f )
-		drift_m += 360.0f;
-	const float side    = drift_m < 180.0f ? 1.0f : -1.0f;
-	const float support = GetWallSupportDistance( g_ctx.m_local, c_vector( normal.m_x, normal.m_y, 0.0f ) );
-	/* touch: hull to contact plane at END, no line. 11-06 log: the feet-z gap line missed the wall on every cand ( gap=14.048 / 15.419 ) =
-	   rank dead, first cand ( fwd 1 ) sent 12-23t, no catch; lab near-axis mirage: dead rank 159/190 caught at 3-9t vs 190/190 at 2t */
-	const float hull_off = std::min( normal.m_x * mins.m_x, normal.m_x * maxs.m_x ) + std::min( normal.m_y * mins.m_y, normal.m_y * maxs.m_y ) +
-	                       std::min( normal.m_z * mins.m_z, normal.m_z * maxs.m_z ) - contact_d;
-
-	n_tick::c_sim_budget clock;
-	clock.start( GET_VARIABLE( g_variables.m_air_stuck_budget, float ) * 0.01f, n_tick::engine_interval( ), n_tick::search_as );
-	int cands        = 0;
-	int crob_sims    = 0;
-	int best_crob    = -1;
-	int best_ticks   = 0;
-	float best_gap   = FLT_MAX;
-	float best_yaw   = wall_yaw;
-	float best_move  = 0.0f;
-	float best_side  = 0.0f;
-	c_vector best_end{ };
-	const auto out_of_time = [ & ]( ) { return cands >= 512 || ( cands > 0 && clock.expired( ) ); };
-
-	const auto try_yaw = [ & ]( const float yaw, const float move, const float gap_len, const float side_move = 0.0f ) {
-		++cands;
-		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-		apply_predicted_state( );
-
-		cmd->m_view_point.m_y = yaw;
-		cmd->m_forward_move   = move;
-		cmd->m_side_move      = side_move;
-		cmd->m_buttons        = live_buttons;
-
-		g_prediction.begin( g_ctx.m_local, cmd );
-		g_prediction.end( g_ctx.m_local );
-		const c_vector end1 = g_ctx.m_local->get_abs_origin( );
-
-		/* lumi chains 3 ticks; ours runs to a fall or a repeat ( fixed point ) so a pin that lasts longer ranks higher */
-		int ticks = 0;
-		if ( pinned( ) ) {
-			ticks = 1;
-			for ( int k = 1; k < k_chain; ++k ) {
-				const c_vector from = g_ctx.m_local->get_abs_origin( ), from_v = g_ctx.m_local->get_velocity( );
-				g_prediction.begin( g_ctx.m_local, cmd );
-				g_prediction.end( g_ctx.m_local );
-				if ( !pinned( ) )
-					break;
-				++ticks;
-				if ( bits_eq( g_ctx.m_local->get_abs_origin( ), from ) && bits_eq( g_ctx.m_local->get_velocity( ), from_v ) ) {
-					ticks = k_chain;
-					break;
-				}
-			}
-		}
-
-		const c_vector end = g_ctx.m_local->get_abs_origin( );
-		const float gap    = touch ? end.dot_product( normal ) + hull_off
-		                           : line( c_vector( end.m_x, end.m_y, hit_z ), c_vector( end.m_x - normal.m_x * gap_len, end.m_y - normal.m_y * gap_len, hit_z ),
-		                                   mask_all ).m_fraction * gap_len - support;
-		/* 10-30 21:19 log: pin=1 fell 28/28, pin=3 held 3/3; crob only breaks ties */
-		const int crob     = ticks > 0 && ticks >= best_ticks ? catch_rob( crob_sims, ticks > best_ticks ? -1 : best_crob - 1, clock ) : -1;
-
-		if ( ticks > best_ticks || ( ticks == best_ticks && ( crob > best_crob || ( crob == best_crob && gap < best_gap ) ) ) ) {
-			best_crob  = crob;
-			best_ticks = ticks;
-			best_gap   = gap;
-			best_yaw   = cmd->m_view_point.m_y;
-			best_move  = move;
-			best_side  = side_move;
-			best_end   = end1;
-		}
+		found     = true;
+		touching  = touch;
+		best_frac = frac;
+		best_tr   = tr;
 	};
-	const auto try_move = [ & ]( const float rel, const float move, const float gap_len ) { try_yaw( std::remainder( wall_yaw + rel * side, 360.0f ), move, gap_len ); };
-
-	/* sticky first: a pin it proves wins outright = keeps the cmd the server may already be pinned on ( 11-08 log: client's own fwd 5 pin
-	   replaced the fwd 1 the server took = fell ). online only: offline nothing is in flight. no speed gate ( 11-08: all 17 server catches
-	   on approach cmds came at client vxy 3-205, next cmd differed, 17/17 fell; same cmd kept 82/83 ). window = 3 cp sends, then re-pick:
-	   a catch on copy k survives only if the next cp copies match = 1 in cp+1 at a cp window ( 11-08 16:24 log: 11/24 locks died to the
-	   next cmd differing ), ~2/3 at 3 cp. capped k_chain, never a long freeze ( 11-05 offline 30-75t, 11-06 sticky-all ) */
-	const bool stick_ok = contact && cp > 0;
-	const bool sticky   = s_sticky.valid && stick_ok && s_sticky.ticks < std::min( cp * 3, k_chain ) && s_sticky.normal.dot_product( normal ) > 0.999f;
-	if ( sticky )
-		try_yaw( s_sticky.yaw, s_sticky.fwd, 32.0f, s_sticky.side );
-	const bool sticky_pin = sticky && best_ticks >= 3;
-
-	constexpr float k_moves_near[ 3 ] = { 1.0f, 5.0f, 30.0f };
-	for ( const float move : k_moves_near ) {
-		if ( sticky_pin )
-			break;
-		if ( out_of_time( ) )
-			break;
-		for ( float rel = 85.999f; rel < 90.0f; rel += 1.0f ) {
-			if ( out_of_time( ) )
-				break;
-			try_move( rel, move, 32.0f );
+	for ( int i = 0; i < 4 && !found; ++i ) {
+		const float a = deg2rad( static_cast< float >( i * 90 ) );
+		probe( c_vector( std::cos( a ), std::sin( a ), 0.0f ), 0.05f, true );
+	}
+	if ( !found ) {
+		const float vxy = live_velocity.length_2d( );
+		if ( vxy > 1.0f )
+			probe( c_vector( live_velocity.m_x / vxy, live_velocity.m_y / vxy, 0.0f ), vxy * n_tick::engine_interval( ) + reach, false );
+		for ( int i = 0; i < 16; ++i ) {
+			const float a = deg2rad( static_cast< float >( i * 22.5f ) );
+			probe( c_vector( std::cos( a ), std::sin( a ), 0.0f ), reach, false );
 		}
 	}
+	if ( !found ) {
+		was_stuck     = false;
+		s_miss_streak = 0;
+		if ( lock_tick )
+			lock_copy( "nowall" );
+		return;
+	}
+	const plane_t P{ best_tr.m_plane.m_normal, best_tr.m_plane.m_distance };
+	const int ent    = best_tr.m_hit_entity ? best_tr.m_hit_entity->get_index( ) : 0;
+	const bool world = ent == 0 && best_tr.m_disp_flags == 0;
+	const bool axis_wall_pre = std::fabsf( P.n.m_x ) == 1.0f || std::fabsf( P.n.m_y ) == 1.0f;
+	const float wall_yaw = rad2deg( std::atan2( -P.n.m_y, -P.n.m_x ) );
+	static auto sv_airaccelerate     = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
+	static auto sv_air_max_wishspeed = g_interfaces.m_convar->find_var( "sv_air_max_wishspeed" );
+	const float dt  = n_tick::engine_interval( );
+	const bool duck = ( live_buttons & in_duck ) != 0;
+	const accel_t A{ dt, sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.0f, sv_air_max_wishspeed ? sv_air_max_wishspeed->get_float( ) : 30.0f,
+	                 g_ctx.m_local->get_surface_friction( ), duck ? 85.0f : 250.0f, -pin_vz };
+	const float coef = A.airaccel * A.dt * A.friction;
+	const int cp     = g_interfaces.m_prediction->m_commands_predicted;
 
-	if ( !sticky_pin && best_ticks < k_chain && !out_of_time( ) ) {
-		constexpr float k_moves_far[ 6 ] = { 1.0f, 5.0f, 30.0f, 60.0f, 90.0f, 120.0f };
-		for ( const float move : k_moves_far ) {
-			if ( out_of_time( ) )
+	/* engine-verified lean fan: tangent yaws leaned 5 / 10 / 2 deg into the wall x 8 fwds, every candidate a real sim ( <= 40 ). the
+	   closed-form model below is world-brush float math only; props / brush entities / displacements ( vcollide and disp traces have
+	   their own arithmetic; 11-10 nuke crane ) and exact-axis walls ( clarity's airstuck_run ladders them on contact too, only its
+	   no-contact push skips them ) go through the sims. true = a pin was published */
+	const c_vector t( -P.n.m_y, P.n.m_x, 0.0f );
+	const auto sim_fan = [ & ]( const char* why ) {
+		const int cap = pinned_search ? 144 : 48;
+		int sims = 0, tried = 0;
+		bool got = false, g_fixed = false;
+		float g_yaw = 0.0f, g_fwd = 0.0f;
+		/* fallback: the slowest vz-pin seen ( xy still moving ), taken only when no full stop exists in the whole sweep */
+		float r_xy = FLT_MAX, r_yaw = 0.0f, r_fwd = 0.0f;
+		/* ridobebra's family: nearly tangent, 0.001..4 deg in, its 9 fwds; 11-10 11:31 log the engine pinned this wall on fwd 1 at 4 deg
+		   while my 5 / 10 / 2 deg leans found nothing. 8 leans x 9 fwds x 2 sides = 144, 48 per tick rotating ( full set in 3 ticks ),
+		   drift side first. accept = exact pin only ( velocity ( 0, 0, pin ), origin fixed ): user wants a stuck, never a ride */
+		constexpr float k_fwds[ 9 ]  = { 1.0f, 5.0f, 30.0f, 1.3856f, 10.0f, 22.0f, 60.0f, 120.0f, 450.0f };
+		constexpr float k_leans[ 8 ] = { 1.0f, 2.0f, 0.5f, 3.0f, 4.0f, 0.111f, 1.5f, 6.0f };
+		constexpr int k_total        = 9 * 8 * 2;
+		static int s_fan_off         = 0;
+		const int side0              = dotv( live_velocity, t ) >= 0.0f ? 0 : 1;
+		for ( int k = 0; k < k_total; ++k ) {
+			if ( tried >= cap || ( tried > 0 && clock.expired( ) ) )
 				break;
-			for ( float rel = 78.0f; rel < 90.0f; rel += 0.5f ) {
-				if ( out_of_time( ) )
-					break;
-				try_move( rel, move, 64.0f );
+			const int idx  = ( ( pinned_search ? 0 : s_fan_off ) + k ) % k_total;
+			const int li   = idx / 18, si = ( idx / 9 ) % 2;
+			const float f  = k_fwds[ idx % 9 ];
+			const int s    = si ^ side0;
+			const float sg = s ? -1.0f : 1.0f;
+			++tried;
+			/* tangent direction sg * t, rotated k_leans toward -n */
+			const c_vector w( t.m_x * sg, t.m_y * sg, 0.0f );
+			const float lean = ( w.m_x * -P.n.m_y - w.m_y * -P.n.m_x ) > 0.0f ? -k_leans[ li ] : k_leans[ li ];
+			const float yaw  = std::remainder( rad2deg( std::atan2( w.m_y, w.m_x ) ) + lean, 360.0f );
+			if ( !sim_pins( yaw, f, live_view.m_x, sims ) ) {
+				if ( vz_held( ) ) {
+					const float xy = g_ctx.m_local->get_velocity( ).length_2d( );
+					if ( xy < r_xy ) {
+						r_xy  = xy;
+						r_yaw = yaw;
+						r_fwd = f;
+					}
+				}
+				continue;
+			}
+			got     = true;
+			g_fixed = sim_again( sims );
+			g_yaw   = yaw;
+			g_fwd   = f;
+			break;
+		}
+		if ( !pinned_search )
+			s_fan_off = ( s_fan_off + tried ) % k_total;
+		restore( );
+		botox_dbg_log( "AS: fan %s ent=%d disp=%d n=%.3f,%.3f d=%.4f pin=%d fixed=%d yaw=%.2f fwd=%.2f vzpin_xy=%.1f tries=%d/%d sims=%d vxy=%.1f vz=%.1f cp=%d us=%lld org=%.7f,%.7f,%.7f vel=%.4f,%.4f pitch=%.2f b=%x surf=%s",
+		               why, ent, ( int )best_tr.m_disp_flags, P.n.m_x, P.n.m_y, best_frac, ( int )got, ( int )g_fixed, g_yaw, g_fwd, r_xy < FLT_MAX ? r_xy : -1.0f, tried, cap,
+		               sims, live_velocity.length_2d( ), live_velocity.m_z, cp, clock.used_us( ), origin.m_x, origin.m_y, origin.m_z, live_velocity.m_x,
+		               live_velocity.m_y, live_view.m_x, live_buttons, best_tr.surface.m_name ? best_tr.surface.m_name : "" );
+		if ( got ) {
+			publish( g_yaw, g_fwd, true, live_view.m_x, true );
+			s_expect = { true, origin };
+			return true;
+		}
+		if ( r_xy < FLT_MAX ) {
+			publish( r_yaw, r_fwd, true, live_view.m_x, false );
+			s_hold.vzpin  = true;
+			s_proof.valid = false;
+			return true;
+		}
+		return false;
+	};
+	/* no pin from the fan: not touching = ridobebra's gentle approach ( fwd 5 straight in ), touching = the press that pinned this wall
+	   ( fwd 1, 4 deg in, drift side ) */
+	const auto fan_approach = [ & ]( ) {
+		/* pinned START and the whole family falls: keep the cmd that pinned ( server noise online may hold it ) rather than a new press */
+		if ( pinned_search && s_last.valid && s_last.cmd == cmd->m_command_number - 1 ) {
+			botox_dbg_log( "AS: pinned resend yaw=%.2f fwd=%.4f", s_last.yaw, s_last.fwd );
+			publish( s_last.yaw, s_last.fwd, true, s_last.pitch, false, s_last.side );
+			s_proof.valid = false;
+			s_expect      = { true, origin };
+			return;
+		}
+		if ( best_frac > 0.05f ) {
+			publish( wall_yaw, 5.0f, false, live_view.m_x, false );
+			return;
+		}
+		/* touching, nothing pins: the pins this wall gives came at tangent speed 90-200 ( 11-10 12:20 log; at xy 0.1 the fan found none
+		   for 40 ticks ). build speed along the wall, 1 deg in, drift side ( +22 u/s per tick ) */
+		const float sg = dotv( live_velocity, t ) >= 0.0f ? 1.0f : -1.0f;
+		publish( std::remainder( wall_yaw + sg * 89.0f, 360.0f ), live_velocity.length_2d( ) < 60.0f ? 120.0f : 1.0f, false, live_view.m_x, false );
+	};
+	if ( lock_tick && ( !world || axis_wall_pre ) ) {
+		lock_copy( world ? "axis" : "ent" );
+		return;
+	}
+	if ( !world ) {
+		if ( !sim_fan( "ent" ) )
+			fan_approach( );
+		return;
+	}
+
+	/* exact-axis brush: the box-brush trace ( coll.cpp IntersectRayWithBoxBrush ) has no rounding to cross; velocity zeroes there only
+	   as allsolid with the face EXACTLY on the plane, which the server's CheckStuck nudges out of in 0.05 s. the catch on these walls is
+	   texturebug's ride ( vz pin + xy slide ): arm it for this tick ( texturebug.cpp `armed`, runs after us ) */
+	/* exact-axis world face: the plane model predicts no crossing, yet the game pins there ( 11-10 nuke crane ) - every one of those pins
+	   came with the hull 1-2 ulps off the face ( y -1021.9997 ), none from REST ( 12:29 log: 40 ticks at gap 0.03..0.0008, 0 pins ). so:
+	   the lattice park below puts the START 1 ulp off ( it picks the smallest positive true d when nothing is predicted to cross ), and
+	   only in the skin the engine-verified fan runs. no pin there = keep the tangent speed up, never texturebug's ride */
+	const bool axis_wall = std::fabsf( P.n.m_x ) == 1.0f || std::fabsf( P.n.m_y ) == 1.0f;
+	const hull_t H{ ( maxs - mins ) * 0.5f, ( mins + maxs ) * 0.5f };
+	const float fwd_cap = duck ? 80.0f : 160.0f;
+	const float d1      = eng_d( origin, P, H );
+	const double dt1    = true_d( origin, P, H );
+	const float vn      = dotv( live_velocity, P.n );
+	if ( axis_wall && d1 > 0.0f && d1 <= 2.5f * grid_q( origin, P, H ) ) {
+		if ( !sim_fan( "axis" ) )
+			fan_approach( );
+		return;
+	}
+
+	/* park window: the cp cmds after a park repeat it ( consecutive cmds, same wall, START not pinned = the lock owns a pinned one ) unless
+	   a FIXED-POINT pin verifies ( sc 2: pins from the live START and again from ( 0, 0, pin ) = holds whether or not the server already
+	   took the park ). 16:01 log: the plain window made every catch wait cp ticks ( first pin 5-27 ) */
+	if ( s_park.valid && ( cmd->m_command_number != s_park.cmd + 1 + s_park.ticks || s_park.ticks >= cp || vel_pinned( live_velocity ) ) )
+		s_park.valid = false;
+	const bool park_window = s_park.valid;
+	const auto park_resend = [ & ]( ) {
+		++s_park.ticks;
+		botox_dbg_log( "AS: park resend t=%d/%d yaw=%.2f fwd=%.4f d=%.3g vxy=%.1f vz=%.1f", s_park.ticks, cp, s_park.yaw, s_park.fwd, d1, live_velocity.length_2d( ),
+		               live_velocity.m_z );
+		publish( s_park.yaw, s_park.fwd, false, live_view.m_x, false );
+		s_proof.valid = false;
+	};
+
+	/* locked: the server is pinned at s_lock.origin. solve the fixed point THERE ( closed form from ( 0, 0, pin ), verified at that
+	   origin ), else copy its cmd */
+	if ( lock_tick ) {
+		std::vector< cand_t > lc;
+		lc.reserve( 128 );
+		const c_vector pinned_v( 0.0f, 0.0f, pin_vz );
+		build( s_lock.origin, pinned_v, P, H, A, pin_vz, fwd_cap, 0.003f, &lc, 120 );
+		std::stable_sort( lc.begin( ), lc.end( ), [ ]( const cand_t& a, const cand_t& b ) { return a.score != b.score ? a.score > b.score : a.a < b.a; } );
+		int sims = 0, tried = 0;
+		for ( const cand_t& c : lc ) {
+			if ( c.score < 2 || tried >= 16 || ( tried > 0 && clock.expired( ) ) )
+				break;
+			++tried;
+			if ( !sim_at( s_lock.origin, pinned_v, c.yaw, c.fwd, sims ) )
+				continue;
+			restore( );
+			++s_lock.ticks;
+			botox_dbg_log( "AS: lock pin t=%d yaw=%.2f fwd=%.4f try=%d sims=%d cands=%zu d_sv=%.3g", s_lock.ticks, c.yaw, c.fwd, tried, sims, lc.size( ),
+			               eng_d( s_lock.origin, P, H ) );
+			publish( c.yaw, c.fwd, true, live_view.m_x, true );
+			s_proof.valid  = false; /* proven at the server's START, not this client START */
+			s_expect.valid = false;
+			return;
+		}
+		restore( );
+		lock_copy( tried ? "nofix" : "nocand" );
+		return;
+	}
+
+	/* pin: predicted crossings from this START, verified ( tick 1 + the fixed point ), best first. axis wall: nothing to predict, park */
+	std::vector< cand_t > cands;
+	cands.reserve( 128 );
+	if ( !axis_wall )
+		build( origin, live_velocity, P, H, A, pin_vz, fwd_cap, 0.003f, &cands, 120 );
+	if ( !cands.empty( ) ) {
+		std::stable_sort( cands.begin( ), cands.end( ), [ ]( const cand_t& a, const cand_t& b ) { return a.score != b.score ? a.score > b.score : a.a < b.a; } );
+		int sims = 0, tried = 0;
+		for ( const cand_t& c : cands ) {
+			/* a pinned START gets 4x the verified tries ( losing it costs the hold ), a wall that already refused the model 3x */
+			if ( tried >= ( pinned_search ? 16 : s_miss_streak ? 12 : 4 ) || ( tried > 0 && clock.expired( ) ) )
+				break;
+			/* inside the park window only a fixed point may replace the park cmd */
+			if ( park_window && c.score < 2 )
+				break;
+			++tried;
+			if ( !sim_pins( c.yaw, c.fwd, live_view.m_x, sims ) )
+				continue;
+			const bool fixd = sim_again( sims );
+			restore( );
+			botox_dbg_log( "AS: pin yaw=%.2f fwd=%.4f a=%.3f sc=%d fixed=%d d=%.3g true=%.3g q=%.3g vn=%.3f vxy=%.1f vz=%.1f cands=%zu try=%d sims=%d cp=%d touch=%d surf=%s us=%lld",
+			               c.yaw, c.fwd, c.a, c.score, ( int )fixd, d1, dt1, grid_q( origin, P, H ), vn, live_velocity.length_2d( ), live_velocity.m_z, cands.size( ), tried,
+			               sims, cp, ( int )touching, best_tr.surface.m_name ? best_tr.surface.m_name : "", clock.used_us( ) );
+			publish( c.yaw, c.fwd, true, live_view.m_x, true );
+			s_expect      = { true, origin };
+			s_miss_streak = 0;
+			s_park.valid  = false;
+			return;
+		}
+		restore( );
+		if ( park_window ) {
+			park_resend( );
+			return;
+		}
+		++s_miss_streak;
+		botox_dbg_log( "AS: pin miss d=%.3g true=%.3g cands=%zu try=%d sims=%d streak=%d us=%lld", d1, dt1, cands.size( ), tried, sims, s_miss_streak, clock.used_us( ) );
+		/* the model keeps missing here: the engine decides ( same fan as entity / axis walls ) */
+		if ( s_miss_streak >= 2 && sim_fan( "pred" ) ) {
+			s_miss_streak = 0;
+			return;
+		}
+	}
+	/* pinned START, nothing re-proven: never park a hull that sits on a fixed point ( 12:37 log: park to=1.5e-07 then `lost` ). keep the cmd */
+	if ( pinned_search && s_last.valid && s_last.cmd == cmd->m_command_number - 1 ) {
+		botox_dbg_log( "AS: pinned resend yaw=%.2f fwd=%.4f", s_last.yaw, s_last.fwd );
+		publish( s_last.yaw, s_last.fwd, true, s_last.pitch, false, s_last.side );
+		s_proof.valid = false;
+		s_expect      = { true, origin };
+		return;
+	}
+
+	if ( park_window ) {
+		park_resend( );
+		return;
+	}
+	/* park: next tick's START on the xy float lattice near ( drift, then -n onto d = q/2 ), scored by its own predicted crossings.
+	   coords ~2000 step 2.4e-4 per axis, so a 1-D push along -n alone often has no point that can pin */
+	c_vector v0 = live_velocity;
+	v0.m_z -= A.grav_half;
+	const float q0   = grid_q( origin, P, H );
+	const float back = static_cast< float >( dt1 + dt * vn - 0.5 * q0 );
+	const float tx   = origin.m_x + v0.m_x * dt - P.n.m_x * back;
+	const float ty   = origin.m_y + v0.m_y * dt - P.n.m_y * back;
+	const float ux = ulp( tx ), uy = ulp( ty );
+	int best_sc    = -1;
+	double best_t  = 1e9;
+	float best_fwd = -1.0f, best_yaw = wall_yaw;
+	int lattice    = 0;
+	const c_vector tdir( -P.n.m_y, P.n.m_x, 0.0f );
+	/* pass 0: the 13x13 ulp lattice. pass 1 ( nothing there can pin, 11-10 log: 42 ticks of sc=0 creeping 1 ulp ): the same depth shifted
+	   along the wall by k * 0.02u, the rounding phase of the big product changes with x ( near-axis walls have no jitter otherwise ) */
+	for ( int pass = 0; pass < 2 && best_sc <= 0; ++pass )
+	for ( int i = -6; i <= 6 && !( lattice > 0 && clock.expired( ) ); ++i )
+		for ( int j = -6; j <= 6; ++j ) {
+			if ( pass == 1 && ( i == 0 || j < -1 || j > 1 ) )
+				continue;
+			const float sh = pass == 1 ? 0.02f * i : 0.0f;
+			const c_vector end( tx + ( pass ? j : i ) * ux + tdir.m_x * sh, ty + j * uy + tdir.m_y * sh, origin.m_z + v0.m_z * dt );
+			/* velocity that lands there, as a wish: v = v0 + a * w */
+			const float dvx = ( end.m_x - origin.m_x ) / dt - v0.m_x, dvy = ( end.m_y - origin.m_y ) / dt - v0.m_y;
+			const float a   = std::sqrt( dvx * dvx + dvy * dvy );
+			if ( a < 1e-6f )
+				continue;
+			const c_vector w( dvx / a, dvy / a, 0.0f );
+			const float ws  = a / coef;
+			const float add = std::min( ws, A.max_wish ) - dotv( v0, w );
+			if ( ws > 450.0f || a > add )
+				continue;
+			const float y     = rad2deg( std::atan2( w.m_y, w.m_x ) );
+			const c_vector v  = accel( live_velocity, y, ws, A );
+			const c_vector nx( origin.m_x + v.m_x * dt, origin.m_y + v.m_y * dt, origin.m_z + v.m_z * dt );
+			if ( eng_d( nx, P, H ) <= 0.0f )
+				continue;
+			const double t2 = true_d( nx, P, H );
+			if ( t2 <= 0.0 )
+				continue;
+			++lattice;
+			/* coarse sweep: a density estimate ranks STARTs as well as the fine one ( lab 29-33/33 either way ) at 1/10 the evals */
+			const int sc = build( nx, v, P, H, A, pin_vz, fwd_cap, 0.1f, nullptr, 16 );
+			if ( sc > best_sc || ( sc == best_sc && t2 < best_t ) ) {
+				best_sc  = sc;
+				best_t   = t2;
+				best_fwd = ws;
+				best_yaw = y;
 			}
 		}
-	}
-
-	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-	apply_predicted_state( );
-	botox_dbg_log( "AS: lumi scan=%c n=%.3f,%.3f,%.3f hz=%.1f side=%.0f pin=%d crob=%d/%d gap=%.3f yaw=%.1f fwd=%.0f cand=%d vz=%.2f ent=%d scan_us=%lld us=%lld stk=%d",
-	               scan, normal.m_x, normal.m_y, normal.m_z, hit_z - origin.m_z, side, best_ticks, best_crob, crob_sims, best_gap, best_yaw, best_move, cands,
-	               live_velocity.m_z, hit_ent, scan_us, clock.used_us( ), sticky ? s_sticky.ticks : -1 );
-	if ( keep_hold( best_ticks ) )
-		return;
-	/* lumi found no pin at all: the deferred clarity pin still beats an approach move */
-	if ( best_ticks < 1 && cl_defer.valid ) {
-		publish( cl_defer.yaw, cl_defer.fwd, true, cl_defer.pitch, true );
-		s_expect = { true, cl_defer.end };
+	if ( best_fwd < 0.0f ) {
+		/* out of reach this tick: max approach, straight in */
+		botox_dbg_log( "AS: approach yaw=%.1f d=%.4f vn=%.2f vxy=%.1f touch=%d us=%lld", wall_yaw, dt1, vn, live_velocity.length_2d( ), ( int )touching, clock.used_us( ) );
+		publish( wall_yaw, 450.0f, false, live_view.m_x, false );
 		return;
 	}
-	if ( best_ticks < 3 && resend( ) )
-		return;
-	if ( best_ticks < 3 && sticky ) {
-		++s_sticky.ticks;
-		publish( s_sticky.yaw, s_sticky.fwd, false, live_view.m_x, false, s_sticky.side );
-		s_expect.valid = false;
-		return;
-	}
-	/* a hold is armed only by the full 3-tick chain; shorter pins go out as the approach move, unarmed */
-	publish( best_yaw, best_move, best_ticks >= 3, live_view.m_x, false, best_side );
-	s_expect = { best_ticks >= 3, best_end };
-	if ( best_ticks < 3 ) {
-		s_sticky = { stick_ok, best_yaw, best_move, best_side, normal, 0 };
-		if ( stick_ok )
-			botox_dbg_log( "AS: sticky yaw=%.1f fwd=%.0f", best_yaw, best_move );
-	}
+	botox_dbg_log( "AS: park yaw=%.2f fwd=%.4f sc=%d to=%.3g d=%.3g true=%.3g q=%.3g vn=%.3f vxy=%.1f vz=%.1f lat=%d cp=%d touch=%d us=%lld", best_yaw, best_fwd, best_sc,
+	               best_t, d1, dt1, q0, vn, live_velocity.length_2d( ), live_velocity.m_z, lattice, cp, ( int )touching, clock.used_us( ) );
+	publish( best_yaw, best_fwd, false, live_view.m_x, false );
+	s_park = { cp > 0, cmd->m_command_number, 0, best_yaw, best_fwd };
 }
 
 void air_stuck_final_stamp( c_user_cmd* cmd )
@@ -937,6 +1037,11 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 		return;
 
 	c_base_entity* local    = g_ctx.m_local;
+	/* same leaf-list bounds as the real run ( see air_stuck ) */
+	struct bounds_guard_t {
+		bounds_guard_t( ) { g_prediction.m_bounds_max_speed = g_prediction.m_real_max_speed; }
+		~bounds_guard_t( ) { g_prediction.m_bounds_max_speed = 0.f; }
+	} bounds_guard;
 	const float pin_vz      = g_prediction.get_engine_target_predict_z_velocity( );
 	const float sent_f      = cmd->m_forward_move;
 	const float sent_s      = cmd->m_side_move;

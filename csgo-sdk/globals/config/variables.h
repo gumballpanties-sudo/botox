@@ -736,6 +736,12 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_old_shaders_players, true );
 		ADD_VARIABLE( bool, m_old_shaders_world, true );
 		ADD_VARIABLE( bool, m_old_shaders_props, true );
+		ADD_VARIABLE( bool, m_old_csgo, false );
+		ADD_VARIABLE( bool, m_old_csgo_players, true );
+		ADD_VARIABLE( bool, m_old_csgo_sounds, true );
+		ADD_VARIABLE( bool, m_old_csgo_ranks, true );
+		ADD_VARIABLE( bool, m_old_csgo_misc, true );
+		ADD_VARIABLE( bool, m_old_csgo_inspect, true );
 		ADD_VARIABLE( bool, m_world_texture, false );
 		ADD_VARIABLE_VECTOR( int, 7, m_world_texture_preset, 0 );
 		ADD_VARIABLE_VECTOR( std::string, 7, m_world_texture_custom, "" );

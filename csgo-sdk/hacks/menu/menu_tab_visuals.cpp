@@ -7,6 +7,7 @@
 #include "../visuals/screen/depth_source.h"
 #include "../visuals/crosshair/custom_crosshair.h"
 #include "../visuals/edicts/edicts.h"
+#include "../visuals/old_mods.h"
 
 static void bool_combo( const char* label, std::initializer_list< std::pair< const char*, bool* > > items )
 {
@@ -879,6 +880,34 @@ void n_menu::impl_t::tab_visuals( )
 						ImGui::Checkbox( "players", &GET_VARIABLE( g_variables.m_old_shaders_players, bool ) );
 						ImGui::Checkbox( "world", &GET_VARIABLE( g_variables.m_old_shaders_world, bool ) );
 						ImGui::Checkbox( "props", &GET_VARIABLE( g_variables.m_old_shaders_props, bool ) );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "old csgo", &GET_VARIABLE( g_variables.m_old_csgo, bool ) );
+			if ( GET_VARIABLE( g_variables.m_old_csgo, bool ) ) {
+				ImGui::OptionPopup(
+					"old csgo settings",
+					[ & ]( ) {
+						// same order as n_old_mods::impl_t::toggle
+						bool* const toggles[ n_old_mods::k_max_packs ] = {
+							&GET_VARIABLE( g_variables.m_old_csgo_players, bool ), &GET_VARIABLE( g_variables.m_old_csgo_sounds, bool ),
+							&GET_VARIABLE( g_variables.m_old_csgo_ranks, bool ), &GET_VARIABLE( g_variables.m_old_csgo_misc, bool ),
+							&GET_VARIABLE( g_variables.m_old_csgo_inspect, bool ) };
+
+						for ( int i = 0; i < n_old_mods::impl_t::count( ); ++i ) {
+							ImGui::Checkbox( std::format( "{}##old csgo", n_old_mods::impl_t::label( i ) ).c_str( ), toggles[ i ] );
+
+							const auto& pack = g_old_mods.m_packs[ i ];
+							const int state  = pack.m_state;
+							if ( !*toggles[ i ] || ( state != n_old_mods::state_downloading && state != n_old_mods::state_failed ) )
+								continue;
+
+							const std::string overlay = state == n_old_mods::state_failed
+							                                ? std::format( "{} failed, re-tick", pack.m_missing.load( ) )
+							                                : std::string( "downloading" );
+							ImGui::ProgressBar( g_old_mods.progress( i ), ImVec2( -1.f, 0.f ), overlay.c_str( ) );
+						}
 					},
 					ImVec2( 220.f, -1.f ) );
 			}

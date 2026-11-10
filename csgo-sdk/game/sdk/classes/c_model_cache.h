@@ -41,6 +41,13 @@ public:
 		return g_virtual.call< studiohdr_t*, unsigned short >( this, 14, handle );
 	}
 
+	/* slot 15 GetHardwareData( handle ) ( live datacache.dll: 1 arg between GetStudioHdr 14 and GetVCollide( handle, scale ) 16 ).
+	   studiohwdata_t: m_RootLOD, m_NumLODs, m_pLODs, m_NumStudioMeshes. null = mesh never loaded */
+	const int* get_hardware_data( unsigned short handle )
+	{
+		return g_virtual.call< const int*, unsigned short >( this, 15, handle );
+	}
+
 	// slot 20 = GetStudioHdr + 6. builds the graph if missing: game thread only
 	const void* get_virtual_model( unsigned short handle )
 	{

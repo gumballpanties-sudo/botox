@@ -1,14 +1,17 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../hooks.h"
+#include "../../hacks/visuals/old_mods.h"
 
-bool __fastcall n_detoured_functions::loose_files_allowed( void* ecx, void* edx )
+int __fastcall n_detoured_functions::loose_files_allowed( void* ecx, void* edx )
 {
 	static auto original = g_hooks.m_loose_files_allowed.get_original< decltype( &n_detoured_functions::loose_files_allowed ) >( );
 	HOOK_SCOPE_OR_BAIL( original( ecx, edx ) );
 
-	if ( GET_VARIABLE( g_variables.m_pure_bypass, bool ) && !GET_VARIABLE( g_variables.m_safe_mode, bool ) )
-		return true;
+	// any thread ( async loaders ): atomics only
+	if ( ( GET_VARIABLE( g_variables.m_pure_bypass, bool ) || g_old_mods.m_any_mounted.load( std::memory_order_relaxed ) ) &&
+	     !GET_VARIABLE( g_variables.m_safe_mode, bool ) )
+		return 1;
 
 	return original( ecx, edx );
 }

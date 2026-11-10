@@ -3,6 +3,9 @@
 
 [[nodiscard]] unsigned int c_color::get_u32( const float alpha_multiplier ) const
 {
+	// game thread can ask before the render thread made the imgui context ( first create_move after inject = null GImGui crash )
+	if ( !ImGui::GetCurrentContext( ) )
+		return ImGui::ColorConvertFloat4ToU32( this->get_vec4( alpha_multiplier ) );
 	return ImGui::GetColorU32( this->get_vec4( alpha_multiplier ) );
 }
 

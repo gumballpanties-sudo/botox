@@ -108,10 +108,13 @@ void fake_pov_create_move( )
 	prev_enabled = enabled;
 }
 
-/* CPrediction::GetLocalViewAngles = demo POV. original = pl.v_angle = last cmd view ( forced angles leak ), engine view = real mouse */
+extern bool g_air_stuck_view_forced;
+
+/* CPrediction::GetLocalViewAngles = the local camera ( CalcPlayerView ) and the demo POV. original = pl.v_angle = last cmd view, so a
+   forced cmd view ( air stuck silent angles, 11-10 ) spins the screen; engine view = real mouse */
 void fake_pov_demo_angles( c_angle& angles )
 {
-	if ( !recording( ) )
+	if ( !recording( ) && !g_air_stuck_view_forced )
 		return;
 
 	const auto local = g_interfaces.m_client_entity_list->get< c_base_entity >( g_interfaces.m_engine_client->get_local_player( ) );

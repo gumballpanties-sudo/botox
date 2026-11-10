@@ -7,6 +7,7 @@
 #include "../../../globals/render/render.h"
 
 class c_texture;
+struct studiohdr_t;
 
 /* visuals > esp "esp preview" box right of the menu: a CMergedMDL agent ( the game's own inventory / main menu model renderer, no
    entity, works in the main menu ) drawn into an own render target with the live chams passes, the 2d esp from n_players::draw_player
@@ -21,6 +22,10 @@ namespace n_esp_preview
 		void on_paint_traverse( );
 		void on_eject( );
 
+		/* game thread: old csgo is about to flush a model it merged. drop it now ( its CMDLs cache hdr / bone merge state ),
+		   rebuild from stage 5 on the next paints, last image stays up meanwhile */
+		void rebuild( );
+
 		/* render thread, inside the preview window: image + esp, drag rotates */
 		void draw_body( );
 
@@ -34,6 +39,7 @@ namespace n_esp_preview
 		bool m_failed         = false;
 		bool m_ready          = false;
 		bool m_constructed    = false;
+		bool m_standalone     = false; /* old csgo: old body is the root, no merged agent */
 		int m_stage           = 0;
 
 		int m_bone_map[ 256 ]{ }; /* agent bone -> animset bone, -1 = parent's */

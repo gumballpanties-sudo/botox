@@ -210,6 +210,7 @@ public:
 	NETVAR_PVARIABLE( float, get_fall_velocity, "CBasePlayer->m_flFallVelocity" );
 	NETVAR_VARIABLE( c_angle, get_view_punch, "CBasePlayer->m_viewPunchAngle" );
 	NETVAR_VARIABLE( c_angle, get_punch, "CBasePlayer->m_aimPunchAngle" );
+	NETVAR_VARIABLE( c_angle, get_punch_vel, "CBasePlayer->m_aimPunchAngleVel" );
 	NETVAR_VARIABLE( int, get_shots_fired, "CCSPlayer->m_iShotsFired" );
 	NETVAR_VARIABLE( c_vector, get_view_offset, "CBasePlayer->m_vecViewOffset[0]" );
 	NETVAR_VARIABLE( float, get_friction, "CBasePlayer->m_flFriction" );

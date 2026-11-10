@@ -177,8 +177,9 @@ namespace n_detoured_functions
 	void __fastcall push_notice( void* ecx, void* edx, const char* text, int str_len, const char* null );
 	void __fastcall set_visuals_data( void* ecx, void* edx, const char* shader_name );
 
-	/* 128 = 0-arg thiscall bool getter; whitelist check = free function, no args */
-	bool __fastcall loose_files_allowed( void* ecx, void* edx );
+	/* 128 = pure mode getter ( mov eax,[ecx+0xE0] ): 0 whitelist = loose materials/models/sound/particles rejected, 1 allow, 2 loaded.
+	   caller tests full eax: int, never bool. whitelist check = free function, no args */
+	int __fastcall loose_files_allowed( void* ecx, void* edx );
 	void __cdecl check_for_pure_server_whitelist( );
 	char __stdcall aaa_bypass( );
 

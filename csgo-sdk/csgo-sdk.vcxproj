@@ -109,6 +109,7 @@
     <ClCompile Include="hacks\visuals\lsd_chams.cpp" />
     <ClCompile Include="hacks\visuals\two_tone_chams.cpp" />
     <ClCompile Include="hacks\visuals\weapon_sheen.cpp" />
+    <ClCompile Include="hacks\visuals\old_mods.cpp" />
     <ClCompile Include="hacks\visuals\players\dormancy\dormancy.cpp" />
     <ClCompile Include="hacks\network\botox_net.cpp" />
     <ClCompile Include="hacks\visuals\players\sound_esp\sound_esp.cpp" />
@@ -515,6 +516,9 @@
     <ClInclude Include="hacks\visuals\two_tone_chams.h" />
     <ClInclude Include="hacks\visuals\model_shader.h" />
     <ClInclude Include="hacks\visuals\weapon_sheen.h" />
+    <ClInclude Include="hacks\visuals\old_mods.h" />
+    <ClInclude Include="hacks\visuals\old_mods_manifest.h" />
+    <ClInclude Include="hacks\visuals\vpk_writer.h" />
     <ClInclude Include="hacks\visuals\screen\render_queue.h" />
     <ClInclude Include="hacks\web\websurface.h" />
     <ClInclude Include="hacks\web\websurf_math.h" />

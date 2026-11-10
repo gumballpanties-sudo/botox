@@ -6,6 +6,7 @@
 #include "../../chams/chams.h"
 #include "../../lagcomp/lagcomp.h"
 #include "../screen/player_stencil.h"
+#include "../old_mods.h"
 #include "players.h"
 #include "../../../utilities/perf/perf_watch.h"
 
@@ -100,13 +101,18 @@ namespace
 		}
 	}
 
+	/* old csgo player pack on: the old body is the root itself ( bone merged onto the animset it never draws ), playing its own
+	   sequence; off: ui animset root + merged agent. set at stage 5 */
+	const char* s_root_model = k_animset;
+	int s_root_sequence      = k_idle_sequence;
+
 	/* one mdl load per frame ( each is a synchronous vpk read + material load ) */
 	void build_root( void* context )
 	{
 		auto* const model = static_cast< std::uint8_t* >( context );
 
 		s_ctor( model );
-		g_virtual.call< void >( model, 4, k_animset, static_cast< void* >( nullptr ), static_cast< void* >( nullptr ) );
+		g_virtual.call< void >( model, 4, s_root_model, static_cast< void* >( nullptr ), static_cast< void* >( nullptr ) );
 	}
 
 	void build_agent( void* context )
@@ -123,7 +129,12 @@ namespace
 	{
 		auto* const model = static_cast< std::uint8_t* >( context );
 
-		at< int >( model, k_root + k_sequence )     = k_idle_sequence;
+		at< int >( model, k_root + k_sequence )     = s_root_sequence;
+
+		// standalone root plays an aim blend: normalized pose params centred ( 0 = aim down left ), MAXSTUDIOPOSEPARAM 24
+		if ( s_root_model != k_animset )
+			for ( int i = 0; i < 24; i++ )
+				( &at< float >( model, k_pose ) )[ i ] = 0.5f;
 		at< bool >( model, k_root + k_use_fps )     = true;
 		at< float >( model, k_root + k_time_basis ) = at< float >( model, k_root + k_time );
 
@@ -135,18 +146,97 @@ namespace
 		g_virtual.call< void >( context, 3, 0u );
 	}
 
+	studiohdr_t* studio_of( std::uint8_t* cmdl )
+	{
+		const unsigned short handle = at< unsigned short >( cmdl, k_handle );
+		return handle != 0xFFFF ? g_interfaces.m_model_cache->get_studio_hdr( handle ) : nullptr;
+	}
+
+	/* the body's header: the root itself when standalone ( old csgo ), else merge 0 */
+	studiohdr_t* agent_of( std::uint8_t* model, const bool standalone )
+	{
+		if ( standalone )
+			return studio_of( model + k_root );
+		return at< int >( model, k_merge + 0xC ) >= 1 ? studio_of( merge_mdl( model, 0 ) ) : nullptr;
+	}
+
+	/* every studio read sits in an SEH job: a flush ( level load, old mods ) frees that data under us */
+	struct map_job_t {
+		std::uint8_t* m_model;
+		bool m_standalone;
+		int* m_bone_map;
+		int* m_agent_bones;
+		studiohdr_t* m_agent; /* out, null = models missing */
+	};
+
+	/* bonemerge by name ( SetupBonesWithBoneMerge ): agent bone = animset bone of the same name */
+	void map_bones( void* context )
+	{
+		auto* const job = static_cast< map_job_t* >( context );
+		job->m_agent    = nullptr;
+
+		studiohdr_t* const root  = studio_of( job->m_model + k_root );
+		studiohdr_t* const agent = agent_of( job->m_model, job->m_standalone );
+		if ( !root || !agent || root->n_bones <= 0 || root->n_bones > 256 || agent->n_bones <= 0 )
+			return;
+
+		*job->m_agent_bones = agent->n_bones < 128 ? agent->n_bones : 128;
+		for ( int i = 0; i < *job->m_agent_bones; i++ ) {
+			job->m_bone_map[ i ] = -1;
+
+			mstudiobone_t* const bone = agent->get_bone( i );
+			const char* const name    = bone ? bone->get_name( ) : nullptr;
+			if ( !name )
+				continue;
+
+			for ( int j = 0; j < root->n_bones; j++ ) {
+				mstudiobone_t* const other   = root->get_bone( j );
+				const char* const other_name = other ? other->get_name( ) : nullptr;
+
+				if ( other_name && !_stricmp( name, other_name ) ) {
+					job->m_bone_map[ i ] = j;
+					break;
+				}
+			}
+		}
+
+		job->m_agent = agent;
+	}
+
 	struct bones_job_t {
 		std::uint8_t* m_model;
 		const matrix3x4_t* m_to_world;
-		int m_count;
+		bool m_standalone;
+		const int* m_bone_map;
+		int m_agent_bones;
+		studiohdr_t* m_agent;                                   /* out, null = failed */
+		std::vector< n_players::hitbox_capsule_t >* m_capsules; /* out */
 	};
 
+	/* engine SetUpBones on the root, agent bones off the name map ( unmapped = parent's ), hitbox capsules */
 	void set_up_bones( void* context )
 	{
-		const auto* const job = static_cast< bones_job_t* >( context );
+		auto* const job = static_cast< bones_job_t* >( context );
+		job->m_agent    = nullptr;
 
-		s_set_up_bones( job->m_model + k_root, job->m_to_world, job->m_count, s_root_bones, &at< float >( job->m_model, k_pose ),
+		studiohdr_t* const root  = studio_of( job->m_model + k_root );
+		studiohdr_t* const agent = agent_of( job->m_model, job->m_standalone );
+		if ( !root || !agent || root->n_bones <= 0 || root->n_bones > 256 )
+			return;
+
+		s_set_up_bones( job->m_model + k_root, job->m_to_world, root->n_bones, s_root_bones, &at< float >( job->m_model, k_pose ),
 		                at< void* >( job->m_model, k_layers ), at< int >( job->m_model, k_layers + 0xC ) );
+
+		for ( int i = 0; i < job->m_agent_bones; i++ ) {
+			const mstudiobone_t* const bone = agent->get_bone( i );
+			const int parent                = bone ? bone->m_parent : -1;
+			const int mapped                = job->m_bone_map[ i ];
+
+			s_bones[ i ] = mapped >= 0 && mapped < root->n_bones ? s_root_bones[ mapped ] : parent >= 0 && parent < i ? s_bones[ parent ] : *job->m_to_world;
+		}
+
+		*job->m_capsules = n_players::hitbox_capsules( agent, 0, s_bones, job->m_agent_bones );
+		job->m_agent     = agent;
 	}
 
 	IDirect3DTexture9* raw_texture( c_texture* texture )
@@ -157,12 +247,6 @@ namespace
 		/* CTexture::m_pTextureHandles +0x50 ( GetTextureHandle reads it ), handle = shaderapi Texture_t*, its d3d texture +0xC */
 		std::uint8_t** const handles = *reinterpret_cast< std::uint8_t*** >( reinterpret_cast< std::uint8_t* >( texture ) + 0x50 );
 		return handles && handles[ 0 ] ? *reinterpret_cast< IDirect3DTexture9** >( handles[ 0 ] + 0xC ) : nullptr;
-	}
-
-	studiohdr_t* studio_of( std::uint8_t* cmdl )
-	{
-		const unsigned short handle = at< unsigned short >( cmdl, k_handle );
-		return handle != 0xFFFF ? g_interfaces.m_model_cache->get_studio_hdr( handle ) : nullptr;
 	}
 }
 
@@ -224,17 +308,24 @@ bool n_esp_preview::impl_t::init( )
 		this->m_cubemap = materials->find_texture( "editor/cubemap.hdr", TEXTURE_GROUP_CUBE_MAP, false );
 		break;
 	}
-	case 5:
+	case 5: {
 		this->m_model = static_cast< std::uint8_t* >( std::calloc( 1, k_model_size ) );
 		if ( !this->m_model )
 			return fail( "model alloc failed, preview off\n" );
+
+		int sequence            = k_idle_sequence;
+		const char* const old   = g_old_mods.preview_model( sequence );
+		this->m_standalone      = old != nullptr;
+		s_root_model            = old ? old : k_animset;
+		s_root_sequence         = sequence;
 
 		this->m_constructed = seh_call( &build_root, this->m_model );
 		if ( !this->m_constructed )
 			return fail( "model build faulted, preview off\n" );
 		break;
+	}
 	case 6:
-		if ( !seh_call( &build_agent, this->m_model ) )
+		if ( !this->m_standalone && !seh_call( &build_agent, this->m_model ) )
 			return fail( "model build faulted, preview off\n" );
 		break;
 	case 7:
@@ -245,31 +336,18 @@ bool n_esp_preview::impl_t::init( )
 		if ( !seh_call( &build_finish, this->m_model ) )
 			return fail( "model build faulted, preview off\n" );
 
-		studiohdr_t* const root  = studio_of( this->m_model + k_root );
-		studiohdr_t* const agent = at< int >( this->m_model, k_merge + 0xC ) >= 1 ? studio_of( merge_mdl( this->m_model, 0 ) ) : nullptr;
-
-		if ( !root || !agent || root->n_bones <= 0 || root->n_bones > 256 || agent->n_bones <= 0 )
+		map_job_t map_job{ this->m_model, this->m_standalone, this->m_bone_map, &this->m_agent_bones, nullptr };
+		if ( !seh_call( &map_bones, &map_job ) )
+			return fail( "bone map faulted, preview off\n" );
+		if ( !map_job.m_agent )
 			return fail( "models missing, preview off\n" );
 
-		/* bonemerge by name ( SetupBonesWithBoneMerge ): agent bone = animset bone of the same name */
-		this->m_agent_bones = agent->n_bones < 128 ? agent->n_bones : 128;
-		for ( int i = 0; i < this->m_agent_bones; i++ ) {
-			this->m_bone_map[ i ] = -1;
-
-			mstudiobone_t* const bone = agent->get_bone( i );
-			const char* const name    = bone ? bone->get_name( ) : nullptr;
-			if ( !name )
-				continue;
-
-			for ( int j = 0; j < root->n_bones; j++ ) {
-				mstudiobone_t* const other   = root->get_bone( j );
-				const char* const other_name = other ? other->get_name( ) : nullptr;
-
-				if ( other_name && !_stricmp( name, other_name ) ) {
-					this->m_bone_map[ i ] = j;
-					break;
-				}
-			}
+		{
+			std::uint8_t* const cmdl    = this->m_standalone ? this->m_model + k_root : merge_mdl( this->m_model, 0 );
+			const int* const hw         = g_interfaces.m_model_cache->get_hardware_data( at< unsigned short >( cmdl, k_handle ) );
+			const auto* const raw       = reinterpret_cast< const std::uint8_t* >( map_job.m_agent ); /* studiohdr_t: checksum +8, name[64] +12 */
+			botox_dbg_log( "PREV: agent %.64s standalone=%d seq=%d chk=%d bones=%d hw=%p lods=%d meshes=%d", raw + 12, this->m_standalone ? 1 : 0,
+			               s_root_sequence, *reinterpret_cast< const int* >( raw + 8 ), map_job.m_agent->n_bones, hw, hw ? hw[ 1 ] : -1, hw ? hw[ 3 ] : -1 );
 		}
 
 		this->m_ready = true;
@@ -295,13 +373,33 @@ void n_esp_preview::impl_t::on_eject( )
 	this->m_model = nullptr;
 }
 
+void n_esp_preview::impl_t::rebuild( )
+{
+	if ( !this->m_model )
+		return;
+
+	if ( this->m_constructed )
+		seh_call( &destroy_model, this->m_model );
+	std::free( this->m_model );
+	this->m_model       = nullptr;
+	this->m_constructed = false;
+	this->m_ready       = false;
+	this->m_failed      = false;
+	this->m_stage       = 5;
+}
+
 void n_esp_preview::impl_t::on_paint_traverse( )
 {
 	const int frame        = this->m_frame.load( );
 	const bool wanted      = frame != this->m_seen_frame;
 	this->m_seen_frame     = frame;
 
-	if ( !wanted || g_ctx.m_eject_restoring || !g_interfaces.m_material_system || !g_interfaces.m_render_view )
+	if ( !wanted || g_ctx.m_eject_restoring || !g_interfaces.m_material_system || !g_interfaces.m_render_view || !g_interfaces.m_engine_client )
+		return;
+
+	/* level load ( connected, not in game ) flushes model + material data under queued draws; the old mods serial reload flushes
+	   ours on purpose ( rebuild waits for it ). last image stays up */
+	if ( g_interfaces.m_engine_client->is_connected( ) != g_interfaces.m_engine_client->is_in_game( ) || g_old_mods.m_serial.load( ) )
 		return;
 
 	/* the target keeps the last frame: 60 renders a second whatever the game fps */
@@ -326,6 +424,18 @@ namespace
 		c_material_render_context* m_context;
 		bool m_stencil;
 	};
+
+	struct esp_job_t {
+		const view_matrix_t* m_world_to_projection;
+		const matrix3x4_t* m_to_world;
+		stream_t m_stream;
+		studiohdr_t* m_agent;
+		int m_agent_bones;
+		const std::vector< n_players::hitbox_capsule_t >* m_capsules;
+		std::vector< draw_object_t >* m_out;
+	};
+
+	void build_esp( void* context );
 
 	void draw_model( std::uint8_t* model, const float yaw, const float shift )
 	{
@@ -433,21 +543,22 @@ void n_esp_preview::impl_t::render( )
 
 	g_interfaces.m_render_view->get_matrices_for_view( view, &world_to_view, &view_to_projection, &world_to_projection, &world_to_pixels );
 
-	/* agent bones ( bonemerge by name off the animset ): esp, inner glow capsules */
+	/* agent bones ( bonemerge by name off the animset ): esp, inner glow capsules. a fault here = studio data gone, no draw */
 	const matrix3x4_t to_world = root_matrix( yaw, 0.f );
-	studiohdr_t* const root    = studio_of( model + k_root );
-	studiohdr_t* const agent   = studio_of( merge_mdl( model, 0 ) );
-	bones_job_t bones_job{ model, &to_world, root ? root->n_bones : 0 };
+	std::vector< n_players::hitbox_capsule_t > capsules{ };
+	bones_job_t bones_job{ model, &to_world, this->m_standalone, this->m_bone_map, this->m_agent_bones, nullptr, &capsules };
 
-	const bool bones = agent && bones_job.m_count > 0 && seh_call( &set_up_bones, &bones_job );
-
-	if ( bones ) {
-		for ( int i = 0; i < this->m_agent_bones; i++ ) {
-			const int parent = agent->get_bone( i ) ? agent->get_bone( i )->m_parent : -1;
-
-			s_bones[ i ] = this->m_bone_map[ i ] >= 0 ? s_root_bones[ this->m_bone_map[ i ] ] : parent >= 0 && parent < i ? s_bones[ parent ] : to_world;
-		}
+	if ( !seh_call( &set_up_bones, &bones_job ) ) {
+		g_logger.print( "bone setup faulted, preview off\n", "[preview]" );
+		this->m_failed      = true;
+		this->m_ready       = false;
+		this->m_constructed = false;
+		this->m_model       = nullptr; /* leaked on purpose: its state is unknown */
+		return;
 	}
+
+	studiohdr_t* const agent = bones_job.m_agent;
+	const bool bones         = agent != nullptr;
 
 	c_material_render_context* const context = g_interfaces.m_material_system->get_render_context( );
 	if ( !context )
@@ -480,6 +591,7 @@ void n_esp_preview::impl_t::render( )
 
 	context->set_ambient_light_cube( cube );
 	g_interfaces.m_studio_render->set_ambient_light_colors( ambient );
+
 	g_interfaces.m_studio_render->set_local_lights( 0, nullptr );
 	g_interfaces.m_model_render->suppress_engine_lighting( true );
 
@@ -488,9 +600,7 @@ void n_esp_preview::impl_t::render( )
 
 	/* outline / glow / inner glow: the live pass on this target ( its own stencil now holds the model ), sizes in body px */
 	if ( drawn && draw_job.m_stencil )
-		g_preview_stencil.after_glow( world_to_projection, bones ? n_players::hitbox_capsules( agent, 0, s_bones, this->m_agent_bones )
-		                                                         : std::vector< n_players::hitbox_capsule_t >{ },
-		                              k_rt_scale );
+		g_preview_stencil.after_glow( world_to_projection, capsules, k_rt_scale );
 
 	g_interfaces.m_model_render->suppress_engine_lighting( false );
 	g_interfaces.m_model_render->forced_material_override( nullptr );
@@ -508,9 +618,10 @@ void n_esp_preview::impl_t::render( )
 
 	if ( !drawn ) {
 		g_logger.print( "model draw faulted, preview off\n", "[preview]" );
-		this->m_failed = true;
-		this->m_ready  = false;
-		this->m_model  = nullptr; /* leaked on purpose: its state is unknown */
+		this->m_failed        = true;
+		this->m_ready         = false;
+		this->m_constructed   = false;
+		this->m_model         = nullptr; /* leaked on purpose: its state is unknown */
 		this->m_shown_texture = nullptr;
 		return;
 	}
@@ -520,14 +631,32 @@ void n_esp_preview::impl_t::render( )
 	/* 2d esp: same draw_player as the live loop, projected through the preview camera onto the k_width x k_height body */
 	this->m_draw_data.clear( );
 
-	[ & ]( ) {
-		if ( !GET_VARIABLE( g_variables.m_players, bool ) )
-			return;
+	if ( bones && GET_VARIABLE( g_variables.m_players, bool ) ) {
+		esp_job_t esp_job{ &world_to_projection, &to_world, stream, agent, this->m_agent_bones, &capsules, &this->m_draw_data };
 
-		if ( !bones )
-			return;
+		if ( !seh_call( &build_esp, &esp_job ) ) {
+			g_logger.print( "esp build faulted, preview esp off\n", "[preview]" );
+			this->m_draw_data.clear( );
+		}
+	}
 
-		const n_players::projector_t w2s{ &world_to_projection, k_width, k_height };
+	/* io.Fonts only changes under the unique font lock, paint holds it shared. no context ( eject ) = nothing shown */
+	std::lock_guard< std::mutex > lock( this->m_mutex );
+	this->m_shown.swap( this->m_draw_data );
+	this->m_shown_atlas = ImGui::GetCurrentContext( ) ? ImGui::GetIO( ).Fonts : nullptr;
+}
+
+namespace
+{
+	/* esp_job_t body: the fake target, all studio reads, draw_player into the out list */
+	void build_esp( void* context )
+	{
+		const auto* const job = static_cast< esp_job_t* >( context );
+		const stream_t stream = job->m_stream;
+		const matrix3x4_t& to_world = *job->m_to_world;
+		studiohdr_t* const agent    = job->m_agent;
+
+		const n_players::projector_t w2s{ job->m_world_to_projection, n_esp_preview::k_width, n_esp_preview::k_height };
 
 		/* live gates: distance cut + fade on a target 600 u out */
 		constexpr float distance = 600.f;
@@ -595,19 +724,19 @@ void n_esp_preview::impl_t::render( )
 		player.m_studio = agent;
 		player.m_bones  = s_bones;
 
-		for ( int i = 0; i < this->m_agent_bones; i++ ) {
+		for ( int i = 0; i < job->m_agent_bones; i++ ) {
 			s_oldest[ i ] = s_bones[ i ];
 			s_oldest[ i ][ 1 ][ 3 ] -= stream.shift_of( stream.m_records - 1 );
 		}
 		player.m_backtrack_bones = s_oldest;
 
 		if ( GET_VARIABLE( g_variables.m_players_hitboxes, bool ) && GET_VARIABLE( g_variables.m_players_hitboxes_mode, int ) == 0 )
-			player.m_capsules = n_players::hitbox_capsules( agent, 0, s_bones, this->m_agent_bones );
+			player.m_capsules = *job->m_capsules;
 
 		const mstudiohitboxset_t* const set = agent->get_hitbox_set( 0 );
 		const mstudiobbox_t* const head     = set ? set->get_hitbox( hitbox_head ) : nullptr;
 
-		if ( head && head->m_bone >= 0 && head->m_bone < this->m_agent_bones ) {
+		if ( head && head->m_bone >= 0 && head->m_bone < job->m_agent_bones ) {
 			const c_vector head_position = g_math.vector_transform( ( head->m_bb_min + head->m_bb_max ) * 0.5f, s_bones[ head->m_bone ] );
 
 			if ( GET_VARIABLE( g_variables.m_players_backtrack_trail, bool ) )
@@ -620,13 +749,8 @@ void n_esp_preview::impl_t::render( )
 			player.m_view_right  = c_vector( 0.f, -1.f, 0.f ); /* camera looks down +x */
 		}
 
-		n_players::draw_player( player, w2s, this->m_draw_data );
-	}( );
-
-	/* io.Fonts only changes under the unique font lock, paint holds it shared */
-	std::lock_guard< std::mutex > lock( this->m_mutex );
-	this->m_shown.swap( this->m_draw_data );
-	this->m_shown_atlas = ImGui::GetIO( ).Fonts;
+		n_players::draw_player( player, w2s, *job->m_out );
+	}
 }
 
 void n_esp_preview::impl_t::draw_body( )
@@ -649,8 +773,15 @@ void n_esp_preview::impl_t::draw_body( )
 
 	draw_list->AddRectFilled( pos, end, background, rounding );
 
-	if ( IDirect3DTexture9* const texture = raw_texture( this->m_shown_texture.load( ) ) )
+	if ( IDirect3DTexture9* const texture = raw_texture( this->m_shown_texture.load( ) ) ) {
+		/* the target's alpha is whatever the shaders wrote: old VertexLitGeneric bodies write ~0 there ( old csgo ) and vanished into the
+		   window. take alpha from the vertex only ( menu fade ), the colour is opaque. imgui_impl_dx9 SetupRenderState puts MODULATE back */
+		draw_list->AddCallback( [ ]( const ImDrawList*, const ImDrawCmd* ) {
+			g_interfaces.m_direct_device->SetTextureStageState( 0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG2 );
+		}, nullptr );
 		draw_list->AddImageRounded( texture, pos, end, ImVec2( 0.f, 0.f ), ImVec2( 1.f, 1.f ), IM_COL32_WHITE, rounding );
+		draw_list->AddCallback( ImDrawCallback_ResetRenderState, nullptr );
+	}
 	else {
 		const char* const text = this->m_failed ? "preview unavailable" : "loading";
 		const ImVec2 size      = ImGui::CalcTextSize( text );

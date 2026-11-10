@@ -794,6 +794,7 @@ Full scripts in [lua_examples/](lua_examples/), copy them into `C:\botox\lua\`:
 | [kill_feed.lua](lua_examples/kill_feed.lua) | named game event, event:get_player, client.chat, button, ui.text |
 | [raw_access.lua](lua_examples/raw_access.lua) | config, netvars, mem.read, mem.vfunc + mem.call |
 | [edgebug_fx.lua](lua_examples/edgebug_fx.lua) | edgebug detect in pre_prediction, own world particles (spark sim, shockwave rings, pillar) via world_to_screen + poly, engine.exec sound |
+| [custom_edgebug.lua](lua_examples/custom_edgebug.lua) | full edgebug from scratch, hotwheels style: own csgo air movement sim on trace.hull, cmd replay in pre_prediction + create_move, mouse lock / strafe camera via frame_stage + set_view_angles. Gate: `lua tools/custom_edgebug_check.lua` |
 
 ---
 

@@ -1486,33 +1486,41 @@ void ImGui::ProgressBar( float fraction, const ImVec2& size_arg, const char* ove
 
 	ImGuiContext& g         = *GImGui;
 	const ImGuiStyle& style = g.Style;
+	IM_UNUSED( size_arg );
 
-	ImVec2 pos  = window->DC.CursorPos;
-	ImVec2 size = CalcItemSize( size_arg, CalcItemWidth( ), g.FontSize + style.FramePadding.y * 2.0f );
-	ImRect bb( pos, pos + size );
-	ItemSize( size, style.FramePadding.y );
-	if ( !ItemAdd( bb, 0 ) )
+	// SliderScalar geometry: overlay = label row on top, percent at its right, thin frame bar under it
+	const float h         = GetFrameHeight( ) - 2.f;
+	const float bar_left  = GetRowFrameLeft( );
+	const float bar_right = GetRowFrameRight( );
+	const float bar_top   = window->DC.CursorPos.y + CalcTextSize( "%" ).y;
+
+	const ImRect frame_bb( ImVec2( bar_left, bar_top ), ImVec2( bar_right, bar_top + h ) );
+	const ImRect total_bb( window->DC.CursorPos, ImVec2( bar_right, frame_bb.Max.y ) );
+	ItemSize( total_bb, style.FramePadding.y );
+	if ( !ItemAdd( total_bb, 0 ) )
 		return;
 
-	// Render
 	fraction = ImSaturate( fraction );
-	RenderFrame( bb.Min, bb.Max, GetColorU32( ImGuiCol_FrameBg ), true, style.FrameRounding );
-	bb.Expand( ImVec2( -style.FrameBorderSize, -style.FrameBorderSize ) );
-	const ImVec2 fill_br = ImVec2( ImLerp( bb.Min.x, bb.Max.x, fraction ), bb.Max.y );
-	RenderRectFilledRangeH( window->DrawList, bb, GetColorU32( ImGuiCol_PlotHistogram ), 0.0f, fraction, style.FrameRounding );
+	RenderFrame( frame_bb.Min, frame_bb.Max, GetColorU32( ImGuiCol_MenuFrame ), true, style.FrameRounding );
+	window->DrawList->AddRect( frame_bb.Min, frame_bb.Max, GetColorU32( ImGuiCol_MenuOutline ), style.FrameRounding );
 
-	// Default displaying the fraction as percentage string, but user can override it
-	char overlay_buf[ 32 ];
-	if ( !overlay ) {
-		ImFormatString( overlay_buf, IM_ARRAYSIZE( overlay_buf ), "%.0f%%", fraction * 100 + 0.01f );
-		overlay = overlay_buf;
+	const float fill = std::floorf( fraction * frame_bb.GetWidth( ) );
+	if ( fill > 0.f ) {
+		const ImColor accent = GetColorU32( ImGuiCol_Accent );
+		window->DrawList->AddRectFilled( frame_bb.Min, ImVec2( frame_bb.Min.x + fill, frame_bb.Max.y ),
+		                                 ImColor( accent.Value.x, accent.Value.y, accent.Value.z, 1.f ), fill > 1.f ? style.FrameRounding : 0.f );
 	}
 
-	ImVec2 overlay_size = CalcTextSize( overlay, NULL );
-	if ( overlay_size.x > 0.0f )
-		RenderTextClipped(
-			ImVec2( ImClamp( fill_br.x + style.ItemSpacing.x, bb.Min.x, bb.Max.x - overlay_size.x - style.ItemInnerSpacing.x ), bb.Min.y ), bb.Max,
-			overlay, NULL, &overlay_size, ImVec2( 0.0f, 0.5f ), &bb );
+	char percent[ 32 ];
+	ImFormatString( percent, IM_ARRAYSIZE( percent ), "%.0f%%", fraction * 100.f + 0.01f );
+
+	// resting slider text alpha ( SliderScalar animation floor )
+	const ImVec4 text = GetStyleColorVec4( ImGuiCol_Text );
+	PushStyleColor( ImGuiCol_Text, ImVec4( text.x, text.y, text.z, text.w * 0.5f ) );
+	RenderText( ImVec2( frame_bb.Max.x - CalcTextSize( percent ).x, total_bb.Min.y + style.FramePadding.y - 3 ), percent );
+	if ( overlay && *overlay )
+		RenderText( ImVec2( frame_bb.Min.x, total_bb.Min.y + style.FramePadding.y - 4.f ), overlay );
+	PopStyleColor( );
 }
 
 void ImGui::Bullet( )
