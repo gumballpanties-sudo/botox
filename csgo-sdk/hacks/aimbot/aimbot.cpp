@@ -9,6 +9,7 @@
 #include "../movement/edgebug.h"
 #include "../prediction/prediction.h"
 #include "../web/websurface.h"
+#include "lumia_aim_logic.h"
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
@@ -18,6 +19,10 @@ extern void botox_dbg_log( const char* fmt, ... );
 
 namespace
 {
+    struct smoothing_state_t {
+        unsigned target=0,weapon=0;int command=-1,hitbox=-1;
+        c_angle input{},aim{};bool silent=false,settled=false;
+    } s_lumia_smoothing;
 	const char* g_dbg_gate = nullptr;
 	float g_dbg_best = -2.f, g_dbg_need = -2.f;
 	int g_dbg_gated  = 0;
@@ -199,6 +204,13 @@ namespace
 		return cached.count( ) > 0 ? cached.base( ) : nullptr;
 	}
 
+    bool lumia_live_bones(c_base_entity* entity,matrix3x4_t* bones) {
+        if(!entity||!bones||!entity->get_model())return false;
+        const auto* header=g_interfaces.m_model_info->get_studio_model(entity->get_model());
+        if(!header||header->n_bones<1||header->n_bones>128)return false;
+        return entity->setup_bones(bones,128,0x7FF00,g_interfaces.m_global_vars_base->m_current_time);
+    }
+
 	c_base_entity* firing_weapon( )
 	{
 		if ( !g_ctx.m_cmd || !g_ctx.m_local )
@@ -228,20 +240,12 @@ namespace
 		return convar ? convar->get_float( ) : 2.f;
 	}
 
-	c_angle rcs_offset( const float class_rcs, const int burst_shots )
-	{
-		if ( class_rcs <= 0.f || !g_ctx.m_local )
-			return { };
-
-		if ( burst_shots < GET_VARIABLE( g_variables.m_aimbot_rcs_start, int ) )
-			return { };
-
-		const float master  = ( class_rcs / 100.f ) * recoil_scale( );
-		const c_angle punch = g_ctx.m_local->get_punch( );
-
-		return { punch.m_x * master * ( GET_VARIABLE( g_variables.m_aimbot_rcs_pitch, float ) / 100.f ),
-		         punch.m_y * master * ( GET_VARIABLE( g_variables.m_aimbot_rcs_yaw, float ) / 100.f ), 0.f };
-	}
+    c_angle rcs_offset(const float class_rcs,const int burst_shots) {
+        if(class_rcs<=0.f||!g_ctx.m_local||burst_shots<GET_VARIABLE(g_variables.m_aimbot_rcs_start,int))return {};
+        const auto corrected=n_lumia_aim::apply_rcs({},class_rcs*GET_VARIABLE(g_variables.m_aimbot_rcs_pitch,float)/100.f,
+            class_rcs*GET_VARIABLE(g_variables.m_aimbot_rcs_yaw,float)/100.f);
+        return {-corrected.m_x,-corrected.m_y,0.f};
+    }
 
 	float rcs_unwind( const float applied, const float want, const float dt )
 	{
@@ -258,13 +262,15 @@ namespace
 
 	struct fov_scorer_t {
 		c_vector m_view_forward{ };
+        c_angle m_view{};
 		c_angle m_punch{ };
 		bool m_has_punch  = false;
 		float m_punch_tan = 0.f;
 
 		void setup( const c_angle& view_point, const c_angle& punch )
 		{
-			g_math.angle_vectors( view_point, &m_view_forward );
+			m_view=view_point;
+            g_math.angle_vectors( view_point, &m_view_forward );
 
 			m_punch     = punch;
 			m_has_punch = punch.m_x != 0.f || punch.m_y != 0.f || punch.m_z != 0.f;
@@ -600,6 +606,7 @@ namespace
 		n_lagcomp::impl_t::record_t* m_record = nullptr;
 		int m_hitbox                          = hitbox_head;
 		c_vector m_position{ };
+        float m_fov=180.f;
 	};
 
 	struct scan_t {
@@ -612,147 +619,66 @@ namespace
 		int m_only          = 0;
 		int m_prefer_entity = 0;
 		int m_prefer_hitbox = -1;
+        bool m_sticky=false;
 	};
 
-	target_t scan_targets( const scan_t& scan )
-	{
-		target_t best{ };
-		const float cosine_limit = fov_scorer_t::cosine_of( scan.m_fov );
-		float best_cosine        = cosine_limit;
-
-		g_dbg_need = cosine_limit;
-
-		const auto eye_position = g_ctx.m_local->get_eye_position( false );
-
-		shortlist_t shortlist{ };
-		shortlist_t::entry_t ranked[ shortlist_t::k_max_entries ]{ };
-
-		g_entity_cache.enumerate( e_enumeration_type::type_players, [ & ]( c_base_entity* entity ) {
-			if ( scan.m_only && entity && entity->get_index( ) != scan.m_only )
-				return;
-
-			g_dbg_players++;
-
-			if ( !entity || !entity->is_valid_aim_target( ) || !player_list_aim_allowed( entity->get_index( ) ) )
-				return;
-
-			g_dbg_valid++;
-
-			if ( entity->has_immunity( ) ) {
-				g_dbg_immune++;
-				return;
-			}
-
-			const auto record_list = scan.m_records ? g_lagcomp.m_records[ entity->get_index( ) ] : nullptr;
-			const int record_count = record_list ? g_ctx.m_max_allocations : 0;
-
-			hitbox_resolver_t resolver{ };
-			bool resolver_ready = false;
-
-			shortlist.clear( );
-
-			for ( int i = scan.m_live ? -1 : 0; i < record_count; i++ ) {
-				auto* record = i < 0 ? nullptr : &record_list[ i ];
-
-				/* fresh on THIS cmd's clock ( m_valid is a frame stale ). rejected record = rewound to window centre = miss */
-				if ( record && !g_lagcomp.usable( entity, record->m_sim_time ) )
-					continue;
-
-				auto* matrix = record ? record->m_matrix : live_bones( entity );
-				if ( !matrix ) {
-					g_dbg_nobones++;
-					continue;
-				}
-
-				const float required = best_cosine;
-
-				const c_vector body_origin = record ? record->m_vec_origin : entity->get_abs_origin( );
-				const float body_cosine    = best_possible_cosine( scan.m_scorer, eye_position, body_origin );
-
-				if ( body_cosine > g_dbg_best )
-					g_dbg_best = body_cosine;
-
-				if ( body_cosine <= required )
-					continue;
-
-				if ( !resolver_ready ) {
-					if ( !resolver.setup( entity ) )
-						return;
-
-					resolver_ready = true;
-				}
-
-				int slot = 0;
-				for ( const int hitbox : scan.m_hitboxes ) {
-					const auto position = resolver.position( hitbox, matrix );
-
-					/* point must sit on the body it claims. the render bone cache only rebuilds when the model draws, so an
-					   enemy off screen / culled keeps bones where it WAS = aim + shot at empty air */
-					if ( !on_body( position, body_origin ) ) {
-						log_void( entity, record != nullptr, hitbox, position, body_origin );
-						slot++;
-						continue;
-					}
-
-					if ( const float cosine = scan.m_scorer.cosine( eye_position, position ); cosine > required )
-						shortlist.add( slot, cosine, record, position, hitbox );
-
-					slot++;
-				}
-			}
-
-			const int ranked_count = shortlist.sorted( ranked );
-
-			/* best cosine past the gate ranks the entity. wide cone: of its top candidates, aim at the one whose cone lands most */
-			const bool spread    = scan.m_cone.wide( );
-			const bool preferred = entity->get_index( ) == scan.m_prefer_entity;
-
-			capsules_t body{ };
-			int first = -1, pick = -1;
-			float pick_score = -1.f, pick_hc = 1.f;
-
-			for ( int i = 0; i < ranked_count; i++ ) {
-				const auto& candidate = ranked[ i ];
-
-				if ( first < 0 ? candidate.m_cosine <= best_cosine : ( !spread || i >= k_hc_candidates ) )
-					break;
-
-				float hc = 1.f, score = 1.f;
-				if ( spread ) {
-					body.build( resolver, candidate.m_record ? candidate.m_record->m_matrix : live_bones( entity ) );
-					hc    = hit_chance( body, eye_position, candidate.m_position, scan.m_cone );
-					score = hc + ( i == 0 || ( preferred && candidate.m_hitbox == scan.m_prefer_hitbox ) ? k_hc_keep : 0.f );
-
-					if ( first >= 0 && score <= pick_score )
-						continue;
-				}
-
-				const auto box = resolver.m_set ? resolver.m_set->get_hitbox( candidate.m_hitbox ) : nullptr;
-
-				if ( !passes_gate( entity, candidate.m_position, eye_position, candidate.m_record != nullptr, box ? box->m_group : hitgroup_generic ) ) {
-					g_dbg_gated++;
-					continue;
-				}
-
-				if ( first < 0 )
-					first = i;
-
-				pick       = i;
-				pick_score = score;
-				pick_hc    = hc;
-			}
-
-			if ( first >= 0 ) {
-				const auto& chosen = ranked[ pick ];
-
-				best_cosine = ranked[ first ].m_cosine;
-				best        = { entity, chosen.m_record, chosen.m_hitbox, chosen.m_position };
-				g_dbg_hc    = pick_hc;
-			}
-		} );
-
-		return best;
-	}
+    target_t scan_targets(const scan_t& scan) {
+        target_t best{};best.m_fov=scan.m_fov;
+        const auto eye=g_ctx.m_local->get_eye_position(false);
+        const auto expected=g_ctx.m_local->get_origin()+g_ctx.m_local->get_view_offset();
+        if(!eye.is_valid()||eye.dist_to_squared(expected)>128.f*128.f)return best;
+        const auto punch=g_ctx.m_local->get_punch()*recoil_scale();
+        // Lumia enumerates actual client slots, with a fresh native pose for
+        // each live target; candidate ranking is exact angular FOV.
+        for(int index=1;index<=std::min(64,g_interfaces.m_global_vars_base->m_max_clients);++index){
+            if(scan.m_only&&index!=scan.m_only)continue;
+            auto* entity=g_interfaces.m_client_entity_list->get<c_base_entity>(index);++g_dbg_players;
+            if(!entity||!entity->is_valid_aim_target()||!player_list_aim_allowed(index))continue;
+            ++g_dbg_valid;if(entity->has_immunity()){++g_dbg_immune;continue;}
+            hitbox_resolver_t resolver{};if(!resolver.setup(entity))continue;
+            matrix3x4_t live[128]{};
+            const bool live_ready=scan.m_live&&lumia_live_bones(entity,live);
+            if(scan.m_live&&!live_ready)++g_dbg_nobones;
+            auto* records=scan.m_records?g_lagcomp.m_records[index]:nullptr;
+            const int count=records?g_ctx.m_max_allocations:0;
+            target_t entity_best{};entity_best.m_fov=scan.m_fov;
+            for(int pose=live_ready?-1:0;pose<count;++pose){
+                auto* record=pose<0?nullptr:&records[pose];
+                if(record&&!g_lagcomp.usable(entity,record->m_sim_time))continue;
+                auto* matrix=record?record->m_matrix:live;
+                const auto origin=record?record->m_vec_origin:entity->get_origin();
+                auto consider=[&](int hitbox,target_t& pick){
+                    if(hitbox<0||hitbox>=resolver.m_set->m_hit_boxes)return;
+                    const auto* box=resolver.m_set->get_hitbox(hitbox);
+                    if(!box||box->m_bone<0||box->m_bone>=128)return;
+                    const auto position=resolver.position(hitbox,matrix);
+                    if(position.is_zero()||!position.is_valid()||position.dist_to_squared(origin)>160.f*160.f)return;
+                    auto angle=g_math.calculate_angle(eye,position);angle-=punch;
+                    const float fov=n_lumia_aim::calculate_fov(scan.m_scorer.m_view,angle);
+                    if(!std::isfinite(fov)||fov>scan.m_fov||(pick.m_entity&&fov>=pick.m_fov))return;
+                    bool valid=false;
+                    if(record)valid=passes_gate(entity,position,eye,true,box->m_group);
+                    else{
+                        fire_bullet_data_t bullet{};const float damage=g_auto_wall.get_damage(position,&bullet);
+                        const bool wall=bullet.m_penetrate_count<4;
+                        const bool aw=GET_VARIABLE(g_variables.m_aimbot_autowall,bool);
+                        valid=std::isfinite(damage)&&damage>=float(aw?GET_VARIABLE(g_variables.m_aimbot_min_damage,int):1)&&
+                            bullet.m_enter_trace.m_hit_entity==entity&&(!wall||aw);
+                    }
+                    if(!valid){++g_dbg_gated;return;}
+                    pick={entity,record,hitbox,position,fov};
+                };
+                if(scan.m_sticky&&index==scan.m_prefer_entity&&scan.m_prefer_hitbox>=0){
+                    bool enabled=false;for(int box:scan.m_hitboxes)enabled|=box==scan.m_prefer_hitbox;
+                    target_t preferred{};if(enabled)consider(scan.m_prefer_hitbox,preferred);
+                    if(preferred.m_entity)return preferred;
+                }
+                for(int hitbox:scan.m_hitboxes)consider(hitbox,entity_best);
+            }
+            if(entity_best.m_entity&&(!best.m_entity||entity_best.m_fov<best.m_fov))best=entity_best;
+        }
+        return best;
+    }
 
 	float ray_depth( const hitbox_resolver_t& resolver, matrix3x4_t* matrix, const c_vector& eye, const c_vector& dir, int& hitbox )
 	{
@@ -792,6 +718,7 @@ float n_aimbot::impl_t::active_fov( )
 
 void n_aimbot::impl_t::on_level_init( )
 {
+    s_lumia_smoothing={};m_lock_index=0;m_lock_handle=0;m_cam_stamp=0.f;
 	m_ns_sent_on   = false;
 	m_ns_last_send = 0.f;
 
@@ -945,32 +872,16 @@ void n_aimbot::impl_t::nospread_frame_stage( const int stage )
 		m_ns_window_end = 0.f;
 }
 
-void n_aimbot::impl_t::camlock_frame( const int stage )
-{
-	if ( stage != e_client_frame_stage::render_start || m_cam_stamp == 0.f || m_cam_smooth <= 1.f )
-		return;
-
-	/* create_move stopped ticking ( pause, menu, disconnect ): no fresh aim, drop the glide */
-	const auto globals = g_interfaces.m_global_vars_base;
-	if ( globals->m_real_time - m_cam_stamp > 0.1f || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) ) {
-		m_cam_stamp = 0.f;
-		return;
-	}
-
-	c_angle camera{ };
-	g_interfaces.m_engine_client->get_view_angles( camera );
-
-	c_angle delta = c_angle( m_cam_pitch, m_cam_yaw, camera.m_z ) - camera;
-	delta.normalize( );
-
-	/* same rate as the old per tick step ( 1 - ( 1 - 1/s )^( interval * 64 ) ), just split over frames */
-	const float frame_time = std::clamp( globals->m_frame_time, 0.f, 0.1f );
-	camera += delta * ( 1.f - std::pow( 1.f - 1.f / m_cam_smooth, frame_time * 64.f ) );
-	camera.normalize( );
-	camera.clamp( );
-
-	if ( std::isfinite( camera.m_x ) && std::isfinite( camera.m_y ) )
-		g_interfaces.m_engine_client->set_view_angles( camera );
+void n_aimbot::impl_t::camlock_frame(const int stage) {
+    if(stage!=e_client_frame_stage::render_start||m_cam_stamp==0.f||m_cam_smooth<=1.f)return;
+    const auto* globals=g_interfaces.m_global_vars_base;
+    if(!globals||globals->m_real_time-m_cam_stamp>.1f||!g_ctx.m_local||!g_ctx.m_local->is_alive()||!can_aimbot()){
+        m_cam_stamp=0.f;return;
+    }
+    if(!std::isfinite(globals->m_frame_time)||globals->m_frame_time<=0.f)return;
+    c_angle camera{};g_interfaces.m_engine_client->get_view_angles(camera);
+    camera=n_lumia_aim::smooth_angle(camera,{m_cam_pitch,m_cam_yaw,camera.m_z},n_lumia_aim::smoothing_percent(m_cam_smooth),globals->m_frame_time);
+    if(std::isfinite(camera.m_x)&&std::isfinite(camera.m_y))g_interfaces.m_engine_client->set_view_angles(camera);
 }
 
 bool n_aimbot::impl_t::can_aimbot( )
@@ -979,8 +890,10 @@ bool n_aimbot::impl_t::can_aimbot( )
 		return false;
 
 	auto& key = GET_VARIABLE( g_variables.m_aimbot_key, key_bind_t );
-	if ( GET_VARIABLE( g_variables.m_aimbot_on_key, bool ) && key.m_key_style != 0 )
+	if ( GET_VARIABLE( g_variables.m_aimbot_on_key, bool ) && key.m_key_style != 0 ) {
+        if(key.m_key_style==1&&!(GetAsyncKeyState(key.m_key)&0x8000))return false;
 		return g_input.check_input( &key );
+    }
 
 	return firing_weapon( ) != nullptr;
 }
@@ -1006,42 +919,22 @@ bool n_aimbot::impl_t::shot_leaves( )
 
 void n_aimbot::impl_t::on_create_move_post( )
 {
-	m_cam_stamp = 0.f;
-
-	if ( !g_ctx.m_local || !g_ctx.m_cmd || !g_ctx.m_local->is_alive( ) )
-		return;
-
-	const bool camlock   = GET_VARIABLE( g_variables.m_aimbot_camlock, bool );
-	const bool silent    = GET_VARIABLE( g_variables.m_aimbot_silent, bool ) && !camlock;
-	const bool trigger   = firing_weapon( ) != nullptr;
-	const float interval = g_interfaces.m_global_vars_base->m_interval_per_tick;
-	const auto weapon    = g_interfaces.m_client_entity_list->get< c_base_entity >( g_ctx.m_local->get_active_weapon_handle( ) );
-	const bool can_fire  = weapon && g_ctx.m_local->can_shoot( weapon );
-
-	if ( !trigger )
-		m_visible_first = false;
-
-	const bool first_bullet = !silent && !camlock && can_fire && trigger && !m_visible_first;
-	if ( first_bullet )
-		m_visible_first = true;
-
-	c_angle camera{ };
-	g_interfaces.m_engine_client->get_view_angles( camera );
-
-	aim_settings_t settings{ };
-
-	const bool allowed = can_aimbot( );
-
-	/* no switch: the lock holds its player while he is a valid target ( out of fov = no aim, not another player ) */
-	const auto held = [ & ]( ) {
-		if ( !allowed || !m_lock_index || !GET_VARIABLE( g_variables.m_aimbot_no_switch, bool ) )
-			return false;
-
-		const auto entity = g_interfaces.m_client_entity_list->get< c_base_entity >( m_lock_index );
-		return entity && entity->is_valid_aim_target( ) && !entity->has_immunity( );
-	};
-	const bool hold = held( );
-
+    m_cam_stamp=0.f;const auto previous=s_lumia_smoothing;s_lumia_smoothing={};
+    if(!g_ctx.m_local||!g_ctx.m_cmd||!g_ctx.m_local->is_alive())return;
+    const bool camlock=GET_VARIABLE(g_variables.m_aimbot_camlock,bool);
+    const bool silent=GET_VARIABLE(g_variables.m_aimbot_silent,bool)&&!camlock;
+    const bool trigger=firing_weapon()!=nullptr;
+    const auto* globals=g_interfaces.m_global_vars_base;
+    const float interval=globals?globals->m_interval_per_tick:1.f/64.f;
+    auto* weapon=g_interfaces.m_client_entity_list->get<c_base_entity>(g_ctx.m_local->get_active_weapon_handle());
+    const bool can_fire=weapon&&g_ctx.m_local->can_shoot(weapon);
+    const bool consecutive=weapon&&previous.weapon==weapon->get_ref_ehandle()&&previous.command+1==g_ctx.m_cmd->m_command_number;
+    c_angle camera{};g_interfaces.m_engine_client->get_view_angles(camera);
+    aim_settings_t settings{};const bool allowed=can_aimbot();
+    auto* locked=m_lock_index?g_interfaces.m_client_entity_list->get<c_base_entity>(m_lock_index):nullptr;
+    if(locked&&locked->get_ref_ehandle()!=m_lock_handle){m_lock_index=0;locked=nullptr;}
+    const bool hold=allowed&&locked&&GET_VARIABLE(g_variables.m_aimbot_no_switch,bool)&&locked->is_valid_aim_target()&&
+        !locked->has_immunity()&&player_list_aim_allowed(m_lock_index);
 	const auto find_target = [ & ]( ) -> target_t {
 		if ( !allowed ) {
 			dbg_gate( "off" );
@@ -1061,24 +954,17 @@ void n_aimbot::impl_t::on_create_move_post( )
 			return { };
 		}
 
-		if ( silent && !can_fire ) {
-			const auto data = g_interfaces.m_weapon_system->get_weapon_data( weapon->get_item_definition_index( ) );
-
-			if ( !data || !data->m_full_auto || m_rcs_shots <= 0 || !trigger ) {
-				dbg_gate( "cantshoot" );
-				return { };
-			}
-		}
 
 		const bool backtrack = GET_VARIABLE( g_variables.m_backtrack_enable, bool );
 		const bool live_ok   = !backtrack || g_lagcomp.live_accepted( );
 
 		scan_t scan{ };
-		scan.m_scorer.setup( silent ? g_ctx.old_view_point : camera, rcs_offset( m_rcs_stale_punch ? 0.f : settings.m_rcs, m_rcs_shots ) );
+		scan.m_scorer.setup( silent ? g_ctx.old_view_point : camera, g_ctx.m_local->get_punch()*recoil_scale() );
 		scan.m_fov           = settings.m_fov;
-		scan.m_cone          = weapon_cone( weapon );
+
 		scan.m_prefer_entity = m_lock_index;
-		scan.m_prefer_hitbox = m_target_hitbox;
+		scan.m_prefer_hitbox = consecutive?previous.hitbox:-1;
+        scan.m_sticky=settings.m_smooth>1.f;
 		scan.m_live          = live_ok;
 		scan.m_records = backtrack && ( GET_VARIABLE( g_variables.m_aimbot_aim_at_backtrack, bool ) || !live_ok );
 
@@ -1097,7 +983,7 @@ void n_aimbot::impl_t::on_create_move_post( )
 
 		const auto scan_all = [ & ]( ) {
 			target_t found{ };
-			if ( m_lock_index ) {
+			if ( m_lock_index && (hold||scan.m_sticky) ) {
 				scan.m_only = m_lock_index;
 				found       = scan_targets( scan );
 				scan.m_only = 0;
@@ -1130,157 +1016,67 @@ void n_aimbot::impl_t::on_create_move_post( )
 		return found;
 	};
 
-	const target_t target = find_target( );
-	const bool aiming     = target.m_entity != nullptr;
-
-	if ( !aiming ) {
-		if ( !hold )
-			m_lock_index = 0;
-	} else {
-		if ( const int index = target.m_entity->get_index( ); index != m_lock_index ) {
-			botox_dbg_log( "AIM: lock %d -> %d hb=%d silent=%d fire=%d rec=%d", m_lock_index, index, target.m_hitbox, ( int )silent,
-			               ( int )trigger, target.m_record ? 1 : 0 );
-			m_lock_index = index;
-		}
-
-		m_target_hitbox = target.m_hitbox;
-	}
-
-	m_rcs_aim_burst |= aiming;
-
-	const float strength = m_rcs_stale_punch ? 0.f : ( aiming ? settings.m_rcs : rcs_strength( true ) );
-	const c_angle want   = rcs_offset( strength, m_rcs_shots );
-
-	if ( const bool comp = !want.is_zero( ); comp != m_rcs_comping ) {
-		m_rcs_comping = comp;
-
-		if ( comp )
-			botox_dbg_log( "RCS: on str=%.0f silent=%d aim=%d shots=%d scale=%.2f want=%.2f/%.2f", strength, ( int )silent, ( int )aiming,
-			               m_rcs_shots, recoil_scale( ), want.m_x, want.m_y );
-	}
-
-	/* silent: bullet = view + punch * weapon_recoil_scale ( cs_player_shared.cpp:3010 ), comp it all, the camera never shows it */
-	c_angle aim{ };
-	if ( aiming ) {
-		aim = g_math.calculate_angle( g_ctx.m_local->get_eye_position( false ), target.m_position );
-		aim -= silent ? g_ctx.m_local->get_punch( ) * recoil_scale( ) : want;
-		aim.normalize( );
-	}
-
-	const auto publish = [ & ]( c_angle shot ) {
-		shot.normalize( );
-		shot.clamp( );
-
-		/* NaN survives normalize / clamp and would ride the cmd out */
-		if ( !std::isfinite( shot.m_x ) || !std::isfinite( shot.m_y ) )
-			return false;
-
-		m_shot_pitch      = shot.m_x;
-		m_shot_yaw        = shot.m_y;
-		m_shot_view_valid = true;
-		m_shot_is_aim     = aiming;
-		return true;
-	};
-
-	if ( silent ) {
-		m_rcs_applied_x = m_rcs_applied_y = 0.f;
-
-		if ( !aiming ) {
-			publish( g_ctx.old_view_point - want );
-			return;
-		}
-
-		/* no smoothing: the base is your mouse view every tick ( camera never moves ), a fraction would send every
-		   bullet a fixed part of the way = a miss */
-		if ( const float step = GET_VARIABLE( g_variables.m_aimbot_silent_step, float ); step > 0.f ) {
-			c_angle delta = aim - g_ctx.old_view_point;
-			delta.normalize( );
-			delta.m_x = std::clamp( delta.m_x, -step, step );
-			delta.m_y = std::clamp( delta.m_y, -step, step );
-			aim       = g_ctx.old_view_point + delta;
-		}
-
-		if ( publish( aim ) && can_fire && trigger )
-			g_lagcomp.commit_shot( target.m_record );
-
-		return;
-	}
-
-	if ( ( g_edgebug.m_found && GET_VARIABLE( g_variables.m_edgebug_mouse_lock, bool ) ) || g_edge_skip.lock_amount( ) > 0.f ) {
-		publish( g_ctx.old_view_point );
-		return;
-	}
-
-	/* camlock ( salvia FUN_1009d890 ): silent off, camera + bullets ride the target ( SetViewAngles( cmd view ) ). smoothed glide
-	   runs per frame ( camlock_frame ), the cmd takes the camera it reached. no smooth = snap here. no target = normal path */
-	if ( camlock && aiming ) {
-		if ( settings.m_smooth <= 1.f ) {
-			camera = aim;
-			camera.normalize( );
-			camera.clamp( );
-		}
-
-		if ( !std::isfinite( camera.m_x ) || !std::isfinite( camera.m_y ) )
-			return;
-
-		m_cam_pitch  = aim.m_x;
-		m_cam_yaw    = aim.m_y;
-		m_cam_smooth = settings.m_smooth;
-		m_cam_stamp  = ( std::max )( g_interfaces.m_global_vars_base->m_real_time, 1e-3f );
-
-		/* aim holds the full comp, lock end unwinds it from here */
-		m_rcs_applied_x = want.m_x;
-		m_rcs_applied_y = want.m_y;
-
-		g_interfaces.m_engine_client->set_view_angles( camera );
-		publish( camera );
-		return;
-	}
-
-	const c_angle start = camera;
-
-	/* rcs step: the camera carries `applied`, walked to `want`: growing exact ( bullets must land ), shrinking paced ( rcs_unwind ).
-	   only this step writes applied, so once the punch is gone the camera is back where the player put it */
-	const float next_x = rcs_unwind( m_rcs_applied_x, want.m_x, interval );
-	const float next_y = rcs_unwind( m_rcs_applied_y, want.m_y, interval );
-
-	camera.m_x -= next_x - m_rcs_applied_x;
-	camera.m_y -= next_y - m_rcs_applied_y;
-
-	m_rcs_applied_x = next_x;
-	m_rcs_applied_y = next_y;
-
-	if ( aiming ) {
-		c_angle delta = aim - camera;
-		delta.normalize( );
-
-		if ( !first_bullet && settings.m_smooth > 1.f )
-			delta = delta * ( 1.f / settings.m_smooth );
-
-		camera += delta;
-	}
-
-	camera.normalize( );
-	camera.clamp( );
-
-	if ( !std::isfinite( camera.m_x ) || !std::isfinite( camera.m_y ) )
-		return;
-
-	c_angle moved = camera - start;
-	moved.normalize( );
-
-	/* engine yaw runs unbounded ( ApplyMouse never wraps it ): normalize alone leaves float noise, not a turn */
-	if ( std::fabsf( moved.m_x ) > 1e-4f || std::fabsf( moved.m_y ) > 1e-4f ) {
-		g_interfaces.m_engine_client->set_view_angles( camera );
-
-		if ( std::fabsf( moved.m_x ) >= 2.f || std::fabsf( moved.m_y ) >= 2.f )
-			botox_dbg_log( "AIM: view %.2f/%.2f -> %.2f/%.2f aim=%d first=%d rec=%d want=%.2f/%.2f applied=%.2f/%.2f punch=%.2f/%.2f", start.m_x,
-			               start.m_y, camera.m_x, camera.m_y, ( int )aiming, ( int )first_bullet, target.m_record ? 1 : 0, want.m_x, want.m_y,
-			               m_rcs_applied_x, m_rcs_applied_y, g_ctx.m_local->get_punch( ).m_x, g_ctx.m_local->get_punch( ).m_y );
-	}
-
-	publish( aiming ? camera : g_ctx.old_view_point + moved );
+    target_t target=find_target();
+    // Lumia rechecks ownership after target/bone/visibility work.
+    if(target.m_entity&&!can_aimbot())target={};
+    const bool aiming=target.m_entity!=nullptr;
+    if(aiming){m_lock_index=target.m_entity->get_index();m_lock_handle=target.m_entity->get_ref_ehandle();m_target_hitbox=target.m_hitbox;}
+    else if(!hold){m_lock_index=0;m_lock_handle=0;}
+    m_rcs_aim_burst|=aiming;
+    const float strength=m_rcs_stale_punch?0.f:(aiming?settings.m_rcs:rcs_strength(true));
+    const auto want=rcs_offset(strength,m_rcs_shots);
+    auto publish=[&](c_angle shot){
+        shot.normalize();shot.clamp();if(!std::isfinite(shot.m_x)||!std::isfinite(shot.m_y))return false;
+        m_shot_pitch=shot.m_x;m_shot_yaw=shot.m_y;m_shot_view_valid=true;m_shot_is_aim=aiming;return true;
+    };
+    if((g_edgebug.m_found&&GET_VARIABLE(g_variables.m_edgebug_mouse_lock,bool))||g_edge_skip.lock_amount()>0.f){
+        publish(g_ctx.old_view_point);return;
+    }
+    if(!aiming){
+        if(silent){m_rcs_applied_x=m_rcs_applied_y=0.f;publish(g_ctx.old_view_point-want);return;}
+        // Preserve Botox's standalone RCS/burst-unwind feature. Aimed shots use
+        // Lumia's absolute recoil correction below, never this incremental step.
+        const auto start=camera;
+        const float x=rcs_unwind(m_rcs_applied_x,want.m_x,interval),y=rcs_unwind(m_rcs_applied_y,want.m_y,interval);
+        camera.m_x-=x-m_rcs_applied_x;camera.m_y-=y-m_rcs_applied_y;
+        m_rcs_applied_x=x;m_rcs_applied_y=y;camera.normalize();camera.clamp();
+        if(!std::isfinite(camera.m_x)||!std::isfinite(camera.m_y))return;
+        c_angle moved=camera-start;moved.normalize();
+        if(std::fabs(moved.m_x)>1e-4f||std::fabs(moved.m_y)>1e-4f)g_interfaces.m_engine_client->set_view_angles(camera);
+        publish(g_ctx.old_view_point+moved);return;
+    }
+    auto aim=g_math.calculate_angle(g_ctx.m_local->get_eye_position(false),target.m_position)-want;
+    if(!std::isfinite(aim.m_x)||!std::isfinite(aim.m_y))return;
+    aim.normalize();aim.clamp();
+    const auto input=silent?g_ctx.old_view_point:camera;auto from=input;
+    const bool same=consecutive&&previous.target==target.m_entity->get_ref_ehandle()&&previous.hitbox==target.m_hitbox;
+    if(silent&&same&&previous.silent){auto delta=input-previous.input;delta.normalize();from=previous.aim+delta;}
+    const int smoothing=n_lumia_aim::smoothing_percent(settings.m_smooth);
+    auto result=n_lumia_aim::smooth_angle(from,aim,smoothing,interval);
+    // Lumia settles on the actual selected native hitbox, then tracks target
+    // motion without repeatedly adding the acquisition delay.
+    bool settled=smoothing>0&&same&&previous.settled;
+    if(smoothing>0&&!settled&&!target.m_record){
+        c_vector direction{};g_math.angle_vectors(result+g_ctx.m_local->get_punch()*recoil_scale(),&direction);
+        trace_t trace{};const auto eye=g_ctx.m_local->get_eye_position(false);
+        g_interfaces.m_engine_trace->clip_ray_to_entity(ray_t(eye,eye+direction*8192.f),mask_shot,target.m_entity,&trace);
+        settled=trace.m_hit_entity==target.m_entity&&trace.m_hitbox==target.m_hitbox;
+    }
+    if(settled)result=aim;
+    if(silent){
+        const float step=GET_VARIABLE(g_variables.m_aimbot_silent_step,float);
+        if(step>0.f){auto delta=result-from;delta.normalize();delta.m_x=std::clamp(delta.m_x,-step,step);delta.m_y=std::clamp(delta.m_y,-step,step);result=from+delta;}
+        m_rcs_applied_x=m_rcs_applied_y=0.f;
+    }else{
+        m_rcs_applied_x=want.m_x;m_rcs_applied_y=want.m_y;
+        if(camlock){m_cam_pitch=aim.m_x;m_cam_yaw=aim.m_y;m_cam_smooth=settings.m_smooth;m_cam_stamp=std::max(globals->m_real_time,1e-3f);}
+        g_interfaces.m_engine_client->set_view_angles(result);
+    }
+    if(!publish(result))return;
+    s_lumia_smoothing={target.m_entity->get_ref_ehandle(),weapon->get_ref_ehandle(),g_ctx.m_cmd->m_command_number,target.m_hitbox,input,result,silent,settled};
+    if(silent&&can_fire&&trigger)g_lagcomp.commit_shot(target.m_record);
 }
+
 
 void n_aimbot::impl_t::run_backtrack( )
 {

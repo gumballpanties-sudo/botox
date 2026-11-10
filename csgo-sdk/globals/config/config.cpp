@@ -243,6 +243,7 @@ bool n_config::impl_t::load( std::string_view file_name, const bool visuals )
 		return false;
 	}
 
+	if(!visuals) GET_VARIABLE(g_variables.m_auto_align_type,int)=0;
 	try {
 		for ( const auto& variable : config ) {
 			const unsigned int index = this->get_variable_index( variable[ ( "name-id" ) ].get< unsigned int >( ) );

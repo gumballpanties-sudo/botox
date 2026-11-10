@@ -54,6 +54,7 @@
     <ClCompile Include="hacks\movement\points_ui.cpp" />
     <ClCompile Include="hacks\movement\pixel_finder.cpp" />
     <ClCompile Include="hacks\movement\auto_align.cpp" />
+    <ClCompile Include="hacks\movement\auto_align_lumia.cpp" />
     <ClCompile Include="hacks\movement\air_stuck.cpp" />
     <ClCompile Include="hacks\movement\fireman.cpp" />
     <ClCompile Include="hacks\misc\hitmarker.cpp" />

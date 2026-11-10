@@ -350,6 +350,7 @@ void n_movement::impl_t::auto_align_sent( const c_user_cmd* cmd )
 
 void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 {
+    if(GET_VARIABLE(g_variables.m_auto_align_type,int)==1){wall_detected=false;auto_align_lumia(cmd);return;}
 	wall_detected = false;
 
 	if ( !g_ctx.m_local || !g_ctx.m_local->is_alive( ) )
@@ -982,4 +983,11 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 			cmd->m_side_move    = -inward_side;
 		}
 	}
+}
+
+bool auto_align_lumia_pixel_jump(c_user_cmd* cmd,const trace_t& wall,const c_vector& origin,const c_vector& mins,const c_vector& maxs){
+    if(!GET_VARIABLE(g_variables.m_auto_align_pixel_jump,bool)||g_prediction.is_target_predict_z_velocity(g_prediction.backup_data.m_velocity.m_z))return false;
+    float gap=0,top=0;int ticks=-1;
+    if(!aa_pj_lip(wall,origin,mins,maxs,gap,top,ticks))return false;
+    n_route::creep_wish(cmd,wall.m_plane.m_normal,std::max(gap,0.f));return true;
 }

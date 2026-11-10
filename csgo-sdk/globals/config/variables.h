@@ -2008,6 +2008,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_debugger_visual, false );
 		ADD_VARIABLE( bool, m_disable_interp, false );
 #endif
+        ADD_VARIABLE( int, m_auto_align_type, 0 ); // 0 Botox, 1 Lumia.
 	};
 };
 

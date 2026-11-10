@@ -1,0 +1,28 @@
+{
+  "lumia_smooth_body": "8dd39693d76888e45e7012fb815d9dbe59d7f0cdb4db327f7014f58ecddf9d94",
+  "lumia_rcs_body": "fdf668432c8e5909c8f957b53d32d2b6849818363309347316471b93707657c8",
+  "lumia_align_search_body": "4dfa83852d438a428ec161923b9b62e6ff88b3f73052346fec7c653091a6ba5d",
+  "botox_base": "99e3d14b21fe44c7cdef2a78d63a6dc42b6b51fb",
+  "lumia_source_files": [
+    {
+      "path": "hacks\\aimbot\\aimbot.cpp",
+      "sha256": "64be668a5fbe25e0798cdc16e7bf21a2d2232a8eb242cc79a0990677a7b31dae"
+    },
+    {
+      "path": "hacks\\aimbot\\native_hitboxes.h",
+      "sha256": "1b6545263cfd199f927c429f985a6da9d31b2116e8c63e87489ce684d757ff00"
+    },
+    {
+      "path": "hacks\\movement\\movement.cpp",
+      "sha256": "cf5891327ae40afe1341a550896c3270e514259e18fcede6b0d5f6cd5d16af4e"
+    },
+    {
+      "path": "hacks\\movement\\pixel_finder_bounce_state.h",
+      "sha256": "3d78a98fb0e91bf15d9dbf04b788089f6bc4bec2bf2ce9cdb45d234cd206978f"
+    },
+    {
+      "path": "hacks\\prediction\\custom\\native_fields.h",
+      "sha256": "9c5b84432477e9b4bfa228a4532c715a59e82649db12232199d828a90e6bab76"
+    }
+  ]
+}

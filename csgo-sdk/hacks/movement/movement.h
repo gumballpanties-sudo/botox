@@ -945,6 +945,7 @@ namespace n_movement
 		void pixel_surf( float target_ps_velocity );
 		void detect_edgebug( c_user_cmd* cmd );
 		void auto_align( c_user_cmd* cmd );
+        void auto_align_lumia( c_user_cmd* cmd );
 		void AutoStrafe( c_user_cmd* cmd );
 		void strafe_optimizer( c_user_cmd* cmd );
 		void strafe_to_yaw( c_user_cmd* cmd, c_angle& angle, const float yaw );

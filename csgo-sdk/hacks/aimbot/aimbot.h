@@ -64,7 +64,7 @@ namespace n_aimbot
 
 		int m_target_hitbox  = 0;
 		int m_lock_index     = 0;
-		bool m_visible_first = false;
+		unsigned int m_lock_handle=0;
 
 		/* camlock aim from the last tick ( rcs comp in ), stamp = real_time, 0 = no glide */
 		float m_cam_pitch = 0.f, m_cam_yaw = 0.f, m_cam_smooth = 1.f, m_cam_stamp = 0.f;

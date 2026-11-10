@@ -839,7 +839,10 @@ void n_menu::impl_t::tab_movement( )
 			if ( GET_VARIABLE( g_variables.m_auto_align, bool ) ) {
 				ImGui::OptionPopup(
 					"auto align settings",
-					[ & ]( ) { ImGui::Checkbox( "pixel jumps over pixelsurfs", &GET_VARIABLE( g_variables.m_auto_align_pixel_jump, bool ) ); },
+					[ & ]( ) {
+                        ImGui::Combo("type",&GET_VARIABLE(g_variables.m_auto_align_type,int),"botox\0lumia\0");
+                        ImGui::Checkbox( "pixel jumps over pixelsurfs", &GET_VARIABLE( g_variables.m_auto_align_pixel_jump, bool ) );
+                    },
 					ImVec2( 220.f, -1.f ) );
 			}
 
