@@ -121,6 +121,7 @@ enum e_keybind_indicators {
 	key_zb,
 	key_az,
 	key_esurf,
+	key_ec,
 	key_max
 };
 
@@ -153,6 +154,7 @@ enum e_keybind_labels {
 	label_az,
 	label_esurf,
 	label_pjast,
+	label_ec,
 	label_max
 };
 
@@ -165,6 +167,7 @@ inline constexpr const char* k_keybind_labels[ label_max ][ 2 ] = {
 	{ "freelook climb", "lfc" }, { "fast ladder", "fl" },     { "one hop", "oh" },        { "auto crouch", "ac" },
 	{ "auto bounce", "ab" },   { "tung surf", "tung" },       { "edge skip", "es" },      { "half sideways", "hsw" },
 	{ "zeus bug", "zb" },      { "air freeze", "az" },        { "edge surf", "esurf" },   { "pj assist", "pjast" },
+	{ "edge catch", "ec" },
 };
 
 enum e_indicator_style {
@@ -713,6 +716,10 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_custom_blood_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( bool, m_custom_precipitation, false );
 		ADD_VARIABLE( c_color, m_custom_precipitation_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( bool, m_footstep_fx, false );
+		ADD_VARIABLE( int, m_footstep_fx_type, 0 );
+		ADD_VARIABLE( bool, m_footstep_fx_custom_color, false );
+		ADD_VARIABLE( c_color, m_footstep_fx_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( bool, m_fullbright, false );
 		ADD_VARIABLE( bool, m_flip_world, false );
 		ADD_VARIABLE( bool, m_flip_world_mirror_hand, false );
@@ -1192,6 +1199,11 @@ namespace n_variables
 		ADD_VARIABLE( std::string, m_edge_skip_sound_custom, "" );
 		ADD_VARIABLE( float, m_edge_skip_sound_volume, 1.f );
 		ADD_VARIABLE( bool, m_edge_skip_visualize, false );
+		ADD_VARIABLE( bool, m_edge_catch, false );
+		ADD_VARIABLE( key_bind_t, m_edge_catch_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( float, m_edge_catch_predict_time, 0.3f );
+		ADD_VARIABLE( float, m_edge_catch_reach, 8.f );
+		ADD_VARIABLE( bool, m_edge_catch_visualize, false );
 		ADD_VARIABLE( int, m_edge_bug_sound, 0 );
 		ADD_VARIABLE( std::string, m_edge_bug_sound_custom, "" );
 		ADD_VARIABLE( float, m_edge_bug_sound_volume, 1.f );

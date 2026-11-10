@@ -16,6 +16,7 @@
 #include "../../hacks/skins/skins.h"
 #include "../../utilities/console/console.h"
 
+#include <algorithm>
 #include <cstring>
 
 bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, game_event_t* game_event )
@@ -76,6 +77,13 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 			g_bullets.on_bullet_impact( game_event );
 			g_players.god_on_impact( g_interfaces.m_engine_client->get_player_for_user_id( game_event->get_int( "userid" ) ),
 			                         c_vector( game_event->get_float( "x" ), game_event->get_float( "y" ), game_event->get_float( "z" ) ) );
+			break;
+		case HASH_BT( "player_footstep" ):
+			if ( GET_VARIABLE( g_variables.m_footstep_fx, bool ) && g_ctx.m_local &&
+			     g_interfaces.m_engine_client->get_player_for_user_id( game_event->get_int( "userid" ) ) ==
+			         g_interfaces.m_engine_client->get_local_player( ) )
+				dispatch_particle( k_footstep_particles[ std::clamp( GET_VARIABLE( g_variables.m_footstep_fx_type, int ), 0, 6 ) ],
+				                   g_ctx.m_local->get_abs_origin( ), c_angle( ) );
 			break;
 		case HASH_BT( "round_mvp" ):
 			g_scaleform.m_pending_mvp = true;

@@ -12,6 +12,7 @@
 #include "../../globals/includes/includes.h"
 #include "../movement/edgebug.h"
 #include "../movement/edge_skip.h"
+#include "../movement/edge_catch.h"
 #include "../movement/movement.h"
 #include "../misc/misc.h"
 #include "../aimbot/aimbot.h"
@@ -1199,6 +1200,7 @@ static int part_fired( const int id )
 	case label_wc:   return trick( e_points_trick::wall_climb );
 	case label_fr:   return trick( e_points_trick::fireman );
 	case label_es:   return g_es_fired;
+	case label_ec:   return g_ec_fired;
 	default:         return -1;
 	}
 }
@@ -1991,6 +1993,10 @@ void n_indicators::impl_t::keybind_indicators( )
 	if ( GET_VARIABLE( g_variables.m_edgebug_edge_skip, bool ) && key_indicators.size( ) > e_keybind_indicators::key_es &&
 	     key_indicators[ e_keybind_indicators::key_es ] )
 		add_hit( label_es, g_edge_skip.active( ), g_input.check_input( &GET_VARIABLE( g_variables.m_edge_skip_key, key_bind_t ) ), true );
+
+	if ( GET_VARIABLE( g_variables.m_edge_catch, bool ) && key_indicators.size( ) > e_keybind_indicators::key_ec &&
+	     key_indicators[ e_keybind_indicators::key_ec ] )
+		add_hit( label_ec, g_edge_catch.active( ), g_input.check_input( &GET_VARIABLE( g_variables.m_edge_catch_key, key_bind_t ) ), true );
 
 	if ( GET_VARIABLE( g_variables.m_hsw, bool ) && key_indicators.size( ) > e_keybind_indicators::key_hsw &&
 	     key_indicators[ e_keybind_indicators::key_hsw ] ) {

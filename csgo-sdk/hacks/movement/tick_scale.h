@@ -63,7 +63,7 @@ namespace n_tick
 
 	constexpr double k_cmd_total_s = 0.6 / 128.0;
 
-	enum e_search : int { search_none = -1, search_eb, search_tb, search_as, search_aa, search_wc, search_pf, search_ab, search_ba, search_psa, search_es, search_tung, search_pja };
+	enum e_search : int { search_none = -1, search_eb, search_tb, search_as, search_aa, search_wc, search_pf, search_ab, search_ba, search_psa, search_es, search_tung, search_pja, search_ec };
 
 	inline unsigned s_hungry_prev = 0u, s_hungry_now = 0u, s_started_now = 0u;
 	inline unsigned s_fair_cuts = 0u;

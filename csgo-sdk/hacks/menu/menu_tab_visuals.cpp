@@ -863,6 +863,18 @@ void n_menu::impl_t::tab_visuals( )
 				                   color_picker_alpha_flags );
 			}
 
+			ImGui::Checkbox( "footstep fx", &GET_VARIABLE( g_variables.m_footstep_fx, bool ) );
+			if ( GET_VARIABLE( g_variables.m_footstep_fx, bool ) ) {
+				ImGui::Combo( "type##footstep fx", &GET_VARIABLE( g_variables.m_footstep_fx_type, int ),
+				              "blood\0feathers\0fireball\0slime\0confetti\0splash\0ring trail\0" );
+				ImGui::Checkbox( "custom color##footstep fx", &GET_VARIABLE( g_variables.m_footstep_fx_custom_color, bool ) );
+				if ( GET_VARIABLE( g_variables.m_footstep_fx_custom_color, bool ) ) {
+					ImGui::SameLine( );
+					ImGui::ColorEdit4( "##footstep fx color picker", &GET_VARIABLE( g_variables.m_footstep_fx_color, c_color ),
+					                   color_picker_alpha_flags );
+				}
+			}
+
 			modulation_row( "world modulation", g_variables.m_world_modulation, g_variables.m_world_modulation_color,
 			                g_variables.m_world_modulation_brightness );
 			modulation_row( "prop modulation", g_variables.m_prop_modulation, g_variables.m_prop_modulation_color,

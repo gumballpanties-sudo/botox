@@ -2,7 +2,9 @@
 
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
+#include "../../hacks/misc/misc.h"
 
+#include <algorithm>
 #include <ranges>
 
 #define PARTICLE_ATTRIBUTE_TINT_RGB 6
@@ -65,8 +67,9 @@ void __fastcall n_detoured_functions::particle_collection_simulate( void* ecx, v
 	const bool want_smoke         = GET_VARIABLE( g_variables.m_custom_smoke, bool );
 	const bool want_molotov       = GET_VARIABLE( g_variables.m_custom_molotov, bool );
 	const bool want_blood         = GET_VARIABLE( g_variables.m_custom_blood, bool );
+	const bool want_footstep      = GET_VARIABLE( g_variables.m_footstep_fx, bool ) && GET_VARIABLE( g_variables.m_footstep_fx_custom_color, bool );
 
-	if ( !want_precipitation && !want_smoke && !want_molotov && !want_blood )
+	if ( !want_precipitation && !want_smoke && !want_molotov && !want_blood && !want_footstep )
 		return;
 
 	const auto particle_collection = reinterpret_cast< c_particle_collection* >( ecx );
@@ -101,4 +104,7 @@ void __fastcall n_detoured_functions::particle_collection_simulate( void* ecx, v
 	if ( want_blood && ( hash == HASH_BT( "blood_impact_light" ) || hash == HASH_BT( "blood_impact_medium" ) ||
 	                     hash == HASH_BT( "blood_impact_heavy" ) || hash == HASH_BT( "blood_impact_light_headshot" ) ) )
 		tint_all( GET_VARIABLE( g_variables.m_custom_blood_color, c_color ) );
+
+	if ( want_footstep && hash == HASH_RT( k_footstep_particles[ std::clamp( GET_VARIABLE( g_variables.m_footstep_fx_type, int ), 0, 6 ) ] ) )
+		tint_all( GET_VARIABLE( g_variables.m_footstep_fx_color, c_color ) );
 }

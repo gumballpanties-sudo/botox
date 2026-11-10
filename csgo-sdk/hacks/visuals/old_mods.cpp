@@ -17,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -273,7 +274,35 @@ namespace
 	/* server indexes come from the SERVER table: the agent changer adds client-only precache slots, so a client index can name
 	   another model there ( missed holder = freed studiohdr in a bot's next SetModel ). match the shared model_t through
 	   VModelInfoServer002 ( IVModelInfo base slots = c_model_info's 1..3 ) */
-	int reset_server_models( const std::unordered_set< const model_t* >& targets )
+	/* SetModel opens with UnlockStudioHdr = reads the OLD hdr's studiohdr / virtual model: after the flush that's freed memory
+	   ( 18:56:33 datacache.dll+0xae1d crash, unmount ). so hdrs drop BEFORE the flush ( 200 = CBaseAnimating::InvalidateMdlCache,
+	   what the `flush` command + knife_anim_live do ), SetModel after. 200 only exists on CBaseAnimating: filtered like the
+	   engine's own dynamic_cast. live server.dll 11-10: slot 200 = +0x16bc80 in CBaseAnimating / Overlay / CCSPlayer / CCSBot /
+	   CCSRagdoll vtables */
+	struct server_holder_t {
+		void* m_entity;
+		const char* m_name;
+	};
+
+	// MSVC x86 RTTI: vtable[ -1 ] = complete object locator, +16 hierarchy ( +8 base count, +12 base array ), base +0 type, name +8
+	bool is_animating( void* entity )
+	{
+		static std::unordered_map< const void*, bool > known{ };
+		const auto vtable = *static_cast< const std::uintptr_t* const* >( entity );
+		if ( const auto it = known.find( vtable ); it != known.end( ) )
+			return it->second;
+
+		const auto col       = reinterpret_cast< const std::uint8_t* >( vtable[ -1 ] );
+		const auto hierarchy = *reinterpret_cast< const std::uint8_t* const* >( col + 16 );
+		const int count      = *reinterpret_cast< const int* >( hierarchy + 8 );
+		const auto bases     = *reinterpret_cast< const std::uint8_t* const* const* >( hierarchy + 12 );
+		bool animating       = false;
+		for ( int i = 0; i < count && !animating; ++i )
+			animating = !strcmp( *reinterpret_cast< const char* const* >( bases[ i ] ) + 8, ".?AVCBaseAnimating@@" );
+		return known[ vtable ] = animating;
+	}
+
+	std::vector< server_holder_t > drop_server_models( const std::unordered_set< const model_t* >& targets )
 	{
 		static void* tools = nullptr;
 		static c_model_info* info = nullptr;
@@ -283,22 +312,29 @@ namespace
 			info = static_cast< c_model_info* >( g_modules[ ENGINE_DLL ].find_interface( "VModelInfoServer002" ) );
 			if ( !tools || !info ) {
 				tools = nullptr;
-				return -1;
+				return { };
 			}
 		}
 
-		int reset = 0;
+		std::vector< server_holder_t > holders{ };
 		for ( void* entity = g_virtual.call< void* >( tools, 7 ); entity; entity = g_virtual.call< void*, void* >( tools, 8, entity ) ) {
 			const model_t* model = info->get_model( g_virtual.call< int >( entity, 6 ) );
-			if ( !model || !targets.count( model ) )
+			if ( !model || !targets.count( model ) || !is_animating( entity ) )
 				continue;
 			const char* name = info->get_model_name( model );
 			if ( !name || !*name )
 				continue;
-			g_virtual.call< void, const char* >( entity, 27, name );
-			reset++;
+			g_virtual.call< void >( entity, 200 );
+			holders.push_back( { entity, name } );
 		}
-		return reset;
+		return holders;
+	}
+
+	// same thread as the server frame, nothing of it ran since the drop: no entity freed, the model_t names stay
+	void reset_server_models( const std::vector< server_holder_t >& holders )
+	{
+		for ( const server_holder_t& holder : holders )
+			g_virtual.call< void, const char* >( holder.m_entity, 27, holder.m_name );
 	}
 
 	/* skins knife_anim_live's live model change, for same-name models whose file just changed underneath: every holder to model 0
@@ -339,6 +375,10 @@ namespace
 		if ( !models.empty( ) )
 			g_esp_preview.rebuild( );
 
+		const auto nci = g_interfaces.m_engine_client->get_net_channel_info( );
+		const std::vector< server_holder_t > server =
+			nci && nci->is_loopback( ) && !targets.empty( ) ? drop_server_models( targets ) : std::vector< server_holder_t >{ };
+
 		int flushed = 0;
 		for ( const std::string& path : models ) {
 			const unsigned short handle = g_interfaces.m_model_cache->find_mdl( path.c_str( ) );
@@ -362,9 +402,7 @@ namespace
 		for ( void*& decoy : decoys )
 			decoy = g_virtual.call< void*, std::size_t >( allocator, 1, k_virtual_model_size );
 
-		// same thread as the server frame: its stale hdrs are rebuilt here, before anything of it runs again
-		const auto nci   = g_interfaces.m_engine_client->get_net_channel_info( );
-		const int server = nci && nci->is_loopback( ) && !targets.empty( ) ? reset_server_models( targets ) : 0;
+		reset_server_models( server );
 
 		for ( const held_t& entry : held )
 			entry.m_entity->set_model_index( entry.m_index );
@@ -386,7 +424,7 @@ namespace
 				g_virtual.call< void, void* >( allocator, 5, decoy );
 
 		botox_dbg_log( "OLD: models flushed=%d loaded=%d held=%d server=%d", flushed, static_cast< int >( indexes.size( ) ),
-		               static_cast< int >( held.size( ) ), server );
+		               static_cast< int >( held.size( ) ), static_cast< int >( server.size( ) ) );
 	}
 
 	c_cconvar* queue_mode( )

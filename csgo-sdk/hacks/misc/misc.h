@@ -241,6 +241,9 @@ void on_healthshot( int trigger );
 void on_death_particles( int victim_index, int attacker_index );
 /* main thread only. particle = name from the map's ParticleEffectNames table, false = not precached here */
 bool dispatch_particle( const char* name, const c_vector& origin, const c_angle& angles );
+/* clarity v2 footstep fx, order = menu combo */
+inline constexpr const char* k_footstep_particles[] = { "blood_impact_mist_heavy", "chicken_gone_feathers", "molotov_explosion_child_fireball1",
+	                                                    "slime_splash_01_reversed", "confetti_C_omni", "water_splash_01", "water_splash_02_surface2" };
 bool dispatch_sparks( const c_vector& origin, int magnitude, int trail_length );
 void kill_effects_paint( );
 void kill_effects_world( const c_vector& origin, const c_angle& angles );

@@ -1807,10 +1807,10 @@ void n_menu::impl_t::tab_misc( )
 				"death particles settings",
 				[]( ) {
 					ImGui::Combo( "effect##deathparticles", &GET_VARIABLE( g_variables.m_death_particles_type, int ),
-					              "blood burst\0sparks\0confetti\0smoke puff\0explosion\0soul\0bouncy balls\0melt\0minecraft\0" );
+					              "blood burst\0sparks\0confetti\0smoke puff\0explosion\0soul\0bouncy balls\0melt\0minecraft\0hl2 dissolve\0" );
 
 					const int type = GET_VARIABLE( g_variables.m_death_particles_type, int );
-					if ( type < 5 && type != 3 )
+					if ( ( type < 5 && type != 3 ) || type == 9 )
 						return;
 
 					if ( type == 8 )

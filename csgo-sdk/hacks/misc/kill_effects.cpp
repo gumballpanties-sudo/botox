@@ -2811,11 +2811,98 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 	}
 }
 
+/* hl2 dissolve: the game's own DissolveEffect ( ragdoll_shared.cpp ) on the victim's ragdoll. cl_portal_use_new_dissolve 0 = hl2 sprites,
+   1 = portal "dissolve" particle ( ambient_fx, not precached on most maps ) */
+namespace
+{
+	struct dissolve_wait_t {
+		int m_victim  = 0;
+		float m_since = 0.f;
+	};
+	std::vector< dissolve_wait_t > g_dissolve_wait{ };
+
+	/* DSV: body path after the dissolve, hl2 zero-g brakes it to <= 50 u/s rising; falling / fast = controller never grabbed it */
+	struct dissolve_live_t {
+		unsigned int m_ragdoll = 0;
+		float m_since = 0.f, m_last = -1.f;
+		c_vector m_prev{ };
+	};
+	std::vector< dissolve_live_t > g_dissolve_live{ };
+
+	void hl2_dissolve_log( const float cur )
+	{
+		std::erase_if( g_dissolve_live, [ & ]( dissolve_live_t& live ) {
+			c_base_entity* ragdoll = from_handle( live.m_ragdoll );
+			if ( !ragdoll || cur < live.m_since || cur - live.m_since > 3.f )
+				return true;
+			if ( live.m_last >= 0.f && cur - live.m_last < 0.1f )
+				return false;
+			const c_vector pelvis = ragdoll->get_hitbox_position( e_hitboxes::hitbox_pelvis );
+			const c_vector origin = ragdoll->get_abs_origin( );
+			if ( live.m_last >= 0.f ) {
+				const float dt  = std::max( cur - live.m_last, 0.001f );
+				const c_vector v = ( pelvis - live.m_prev ) * ( 1.f / dt );
+				botox_dbg_log( "DSV: t=%.2f pel=(%.0f %.0f %.0f) org=(%.0f %.0f %.0f) v=%.0f vz=%.0f", cur - live.m_since, pelvis.m_x, pelvis.m_y,
+				               pelvis.m_z, origin.m_x, origin.m_y, origin.m_z, v.length( ), v.m_z );
+			}
+			live.m_prev = pelvis;
+			live.m_last = cur;
+			return false;
+		} );
+	}
+
+	void hl2_dissolve_paint( const bool in_game, const float cur )
+	{
+		const bool on = GET_VARIABLE( g_variables.m_death_particles, bool ) && GET_VARIABLE( g_variables.m_death_particles_type, int ) == 9 &&
+		                !g_ctx.m_eject_restoring;
+
+		static auto new_dissolve = g_convars[ HASH_BT( "cl_portal_use_new_dissolve" ) ];
+		static int stored        = -1;
+		if ( new_dissolve ) {
+			if ( on && stored < 0 ) {
+				stored = new_dissolve->get_int( );
+				new_dissolve->set_value( 0 );
+			} else if ( !on && stored >= 0 ) {
+				new_dissolve->set_value( stored );
+				stored = -1;
+			}
+		}
+
+		if ( !in_game || !on ) {
+			g_dissolve_wait.clear( );
+			g_dissolve_live.clear( );
+			return;
+		}
+		hl2_dissolve_log( cur );
+
+		// target ecx, time xmm1
+		using dissolve_fn    = void*( __vectorcall* )( c_base_entity*, float );
+		static auto dissolve = reinterpret_cast< dissolve_fn >(
+			g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 EC 08 A1 ? ? ? ? 56 57 8B F9 F3 0F 11 4D FC 8B 08 68 33 0A 00 00" ) );
+
+		std::erase_if( g_dissolve_wait, [ & ]( const dissolve_wait_t& wait ) {
+			if ( !dissolve || cur < wait.m_since || cur - wait.m_since > 1.f )
+				return true;
+			const auto victim      = g_interfaces.m_client_entity_list->get< c_base_entity >( wait.m_victim );
+			c_base_entity* ragdoll = victim ? melt_ragdoll( victim ) : nullptr;
+			if ( !ragdoll )
+				return false;
+			void* made = dissolve( ragdoll, cur );
+			botox_dbg_log( "DSV: start victim=%d rag=%d waited=%.2f made=%p cvar=%d", wait.m_victim, ragdoll->get_index( ), cur - wait.m_since, made,
+			               new_dissolve ? new_dissolve->get_int( ) : -1 );
+			g_dissolve_live.push_back( { victim->get_ragdoll_handle( ), cur } );
+			return true;
+		} );
+	}
+} // namespace
+
 void kill_effects_paint( )
 {
 	const bool in_game = g_interfaces.m_engine_client->is_in_game( );
 	const float now    = g_interfaces.m_global_vars_base->m_real_time;
 	const float cur    = g_interfaces.m_global_vars_base->m_current_time;
+
+	hl2_dissolve_paint( in_game, cur );
 
 	if ( !in_game || !GET_VARIABLE( g_variables.m_death_particles, bool ) || cur + 1.f < g_kfx_last_cur ) {
 		g_kfx.clear( );
@@ -3227,6 +3314,7 @@ void on_death_particles( const int victim_index, const int attacker_index )
 	case 5: spawn_soul( victim, victim_index ); return;
 	case 7: spawn_melt( victim, victim_index ); return;
 	case 8: spawn_mc( victim ); return;
+	case 9: g_dissolve_wait.push_back( { victim_index, g_interfaces.m_global_vars_base->m_current_time } ); return;
 	case 6:
 		if ( attacker_index == g_interfaces.m_engine_client->get_local_player( ) )
 			spawn_balls( victim, victim_index );

@@ -599,6 +599,20 @@ void n_menu::impl_t::tab_movement( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			ImGui::Checkbox( "edge catch", &GET_VARIABLE( g_variables.m_edge_catch, bool ) );
+			if ( GET_VARIABLE( g_variables.m_edge_catch, bool ) ) {
+				ImGui::OptionPopup(
+					"edge catch settings",
+					[ & ]( ) {
+						ImGui::Label( "edge catch keybind" );
+						ImGui::Keybind( "edge catch key", &GET_VARIABLE( g_variables.m_edge_catch_key, key_bind_t ) );
+						ImGui::SliderFloat( "predict time##ecptime", &GET_VARIABLE( g_variables.m_edge_catch_predict_time, float ), 0.05f, 1.f, "%.2f s" );
+						ImGui::SliderFloat( "max reach##ecreach", &GET_VARIABLE( g_variables.m_edge_catch_reach, float ), 0.5f, 64.f, "%.1f u" );
+						ImGui::Checkbox( "visualize##ecviz", &GET_VARIABLE( g_variables.m_edge_catch_visualize, bool ) );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
 			ImGui::Checkbox( "pixel surf", &GET_VARIABLE( g_variables.m_pixel_surf, bool ) );
 			if ( GET_VARIABLE( g_variables.m_pixel_surf, bool ) ) {
 				ImGui::OptionPopup(
@@ -1345,7 +1359,7 @@ void n_menu::impl_t::tab_movement( )
 					                       { "edgebug", "pixelsurf", "edgejump", "longjump", "delayhop", "minijump", "jumpbug", "texturebug",
 					                         "airstuck", "wallclimb", "autostrafe", "ps assist", "fireman", "ladder bug", "ladder glide",
 					                         "freelook climb", "fast ladder", "one hop", "auto crouch", "auto bounce", "tung surf", "edge skip", "half sideways",
-					                         "zeus bug", "air freeze", "edge surf" },
+					                         "zeus bug", "air freeze", "edge surf", "edge catch" },
 					                       GET_VARIABLE( g_variables.m_key_indicators, std::vector< bool > ).size( ) );
 
 						/* per-bind label override; empty = stock label (hint). buffer 16 = 15 chars keeps the

@@ -12,6 +12,7 @@
 #include "../../hacks/chud_hud/chud_hud.h"
 #include "../../hacks/movement/edgebug.h"
 #include "../../hacks/movement/edge_skip.h"
+#include "../../hacks/movement/edge_catch.h"
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/movement/tick_scale.h"
@@ -390,6 +391,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 			g_edgebug.m_ducked = false;
 			g_edgebug.drop_mouse( );
 			g_edge_skip.reset( true );
+			g_edge_catch.reset( true );
 			return;
 		}
 
@@ -419,6 +421,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 			cmd_start_guard( "edgebug_pre", false );
 			g_edge_skip.pre( cmd );
 			cmd_start_guard( "edge_skip_pre", false );
+			g_edge_catch.pre( cmd );
+			cmd_start_guard( "edge_catch_pre", false );
 		}
 
 		{
@@ -479,6 +483,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 			{
 				PERF_ZONE( zone_cmd_edge_skip );
 				g_edge_skip.post( cmd );
+				g_edge_catch.post( cmd );
 			}
 		} else {
 			/* post never runs: a plan latched by pre would hold mouse lock */
@@ -486,6 +491,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 			g_edgebug.m_ducked = false;
 			g_edgebug.drop_mouse( );
 			g_edge_skip.reset( true );
+			g_edge_catch.reset( true );
 		}
 		gnd_wish_check( "edgebug_post", true );
 

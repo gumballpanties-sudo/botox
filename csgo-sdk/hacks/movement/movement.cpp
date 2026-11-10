@@ -30,6 +30,7 @@
 #include "wall_climb.h"
 #include "edgebug.h"
 #include "edge_skip.h"
+#include "edge_catch.h"
 #include "tick_scale.h"
 #include "../misc/misc.h"
 #include "../../utilities/perf/perf_watch.h"
@@ -727,6 +728,7 @@ void n_movement::impl_t::on_paint_traverse( )
 	this->dist_calc_render( );
 	g_edgebug.render( );
 	g_edge_skip.render( );
+	g_edge_catch.render( );
 	this->auto_bounce_render( );
 	g_wall_climb.render( );
 
@@ -4564,7 +4566,7 @@ bool bind_cmd_taken( )
 }
 bool eb_cmd_taken( )
 {
-	return bind_cmd_taken( ) || g_edge_skip.active( );
+	return bind_cmd_taken( ) || g_edge_skip.active( ) || g_edge_catch.active( );
 }
 
 void ps_ride_diag( const c_user_cmd* cmd )

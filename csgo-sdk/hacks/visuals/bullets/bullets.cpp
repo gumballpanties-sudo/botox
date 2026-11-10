@@ -64,8 +64,10 @@ void n_bullets::impl_t::register_listener( )
 	m_listening = g_interfaces.m_game_event_manager->add_listener( &m_listener, "bullet_impact", false );
 
 	// god esp reads "impact, no hurt": a hurt we never receive would latch god on everyone
-	if ( m_listening )
+	if ( m_listening ) {
 		g_interfaces.m_game_event_manager->add_listener( &m_listener, "player_hurt", false );
+		g_interfaces.m_game_event_manager->add_listener( &m_listener, "player_footstep", false );
+	}
 
 	g_console.print( m_listening ? "listening for bullet_impact" : "FAILED TO LISTEN FOR BULLET_IMPACT" );
 }
