@@ -18,6 +18,11 @@ namespace {
 	constexpr int k_max_sims = 1024;
 	constexpr int k_max_snap = 30; /* per side: slots 1..30 / 31..60, 62 / 63 = wall climb spot job */
 
+	bool jb_bind( )
+	{
+		return GET_VARIABLE( g_variables.m_jump_bug, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_jump_bug_key, key_bind_t ) );
+	}
+
 	void restore_start( )
 	{
 		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
@@ -81,10 +86,10 @@ void n_edge_catch::impl_t::apply( c_user_cmd* cmd, const tick_t& t, const c_angl
 	n_assist::set_move( cmd, cmd->m_forward_move, cmd->m_side_move );
 }
 
-void n_edge_catch::impl_t::sim( c_user_cmd* cmd, const int index, const tick_t& t )
+void n_edge_catch::impl_t::sim( c_user_cmd* cmd, const int index, const tick_t& t, const int buttons )
 {
 	const auto local    = g_ctx.m_local;
-	cmd->m_buttons      = m_buttons0;
+	cmd->m_buttons      = buttons;
 	cmd->m_view_point   = m_view;
 	cmd->m_forward_move = m_fwd0;
 	cmd->m_side_move    = m_side0;
@@ -132,7 +137,7 @@ bool n_edge_catch::impl_t::baseline( c_user_cmd* cmd )
 		const bool ducked = ( local->get_flags( ) & fl_ducking ) != 0;
 		tick_t t;
 		t.origin = s;
-		sim( cmd, k, t );
+		sim( cmd, k, t, m_buttons0 );
 		if ( landed( ) ) {
 			if ( cand_k >= 0 && local->get_origin( ).m_z < cand_z - 2.f ) {
 				m_kind = 2, m_miss = cand_k, m_ground_z = cand_z, m_miss_vz = local->get_velocity( ).m_z;
@@ -182,14 +187,41 @@ bool n_edge_catch::impl_t::baseline( c_user_cmd* cmd )
 	return false;
 }
 
-/* strafe ticks [ 0, prefix ) at the perfect angle, your keys after. save = full chain, slot base + k + 1 = START of tick k + 1 */
+/* jb bind on: the jump bug decides its landing duck on your unstrafed keys, so it never sees a catch's landing. the plan ducks
+   tick k itself and needs the jb to work there ( jb_will_work: duck on k stays airborne, unduck + jump on k + 1 rises ).
+   ducked START = crouched fall, plain landing */
+bool n_edge_catch::impl_t::jb_works( c_user_cmd* cmd, const int k, const int from, const int base )
+{
+	const auto local = g_ctx.m_local;
+	restore_start( );
+	if ( from > 0 )
+		g_prediction.snapshot_load( base + from );
+	for ( int i = from; i < k; i++ ) {
+		if ( out( ) )
+			return false;
+		sim( cmd, i, m_plan[ i ], m_buttons0 );
+	}
+	if ( local->get_flags( ) & fl_ducking )
+		return true;
+	sim( cmd, k, m_plan[ k ], ( m_buttons0 | in_duck ) & ~in_jump );
+	if ( landed( ) )
+		return false;
+	sim( cmd, k + 1, tick_t{ }, ( m_buttons0 & ~in_duck ) | in_jump );
+	m_jb_plan = !landed( ) && local->get_velocity( ).m_z > 0.f;
+	return m_jb_plan;
+}
+
+/* strafe ticks [ 0, prefix ) at the perfect angle, your keys after. save = full chain, slot base + k + 1 = START of tick k + 1,
+   m_seed = its ticks ( a prefix chain starts mid-plan, ticks below prefix come from there ) */
 bool n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool neg, const bool save, const int base )
 {
 	const auto local = g_ctx.m_local;
+	const int side   = base / k_max_snap;
 	restore_start( );
 	int k = 0;
 	if ( !save ) {
 		g_prediction.snapshot_load( base + prefix );
+		std::copy_n( m_seed[ side ], prefix, m_plan );
 		k = prefix;
 	}
 	m_chains++;
@@ -206,16 +238,18 @@ bool n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool 
 			t.yaw               = neg ? vel_yaw - ang : vel_yaw + ang;
 			t.side              = neg ? -450.f : 450.f;
 		}
-		sim( cmd, k, t );
+		if ( save && k < k_max_snap )
+			m_seed[ side ][ k ] = t;
+		sim( cmd, k, t, m_buttons0 );
 		if ( save && k + 1 <= k_max_snap && g_prediction.snapshot_save( base + k + 1 ) )
-			m_saved[ base / k_max_snap ] = k + 1;
+			m_saved[ side ] = k + 1;
 		if ( landed( ) ) {
-			if ( local->get_origin( ).m_z >= m_ground_z - 2.f ) {
-				m_last     = k;
-				m_land_pos = local->get_origin( );
-				return true;
-			}
-			return false;
+			if ( local->get_origin( ).m_z < m_ground_z - 2.f )
+				return false;
+			m_last     = k;
+			m_land_pos = local->get_origin( );
+			m_jb_plan  = false;
+			return !m_jb || jb_works( cmd, k, save ? std::min( k, m_saved[ side ] ) : prefix, base );
 		}
 		if ( local->get_move_type( ) != move_type_walk )
 			return false;
@@ -257,6 +291,8 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 	m_budget.start( 0.15f, 1.f / 128.f, n_tick::search_ec );
 	m_sims = m_chains = 0;
 	m_kind = 0;
+	m_jb   = jb_bind( );
+	m_jb_plan = false;
 	m_view     = cmd->m_view_point;
 	m_fwd0     = cmd->m_forward_move;
 	m_side0    = cmd->m_side_move;
@@ -309,9 +345,9 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 		restore_start( );
 
 	if ( miss )
-		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f evz=%.2f reach=%.1f win=%d turn=%d chains=%d sims=%d us=%lld found=%d last=%d strafe=%d\n",
+		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f evz=%.2f reach=%.1f win=%d turn=%d chains=%d sims=%d us=%lld found=%d last=%d strafe=%d jb=%d/%d\n",
 		               m_kind, m_miss, m_ground_z, org0.m_z, vel0.m_z, m_miss_vz, m_reach, m_max_ticks, m_turn_left ? 1 : 0, m_chains, m_sims, m_budget.used_us( ),
-		               found ? 1 : 0, found ? m_last : -1, found ? strafed( ) : 0 );
+		               found ? 1 : 0, found ? m_last : -1, found ? strafed( ) : 0, m_jb ? 1 : 0, found && m_jb_plan ? 1 : 0 );
 	if ( !found )
 		return;
 	m_active = true;
@@ -347,7 +383,15 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 		return;
 	}
 	if ( m_active ) {
-		if ( m_hit > m_last ) {
+		if ( m_jb_plan && m_hit == m_last + 1 ) {
+			const bool on_lip = start.m_z >= m_ground_z - 2.f;
+			if ( on_lip )
+				++g_ec_fired;
+			botox_dbg_log( "EC: jb last=%d gz=%.2f z=%.2f ducked=%d lip=%d\n", m_last, m_ground_z, start.m_z, ( m_start_flags & fl_ducking ) ? 1 : 0,
+			               on_lip ? 1 : 0 );
+			reset( );
+			return;
+		} else if ( m_hit > m_last ) {
 			botox_dbg_log( "EC: missed spent=%d z=%.2f gz=%.2f\n", m_last, start.m_z, m_ground_z );
 			reset( );
 		} else if ( const float dist = start.dist_to( m_plan[ m_hit ].origin ); dist > 1.f ) {
@@ -379,5 +423,8 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 		return;
 	if ( m_plan[ m_hit ].strafe )
 		apply( cmd, m_plan[ m_hit ], cmd->m_view_point );
+	/* the jump bug's own landing duck, on the tick its prediction never saw land */
+	if ( m_jb_plan && m_hit == m_last && jb_bind( ) )
+		cmd->m_buttons = ( cmd->m_buttons | in_duck ) & ~in_jump;
 	m_hit++;
 }
