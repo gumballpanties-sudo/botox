@@ -255,7 +255,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	const c_vector origin    = local->get_abs_origin( );
 	const c_vector start_vel = local->get_velocity( );
 	const bool on_ground     = ( local->get_flags( ) & fl_onground ) != 0;
-	const float friction     = local->get_surface_friction( );
+	const float friction     = std::max( local->get_surface_friction( ), 0.01f );
 	const float stamina      = local->get_stamina( );
 	const c_vector mins = collideable->get_obb_mins( ), maxs = collideable->get_obb_maxs( );
 	if ( on_ground )
@@ -380,7 +380,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	static auto sv_airaccelerate = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
 	static auto sv_jump_impulse  = g_interfaces.m_convar->find_var( "sv_jump_impulse" );
 	static auto sv_gravity       = g_interfaces.m_convar->find_var( "sv_gravity" );
-	const float airaccel = sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.f;
+	const float airaccel = std::max( sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.f, 0.1f );
 	const float ipt      = g_interfaces.m_global_vars_base->m_interval_per_tick;
 
 	const c_user_cmd keys = *cmd;
@@ -804,7 +804,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 			load( slot );
 			sim_out_t st{ };
 			read_out( st );
-			const float fr     = local->get_surface_friction( );
+			const float fr     = std::max( local->get_surface_friction( ), 0.01f );
 			const float target = j.cand >= 0 ? j.order[ j.cand ] : 0.f;
 			c_user_cmd c       = job_keys( );
 			c_vector n{ };

@@ -24,6 +24,9 @@ struct c_particle_attribute_address_table {
 
 	void modulate_color( const c_color& color, int num )
 	{
+		if ( !m_attributes[ PARTICLE_ATTRIBUTE_TINT_RGB ] || !m_attributes[ PARTICLE_ATTRIBUTE_ALPHA ] )
+			return;
+
 		auto rgb = this->float_attribute( PARTICLE_ATTRIBUTE_TINT_RGB, num );
 		auto a   = this->float_attribute( PARTICLE_ATTRIBUTE_ALPHA, num );
 

@@ -675,7 +675,8 @@ static void soft_image( ImDrawList* dl, const frame_tex_t& tex, const ImVec2 org
 	              ImVec2( tex.m_w / d, tex.m_h / d ), color );
 }
 
-static bool soft_draw( ImDrawList* dl, const int bw, const int bh, const ImVec2 org, const ImU32 color, const int r[ 3 ], const std::uint64_t key )
+static bool soft_draw( ImDrawList* dl, const int bw, const int bh, const ImVec2 org, const ImU32 color, const int r[ 3 ], const std::uint64_t key,
+                       const int passes = 1 )
 {
 	const std::size_t n = static_cast< std::size_t >( bw ) * bh;
 	s_soft_b.resize( n );
@@ -700,11 +701,14 @@ static bool soft_draw( ImDrawList* dl, const int bw, const int bh, const ImVec2 
 	if ( !tex )
 		return false;
 
-	soft_image( dl, *tex, org, color );
+	for ( int i = 0; i < passes; ++i )
+		soft_image( dl, *tex, org, color );
 	return true;
 }
 
-static bool soft_text( ImDrawList* dl, ImFont* font, const float fs, const ImVec2 pos, const char* text, const ImU32 color, const float blur )
+/* passes = same blurred copy stacked n times (glow strength) */
+static bool soft_text( ImDrawList* dl, ImFont* font, const float fs, const ImVec2 pos, const char* text, const ImU32 color, const float blur,
+                       const int passes = 1 )
 {
 	int r[ 3 ];
 	const int pad = soft_radii( blur * 0.5f, r );
@@ -738,7 +742,8 @@ static bool soft_text( ImDrawList* dl, ImFont* font, const float fs, const ImVec
 
 	const ImVec2 org( static_cast< float >( x0 ), static_cast< float >( y0 ) );
 	if ( const frame_tex_t* const hit = frame_tex_cached( key ) ) {
-		soft_image( dl, *hit, org, color );
+		for ( int i = 0; i < passes; ++i )
+			soft_image( dl, *hit, org, color );
 		return true;
 	}
 
@@ -751,7 +756,7 @@ static bool soft_text( ImDrawList* dl, ImFont* font, const float fs, const ImVec
 	for ( std::size_t i = 0; i < n; ++i )
 		s_soft_a[ i ] = s_soft_cov[ i ] / 255.f;
 
-	return soft_draw( dl, bw, bh, org, color, r, key );
+	return soft_draw( dl, bw, bh, org, color, r, key, passes );
 }
 
 static bool soft_picture( ImDrawList* dl, const unsigned int* px, const int w, const int h, const ImVec2 at, const ImU32 color, const float blur )
@@ -1170,6 +1175,15 @@ static float s_part_want_at[ label_max ]{ };
 static float s_part_last[ label_max ]{ };
 static bool s_part_seen[ label_max ]{ };
 static c_vector_2d s_part_at[ label_max ]{ };
+static ImVec2 s_part_top[ label_max ]{ };
+
+/* detection glow: blurred label copy in glow colour, under the labels, fades over life */
+static bool s_glow_on[ label_max ]{ };
+static float s_glow_born[ label_max ]{ };
+static std::string s_glow_text[ label_max ];
+static ImFont* s_glow_font     = nullptr;
+static float s_glow_fs         = 0.f;
+static std::size_t s_glow_slot = 0;
 
 static float part_rand( const float lo, const float hi )
 {
@@ -1181,6 +1195,7 @@ static void part_mark( const int id, const float x, const float y, const ImVec2&
 {
 	s_part_seen[ id ] = true;
 	s_part_at[ id ]   = c_vector_2d( x + size.x * 0.5f, y + size.y * 0.5f );
+	s_part_top[ id ]  = ImVec2( x, y );
 }
 
 /* the label's PERFORMED count: run_detections' fires off cmd STARTs ( points_on_trick ), the same ones chat / sound use, so a
@@ -1209,6 +1224,8 @@ static int s_part_fired[ label_max ]{ };
 static void part_track( const std::vector< key_pending_t >& pending, const float real )
 {
 	const float cooldown = std::clamp( GET_VARIABLE( g_variables.m_key_indicators_particle_cooldown, float ), 0.f, 5.f );
+	const bool particles = GET_VARIABLE( g_variables.m_key_indicators_particles, bool );
+	const bool glow      = GET_VARIABLE( g_variables.m_key_indicators_glow, bool );
 
 	/* every label, listed or not: a fire while hidden never bursts later */
 	bool fired[ label_max ]{ };
@@ -1225,17 +1242,62 @@ static void part_track( const std::vector< key_pending_t >& pending, const float
 
 		const bool phys = s_part_fired[ id ] >= 0;
 		const bool hit  = p.m_detect && p.m_active && ( phys ? fired[ id ] : p.m_success );
-		if ( hit && ( phys || !s_part_was[ id ] ) && ( real - s_part_last[ id ] >= cooldown || real < s_part_last[ id ] ) ) {
-			s_part_want[ id ]    = true;
-			s_part_want_at[ id ] = real;
-			s_part_last[ id ]    = real;
+		if ( hit && ( phys || !s_part_was[ id ] ) ) {
+			if ( glow ) {
+				s_glow_on[ id ]   = true;
+				s_glow_born[ id ] = real;
+				s_glow_text[ id ] = p.m_text;
+			}
+			if ( particles && ( real - s_part_last[ id ] >= cooldown || real < s_part_last[ id ] ) ) {
+				s_part_want[ id ]    = true;
+				s_part_want_at[ id ] = real;
+				s_part_last[ id ]    = real;
+			}
 		}
 		s_part_was[ id ] = hit;
 	}
 
 	for ( int id = 0; id < label_max; ++id )
 		if ( !listed[ id ] )
-			s_part_was[ id ] = s_part_want[ id ] = false;
+			s_part_was[ id ] = s_part_want[ id ] = s_glow_on[ id ] = false;
+}
+
+/* under every keybind label: inserted at the queue slot keybind_indicators started at */
+static void key_glow( const float real )
+{
+	const c_color tint = GET_VARIABLE( g_variables.m_key_indicators_glow_color, c_color );
+	const float blur  = std::clamp( GET_VARIABLE( g_variables.m_key_indicators_glow_blur, float ), 1.f, 40.f );
+	const int passes   = std::clamp( GET_VARIABLE( g_variables.m_key_indicators_glow_strength, int ), 1, 4 );
+	const float life   = std::clamp( GET_VARIABLE( g_variables.m_key_indicators_glow_life, float ), 0.05f, 10.f );
+	ImFont* const font = s_glow_font;
+	const float fs     = s_glow_fs;
+
+	std::vector< draw_object_t > glows;
+	for ( int id = 0; id < label_max; ++id ) {
+		if ( !s_glow_on[ id ] )
+			continue;
+
+		const float age = real - s_glow_born[ id ];
+		if ( age < 0.f || age > life || !font ) {
+			s_glow_on[ id ] = false;
+			continue;
+		}
+		if ( !s_part_seen[ id ] )
+			continue;
+
+		const float t          = 1.f - age / life;
+		const ImU32 color      = tint.get_u32( t * t );
+		const ImVec2 pos       = ImVec2( std::floor( s_part_top[ id ].x ), std::floor( s_part_top[ id ].y ) );
+		const std::string text = s_glow_text[ id ];
+		glows.emplace_back( e_draw_type::draw_type_callback, std::make_any< callback_draw_object_t >( callback_draw_object_t{ [ = ]( ImDrawList* dl ) {
+			if ( ImFont* const live = g_render.live_font( font ) )
+				soft_text( dl, live, fs > 0.f ? fs : live->FontSize, pos, text.c_str( ), color, blur, passes );
+		} } ) );
+	}
+
+	auto& queue = g_render.m_draw_data;
+	queue.insert( queue.begin( ) + static_cast< std::ptrdiff_t >( std::min( s_glow_slot, queue.size( ) ) ), std::make_move_iterator( glows.begin( ) ),
+	              std::make_move_iterator( glows.end( ) ) );
 }
 
 static void part_burst( const c_vector_2d& at )
@@ -1274,7 +1336,11 @@ static void part_burst( const c_vector_2d& at )
 
 static void key_particles( )
 {
-	if ( !GET_VARIABLE( g_variables.m_key_indicators_enable, bool ) || !GET_VARIABLE( g_variables.m_key_indicators_particles, bool ) ) {
+	const bool enabled = GET_VARIABLE( g_variables.m_key_indicators_enable, bool );
+	if ( !enabled || !GET_VARIABLE( g_variables.m_key_indicators_glow, bool ) )
+		std::fill( std::begin( s_glow_on ), std::end( s_glow_on ), false );
+
+	if ( !enabled || ( !GET_VARIABLE( g_variables.m_key_indicators_particles, bool ) && !GET_VARIABLE( g_variables.m_key_indicators_glow, bool ) ) ) {
 		s_key_particles.clear( );
 		std::fill( std::begin( s_part_was ), std::end( s_part_was ), false );
 		std::fill( std::begin( s_part_want ), std::end( s_part_want ), false );
@@ -1286,6 +1352,14 @@ static void key_particles( )
 	}
 
 	const float real = g_interfaces.m_global_vars_base->m_real_time;
+	key_glow( real );
+	if ( !GET_VARIABLE( g_variables.m_key_indicators_particles, bool ) ) {
+		s_key_particles.clear( );
+		std::fill( std::begin( s_part_want ), std::end( s_part_want ), false );
+		std::fill( std::begin( s_part_seen ), std::end( s_part_seen ), false );
+		return;
+	}
+
 	for ( int id = 0; id < label_max; ++id ) {
 		if ( !s_part_want[ id ] )
 			continue;
@@ -1879,6 +1953,9 @@ static float s_static_key_alpha[ label_max ]{ };
 
 void n_indicators::impl_t::keybind_indicators( )
 {
+	s_glow_slot = g_render.m_draw_data.size( );
+	s_glow_font = nullptr;
+
 	std::vector< key_pending_t > pending;
 
 	const auto& key_indicators = g_config.get< std::vector< bool > >( g_variables.m_key_indicators );
@@ -2033,7 +2110,9 @@ void n_indicators::impl_t::keybind_indicators( )
 		}
 	}
 
-	if ( GET_VARIABLE( g_variables.m_key_indicators_particles, bool ) )
+	s_glow_font = font;
+	s_glow_fs   = fs;
+	if ( GET_VARIABLE( g_variables.m_key_indicators_particles, bool ) || GET_VARIABLE( g_variables.m_key_indicators_glow, bool ) )
 		part_track( pending, g_interfaces.m_global_vars_base->m_real_time );
 
 	if ( style != indicator_style_smooth )

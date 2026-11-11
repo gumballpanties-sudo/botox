@@ -12,7 +12,8 @@ class lumia_align_trial_t {
         n_lumia_state::layout_t layout;
         n_lumia_native::native_fields_t prediction,ordinary;
     };
-    static maps_t& maps(){static thread_local maps_t value;return value;}
+    // never thread_local: manual mapped image has no tls index. createmove only
+    static maps_t& maps(){static maps_t value;return value;}
     c_base_entity* local;
     n_lumia_state::snapshot_t caller;
     n_lumia_native::native_fields_t::snapshot_t predicted,ordinary;

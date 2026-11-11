@@ -189,7 +189,7 @@ void n_movement::impl_t::autobounce_assist( c_user_cmd* cmd )
 
 			n_assist::run_t r = n_assist::run( c, prog, targets, false );
 			if ( !r.hit ) {
-				if ( r.gap < 1e8f && miss_len < static_cast< int >( sizeof( miss ) ) - 32 )
+				if ( r.gap < 1e8f && miss_len < static_cast< int >( sizeof( miss ) ) - 48 )
 					miss_len += sprintf_s( miss + miss_len, sizeof( miss ) - miss_len, " %s%s=%.3f%s", n_assist::k_launch_names[ prog.launch ],
 					                       prog.crouch ? "(c)" : "", r.gap, r.complete ? "" : "(cut)" );
 				continue;

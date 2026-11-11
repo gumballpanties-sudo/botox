@@ -807,6 +807,11 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		bool allow_stand     = eb_types.size( ) > 1 && eb_types[ 1 ];
 		if ( !allow_duck && !allow_stand )
 			allow_duck = allow_stand = true;
+		/* current stance: the duck KEY, not fl_ducking ( a release plan ducks from tick 0 ) */
+		if ( GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) ) {
+			allow_duck  = ( user_buttons & in_duck ) != 0;
+			allow_stand = !allow_duck;
+		}
 		/* bug ticks the stance refused ( `srej=` ) */
 		int stance_rej = 0;
 		/* last pass's first ground tick, -1 = never; contact_z = origin z there ( refine tells lip vs lower floor ). */
@@ -1747,6 +1752,8 @@ void n_edgebug::impl_t::donor_post( c_user_cmd* cmd, const int style )
 		const int divisor     = del || advanced ? search : 2;
 		const float del_limit = GET_VARIABLE( g_variables.m_edgebug_del_angle_limit, float );
 		const bool dna_custom = GET_VARIABLE( g_variables.m_edgebug_dna_custom_angle, bool );
+		const bool cur_stance = GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool );
+		const bool user_duck  = ( m_user_buttons & in_duck ) != 0;
 		const float dna_limit = GET_VARIABLE( g_variables.m_edgebug_dna_angle_limit, float );
 		const c_user_cmd base = *cmd;
 		const c_angle originalangles = base.m_view_point;
@@ -1833,7 +1840,10 @@ void n_edgebug::impl_t::donor_post( c_user_cmd* cmd, const int style )
 				if ( path_n <= k_predicted_cmd_max )
 					path[ path_n++ ] = local->get_origin( );
 				bool br = false;
+				const bool ducked_now = ( local->get_flags( ) & fl_ducking ) != 0;
 				if ( donor_check( cmd, br ) ) {
+					if ( cur_stance && ducked_now != user_duck )
+						break;
 					m_donor.ticks_left  = t;
 					m_donor.eblength    = t;
 					m_donor.edgebugtick = tick_count + t;
@@ -2071,6 +2081,9 @@ void n_edgebug::impl_t::hw_post( c_user_cmd* cmd )
 
 	const auto loop_through_ticks = [ & ]( const bool ducked, const bool strafe = false ) {
 		if ( m_hw.will_edgebug )
+			return;
+		/* hw: own rounds, not the stance combo */
+		if ( GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) && ducked != ( ( m_user_buttons & in_duck ) != 0 ) )
 			return;
 		ReStorePrediction( );
 		m_hw.starting_yaw = original_view_point.m_y;
@@ -2430,6 +2443,9 @@ void n_edgebug::impl_t::lob_post( c_user_cmd* cmd )
 					v           = s.last_type;
 					s.last_type = 0;
 				}
+				/* odd variant = duck held all run */
+				if ( GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) && ( ( v & 1 ) != 0 ) != ( ( m_user_buttons & in_duck ) != 0 ) )
+					continue;
 				ReStorePrediction( );
 				s.vel_backup        = local->get_velocity( );
 				cmd->m_view_point   = view_backup;

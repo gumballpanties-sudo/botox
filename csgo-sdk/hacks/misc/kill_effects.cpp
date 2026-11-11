@@ -60,9 +60,17 @@ bool dispatch_particle( const char* name, const c_vector& origin, const c_angle&
 		return false;
 
 	const auto table = g_interfaces.m_string_tables->find_table( "ParticleEffectNames" );
-	const int index  = table ? table->find_string_index( name ) : 0;
-	if ( index <= 0 || index >= 0xffff )
+	if ( !table )
 		return false;
+	/* table allows client side adds: negative index, change callback precaches the system ( 0 / -1 / 0xffff = invalid ) */
+	const auto valid = []( const int i ) { return ( i > 0 && i < 0xffff ) || i < -1; };
+	int index        = table->find_string_index( name );
+	if ( !valid( index ) ) {
+		index = table->add_string( false, name );
+		botox_dbg_log( "PFX: client precache %s -> %d", name, index );
+		if ( !valid( index ) )
+			return false;
+	}
 
 	effect_data_t data{ };
 	data.m_origin  = origin;

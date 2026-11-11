@@ -239,7 +239,7 @@ void on_hit_marker( );
 void on_hit_sound( );
 void on_healthshot( int trigger );
 void on_death_particles( int victim_index, int attacker_index );
-/* main thread only. particle = name from the map's ParticleEffectNames table, false = not precached here */
+/* main thread only. name missing from ParticleEffectNames = client side precache first, false = table refused it */
 bool dispatch_particle( const char* name, const c_vector& origin, const c_angle& angles );
 /* clarity v2 footstep fx, order = menu combo */
 inline constexpr const char* k_footstep_particles[] = { "blood_impact_mist_heavy", "chicken_gone_feathers", "molotov_explosion_child_fireball1",

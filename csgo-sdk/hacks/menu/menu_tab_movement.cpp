@@ -500,12 +500,15 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderInt( "edgebug ticks##eblobticks", &GET_VARIABLE( g_variables.m_edgebug_lob_ticks, int ), 1, 64 );
 							ImGui::SliderFloat( "edgebug lock##ebloblock", &GET_VARIABLE( g_variables.m_edgebug_lob_lock, float ), 0.f, 10.f, "%.2f" );
 						}
+						/* standing -> standing ebs only, holding duck -> ducked ebs only */
+						ImGui::Checkbox( "current stance only##ebcurstance", &GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) );
 						if ( style == 0 ) {
 							ImGui::SliderFloat( "edge bug predict time", &GET_VARIABLE( g_variables.m_edgebug_predict_time, float ),
 							                    0.02f, 2.f, "%.2f s" );
 							/* none picked = both */
-							ImGui::MultiCombo( "stance##ebtypes", GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > ),
-							                   { "ducked", "standing" }, GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > ).size( ) );
+							if ( !GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) )
+								ImGui::MultiCombo( "stance##ebtypes", GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > ),
+								                   { "ducked", "standing" }, GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > ).size( ) );
 
 							ImGui::Checkbox( "autostrafe to edge", &GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool ) );
 							if ( GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool ) ) {
@@ -1350,6 +1353,14 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderFloat( "life##key particles", &GET_VARIABLE( g_variables.m_key_indicators_particle_life, float ), 0.2f, 3.f, "%.1f s" );
 							ImGui::SliderFloat( "cooldown##key particles", &GET_VARIABLE( g_variables.m_key_indicators_particle_cooldown, float ), 0.f, 2.f,
 							                    "%.2f s" );
+						}
+
+						ImGui::Checkbox( "detection glow", &GET_VARIABLE( g_variables.m_key_indicators_glow, bool ) );
+						if ( GET_VARIABLE( g_variables.m_key_indicators_glow, bool ) ) {
+							ImGui::ColorEdit4( "glow color##key glow", &GET_VARIABLE( g_variables.m_key_indicators_glow_color, c_color ), color_picker_alpha_flags );
+							ImGui::SliderFloat( "blur##key glow", &GET_VARIABLE( g_variables.m_key_indicators_glow_blur, float ), 2.f, 30.f, "%.1f" );
+							ImGui::SliderInt( "strength##key glow", &GET_VARIABLE( g_variables.m_key_indicators_glow_strength, int ), 1, 4 );
+							ImGui::SliderFloat( "life##key glow", &GET_VARIABLE( g_variables.m_key_indicators_glow_life, float ), 0.1f, 3.f, "%.1f s" );
 						}
 
 						ImGui::SliderInt( "position##sub indicators", &GET_VARIABLE( g_variables.m_key_indicators_position, int ), 30,

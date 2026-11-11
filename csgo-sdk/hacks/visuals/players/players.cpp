@@ -1033,7 +1033,7 @@ void n_players::draw_player( const esp_player_t& player, const projector_t& w2s,
 		if ( player.m_bot )
 			converted_name.insert( 0, "[bot] " );
 
-		const auto name_font = g_render.m_custom_fonts[ e_custom_font_names::custom_font_name_esp ];
+		const auto name_font = g_render.m_custom_fonts[ e_custom_font_names::custom_font_name_esp ] ? g_render.m_custom_fonts[ e_custom_font_names::custom_font_name_esp ] : g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
 
 		const auto text_size = name_font->CalcTextSizeA( name_font->FontSize, FLT_MAX, 0.f, converted_name.c_str( ) );
 
@@ -1089,7 +1089,7 @@ void n_players::draw_player( const esp_player_t& player, const projector_t& w2s,
 	}
 
 	if ( player.m_god ) {
-		const auto god_font = g_render.m_custom_fonts[ e_custom_font_names::custom_font_name_esp ];
+		const auto god_font = g_render.m_custom_fonts[ e_custom_font_names::custom_font_name_esp ] ? g_render.m_custom_fonts[ e_custom_font_names::custom_font_name_esp ] : g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
 		const auto text     = "(GOD)";
 		const auto text_size = god_font->CalcTextSizeA( god_font->FontSize, FLT_MAX, 0.f, text );
 
@@ -1178,7 +1178,7 @@ void n_players::draw_player( const esp_player_t& player, const projector_t& w2s,
 					if ( converted_name.empty( ) )
 						return;
 
-					const auto weapon_font = g_render.m_custom_fonts[ e_custom_font_names::custom_font_name_esp ];
+					const auto weapon_font = g_render.m_custom_fonts[ e_custom_font_names::custom_font_name_esp ] ? g_render.m_custom_fonts[ e_custom_font_names::custom_font_name_esp ] : g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
 
 					const auto text_size = weapon_font->CalcTextSizeA( weapon_font->FontSize, FLT_MAX, 0.f, converted_name.c_str( ) );
 

@@ -466,13 +466,11 @@ int& c_base_entity::get_take_damage( )
 
 c_vector c_base_entity::get_bone_position( int bone )
 {
-	matrix3x4_t bone_matrix[ 128 ]{ };
-	memcpy( bone_matrix, this->get_cached_bone_data( ).get_elements( ), this->get_cached_bone_data( ).count( ) * sizeof( matrix3x4_t ) );
-
-	if ( !bone_matrix )
+	auto& bones = this->get_cached_bone_data( );
+	if ( bone < 0 || bone >= bones.count( ) || !bones.base( ) )
 		return { };
 
-	return bone_matrix[ bone ][ 3 ];
+	return bones.base( )[ bone ].at( 3 );
 }
 
 c_vector c_base_entity::get_hitbox_position( int index, float point_scale )

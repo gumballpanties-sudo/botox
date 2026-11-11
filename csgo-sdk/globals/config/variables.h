@@ -1230,6 +1230,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_edgebug_autostrafe_to_edge, true );
 		ADD_VARIABLE( float, m_edgebug_autostrafe_max_angle, 180.f );
 		ADD_VARIABLE_VECTOR( bool, 2, m_edgebug_types, true );
+		ADD_VARIABLE( bool, m_edgebug_cur_stance, false );
 		ADD_VARIABLE( int, m_edgebug_search_amount, 2 );
 		ADD_VARIABLE( bool, m_edgebug_mouse_steer, true );
 		ADD_VARIABLE( int, m_edgebug_paths, 3 );
@@ -1495,6 +1496,11 @@ namespace n_variables
 		ADD_VARIABLE( float, m_key_indicators_particle_gravity, 90.f );
 		ADD_VARIABLE( float, m_key_indicators_particle_life, 0.8f );
 		ADD_VARIABLE( float, m_key_indicators_particle_cooldown, 0.25f );
+		ADD_VARIABLE( bool, m_key_indicators_glow, false );
+		ADD_VARIABLE( c_color, m_key_indicators_glow_color, c_color( 175, 210, 170, 255 ) );
+		ADD_VARIABLE( float, m_key_indicators_glow_blur, 10.f );
+		ADD_VARIABLE( int, m_key_indicators_glow_strength, 2 );
+		ADD_VARIABLE( float, m_key_indicators_glow_life, 0.6f );
 
 		ADD_VARIABLE( c_color, m_velocity_indicator_shadow_color, c_color( 0, 0, 0, 255 ) );
 		ADD_VARIABLE( c_color, m_stamina_indicator_shadow_color, c_color( 0, 0, 0, 255 ) );

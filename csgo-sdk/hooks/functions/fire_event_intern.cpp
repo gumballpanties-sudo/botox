@@ -220,6 +220,8 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 				break;
 
 			m_group = game_event->get_int( "hitgroup" );
+			if ( m_group != hitgroup_gear && ( m_group < 0 || m_group > 8 ) )
+				m_group = 0;
 
 			on_hit_marker( );
 			on_hit_sound( );
