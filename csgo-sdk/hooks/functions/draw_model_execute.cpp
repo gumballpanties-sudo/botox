@@ -185,7 +185,6 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 			layers, colors, darks, false, 1.f, [ & ]( ) { original( ecx, edx, context, state, info, custom_bone_to_world ); },
 			static_cast< c_material_render_context* >( context ) );
 
-		g_interfaces.m_model_render->forced_material_override( nullptr );
 		n_chams::impl_t::reset_original_color( );
 		return;
 	}

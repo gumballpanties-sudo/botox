@@ -607,7 +607,25 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "edge catch key", &GET_VARIABLE( g_variables.m_edge_catch_key, key_bind_t ) );
 						ImGui::SliderFloat( "predict time##ecptime", &GET_VARIABLE( g_variables.m_edge_catch_predict_time, float ), 0.05f, 1.f, "%.2f s" );
 						ImGui::SliderFloat( "max reach##ecreach", &GET_VARIABLE( g_variables.m_edge_catch_reach, float ), 0.5f, 64.f, "%.1f u" );
+						ImGui::Checkbox( "duck lift##ecduck", &GET_VARIABLE( g_variables.m_edge_catch_duck, bool ) );
 						ImGui::Checkbox( "visualize##ecviz", &GET_VARIABLE( g_variables.m_edge_catch_visualize, bool ) );
+						if ( GET_VARIABLE( g_variables.m_edge_catch_visualize, bool ) ) {
+							ImGui::ColorEdit4( "outline color##ecvizcolor", &GET_VARIABLE( g_variables.m_edge_catch_visualize_color, c_color ),
+							                   color_picker_alpha_flags );
+							ImGui::SliderFloat( "visualize thickness##ecvizthick",
+							                    &GET_VARIABLE( g_variables.m_edge_catch_visualize_thickness, float ), 0.5f, 10.f, "%.1f" );
+							ImGui::Combo( "pad shape##ecvizshape", &GET_VARIABLE( g_variables.m_edge_catch_visualize_shape, int ), "square\0circle\0" );
+							ImGui::Combo( "pad fill##ecvizfill", &GET_VARIABLE( g_variables.m_edge_catch_visualize_fill, int ),
+							              "outline\0filled\0filled + outline\0" );
+							if ( GET_VARIABLE( g_variables.m_edge_catch_visualize_fill, int ) != 0 ) {
+								ImGui::ColorEdit4( "pad color##ecvizpadcolor", &GET_VARIABLE( g_variables.m_edge_catch_visualize_pad_color, c_color ),
+								                   color_picker_alpha_flags );
+								ImGui::SliderFloat( "fill opacity##ecvizfilla",
+								                    &GET_VARIABLE( g_variables.m_edge_catch_visualize_fill_alpha, float ), 0.05f, 1.f, "%.2f" );
+							}
+							ImGui::SliderFloat( "pad size##ecvizsize", &GET_VARIABLE( g_variables.m_edge_catch_visualize_size, float ), 4.f, 64.f, "%.0f" );
+							ImGui::Checkbox( "project onto geometry##ecvizproj", &GET_VARIABLE( g_variables.m_edge_catch_visualize_projected, bool ) );
+						}
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
@@ -891,6 +909,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Label( "scan key" );
 						ImGui::Keybind( "pixel finder key", &GET_VARIABLE( g_variables.m_pixel_finder_key, key_bind_t ) );
 						ImGui::Checkbox( "pixelsurfs", &GET_VARIABLE( g_variables.m_pixel_finder_pixelsurfs, bool ) );
+						ImGui::Checkbox( "draw pixelsurf length", &GET_VARIABLE( g_variables.m_pixel_finder_length, bool ) );
 						ImGui::Checkbox( "texturebugs", &GET_VARIABLE( g_variables.m_pixel_finder_texturebugs, bool ) );
 						ImGui::Checkbox( "headbounces", &GET_VARIABLE( g_variables.m_pixel_finder_headbounces, bool ) );
 						ImGui::Checkbox( "pixeljumps", &GET_VARIABLE( g_variables.m_pixel_finder_pixeljumps, bool ) );
@@ -949,6 +968,7 @@ void n_menu::impl_t::tab_movement( )
 						if ( ImGui::Button( floor_level_shown( ) ? "clear floor level" : "check floor level##button", ImVec2( -1.f, 15.f ) ) )
 							floor_level_toggle( );
 						ImGui::SliderFloat( "size##floorlevel", &GET_VARIABLE( g_variables.m_floor_level_size, float ), 16.f, 512.f, "%.0f u" );
+						ImGui::SliderFloat( "max height deviance##floorlevel", &GET_VARIABLE( g_variables.m_floor_level_dev, float ), 0.5f, 256.f, "%.1f u" );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}

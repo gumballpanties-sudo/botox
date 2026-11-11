@@ -36,6 +36,17 @@ namespace {
 		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
 		return tr.m_fraction < 1.f && tr.m_plane.m_normal.m_z > 0.f && tr.m_plane.m_normal.m_z < 0.7f;
 	}
+
+	/* z = hull resting on the standable floor within 32 u below, same frame as baseline's floor z */
+	bool floor_under( const c_vector& at, const bool ducked, float& z )
+	{
+		c_trace_filter filter( g_ctx.m_local );
+		ray_t ray( at, c_vector( at.m_x, at.m_y, at.m_z - 32.f ), c_vector( -16.f, -16.f, 0.f ), c_vector( 16.f, 16.f, ducked ? 54.f : 72.f ) );
+		trace_t tr;
+		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &filter, &tr );
+		z = tr.m_end.m_z;
+		return !tr.m_start_solid && tr.m_fraction < 1.f && tr.m_plane.m_normal.m_z >= 0.7f;
+	}
 }
 
 void n_edge_catch::impl_t::reset( const bool forget )
@@ -50,7 +61,11 @@ void n_edge_catch::impl_t::render( ) const
 {
 	if ( !m_active || !GET_VARIABLE( g_variables.m_edge_catch_visualize, bool ) )
 		return;
-	n_edgebug::draw_plan( m_viz, m_last + 2, m_hit, m_land_pos );
+	const n_edgebug::viz_vars_t style{ g_variables.m_edge_catch_visualize_color, g_variables.m_edge_catch_visualize_thickness,
+		                               g_variables.m_edge_catch_visualize_shape, g_variables.m_edge_catch_visualize_fill,
+		                               g_variables.m_edge_catch_visualize_fill_alpha, g_variables.m_edge_catch_visualize_pad_color,
+		                               g_variables.m_edge_catch_visualize_projected, g_variables.m_edge_catch_visualize_size };
+	n_edgebug::draw_plan( m_viz, m_last + 2, m_hit, m_land_pos, 1.f, &style );
 }
 
 void n_edge_catch::impl_t::pre( c_user_cmd* cmd )
@@ -64,10 +79,18 @@ void n_edge_catch::impl_t::pre( c_user_cmd* cmd )
 	m_start_move_type = local->get_move_type( );
 	m_start_vel       = local->get_velocity( );
 	m_eb_latched      = g_edgebug.m_found;
-	if ( ( m_start_flags & fl_onground ) && m_start_move_type == move_type_walk ) {
+	const bool air = !( m_start_flags & fl_onground );
+	if ( !air && m_start_move_type == move_type_walk ) {
 		m_takeoff_z  = local->get_origin( ).m_z;
 		m_had_ground = true;
 	}
+	/* airborne rise after a fall = jumpbug / bounce: that floor is the new takeoff ( rising search would pull you back onto it ) */
+	float jb_z = 0.f;
+	if ( air && m_yaw_valid && m_start_vel.m_z > 0.f && m_prev_vz <= 0.f && floor_under( local->get_origin( ), ( m_start_flags & fl_ducking ) != 0, jb_z ) ) {
+		m_takeoff_z  = jb_z;
+		m_had_ground = true;
+	}
+	m_prev_vz = air ? m_start_vel.m_z : 1.f;
 	const float yaw   = rad2deg( atan2f( m_start_vel.m_y, m_start_vel.m_x ) );
 	m_turn_left       = m_yaw_valid && std::remainderf( yaw - m_prev_yaw, 360.f ) > 0.f;
 	m_prev_yaw        = yaw;
@@ -89,7 +112,7 @@ void n_edge_catch::impl_t::apply( c_user_cmd* cmd, const tick_t& t, const c_angl
 void n_edge_catch::impl_t::sim( c_user_cmd* cmd, const int index, const tick_t& t, const int buttons )
 {
 	const auto local    = g_ctx.m_local;
-	cmd->m_buttons      = buttons;
+	cmd->m_buttons      = t.duck ? buttons | in_duck : buttons;
 	cmd->m_view_point   = m_view;
 	cmd->m_forward_move = m_fwd0;
 	cmd->m_side_move    = m_side0;
@@ -231,6 +254,7 @@ bool n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool 
 		tick_t& t = m_plan[ k ];
 		t.origin  = local->get_origin( );
 		t.strafe  = k < prefix;
+		t.duck    = m_duck;
 		if ( t.strafe ) {
 			const c_vector vel  = local->get_velocity( );
 			const float ang     = n_edge_skip::perfect_angle( vel, local->get_surface_friction( ), local->get_max_speed( ) );
@@ -263,6 +287,12 @@ bool n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool 
    lands, strafing all the way is the last resort */
 bool n_edge_catch::impl_t::family( c_user_cmd* cmd, const bool first_neg )
 {
+	/* duck lift pass: duck alone ( no strafe ) first */
+	if ( m_duck ) {
+		m_saved[ 0 ] = 0;
+		if ( chain( cmd, 0, first_neg, true, 0 ) )
+			return true;
+	}
 	bool full[ 2 ]{ };
 	for ( int s = 0; s < 2; s++ ) {
 		m_saved[ s ] = 0;
@@ -293,6 +323,7 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 	m_kind = 0;
 	m_jb   = jb_bind( );
 	m_jb_plan = false;
+	m_duck    = false;
 	m_view     = cmd->m_view_point;
 	m_fwd0     = cmd->m_forward_move;
 	m_side0    = cmd->m_side_move;
@@ -333,7 +364,12 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 	} bounds_guard;
 
 	const bool miss  = reach && baseline( cmd );
-	const bool found = miss && family( cmd, m_turn_left );
+	bool found       = miss && family( cmd, m_turn_left );
+	/* strafe alone can't reach: hold duck ( feet +9 u ) */
+	if ( miss && !found && GET_VARIABLE( g_variables.m_edge_catch_duck, bool ) && !( m_buttons0 & in_duck ) && !out( ) ) {
+		m_duck = true;
+		found  = family( cmd, m_turn_left );
+	}
 
 	cmd->m_view_point       = m_view;
 	cmd->m_forward_move     = m_fwd0;
@@ -345,9 +381,9 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 		restore_start( );
 
 	if ( miss )
-		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f evz=%.2f reach=%.1f win=%d turn=%d chains=%d sims=%d us=%lld found=%d last=%d strafe=%d jb=%d/%d\n",
+		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f evz=%.2f reach=%.1f win=%d turn=%d chains=%d sims=%d us=%lld found=%d last=%d strafe=%d jb=%d/%d duck=%d\n",
 		               m_kind, m_miss, m_ground_z, org0.m_z, vel0.m_z, m_miss_vz, m_reach, m_max_ticks, m_turn_left ? 1 : 0, m_chains, m_sims, m_budget.used_us( ),
-		               found ? 1 : 0, found ? m_last : -1, found ? strafed( ) : 0, m_jb ? 1 : 0, found && m_jb_plan ? 1 : 0 );
+		               found ? 1 : 0, found ? m_last : -1, found ? strafed( ) : 0, m_jb ? 1 : 0, found && m_jb_plan ? 1 : 0, m_duck ? ( found ? 2 : 1 ) : 0 );
 	if ( !found )
 		return;
 	m_active = true;
@@ -403,17 +439,16 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 		}
 	}
 	if ( !m_active ) {
-		static int n_eb = 0, n_vz = 0, n_run = 0;
+		static int n_eb = 0, n_run = 0;
 		if ( static unsigned long long next = 0ull; GetTickCount64( ) >= next ) {
 			next = GetTickCount64( ) + 1000ull;
-			if ( n_eb || n_vz || n_run )
-				botox_dbg_log( "EC: gates eb=%d vz=%d run=%d\n", n_eb, n_vz, n_run );
-			n_eb = n_vz = n_run = 0;
+			if ( n_eb || n_run )
+				botox_dbg_log( "EC: gates eb=%d run=%d\n", n_eb, n_run );
+			n_eb = n_run = 0;
 		}
+		/* rising too: an early plan has more ticks to strafe */
 		if ( m_eb_latched )
 			n_eb++;
-		else if ( m_start_vel.m_z > 0.f )
-			n_vz++;
 		else {
 			n_run++;
 			search( cmd );
@@ -423,6 +458,8 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 		return;
 	if ( m_plan[ m_hit ].strafe )
 		apply( cmd, m_plan[ m_hit ], cmd->m_view_point );
+	if ( m_plan[ m_hit ].duck )
+		cmd->m_buttons |= in_duck;
 	/* the jump bug's own landing duck, on the tick its prediction never saw land */
 	if ( m_jb_plan && m_hit == m_last && jb_bind( ) )
 		cmd->m_buttons = ( cmd->m_buttons | in_duck ) & ~in_jump;

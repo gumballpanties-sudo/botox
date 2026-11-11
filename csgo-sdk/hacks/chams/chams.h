@@ -439,6 +439,10 @@ namespace n_chams
 		{
 			PERF_ZONE( zone_draw_model );
 
+			// game sets skin composites as selective overrides before dme, any forced override wipes them
+			auto& override_state                            = g_interfaces.m_studio_render->material_override( );
+			const studio_material_override_t saved_override = override_state;
+
 			const auto depth_prepass = [ & ]( ) {
 				prepass_context->override_color_write_enable( true, false );
 				prepass_context->override_depth_enable( true, true, true );
@@ -487,6 +491,7 @@ namespace n_chams
 					apply_original_color( layer_color, alpha_scale );
 
 					g_interfaces.m_model_render->forced_material_override( nullptr );
+					override_state = saved_override;
 
 					const float original_alpha = layer_color.base< e_color_type::color_type_a >( ) * alpha_scale;
 
@@ -538,6 +543,7 @@ namespace n_chams
 			}
 
 			g_interfaces.m_model_render->forced_material_override( nullptr );
+			override_state = saved_override;
 		}
 
 		template< typename t_draw_pass >

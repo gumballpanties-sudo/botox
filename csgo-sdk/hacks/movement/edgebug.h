@@ -5,6 +5,7 @@
 #include <vector>
 #include <deque>
 #include <algorithm>
+#include <cstdint>
 #include "../../game/sdk/classes/c_vector.h"
 #include "../../game/sdk/classes/c_angle.h"
 class c_user_cmd;
@@ -28,7 +29,11 @@ namespace n_edgebug
 		/* false = no IsNearEdge trace ( route calc worker thread, sim ticks off the live player anyway ) */
 		bool trace_edge = true;
 	};
-	void draw_plan( const c_vector* path, int count, int from, const c_vector& pad_pos, float alpha = 1.f );
+	/* var ids of one visualizer look ( null = edgebug's own ) */
+	struct viz_vars_t {
+		std::uint32_t color, thickness, shape, fill, fill_alpha, pad_color, projected, size;
+	};
+	void draw_plan( const c_vector* path, int count, int from, const c_vector& pad_pos, float alpha = 1.f, const viz_vars_t* vars = nullptr );
 	struct impl_t {
 	public:
 		void PrePredictionEdgeBug( c_user_cmd* cmd );

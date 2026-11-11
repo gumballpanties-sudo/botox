@@ -92,7 +92,15 @@ bool pf_tb_info( c_vector& dot, pf_tb_t& out )
 }
 static std::vector< c_vector > Point_pj{ };
 
-constexpr float k_pf_share        = 0.2f;
+struct pf_len_t {
+	c_vector dot{ };
+	float z = 0.f, lat = 0.f;
+	bool duck = true;
+	n_pf::run_t run;
+};
+static std::vector< pf_len_t > Point_len{ };
+
+constexpr float k_pf_share       = 0.2f;
 constexpr float k_pf_max_span     = 1024.f;
 constexpr float k_pf_hull         = 54.f;
 constexpr float k_pf_stand_hull   = 72.f;
@@ -778,6 +786,7 @@ static struct {
 	int row_box          = 0;
 	int tally[ pf_kinds ][ k_pf_outcomes ]{ };
 	int tb_seams = 0, tb_heads = 0, tb_edges = 0, tb_rises = 0, tb_unverified = 0, pj_lips = 0, pj_skins = 0;
+	int run_i = 0;
 	int chunks = 0, sims = 0, traces = 0;
 	long long used_us = 0, next_qpc = 0, worst_chunk_us = 0;
 } s_pf_scan;
@@ -1567,52 +1576,56 @@ static void pm_scan( c_user_cmd* cmd )
 }
 
 /* paint ( game thread ): lines in 64u pieces so one end behind the camera keeps the rest, 48u smoothstep fade at the ends */
-static void pm_render( )
+struct pm_seg_t {
+	ImVec2 a, b;
+	ImU32 col;
+};
+
+/* max_dist: nearest point of the line to you, so skybox seams stay hidden */
+static void pm_add_segs( const std::vector< c_vector >& lines, ImU32 base, float max_dist, std::vector< pm_seg_t >& segs )
 {
-	if ( !GET_VARIABLE( g_variables.m_pixel_finder_map_lines, bool ) )
-		return;
-	struct seg_t {
-		ImVec2 a, b;
-		ImU32 col;
-	};
-	std::vector< seg_t > segs;
-	/* max visible distance: nearest point of the line to you, so skybox seams stay hidden */
-	const float max_dist = GET_VARIABLE( g_variables.m_pixel_finder_map_max_dist, float );
-	const bool cull      = max_dist > 0.f && g_ctx.m_local;
-	const c_vector eye   = cull ? g_ctx.m_local->get_origin( ) : c_vector( 0.f, 0.f, 0.f );
-	/* tb last: on a seam that is both, orange stays visible */
-	for ( int k = 0; k < pm_kinds; ++k ) {
-		const std::vector< c_vector >& lines = s_pm_lines[ k ];
-		for ( size_t i = 0; i + 1 < lines.size( ); i += 2 ) {
-			const c_vector a   = lines[ i ];
-			const c_vector dir = lines[ i + 1 ] - a;
-			const float len    = dir.length( );
-			if ( len < 0.01f )
+	const bool cull    = max_dist > 0.f && g_ctx.m_local;
+	const c_vector eye = cull ? g_ctx.m_local->get_origin( ) : c_vector( 0.f, 0.f, 0.f );
+	for ( size_t i = 0; i + 1 < lines.size( ); i += 2 ) {
+		const c_vector a   = lines[ i ];
+		const c_vector dir = lines[ i + 1 ] - a;
+		const float len    = dir.length( );
+		if ( len < 0.01f )
+			continue;
+		if ( cull ) {
+			const float t = std::clamp( ( eye - a ).dot_product( dir ) / ( len * len ), 0.f, 1.f );
+			if ( eye.dist_to( a + dir * t ) > max_dist )
 				continue;
-			if ( cull ) {
-				const float t = std::clamp( ( eye - a ).dot_product( dir ) / ( len * len ), 0.f, 1.f );
-				if ( eye.dist_to( a + dir * t ) > max_dist )
-					continue;
-			}
-			const float fade = ( std::min )( 48.f, len * 0.34f );
-			for ( float da = 0.f; da < len - 0.001f; ) {
-				const bool fine = ( std::min )( da, len - da ) < fade + 6.f;
-				const float db  = ( std::min )( da + ( fine ? 6.f : 64.f ), len );
-				const float mid = ( da + db ) * 0.5f;
-				const float fa  = std::clamp( ( std::min )( mid, len - mid ) / fade, 0.f, 1.f );
-				const float sm  = fa * fa * ( 3.f - 2.f * fa );
-				const ImU32 col = ( k_pm_col[ k ] & ~IM_COL32_A_MASK ) | ( static_cast< ImU32 >( 220.f * sm ) << IM_COL32_A_SHIFT );
-				c_vector_2d p0, p1;
-				if ( g_render.world_to_screen( a + dir * ( da / len ), p0 ) && g_render.world_to_screen( a + dir * ( db / len ), p1 ) )
-					segs.push_back( { ImVec2( p0.m_x, p0.m_y ), ImVec2( p1.m_x, p1.m_y ), col } );
-				da = db;
-			}
+		}
+		const float fade = ( std::min )( 48.f, len * 0.34f );
+		for ( float da = 0.f; da < len - 0.001f; ) {
+			const bool fine = ( std::min )( da, len - da ) < fade + 6.f;
+			const float db  = ( std::min )( da + ( fine ? 6.f : 64.f ), len );
+			const float mid = ( da + db ) * 0.5f;
+			const float fa  = std::clamp( ( std::min )( mid, len - mid ) / fade, 0.f, 1.f );
+			const float sm  = fa * fa * ( 3.f - 2.f * fa );
+			const ImU32 col = ( base & ~IM_COL32_A_MASK ) | ( static_cast< ImU32 >( 220.f * sm ) << IM_COL32_A_SHIFT );
+			c_vector_2d p0, p1;
+			if ( g_render.world_to_screen( a + dir * ( da / len ), p0 ) && g_render.world_to_screen( a + dir * ( db / len ), p1 ) )
+				segs.push_back( { ImVec2( p0.m_x, p0.m_y ), ImVec2( p1.m_x, p1.m_y ), col } );
+			da = db;
 		}
 	}
+}
+
+static void pm_render( const std::vector< c_vector >& finder_lines = { } )
+{
+	std::vector< pm_seg_t > segs;
+	/* tb last: on a seam that is both, orange stays visible */
+	if ( GET_VARIABLE( g_variables.m_pixel_finder_map_lines, bool ) )
+		for ( int k = 0; k < pm_kinds; ++k )
+			pm_add_segs( s_pm_lines[ k ], k_pm_col[ k ], GET_VARIABLE( g_variables.m_pixel_finder_map_max_dist, float ), segs );
+	if ( !finder_lines.empty( ) )
+		pm_add_segs( finder_lines, GET_VARIABLE( g_variables.m_point_clr_pf_ps, c_color ).get_u32( ), 0.f, segs );
 	if ( segs.empty( ) )
 		return;
 	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_callback, std::make_any< callback_draw_object_t >( callback_draw_object_t{ [ segs ]( ImDrawList* dl ) {
-										   for ( const seg_t& s : segs )
+										   for ( const pm_seg_t& s : segs )
 											   dl->AddLine( s.a, s.b, s.col, 1.f );
 									   } } ) );
 }
@@ -1654,6 +1667,7 @@ void n_movement::impl_t::on_level_init( )
 	Point_tb_info.clear( );
 	Point_tb_rise.clear( );
 	Point_pj.clear( );
+	Point_len.clear( );
 	animated_points.clear( );
 	animated_points2.clear( );
 	animated_points3.clear( );
@@ -1680,6 +1694,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 			Point_tb_info.clear( );
 			Point_tb_rise.clear( );
 			Point_pj.clear( );
+			Point_len.clear( );
 			animated_points.clear( );
 			animated_points2.clear( );
 			animated_points3.clear( );
@@ -1690,7 +1705,17 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 	if ( cmd == nullptr ) {
 		std::vector< c_vector > none;
 		std::vector< c_vector > tb = GET_VARIABLE( g_variables.m_pixel_finder_texturebugs, bool ) ? pf_tb_drawn( ) : none;
-		pm_render( );
+		std::vector< c_vector > len_lines;
+		if ( !Point_len.empty( ) && GET_VARIABLE( g_variables.m_pixel_finder_pixelsurfs, bool ) && GET_VARIABLE( g_variables.m_pixel_finder_length, bool ) ) {
+			const c_vector n = c_vector( WallNormal.m_x, WallNormal.m_y, 0.f ).normalized( );
+			const c_vector along( n.m_y, -n.m_x, 0.f );
+			for ( const pf_len_t& l : Point_len )
+				if ( l.run.ext[ 1 ] - l.run.ext[ 0 ] >= 1.f ) {
+					len_lines.push_back( l.dot + along * l.run.ext[ 0 ] );
+					len_lines.push_back( l.dot + along * l.run.ext[ 1 ] );
+				}
+		}
+		pm_render( len_lines );
 		pf_render_dots( GET_VARIABLE( g_variables.m_pixel_finder_pixelsurfs, bool ) ? Points : none,
 		                GET_VARIABLE( g_variables.m_pixel_finder_headbounces, bool ) ? Point_bounce : none, tb,
 		                GET_VARIABLE( g_variables.m_pixel_finder_pixeljumps, bool ) ? Point_pj : none );
@@ -1757,6 +1782,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 		Point_tb_info.clear( );
 		Point_tb_rise.clear( );
 		Point_pj.clear( );
+		Point_len.clear( );
 		const c_vector end = eye + dir * 6000.f;
 		trace_t trace      = { };
 		ray_t ray( eye, end );
@@ -1846,7 +1872,8 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 		if ( s.arm_fails > k_pf_arm_tries ) {
 			movement_add_window( 3.f, "pixel finder: crouch kept failing, scan stopped" );
 			botox_dbg_log( "[pf] duck refused %d chunks in a row, scan stopped", s.arm_fails );
-			s.h_i = static_cast< int >( s.hs.size( ) );
+			s.h_i   = static_cast< int >( s.hs.size( ) );
+			s.run_i = static_cast< int >( Point_len.size( ) );
 		}
 		return 0;
 	};
@@ -1884,6 +1911,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 				return pf_dup;
 			const c_vector dot = pf_dot( pf_face_pt( c, sp ), got );
 			Points.push_back( dot );
+			Point_len.push_back( { dot, z, lat, duck } );
 			botox_dbg_log( "[pf ps] dot z %.4f | %s %.4f lat %+.1f %s slide %+.0f, %s%s", got, h.seam ? "seam" : "edge", h.z, lat, duck ? "ducked" : "standing", slid,
 			               sp.disp ? "disp" : "brush", sp.prop ? " prop" : "" );
 			if ( n_pf::is_marker( got ) ) {
@@ -1970,6 +1998,23 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 		}
 	};
 
+	/* same probe that found the dot, slid d along the wall: 1 still pins at its z, 0 not, k_pf_wait arm refused */
+	const auto holds = [ & ]( const pf_len_t& l, float d ) -> int {
+		s_pf_h = l.duck ? k_pf_hull : k_pf_stand_hull;
+		pf_spot_t sp;
+		if ( pf_spot( c, StartPos + c.along * ( l.lat + d ), l.z, sp ) != pf_held )
+			return 0;
+		if ( !sp.disp && std::fabs( ( pf_face_pt( c, sp ) - l.dot ).dot_product( c.n ) ) > 0.05f )
+			return 0;
+		if ( !pf_surf_gate( c, sp, true ) )
+			return 0;
+		if ( const int r = ready( l.duck ); r != 1 )
+			return r == 0 ? k_pf_wait : 0;
+		float got = 0.f, slid = 0.f;
+		return pf_surf( c, sp, got, slid ) == pf_held && std::fabs( got - l.dot.m_z ) < 0.02f ? 1 : 0;
+	};
+	const bool walk = ps_on && GET_VARIABLE( g_variables.m_pixel_finder_length, bool );
+
 	n_tick::c_sim_budget budget;
 	budget.start( k_pf_share, 0.f, n_tick::search_pf );
 	while ( s.busy && !budget.expired( ) ) {
@@ -1990,8 +2035,20 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 			continue;
 		}
 		if ( s.h_i >= static_cast< int >( s.hs.size( ) ) ) {
-			s.busy = false;
-			break;
+			if ( !walk || s.run_i >= static_cast< int >( Point_len.size( ) ) ) {
+				s.busy = false;
+				break;
+			}
+			pf_len_t& l = Point_len[ s.run_i ];
+			if ( l.run.done( ) ) {
+				++s.run_i;
+				continue;
+			}
+			const int o = holds( l, l.run.next( ) );
+			if ( o == k_pf_wait )
+				break;
+			l.run.feed( o == 1 );
+			continue;
 		}
 		const n_pf::height_t h = s.hs[ s.h_i ];
 		s.k                    = h.z;
@@ -2045,12 +2102,15 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 	s.next_qpc = n_tick::qpc_now( ) + 2ll * chunk_us * n_tick::qpc_freq( ) / 1000000ll;
 	++s.chunks;
 	if ( !s.busy ) {
+		float longest = 0.f;
+		for ( const pf_len_t& l : Point_len )
+			longest = ( std::max )( longest, l.run.ext[ 1 ] - l.run.ext[ 0 ] );
 		botox_dbg_log( "[pf] scan done heights %.0f..%.0f | ps%s | stand%s | hb%s | head%s | rise%s | tb %d seam %d head %d edge %d rise, %d diagonal/disp not marked | "
-		               "pj %d lip %d skin | %d cmd(s), %lld us, worst chunk %lld us, %d sims, %d traces",
+		               "pj %d lip %d skin | len %d walked, longest %.0fu | %d cmd(s), %lld us, worst chunk %lld us, %d sims, %d traces",
 		               s.lo, s.hi, pf_tally( s.tally[ pf_k_surf ] ).c_str( ), pf_tally( s.tally[ pf_k_stand ] ).c_str( ), pf_tally( s.tally[ pf_k_hb ] ).c_str( ),
 		               pf_tally( s.tally[ pf_k_head ] ).c_str( ),
 		               pf_tally( s.tally[ pf_k_rise ] ).c_str( ), s.tb_seams, s.tb_heads, s.tb_edges, s.tb_rises, s.tb_unverified, s.pj_lips, s.pj_skins,
-		               s.chunks, s.used_us, s.worst_chunk_us, s.sims, s.traces );
+		               walk ? s.run_i : -1, longest, s.chunks, s.used_us, s.worst_chunk_us, s.sims, s.traces );
 		pf_recheck_tricks( );
 		const int pixelsurf_count = ps_on ? static_cast< int >( Points.size( ) ) : 0;
 		const int bounce_count    = hb_on ? static_cast< int >( Point_bounce.size( ) ) : 0;

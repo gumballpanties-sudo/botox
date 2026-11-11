@@ -72,4 +72,46 @@ namespace n_pf
 		std::stable_sort( out.begin( ), out.end( ), [ ]( const height_t& a, const height_t& b ) { return a.z > b.z; } );
 		return out;
 	}
+
+	constexpr float k_run_step   = 8.f;
+	constexpr int k_run_max      = 160;
+	constexpr int k_run_bisect   = 3;
+
+	/* one found surf walked along its wall: next( ) = offset to test, feed( held ). ext[ 0 ] <= 0 <= ext[ 1 ] */
+	struct run_t {
+		float ext[ 2 ]{ };
+		int dir = 0, k = 1, b = -1;
+		float lo = 0.f, hi = 0.f;
+
+		bool done( ) const { return dir > 1; }
+		float sgn( ) const { return dir ? 1.f : -1.f; }
+		float next( ) const { return sgn( ) * ( b < 0 ? k_run_step * static_cast< float >( k ) : 0.5f * ( lo + hi ) ); }
+		void side_done( )
+		{
+			++dir;
+			k = 1;
+			b = -1;
+		}
+		void feed( bool held )
+		{
+			if ( b < 0 ) {
+				if ( held ) {
+					ext[ dir ] = sgn( ) * k_run_step * static_cast< float >( k );
+					if ( ++k > k_run_max )
+						side_done( );
+					return;
+				}
+				lo = k_run_step * static_cast< float >( k - 1 );
+				hi = k_run_step * static_cast< float >( k );
+				b  = 0;
+				return;
+			}
+			const float mid = 0.5f * ( lo + hi );
+			( held ? lo : hi ) = mid;
+			if ( ++b >= k_run_bisect ) {
+				ext[ dir ] = sgn( ) * lo;
+				side_done( );
+			}
+		}
+	};
 }

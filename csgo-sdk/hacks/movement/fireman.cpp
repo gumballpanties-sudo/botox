@@ -2738,8 +2738,11 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 	constexpr float drop_in_depth   = 512.f;
 
 	fireman_drop_target_t target;
-	const bool drop_found = drop_in_on && fireman_find_drop_target( origin, mins, maxs, drop_in_depth, drop_in_lateral, target,
-	                                                                m_fireman_data.drop_col_valid ? &m_fireman_data.drop_col : nullptr );
+	/* beside the column = approach's job: without approach drop in only acts already over the ladder */
+	const bool drop_found = drop_in_on &&
+	                        fireman_find_drop_target( origin, mins, maxs, drop_in_depth, drop_in_lateral, target,
+	                                                  m_fireman_data.drop_col_valid ? &m_fireman_data.drop_col : nullptr ) &&
+	                        ( approach || target.overhead );
 
 	float column_slice = -1.f;
 
@@ -3129,7 +3132,7 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			m_fireman_data.drop_col_valid  = true;
 
 			/* cooldown + idle reset like the hunt's arm: a lock the idle valve just dropped must not re-arm next tick */
-			if ( lock_armed && !m_fireman_data.drop_in_lock && m_fireman_data.lock_cooldown <= 0 ) {
+			if ( lock_armed && target.overhead && !m_fireman_data.drop_in_lock && m_fireman_data.lock_cooldown <= 0 ) {
 				m_fireman_data.drop_in_lock    = true;
 				m_fireman_data.lock_ticks      = 0;
 				m_fireman_data.lock_idle_ticks = 0;

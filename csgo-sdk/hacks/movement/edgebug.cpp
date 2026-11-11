@@ -1545,12 +1545,16 @@ void n_edgebug::impl_t::render( )
 	f.pts[ 0 ] = first;
 }
 
-void n_edgebug::draw_plan( const c_vector* path, const int count, const int from, const c_vector& pad_pos, const float alpha )
+void n_edgebug::draw_plan( const c_vector* path, const int count, const int from, const c_vector& pad_pos, const float alpha, const viz_vars_t* vars )
 {
 	if ( count < 2 || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) || !g_interfaces.m_engine_client->is_in_game( ) )
 		return;
-	const unsigned int color = GET_VARIABLE( g_variables.m_edgebug_visualize_color, c_color ).get_u32( alpha );
-	const float thickness    = GET_VARIABLE( g_variables.m_edgebug_visualize_thickness, float );
+	const viz_vars_t eb{ g_variables.m_edgebug_visualize_color, g_variables.m_edgebug_visualize_thickness, g_variables.m_edgebug_visualize_shape,
+	                    g_variables.m_edgebug_visualize_fill, g_variables.m_edgebug_visualize_fill_alpha, g_variables.m_edgebug_visualize_pad_color,
+	                    g_variables.m_edgebug_visualize_projected, g_variables.m_edgebug_visualize_size };
+	const viz_vars_t& v = vars ? *vars : eb;
+	const unsigned int color = GET_VARIABLE( v.color, c_color ).get_u32( alpha );
+	const float thickness    = GET_VARIABLE( v.thickness, float );
 	auto line = [ & ]( const c_vector& a, const c_vector& b ) {
 		c_vector_2d sa, sb;
 		if ( g_render.world_to_screen( a, sa ) && g_render.world_to_screen( b, sb ) )
@@ -1560,10 +1564,10 @@ void n_edgebug::draw_plan( const c_vector* path, const int count, const int from
 	for ( int i = std::clamp( from, 0, count - 1 ); i + 1 < count; i++ )
 		line( path[i], path[i + 1] );
 	const c_vector p       = pad_pos;
-	const bool circle      = GET_VARIABLE( g_variables.m_edgebug_visualize_shape, int ) == 1;
-	const int fill_mode    = GET_VARIABLE( g_variables.m_edgebug_visualize_fill, int );
-	const bool projected   = GET_VARIABLE( g_variables.m_edgebug_visualize_projected, bool );
-	const float reach      = GET_VARIABLE( g_variables.m_edgebug_visualize_size, float );
+	const bool circle      = GET_VARIABLE( v.shape, int ) == 1;
+	const int fill_mode    = GET_VARIABLE( v.fill, int );
+	const bool projected   = GET_VARIABLE( v.projected, bool );
+	const float reach      = GET_VARIABLE( v.size, float );
 	constexpr int k_max_pts = 32; /* = poly_draw_object_t cap, fill shares the ring */
 	/* projected square walks its edges ( 8 a side ) so the outline bends over steps instead of cutting through */
 	const int pts = circle || projected ? k_max_pts : 4;
@@ -1607,8 +1611,8 @@ void n_edgebug::draw_plan( const c_vector* path, const int count, const int from
 	}
 	if ( fill_mode != 0 ) {
 		// one convex poly, never a centre fan: imgui AA-fringes each triangle = bright spokes
-		const unsigned int fill_color = GET_VARIABLE( g_variables.m_edgebug_visualize_pad_color, c_color )
-			.get_u32( GET_VARIABLE( g_variables.m_edgebug_visualize_fill_alpha, float ) * alpha );
+		const unsigned int fill_color = GET_VARIABLE( v.pad_color, c_color )
+			.get_u32( GET_VARIABLE( v.fill_alpha, float ) * alpha );
 		poly_draw_object_t poly{ };
 		poly.m_color = fill_color;
 		bool all_on_screen = true;

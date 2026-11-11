@@ -18,6 +18,7 @@ namespace n_edge_catch
 	private:
 		struct tick_t {
 			bool strafe = false;
+			bool duck   = false;
 			float yaw   = 0.f;
 			float side  = 0.f;
 			c_vector origin{ };
@@ -39,6 +40,7 @@ namespace n_edge_catch
 		bool m_eb_latched = false;
 		float m_takeoff_z = 0.f;
 		bool m_had_ground = false;
+		float m_prev_vz   = 0.f;
 		float m_prev_yaw  = 0.f;
 		bool m_yaw_valid  = false;
 		bool m_turn_left  = false;
@@ -47,6 +49,7 @@ namespace n_edge_catch
 		tick_t m_seed[ 2 ][ 30 ];
 		bool m_jb         = false;
 		bool m_jb_plan    = false;
+		bool m_duck       = false;
 		bool m_active     = false;
 		int m_hit         = 0;
 		int m_last        = 0;

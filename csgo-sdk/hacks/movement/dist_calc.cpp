@@ -330,6 +330,91 @@ static std::string floor_level_readout( const float lo, const float hi, const fl
 	return buf;
 }
 
+struct fl_plane_t {
+	float nx, ny, nz, d;
+};
+
+/* SEH frames: no unwinding locals ( C2712 ); query released at once */
+static int fl_seh_query( const c_vector& mn, const c_vector& mx, unsigned int* out, int cap )
+{
+	__try {
+		c_brush_query q{ };
+		g_interfaces.m_engine_trace->get_brushes_in_aabb( mn, mx, q, mask_playersolid, 0 );
+		const int n = q.m_brushes ? std::clamp( q.m_count, 0, cap ) : 0;
+		if ( n )
+			std::memcpy( out, q.m_brushes, static_cast< size_t >( n ) * sizeof( unsigned int ) );
+		if ( q.m_release )
+			q.m_release( &q );
+		return n;
+	} __except ( EXCEPTION_EXECUTE_HANDLER ) {
+		return -1;
+	}
+}
+
+static int fl_seh_info( int brush, int& contents, brush_side_info_t* out, int cap )
+{
+	__try {
+		return g_interfaces.m_engine_trace->get_brush_info( brush, contents, out, cap );
+	} __except ( EXCEPTION_EXECUTE_HANDLER ) {
+		return 0;
+	}
+}
+
+/* planes of the world brush holding p, empty = none ( displacement, query fault ) */
+static std::vector< fl_plane_t > fl_brush_at( const c_vector& p )
+{
+	unsigned int ids[ 256 ];
+	const int n = fl_seh_query( p - c_vector( 1.f, 1.f, 1.f ), p + c_vector( 1.f, 1.f, 1.f ), ids, 256 );
+	std::vector< brush_side_info_t > sides( 128 );
+	std::vector< fl_plane_t > planes;
+	for ( int b = 0; b < n; b++ ) {
+		int contents = 0;
+		int ns       = fl_seh_info( static_cast< int >( ids[ b ] ), contents, sides.data( ), static_cast< int >( sides.size( ) ) );
+		if ( ns < 0 && -ns <= 4096 ) {
+			sides.resize( static_cast< size_t >( -ns ) );
+			ns = fl_seh_info( static_cast< int >( ids[ b ] ), contents, sides.data( ), static_cast< int >( sides.size( ) ) );
+		}
+		if ( ns <= 0 || ns > static_cast< int >( sides.size( ) ) || !( contents & mask_playersolid ) )
+			continue;
+		planes.clear( );
+		bool inside = true;
+		for ( int i = 0; i < ns && inside; i++ ) {
+			const cplane_t& pl = sides[ i ].m_plane;
+			planes.push_back( { pl.m_normal.m_x, pl.m_normal.m_y, pl.m_normal.m_z, pl.m_distance } );
+			inside = pl.m_normal.m_x * p.m_x + pl.m_normal.m_y * p.m_y + pl.m_normal.m_z * p.m_z - pl.m_distance <= 0.01f;
+		}
+		if ( inside )
+			return planes;
+	}
+	return { };
+}
+
+/* vertical ray top -> bot clipped against one convex brush, z of the face it enters through */
+static bool fl_clip_down( const std::vector< fl_plane_t >& planes, float x, float y, float top, float bot, float& z )
+{
+	float enter = -1.f, exit = 1.f, enter_nz = 0.f;
+	for ( const auto& p : planes ) {
+		const float xy = p.nx * x + p.ny * y - p.d;
+		const float d1 = xy + p.nz * top, d2 = xy + p.nz * bot;
+		if ( d1 > 0.f && d2 > 0.f )
+			return false;
+		if ( d1 <= 0.f && d2 <= 0.f )
+			continue;
+		const float t = d1 / ( d1 - d2 );
+		if ( d1 > 0.f ) {
+			if ( t > enter ) {
+				enter    = t;
+				enter_nz = p.nz;
+			}
+		} else if ( t < exit )
+			exit = t;
+	}
+	if ( enter < 0.f || enter > exit || enter_nz < 0.7f )
+		return false;
+	z = top + ( bot - top ) * enter;
+	return true;
+}
+
 void n_movement::impl_t::floor_level( c_user_cmd* cmd )
 {
 	auto& data        = m_floor_level_data;
@@ -357,7 +442,16 @@ void n_movement::impl_t::floor_level( c_user_cmd* cmd )
 	g_interfaces.m_engine_client->get_view_angles( cam );
 	const c_vector eye     = g_ctx.m_local->get_eye_position( );
 	const c_vector forward = c_vector::fromAngle( c_vector( cam.m_x, cam.m_y, 0.f ) );
-	c_trace_filter fil( g_ctx.m_local );
+	/* brushes only: world + brush ents ( "*N" model ), no players / guns / props */
+	c_trace_filter fil(
+		[]( c_base_entity* e, int ) {
+			if ( !e || e == g_ctx.m_local || ( e->get_ref_ehandle( ) >> 16 ) == ( 1u << 15 ) )
+				return false;
+			const model_t* const model = e->get_model( );
+			const char* const name     = model ? g_interfaces.m_model_info->get_model_name( model ) : nullptr;
+			return name && name[ 0 ] == '*';
+		},
+		e_trace_type::trace_type_everything_filter_props );
 	trace_t tr;
 	ray_t ray( eye, eye + forward * 8192.f );
 	g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &fil, &tr );
@@ -366,8 +460,17 @@ void n_movement::impl_t::floor_level( c_user_cmd* cmd )
 		return;
 	}
 
+	/* only the aimed brush: world brush = its planes, brush ent = that ent alone, displacement = displacements alone */
+	c_base_entity* const sel = tr.m_hit_entity == g_interfaces.m_client_entity_list->get< c_base_entity >( 0 ) ? nullptr : tr.m_hit_entity;
+	const bool disp          = !sel && tr.surface.m_name && strstr( tr.surface.m_name, "displacement" );
+	const auto planes        = sel || disp ? std::vector< fl_plane_t >{ } : fl_brush_at( tr.m_end - tr.m_plane.m_normal * 0.5f );
+	c_trace_filter grid_fil( [ sel ]( c_base_entity* e, int ) { return sel && e == sel; },
+	                         sel ? e_trace_type::trace_type_entities_only : e_trace_type::trace_type_world_only );
+
 	constexpr int n    = k_floor_level_n;
 	const float radius = std::clamp( GET_VARIABLE( g_variables.m_floor_level_size, float ), 16.f, 512.f );
+	/* samples further than this above / below the aimed point are dropped */
+	const float dev = std::clamp( GET_VARIABLE( g_variables.m_floor_level_dev, float ), 0.5f, 256.f );
 	const float step   = 2.f * radius / ( n - 1 );
 	const float x0 = tr.m_end.m_x - radius, y0 = tr.m_end.m_y - radius;
 	std::vector< float > zs( n * n, NAN );
@@ -379,14 +482,22 @@ void n_movement::impl_t::floor_level( c_user_cmd* cmd )
 	for ( int i = 0; i < n; i++ ) {
 		for ( int j = 0; j < n; j++ ) {
 			const float x = x0 + j * step, y = y0 + i * step;
-			trace_t t;
-			/* point rays slip through brush seams and hit the void below, a tiny hull does not */
-			ray_t down_ray( c_vector( x, y, tr.m_end.m_z + 64.f ), c_vector( x, y, tr.m_end.m_z - 64.f ), c_vector( -0.25f, -0.25f, 0.f ),
-			                c_vector( 0.25f, 0.25f, 0.f ) );
-			g_interfaces.m_engine_trace->trace_ray( down_ray, mask_playersolid, &fil, &t );
-			if ( t.m_start_solid || !t.did_hit( ) || t.m_plane.m_normal.m_z < 0.7f )
-				continue;
-			const float z     = t.m_end.m_z;
+			const float top = tr.m_end.m_z + dev, bot = tr.m_end.m_z - dev;
+			float z         = 0.f;
+			if ( !planes.empty( ) ) {
+				if ( !fl_clip_down( planes, x, y, top, bot, z ) )
+					continue;
+			} else {
+				trace_t t;
+				/* point rays slip through brush seams and hit the void below, a tiny hull does not */
+				ray_t down_ray( c_vector( x, y, top ), c_vector( x, y, bot ), c_vector( -0.25f, -0.25f, 0.f ), c_vector( 0.25f, 0.25f, 0.f ) );
+				g_interfaces.m_engine_trace->trace_ray( down_ray, mask_playersolid, &grid_fil, &t );
+				if ( t.m_start_solid || !t.did_hit( ) || t.m_plane.m_normal.m_z < 0.7f )
+					continue;
+				if ( disp && !( t.surface.m_name && strstr( t.surface.m_name, "displacement" ) ) )
+					continue;
+				z = t.m_end.m_z;
+			}
 			zs[ i * n + j ] = z;
 			data.lo         = std::min( data.lo, z );
 			data.hi         = std::max( data.hi, z );

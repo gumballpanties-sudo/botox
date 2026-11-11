@@ -1204,6 +1204,15 @@ namespace n_variables
 		ADD_VARIABLE( float, m_edge_catch_predict_time, 0.3f );
 		ADD_VARIABLE( float, m_edge_catch_reach, 8.f );
 		ADD_VARIABLE( bool, m_edge_catch_visualize, false );
+		ADD_VARIABLE( c_color, m_edge_catch_visualize_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( float, m_edge_catch_visualize_thickness, 1.5f );
+		ADD_VARIABLE( int, m_edge_catch_visualize_shape, 0 );
+		ADD_VARIABLE( int, m_edge_catch_visualize_fill, 0 );
+		ADD_VARIABLE( float, m_edge_catch_visualize_fill_alpha, 0.35f );
+		ADD_VARIABLE( c_color, m_edge_catch_visualize_pad_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( bool, m_edge_catch_visualize_projected, false );
+		ADD_VARIABLE( float, m_edge_catch_visualize_size, 16.f );
+		ADD_VARIABLE( bool, m_edge_catch_duck, false );
 		ADD_VARIABLE( int, m_edge_bug_sound, 0 );
 		ADD_VARIABLE( std::string, m_edge_bug_sound_custom, "" );
 		ADD_VARIABLE( float, m_edge_bug_sound_volume, 1.f );
@@ -1359,6 +1368,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_pixel_finder_pixelsurfs, true );
 		ADD_VARIABLE( bool, m_pixel_finder_headbounces, true );
 		ADD_VARIABLE( bool, m_pixel_finder_pixeljumps, true );
+		ADD_VARIABLE( bool, m_pixel_finder_length, true );
 		ADD_VARIABLE( bool, m_pixel_finder_map_lines, true );
 		ADD_VARIABLE( float, m_pixel_finder_map_max_dist, 0.f ); /* 0 = no limit; skybox seams sit far out */
 		ADD_VARIABLE( bool, m_pixel_finder_map_texturebugs, false );
@@ -1408,6 +1418,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_floor_level, false );
 		ADD_VARIABLE( key_bind_t, m_floor_level_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( float, m_floor_level_size, 128.f );
+		ADD_VARIABLE( float, m_floor_level_dev, 64.f );
 		ADD_VARIABLE( bool, m_detections, false );
 		ADD_VARIABLE_VECTOR( bool, e_detection_types::detect_max, m_detection_types, false );
 		ADD_VARIABLE( std::string, m_detection_label, "botox" );
