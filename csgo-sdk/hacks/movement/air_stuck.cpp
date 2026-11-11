@@ -48,16 +48,6 @@ static struct {
 	                       straight-in park fell at t=1 61/70, no tangent = nothing rounds ) */
 } s_lock;
 
-/* last park cmd: online the server pins on it ( 11-10 10:58 log: 5/5 cycles `sv lock ack` = the park cmd, same cmd next kept 16/16,
-   a different one 1/5 ), but the client learns cp ticks later and has already sent its own pin = knocked off. so the in-flight
-   cmds after a park repeat it until the park's ack. not the 11-09 "park sticky" ( straight-in bisect, no tangent, 0 server pins ): this park keeps the
-   tangent speed, which is what rounds across */
-static struct {
-	bool valid = false;
-	int cmd = -1, ticks = 0;
-	float yaw = 0.0f, fwd = 0.0f;
-} s_park;
-
 /* every cmd we publish. START pinned by it with no armed hold ( an unproven press pinned on a seam: 11-10 11:31 nuke crane, fwd 1 at 86
    deg pinned twice, lost next tick to a fresh fan ) = replay it: proven -> hold, else resend */
 static struct {
@@ -846,24 +836,12 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		return;
 	}
 
-	/* park window: the cmds after a park repeat it until the server acks the park itself ( consecutive cmds, START not pinned = the lock
-	   owns a pinned one ). no client pin may cut it: 18:20 log, the server pinned on the park 67/113 times the window was cut by a
-	   verified sc 2 pin, all 67 knocked off at t=1; the only long lock ( 73t ) came from a window that ran to its ack. ack, not cp:
-	   the park's ack landed after a cp-tick window 2x ( Q already on the wire ) */
-	const int ack = g_interfaces.m_client_state->m_last_command_ack;
-	if ( s_park.valid && ( cmd->m_command_number != s_park.cmd + 1 + s_park.ticks || ack >= s_park.cmd || s_park.ticks >= 2 * cp + 2 || vel_pinned( live_velocity ) ) )
-		s_park.valid = false;
-	const bool park_window = s_park.valid;
-	const auto park_resend = [ & ]( ) {
-		++s_park.ticks;
-		botox_dbg_log( "AS: park resend t=%d/%d yaw=%.2f fwd=%.4f d=%.3g vxy=%.1f vz=%.1f", s_park.ticks, cp, s_park.yaw, s_park.fwd, d1, live_velocity.length_2d( ),
-		               live_velocity.m_z );
-		publish( s_park.yaw, s_park.fwd, false, live_view.m_x, false );
-		s_proof.valid = false;
-	};
+	/* no park window ( 11-11 10:15 log ): online the server zeroes on the park cmd at the park START ( even 1.93u off the face ) and that
+	   stop is a 1-tick pin whatever follows ( same park resent fell 8/8, an impact pin from the skin 0/45 ). every long hold ( 24-143t )
+	   was the client's own proven pin with the server in sync, so each tick solves from this START */
 
 	/* locked: the server is pinned at s_lock.origin. solve the fixed point THERE ( closed form from ( 0, 0, pin ), verified at that
-	   origin ), else copy its cmd */
+	   origin ), else copy its cmd if that copy pins there, else catch from this START */
 	if ( lock_tick ) {
 		std::vector< cand_t > lc;
 		lc.reserve( 128 );
@@ -904,14 +882,20 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		restore( );
 		botox_dbg_log( "AS: lock d_sv=%.3g true_sv=%.3g d_cl=%.3g cands=%zu copy=%d", eng_d( s_lock.origin, P, H ), true_d( s_lock.origin, P, H ), d1, lc.size( ),
 		               ( int )copy_pins );
-		lock_copy( tried ? "nofix" : "nocand" );
-		return;
+		if ( copy_pins ) {
+			lock_copy( tried ? "nofix" : "nocand" );
+			return;
+		}
+		/* the copy falls from the server's pinned state: 11-11 10:15 log copy=0 85/85, 22/23 such locks fell t<=5. catch from this START
+		   instead ( in sync it is the server's START too ) */
+		++s_lock.ticks;
+		botox_dbg_log( "AS: lock skip t=%d why=%s", s_lock.ticks, tried ? "nofix" : "nocand" );
 	}
 
 	/* pin: predicted crossings from this START, verified ( tick 1 + the fixed point ), best first. axis wall: nothing to predict, park */
 	std::vector< cand_t > cands;
 	cands.reserve( 128 );
-	if ( !axis_wall && !park_window )
+	if ( !axis_wall )
 		build( origin, live_velocity, P, H, A, pin_vz, fwd_cap, 0.003f, &cands, 120 );
 	if ( !cands.empty( ) ) {
 		std::stable_sort( cands.begin( ), cands.end( ), [ ]( const cand_t& a, const cand_t& b ) { return a.score != b.score ? a.score > b.score : a.a < b.a; } );
@@ -931,7 +915,6 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			publish( c.yaw, c.fwd, true, live_view.m_x, true );
 			s_expect      = { true, origin };
 			s_miss_streak = 0;
-			s_park.valid  = false;
 			return;
 		}
 		restore( );
@@ -942,10 +925,6 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			s_miss_streak = 0;
 			return;
 		}
-	}
-	if ( park_window ) {
-		park_resend( );
-		return;
 	}
 	/* pinned START, nothing re-proven: never park a hull that sits on a fixed point ( 12:37 log: park to=1.5e-07 then `lost` ). keep the cmd */
 	if ( pinned_search && s_last.valid && s_last.cmd == cmd->m_command_number - 1 ) {
@@ -1007,17 +986,14 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			}
 		}
 	if ( best_fwd < 0.0f ) {
-		/* out of reach this tick: max approach, straight in. online the server pins on the impact cmd itself ( 17:11 log: `sv lock`
-		   on cmd fwd 71 / 49 with the server 1-3 ticks higher than us ) = same in-flight window as a park */
+		/* out of reach this tick: max approach, straight in */
 		botox_dbg_log( "AS: approach yaw=%.1f d=%.4f vn=%.2f vxy=%.1f touch=%d us=%lld", wall_yaw, dt1, vn, live_velocity.length_2d( ), ( int )touching, clock.used_us( ) );
 		publish( wall_yaw, 450.0f, false, live_view.m_x, false );
-		s_park = { cp > 0 && dt1 < 2.0 * live_velocity.length_2d( ) * dt + 2.0, cmd->m_command_number, 0, wall_yaw, 450.0f };
 		return;
 	}
 	botox_dbg_log( "AS: park yaw=%.2f fwd=%.4f sc=%d to=%.3g d=%.3g true=%.3g q=%.3g vn=%.3f vxy=%.1f vz=%.1f lat=%d cp=%d touch=%d us=%lld", best_yaw, best_fwd, best_sc,
 	               best_t, d1, dt1, q0, vn, live_velocity.length_2d( ), live_velocity.m_z, lattice, cp, ( int )touching, clock.used_us( ) );
 	publish( best_yaw, best_fwd, false, live_view.m_x, false );
-	s_park = { cp > 0, cmd->m_command_number, 0, best_yaw, best_fwd };
 }
 
 void air_stuck_final_stamp( c_user_cmd* cmd )

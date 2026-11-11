@@ -49,6 +49,7 @@ namespace n_edge_catch
 		int m_miss        = 0;
 		int m_kind        = 0;
 		float m_ground_z  = 0.f;
+		float m_miss_vz   = 0.f;
 		c_vector m_land_pos{ };
 		c_vector m_viz[ k_max_ticks + 1 ];
 

@@ -135,7 +135,7 @@ bool n_edge_catch::impl_t::baseline( c_user_cmd* cmd )
 		sim( cmd, k, t );
 		if ( landed( ) ) {
 			if ( cand_k >= 0 && local->get_origin( ).m_z < cand_z - 2.f ) {
-				m_kind = 2, m_miss = cand_k, m_ground_z = cand_z;
+				m_kind = 2, m_miss = cand_k, m_ground_z = cand_z, m_miss_vz = local->get_velocity( ).m_z;
 				return true;
 			}
 			return false;
@@ -144,9 +144,10 @@ bool n_edge_catch::impl_t::baseline( c_user_cmd* cmd )
 			return false;
 		const c_vector e = local->get_origin( );
 		const float vz   = local->get_velocity( ).m_z;
+		/* vz > 0 = your own jumpbug / bounce ( edgebug.cpp drops it too ), not an eb */
 		if ( vz > prev_vz ) {
-			if ( cand_k < 0 && !slope_under( e, ducked ) ) {
-				m_kind = 1, m_miss = k, m_ground_z = e.m_z;
+			if ( vz <= 0.f && cand_k < 0 && !slope_under( e, ducked ) ) {
+				m_kind = 1, m_miss = k, m_ground_z = e.m_z, m_miss_vz = vz;
 				return true;
 			}
 			return false;
@@ -175,7 +176,7 @@ bool n_edge_catch::impl_t::baseline( c_user_cmd* cmd )
 		prev_vz = vz;
 	}
 	if ( cand_k >= 0 ) {
-		m_kind = 2, m_miss = cand_k, m_ground_z = cand_z;
+		m_kind = 2, m_miss = cand_k, m_ground_z = cand_z, m_miss_vz = local->get_velocity( ).m_z;
 		return true;
 	}
 	return false;
@@ -308,8 +309,8 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 		restore_start( );
 
 	if ( miss )
-		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f reach=%.1f win=%d turn=%d chains=%d sims=%d us=%lld found=%d last=%d strafe=%d\n",
-		               m_kind, m_miss, m_ground_z, org0.m_z, vel0.m_z, m_reach, m_max_ticks, m_turn_left ? 1 : 0, m_chains, m_sims, m_budget.used_us( ),
+		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f evz=%.2f reach=%.1f win=%d turn=%d chains=%d sims=%d us=%lld found=%d last=%d strafe=%d\n",
+		               m_kind, m_miss, m_ground_z, org0.m_z, vel0.m_z, m_miss_vz, m_reach, m_max_ticks, m_turn_left ? 1 : 0, m_chains, m_sims, m_budget.used_us( ),
 		               found ? 1 : 0, found ? m_last : -1, found ? strafed( ) : 0 );
 	if ( !found )
 		return;
@@ -350,7 +351,10 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 			botox_dbg_log( "EC: missed spent=%d z=%.2f gz=%.2f\n", m_last, start.m_z, m_ground_z );
 			reset( );
 		} else if ( const float dist = start.dist_to( m_plan[ m_hit ].origin ); dist > 1.f ) {
-			botox_dbg_log( "EC: drop at %d/%d dist=%.3f\n", m_hit, m_last, dist );
+			int left = 0;
+			for ( int i = m_hit; i <= m_last; i++ )
+				left += m_plan[ i ].strafe ? 1 : 0;
+			botox_dbg_log( "EC: drop at %d/%d dist=%.3f left=%d\n", m_hit, m_last, dist, left );
 			reset( );
 		}
 	}
