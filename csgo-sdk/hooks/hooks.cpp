@@ -37,6 +37,7 @@
 #include "../hacks/visuals/screen/true_motion_blur.h"
 #include "../hacks/visuals/screen/fx_compat.h"
 #include "../hacks/visuals/screen/gpu_timer.h"
+#include "../hacks/visuals/atlas_chams.h"
 #include "../hacks/visuals/lsd_chams.h"
 #include "../hacks/visuals/two_tone_chams.h"
 #include "../hacks/visuals/weapon_sheen.h"
@@ -320,6 +321,7 @@ void n_hooks::impl_t::release_render_resources( )
 	g_weapon_sheen.on_device_lost( );
 	g_lsd_chams.on_device_lost( );
 	g_two_tone_chams.on_device_lost( );
+	g_atlas_chams.on_device_lost( );
 	g_flip_world.on_device_lost( );
 	g_mc_clouds.on_device_lost( );
 	n_gpu_timer::on_device_lost( );

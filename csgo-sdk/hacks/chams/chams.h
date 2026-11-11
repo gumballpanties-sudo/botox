@@ -9,6 +9,7 @@
 #include "../../globals/config/variables.h"
 #include "../../globals/interfaces/interfaces.h"
 #include "../../utilities/perf/perf_watch.h"
+#include "../visuals/atlas_chams.h"
 #include "../visuals/lsd_chams.h"
 #include "../visuals/two_tone_chams.h"
 
@@ -29,11 +30,29 @@ namespace n_chams
 		chams_material_wet,
 		chams_material_lsd,
 		chams_material_two_tone, /* no material: model's own materials, DIP swaps in the two tone shader */
+		/* Atlas-TF2 chams: vertexlit white carrier, DIP swaps in atlas_chams shaders. neon = Atlas "lsd" */
+		chams_material_fresnel,
+		chams_material_lava,
+		chams_material_pearl,
+		chams_material_bubble,
+		chams_material_neon,
+		chams_material_network,
+		chams_material_soap,
+		chams_material_aurora,
+		chams_material_aquarium,
+		chams_material_sky,
 		chams_material_max
 	};
 
 	inline const char* material_names[ chams_material_max ] = { "original", "flat",     "shaded",      "wireframe", "glow",     "metallic", "pearlescent",
-		                                                        "ambient",  "gold",     "damascus",    "crystal",   "wet",      "lsd",      "two tone" };
+		                                                        "ambient",  "gold",     "damascus",    "crystal",   "wet",      "lsd",      "two tone",
+		                                                        "fresnel",  "lava",     "pearl",       "bubble",    "neon",     "network",  "soap",
+		                                                        "aurora",   "aquarium", "sky" };
+
+	constexpr bool is_atlas( const int index )
+	{
+		return index >= chams_material_fresnel && index < chams_material_max;
+	}
 
 	constexpr float gold_envmap_tint[ 3 ] = { 0.55f, 0.3f, 0.05f };
 	constexpr float gold_phong_tint[ 3 ]  = { 0.6f, 0.35f, 0.08f };
@@ -256,10 +275,20 @@ namespace n_chams
 	"$model"       "1"
 )" );
 				break;
+
+			default: { /* 12.. = atlas carriers (slot = build index + 2, two tone has none): vertexlit brings the normals */
+				const int index        = this->m_build_index + 2;
+				const std::string name = std::string( "botox_" ) + material_names[ index ];
+
+				make_variants( index, name.c_str( ), "VertexLitGeneric",
+				               index == chams_material_network ? "\t\"$basetexture\" \"vgui/white\"\n\t\"$model\" \"1\"\n\t\"$wireframe\" \"1\"\n"
+				                                               : "\t\"$basetexture\" \"vgui/white\"\n\t\"$model\" \"1\"\n" );
+				break;
+			}
 			}
 
-			/* case 11 (lsd carrier) is the last built slot */
-			if ( ++this->m_build_index >= chams_material_lsd )
+			/* last atlas carrier (sky) is the last built slot */
+			if ( ++this->m_build_index >= chams_material_max - 2 )
 				this->m_created = true;
 		}
 
@@ -488,8 +517,8 @@ namespace n_chams
 
 				g_interfaces.m_model_render->forced_material_override( material );
 
-				// lsd swaps the vs in dip: depth would not match its colour pass
-				if ( prepass_context && !ignorez && index != chams_material_lsd &&
+				// lsd / atlas swap the vs in dip: depth would not match their colour pass (atlas lays its own)
+				if ( prepass_context && !ignorez && index != chams_material_lsd && !is_atlas( index ) &&
 				     ( layer_color.base< e_color_type::color_type_a >( ) * alpha_scale < 1.f || material->is_translucent( ) ) )
 					depth_prepass( );
 
@@ -497,6 +526,13 @@ namespace n_chams
 					g_lsd_chams.begin( layer_color.base< e_color_type::color_type_a >( ) * alpha_scale );
 					draw_pass( );
 					g_lsd_chams.end( );
+				} else if ( is_atlas( index ) ) {
+					const float color[ 4 ] = { layer_color.base< e_color_type::color_type_r >( ), layer_color.base< e_color_type::color_type_g >( ),
+						                       layer_color.base< e_color_type::color_type_b >( ), layer_color.base< e_color_type::color_type_a >( ) * alpha_scale };
+
+					g_atlas_chams.begin( index, color, ignorez );
+					draw_pass( );
+					g_atlas_chams.end( );
 				} else
 					draw_pass( );
 			}

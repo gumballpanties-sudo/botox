@@ -48,6 +48,7 @@
     <ClCompile Include="hacks\visuals\bullets\bullets.cpp" />
     <ClCompile Include="hacks\visuals\lsd_chams.cpp" />
     <ClCompile Include="hacks\visuals\two_tone_chams.cpp" />
+    <ClCompile Include="hacks\visuals\atlas_chams.cpp" />
     <ClCompile Include="hacks\visuals\weapon_sheen.cpp" />
     <ClCompile Include="hacks\visuals\old_mods.cpp" />
     <ClCompile Include="hacks\movement\movement.cpp" />
@@ -482,6 +483,7 @@
     <ClInclude Include="hacks\visuals\viewmodel_fps.h" />
     <ClInclude Include="hacks\visuals\lsd_chams.h" />
     <ClInclude Include="hacks\visuals\two_tone_chams.h" />
+    <ClInclude Include="hacks\visuals\atlas_chams.h" />
     <ClInclude Include="hacks\visuals\model_shader.h" />
     <ClInclude Include="hacks\visuals\weapon_sheen.h" />
     <ClInclude Include="hacks\visuals\old_mods.h" />
