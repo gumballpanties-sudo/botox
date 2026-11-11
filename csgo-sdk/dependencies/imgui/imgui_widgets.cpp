@@ -6192,6 +6192,56 @@ static void RenderArrowsForVerticalBar( ImDrawList* draw_list, ImVec2 pos, ImVec
 	ImGui::RenderArrowPointingAt( draw_list, ImVec2( pos.x + bar_w - half_sz.x, pos.y ), half_sz, ImGuiDir_Left, IM_COL32( 255, 255, 255, alpha8 ) );
 }
 
+// picker row item: "##name" -> dim name left of the box, box shows buf, one click types into it
+// ( same temp input path as the slider number ). true = buf edited this frame
+static bool picker_text_box( const char* label, char* buf, int buf_size, float width, ImGuiInputTextFlags flags )
+{
+	using namespace ImGui;
+	ImGuiContext& g         = *GImGui;
+	ImGuiWindow* window     = GetCurrentWindow( );
+	const ImGuiStyle& style = g.Style;
+	const ImGuiID id        = window->GetID( label );
+	const char* name        = label + 2;
+	const ImVec2 pos        = window->DC.CursorPos;
+	const ImRect bb( ImVec2( pos.x + CalcTextSize( name ).x + 4.f, pos.y ), ImVec2( pos.x + width, pos.y + 20.f ) );
+	// InputTextEx draws text at FramePadding + ( 5, 2 ): pick the padding that centers buf, typing uses it too
+	const float pad_x     = ImMax( 0.f, ( bb.GetWidth( ) - CalcTextSize( buf ).x ) * 0.5f - 5.f );
+	const ImVec2 text_off = ImVec2( pad_x, style.FramePadding.y ) + ImVec2( 5.f, 2.f );
+	ItemSize( ImRect( pos, bb.Max ) );
+	if ( !ItemAdd( bb, id, NULL, ImGuiItemFlags_Inputable ) )
+		return false;
+
+	window->DrawList->AddText( ImVec2( pos.x, pos.y + text_off.y ), GetColorU32( ImGuiCol_TextDisabled ), name );
+	RenderFrame( bb.Min, bb.Max, GetColorU32( ImGuiCol_MenuFrame ), true, style.FrameRounding );
+	window->DrawList->AddRect( bb.Min, bb.Max, GetColorU32( ImGuiCol_MenuOutline ), style.FrameRounding );
+
+	bool active = TempInputIsActive( id );
+	if ( !active ) {
+		// a sibling box still typing owns ActiveId this frame, rect test lets one click hop boxes
+		const bool hovered = ItemHoverable( bb, id ) || ( g.ActiveId != 0 && g.ActiveIdWindow == window && TempInputIsActive( g.ActiveId ) &&
+		                                                  IsMouseHoveringRect( bb.Min, bb.Max ) );
+		if ( hovered && IsMouseClicked( 0, id ) ) {
+			SetKeyOwner( ImGuiKey_MouseLeft, id );
+			active = true;
+		}
+	}
+
+	if ( active ) {
+		if ( g.TempInputId != id )
+			g.NavActivateInputId = id;
+		const ImVec2 backup_cursor = window->DC.CursorPos;
+		const float backup_pad_x   = g.Style.FramePadding.x;
+		g.Style.FramePadding.x     = pad_x;
+		const bool changed = TempInputText( bb, id, label, buf, buf_size, flags | ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_NoMarkEdited );
+		g.Style.FramePadding.x = backup_pad_x;
+		window->DC.CursorPos   = backup_cursor;
+		return changed;
+	}
+
+	window->DrawList->AddText( bb.Min + text_off, GetColorU32( ImGuiCol_Text ), buf );
+	return false;
+}
+
 // Note: ColorPicker4() only accesses 3 floats if ImGuiColorEditFlags_NoAlpha flag is set.
 // (In C++ the 'float col[4]' notation for a function argument is equivalent to 'float* col', we only specify a size to facilitate understanding of
 // the code.)
@@ -6465,6 +6515,53 @@ bool ImGui::ColorPicker4( const char* label, float col[ 4 ], ImGuiColorEditFlags
 
 		// RenderArrowsForVerticalBar(draw_list, ImVec2(bar0_pos_x - 1, bar0_line_y), ImVec2(bars_triangles_half_sz + 1, bars_triangles_half_sz),
 		// bars_width + 2.0f, style.Alpha);
+	}
+
+	// rgba row + hex row above copy / paste, R G B already hold this frame's rgb
+	{
+		static const char* const channel_labels[ 4 ] = { "##r", "##g", "##b", "##a" };
+		float channels[ 4 ]                          = { R, G, B, components == 4 ? col[ 3 ] : 1.f };
+		const auto store                             = [ & ]( ) {
+			if ( flags & ImGuiColorEditFlags_InputHSV )
+				ColorConvertRGBtoHSV( channels[ 0 ], channels[ 1 ], channels[ 2 ], col[ 0 ], col[ 1 ], col[ 2 ] );
+			else
+				memcpy( col, channels, 3 * sizeof( float ) );
+			if ( components == 4 )
+				col[ 3 ] = channels[ 3 ];
+			value_changed = true;
+		};
+
+		const float row_w     = ImGui::GetRowFrameWidth( ) - 6.f;
+		const float channel_w = ( row_w - style.ItemSpacing.x * ( components - 1 ) ) / components;
+		for ( int n = 0; n < components; n++ ) {
+			if ( n )
+				ImGui::SameLine( );
+			char buf[ 8 ];
+			ImFormatString( buf, IM_ARRAYSIZE( buf ), "%d", IM_F32_TO_INT8_SAT( channels[ n ] ) );
+			if ( picker_text_box( channel_labels[ n ], buf, IM_ARRAYSIZE( buf ), channel_w, ImGuiInputTextFlags_CharsDecimal ) && buf[ 0 ] ) {
+				channels[ n ] = ImClamp( atoi( buf ), 0, 255 ) / 255.f;
+				store( );
+			}
+		}
+
+		// 6 digits = rgb ( alpha kept ), 8 = rgba; anything else waits for more typing
+		char hex[ 12 ];
+		ImFormatString( hex, IM_ARRAYSIZE( hex ), components == 4 ? "%02X%02X%02X%02X" : "%02X%02X%02X", IM_F32_TO_INT8_SAT( channels[ 0 ] ),
+		                IM_F32_TO_INT8_SAT( channels[ 1 ] ), IM_F32_TO_INT8_SAT( channels[ 2 ] ), IM_F32_TO_INT8_SAT( channels[ 3 ] ) );
+		if ( picker_text_box( "##hex", hex, IM_ARRAYSIZE( hex ), row_w, ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_CharsUppercase ) ) {
+			const size_t len = strlen( hex );
+			if ( len == 6 || ( len == 8 && components == 4 ) ) {
+				unsigned int v = strtoul( hex, NULL, 16 );
+				if ( len == 8 ) {
+					channels[ 3 ] = ( v & 0xFF ) / 255.f;
+					v >>= 8;
+				}
+				channels[ 0 ] = ( ( v >> 16 ) & 0xFF ) / 255.f;
+				channels[ 1 ] = ( ( v >> 8 ) & 0xFF ) / 255.f;
+				channels[ 2 ] = ( v & 0xFF ) / 255.f;
+				store( );
+			}
+		}
 	}
 
 	static float temp[ 4 ] = { 1.f, 1.f, 1.f, 1.f };
