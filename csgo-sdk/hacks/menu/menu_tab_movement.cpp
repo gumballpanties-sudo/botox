@@ -547,9 +547,7 @@ void n_menu::impl_t::tab_movement( )
 					                  "none\0arena switch\0button\0money\0beep\0custom\0" );
 
 						if ( GET_VARIABLE( g_variables.m_edge_bug_sound, int ) == 5 ) {
-							auto&       eb_snd_var = GET_VARIABLE( g_variables.m_edge_bug_sound_custom, std::string );
-							static char eb_snd_buffer[ 128 ] = { };
-							text_buffer_sync( "sound path##ebsndpath", eb_snd_var, eb_snd_buffer, sizeof( eb_snd_buffer ) );
+							sound_file_combo( "sound file##ebsndpath", GET_VARIABLE( g_variables.m_edge_bug_sound_custom, std::string ) );
 						}
 
 						if ( GET_VARIABLE( g_variables.m_edge_bug_sound, int ) > 0 )
@@ -590,9 +588,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Combo( "detection sound##essound", &GET_VARIABLE( g_variables.m_edge_skip_sound, int ),
 						              "none\0arena switch\0button\0money\0beep\0custom\0" );
 						if ( GET_VARIABLE( g_variables.m_edge_skip_sound, int ) == 5 ) {
-							auto&       es_snd_var = GET_VARIABLE( g_variables.m_edge_skip_sound_custom, std::string );
-							static char es_snd_buffer[ 128 ] = { };
-							text_buffer_sync( "sound path##essndpath", es_snd_var, es_snd_buffer, sizeof( es_snd_buffer ) );
+							sound_file_combo( "sound file##essndpath", GET_VARIABLE( g_variables.m_edge_skip_sound_custom, std::string ) );
 						}
 						if ( GET_VARIABLE( g_variables.m_edge_skip_sound, int ) > 0 )
 							ImGui::SliderFloat( "sound volume##essndvol", &GET_VARIABLE( g_variables.m_edge_skip_sound_volume, float ), 0.f, 2.f, "%.2f" );
@@ -629,9 +625,7 @@ void n_menu::impl_t::tab_movement( )
 					                  "none\0arena switch\0button\0money\0beep\0custom\0" );
 
 						if ( GET_VARIABLE( g_variables.m_pixel_surf_sound, int ) == 5 ) {
-							auto&       ps_snd_var = GET_VARIABLE( g_variables.m_pixel_surf_sound_custom, std::string );
-							static char ps_snd_buffer[ 128 ] = { };
-							text_buffer_sync( "sound path##pssndpath", ps_snd_var, ps_snd_buffer, sizeof( ps_snd_buffer ) );
+							sound_file_combo( "sound file##pssndpath", GET_VARIABLE( g_variables.m_pixel_surf_sound_custom, std::string ) );
 						}
 
 						if ( GET_VARIABLE( g_variables.m_pixel_surf_sound, int ) > 0 )
@@ -749,9 +743,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Combo( "detection sound##tbsound", &GET_VARIABLE( g_variables.m_texture_bug_sound, int ),
 						              "none\0arena switch\0button\0money\0beep\0custom\0" );
 						if ( GET_VARIABLE( g_variables.m_texture_bug_sound, int ) == 5 ) {
-							auto&       tb_snd_var = GET_VARIABLE( g_variables.m_texture_bug_sound_custom, std::string );
-							static char tb_snd_buffer[ 128 ] = { };
-							text_buffer_sync( "sound path##tbsndpath", tb_snd_var, tb_snd_buffer, sizeof( tb_snd_buffer ) );
+							sound_file_combo( "sound file##tbsndpath", GET_VARIABLE( g_variables.m_texture_bug_sound_custom, std::string ) );
 						}
 						if ( GET_VARIABLE( g_variables.m_texture_bug_sound, int ) > 0 )
 							ImGui::SliderFloat( "sound volume##tbsndvol", &GET_VARIABLE( g_variables.m_texture_bug_sound_volume, float ), 0.f, 2.f, "%.2f" );

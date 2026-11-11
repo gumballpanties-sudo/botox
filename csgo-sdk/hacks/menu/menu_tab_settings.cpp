@@ -1777,9 +1777,7 @@ void n_menu::impl_t::tab_misc( )
 				                  "arena switch\0button\0money\0beep\0custom\0" );
 
 					if ( GET_VARIABLE( g_variables.m_hit_sound_type, int ) == 4 ) {
-						auto&       hs_snd_var           = GET_VARIABLE( g_variables.m_hit_sound_custom, std::string );
-						static char hs_snd_buffer[ 128 ] = { };
-						text_buffer_sync( "sound path##hitsndpath", hs_snd_var, hs_snd_buffer, sizeof( hs_snd_buffer ) );
+						sound_file_combo( "sound file##hitsndpath", GET_VARIABLE( g_variables.m_hit_sound_custom, std::string ) );
 					}
 
 					ImGui::SliderFloat( "volume##hitsndvol", &GET_VARIABLE( g_variables.m_hit_sound_volume, float ), 0.f, 2.f, "%.2f" );

@@ -10,10 +10,13 @@
 #include "../skins/skins.h"
 #include "../visuals/screen/resolution_spoof.h"
 
+#include <shellapi.h> /* ShellExecuteA: sound_file_combo "open folder" */
+
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <functional>
 #include <string>
@@ -49,6 +52,30 @@ inline void text_buffer_sync( const char* widget_id, std::string& var, char* buf
 		std::memcpy( buffer, var.c_str( ), len );
 		buffer[ len ] = '\0';
 	}
+}
+
+/* custom sound pick: lists *.wav in C:\botox\sounds ( play_trick_sound looks there first ), rescanned while open */
+inline void sound_file_combo( const char* widget_id, std::string& var )
+{
+	if ( !ImGui::BeginCombo( widget_id, var.empty( ) ? "drop .wav in C:\\botox\\sounds" : var.c_str( ) ) )
+		return;
+	const std::filesystem::path dir = "C:\\botox\\sounds";
+	std::error_code             ec;
+	std::filesystem::create_directories( dir, ec );
+	bool any = false;
+	for ( const auto& e : std::filesystem::directory_iterator( dir, ec ) ) {
+		if ( !e.is_regular_file( ec ) || _wcsicmp( e.path( ).extension( ).c_str( ), L".wav" ) )
+			continue;
+		any                    = true;
+		const std::string name = e.path( ).filename( ).string( );
+		if ( ImGui::Selectable( name.c_str( ), var == name ) )
+			var = name;
+	}
+	if ( !any )
+		ImGui::TextDisabled( "no .wav files" );
+	if ( ImGui::Selectable( "open folder" ) )
+		ShellExecuteA( nullptr, "open", dir.string( ).c_str( ), nullptr, nullptr, SW_SHOWNORMAL );
+	ImGui::EndCombo( );
 }
 
 /* safe mode: greyed + shown off, feature code skips it too */
