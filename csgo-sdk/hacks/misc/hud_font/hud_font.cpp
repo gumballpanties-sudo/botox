@@ -149,7 +149,15 @@ namespace
 (function () {
     var mode = ${mode};
     var xf = ${xf};
-    var total = 0, text = 0, wrote = 0, cleaned = 0, err = '', wn = '';
+    var total = 0, text = 0, wrote = 0, cleaned = 0, skipped = 0, err = '', wn = '';
+    /* post-layout numbers ( valve's own _SetWidth idiom ); unreadable = assume it fits */
+    var overflows = function ( p ) {
+        try {
+            var lw = p.actuallayoutwidth, lh = p.actuallayoutheight, cw = p.contentwidth, ch = p.contentheight;
+            if ( typeof lw !== 'number' || typeof cw !== 'number' ) return false;
+            return cw > lw + 1 || ( typeof lh === 'number' && typeof ch === 'number' && ch > lh + 1 );
+        } catch ( x ) { return false; }
+    };
     /* older builds wrote the fontFamily alias: inline "unset unset 0.0 <family>" with the size baked from a label that
        only inherited one = 0 = invisible ( weapon names ). such a leftover survives eject / inject, drop it. scaleform's
        own writes name Stratum2 and stay */
@@ -188,7 +196,11 @@ namespace
                         if ( leftover( p ) ) { p.style.font = null; ++cleaned; }
                         poke( p );
                     }
-                    p.style.transform = xf === '' ? null : xf;
+                    /* a transformed panel is composited through a layer the size of its LAYOUT box; text that lives
+                       outside it ( weapon names: parent width 1px + noclip, label right-aligned ) would vanish -> no
+                       transform on anything whose content overflows its box */
+                    if ( xf !== '' && overflows( p ) ) { if ( tag !== '' ) p.style.transform = null; ++skipped; }
+                    else p.style.transform = xf === '' ? null : xf;
                     p.SetAttributeString( 'bxfont', xf );
                     ++wrote;
                 }
@@ -213,7 +225,8 @@ namespace
                 var g = function ( fn ) { try { var v = fn(); return v === null ? 'null' : v === undefined ? 'undef' : '' + v; } catch ( x ) { return 'throw'; } };
                 wn = names.length + '|' + g( function () { return q.style.font; } ) + '|' + g( function () { return q.visible; } ) + '|' +
                      g( function () { return q.text.length; } ) + '|' + g( function () { return q.style.letterSpacing; } ) + '|' +
-                     g( function () { return q.style.transform; } ) + '|' + g( function () { return q.style.opacity; } );
+                     g( function () { return q.style.transform; } ) + '|' + g( function () { return q.style.opacity; } ) + '|lw=' +
+                     g( function () { return q.actuallayoutwidth; } ) + '|cw=' + g( function () { return q.contentwidth; } );
             }
         } catch ( x ) { wn = 'throw'; }
         try {
@@ -222,7 +235,7 @@ namespace
                 var c = root.GetChild( i );
                 if ( c && ( '' + c.id ).indexOf( 'bxlog_' ) === 0 ) c.DeleteAsync( 0.0 );
             }
-            var msg = ( 'mode=' + mode + '_panels=' + total + '_text=' + text + '_wrote=' + wrote + '_cleaned=' + cleaned + '_wn=' + wn +
+            var msg = ( 'mode=' + mode + '_panels=' + total + '_text=' + text + '_wrote=' + wrote + '_cleaned=' + cleaned + '_skip=' + skipped + '_wn=' + wn +
                         ( err ? '_err=' + err : '' ) ).replace( /[^A-Za-z0-9_=.|]/g, '-' );
             $.CreatePanel( 'Panel', root, 'bxlog_' + msg.substr( 0, 220 ), { style: 'width: 0px; height: 0px;' } );
         } catch ( x ) {}

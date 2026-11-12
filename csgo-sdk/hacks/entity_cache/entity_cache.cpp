@@ -2,8 +2,9 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 
-/* 11-12 20:32 crash: spectator list read m_hObserverTarget off a cached player ptr whose pages were gone ( freed without a remove we saw ).
-   index rides with the ptr: enumerate hands out only ptrs the live entity list still holds at that index, no deref of a stale one */
+/* 11-12 crashes ( spectator list +0x33DC, player stencil +0x2920 ): both read past a page edge off a "player" that was a small
+   non-player entity. slot 1..64 is only a player when maxplayers = 64; offline w/ bots the free slots hold weapons / props, so
+   players = is_player( ) ( vtable ), not index. index rides with the ptr: enumerate hands out only ptrs the live list still holds */
 struct cached_t {
 	c_base_entity* m_entity;
 	int m_index;
@@ -43,10 +44,13 @@ void n_entity_cache::impl_t::on_add_entity( c_base_entity* entity )
 
 	const int index = entity->get_index( );
 
-	if ( index >= 1 && index <= 64 ) {
+	if ( index < 1 )
+		return;
+
+	if ( index <= 64 && entity->is_player( ) ) {
 		if ( !has( cached_players, entity ) )
 			cached_players.push_back( { entity, index } );
-	} else if ( index > 64 ) {
+	} else {
 		if ( !has( cached_edicts, entity ) )
 			cached_edicts.push_back( { entity, index } );
 	}
