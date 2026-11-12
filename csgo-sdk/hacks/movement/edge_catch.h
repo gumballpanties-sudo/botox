@@ -26,7 +26,7 @@ namespace n_edge_catch
 		void search( c_user_cmd* cmd );
 		bool baseline( c_user_cmd* cmd );
 		bool family( c_user_cmd* cmd, bool first_neg );
-		bool chain( c_user_cmd* cmd, int prefix, bool neg, bool save, int base );
+		int chain( c_user_cmd* cmd, int prefix, bool neg, bool save, int base );
 		bool jb_works( c_user_cmd* cmd, int k, int from, int base );
 		void apply( c_user_cmd* cmd, const tick_t& t, const c_angle& view ) const;
 		void sim( c_user_cmd* cmd, int index, const tick_t& t, int buttons );
@@ -47,6 +47,10 @@ namespace n_edge_catch
 
 		tick_t m_plan[ k_max_ticks ];
 		tick_t m_seed[ 2 ][ 30 ];
+		tick_t m_best[ k_max_ticks ]; /* shortest landing chain seen in this search */
+		int m_best_last   = 0;
+		bool m_best_jb    = false;
+		c_vector m_best_land{ };
 		bool m_jb         = false;
 		bool m_jb_plan    = false;
 		bool m_duck       = false;

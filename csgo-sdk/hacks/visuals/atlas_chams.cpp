@@ -77,7 +77,7 @@ VS_OUTPUT main( const VS_INPUT i )
 }
 )";
 
-	/* Atlas-TF2 model.hlsl pixel shaders 1:1, MODE = n_chams slot (same numbers as botox-tf2 fx_cham_ps.hlsl).
+	/* Atlas-TF2 model.hlsl pixel shaders 1:1 + botox grid (24), MODE = n_chams slot (same numbers as botox-tf2 fx_cham_ps.hlsl).
 	   c40 colour (display, alpha pre-scaled), c41 x = time */
 	constexpr const char k_ps[] = R"(
 float4 cColor : register( c40 );
@@ -233,6 +233,12 @@ float4 main( PS_INPUT i ) : COLOR
 	const float  gloss  = smoothstep( 0.80f, 0.88f, dot( unit, normalize( normalize( eye ) + float3( 0.0f, 0.0f, 1.1f ) ) ) ) * 0.3f;
 	const float  glow   = smoothstep( 0.55f, 0.72f, cloud ) * above * 0.45f + gloss;
 	return aero( lerp( grass, air, above ) * cColor.rgb * 1.2f, glow, 1.0f - facing );
+#elif MODE == 24   // grid: 4 unit bind pose cells (position, not uv: ride the bones), 3 plane families = rings + stripes on every limb
+	const float3 p     = model / 4.0f;
+	const float3 dist  = abs( frac( p - 0.5f ) - 0.5f ) / max( fwidth( p ) * 1.5f, 1e-5f );   // 1.5 px lines at any angle / range
+	const float3 flat_ = pow( abs( unit ), 16.0f ) * 4.0f;                                     // only a face lying IN a plane is muted (would light whole)
+	const float  line_ = saturate( 1.0f - min( min( dist.x + flat_.x, dist.y + flat_.y ), dist.z + flat_.z ) );
+	return float4( cColor.rgb, cColor.a * line_ );
 #else
 	return cColor;
 #endif
@@ -355,7 +361,7 @@ long n_atlas_chams::impl_t::draw( const draw_indexed_primitive_t original, IDire
 		return original( device, type, base_vertex, min_vertex, vertices, start_index, primitives );
 
 	const bool add    = additive( this->m_slot );
-	const bool blends = add || this->m_color[ 3 ] < 1.f || this->m_slot == n_chams::chams_material_network;
+	const bool blends = add || this->m_color[ 3 ] < 1.f || this->m_slot == n_chams::chams_material_network || this->m_slot == n_chams::chams_material_grid;
 
 	IDirect3DVertexShader9* old_vs = nullptr;
 	IDirect3DPixelShader9* old_ps  = nullptr;

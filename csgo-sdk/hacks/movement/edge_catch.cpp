@@ -236,8 +236,9 @@ bool n_edge_catch::impl_t::jb_works( c_user_cmd* cmd, const int k, const int fro
 }
 
 /* strafe ticks [ 0, prefix ) at the perfect angle, your keys after. save = full chain, slot base + k + 1 = START of tick k + 1,
-   m_seed = its ticks ( a prefix chain starts mid-plan, ticks below prefix come from there ) */
-bool n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool neg, const bool save, const int base )
+   m_seed = its ticks ( a prefix chain starts mid-plan, ticks below prefix come from there ).
+   0 = no landing on the lip, 2 = lands ( jb bind off / jb fires there ), 1 = lands but the jb can't fire = plain landing fallback */
+int n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool neg, const bool save, const int base )
 {
 	const auto local = g_ctx.m_local;
 	const int side   = base / k_max_snap;
@@ -251,7 +252,7 @@ bool n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool 
 	m_chains++;
 	for ( ; k < m_max_ticks; k++ ) {
 		if ( out( ) )
-			return false;
+			return 0;
 		tick_t& t = m_plan[ k ];
 		t.origin  = local->get_origin( );
 		t.strafe  = k < prefix;
@@ -270,22 +271,24 @@ bool n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool 
 			m_saved[ side ] = k + 1;
 		if ( landed( ) ) {
 			if ( local->get_origin( ).m_z < m_ground_z - 2.f )
-				return false;
+				return 0;
 			m_last     = k;
 			m_land_pos = local->get_origin( );
 			m_jb_plan  = false;
-			return !m_jb || jb_works( cmd, k, save ? std::min( k, m_saved[ side ] ) : prefix, base );
+			return !m_jb || jb_works( cmd, k, save ? std::min( k, m_saved[ side ] ) : prefix, base ) ? 2 : 1;
 		}
 		if ( local->get_move_type( ) != move_type_walk )
-			return false;
+			return 0;
 		if ( local->get_origin( ).m_z + 9.f < m_ground_z - 2.f && local->get_velocity( ).m_z <= 0.f )
-			return false;
+			return 0;
 	}
-	return false;
+	return 0;
 }
 
-/* full strafe chains per side only seed the snapshots; the plan = the shortest prefix ( both sides, turn side first ) that
-   lands, strafing all the way is the last resort */
+/* full strafe chains per side seed the snapshots and anchor the search: landing is near monotone in the strafe count ( more
+   ticks = more lateral pull ), so a side whose full chain lands bisects for its shortest landing prefix, turn side first, the
+   other side only below it. every landing shorter than the best so far is copied out ( no re-run, budget-safe ).
+   11-12 log: the linear 1..miss+2 scan hit the 3.9 ms budget on 8/20 misses ( ~300 sims ), bisect = ~5 chains per side */
 bool n_edge_catch::impl_t::family( c_user_cmd* cmd, const bool first_neg )
 {
 	/* duck lift pass: duck alone ( no strafe ) first */
@@ -294,23 +297,53 @@ bool n_edge_catch::impl_t::family( c_user_cmd* cmd, const bool first_neg )
 		if ( chain( cmd, 0, first_neg, true, 0 ) )
 			return true;
 	}
-	bool full[ 2 ]{ };
+	int best_n = 0, best_s = -1;
+	const auto keep = [ & ]( const int n, const int s ) {
+		best_n = n, best_s = s;
+		std::copy_n( m_plan, m_last + 1, m_best );
+		m_best_last = m_last;
+		m_best_land = m_land_pos;
+		m_best_jb   = m_jb_plan;
+	};
+	const int n_max = std::min( m_miss + 2, m_max_ticks - 1 );
+	int full[ 2 ]{ }, n_full[ 2 ]{ };
 	for ( int s = 0; s < 2; s++ ) {
 		m_saved[ s ] = 0;
 		full[ s ]    = chain( cmd, m_max_ticks, ( s == 0 ) == first_neg, true, s * k_max_snap );
+		/* prefix count the full chain stands for ( strafes every tick up to the landing ) */
+		n_full[ s ] = m_saved[ s ] > 0 ? std::min( n_max, m_saved[ s ] - 1 ) + 1 : 1;
+		if ( full[ s ] && ( best_s < 0 || n_full[ s ] < best_n ) )
+			keep( n_full[ s ], s );
 	}
-	const int n_max = std::min( m_miss + 2, m_max_ticks - 1 );
-	for ( int n = 1; n <= n_max; n++ )
-		for ( int s = 0; s < 2; s++ ) {
-			if ( out( ) )
-				return false;
-			if ( n <= m_saved[ s ] && chain( cmd, n, ( s == 0 ) == first_neg, false, s * k_max_snap ) )
-				return true;
+	/* ponytail: full pull misses = that side skipped; a ledge only a shorter pull hits ( narrow, far side ) is lost */
+	for ( int s = 0; s < 2 && !out( ); s++ ) {
+		if ( !full[ s ] )
+			continue;
+		const bool neg = ( s == 0 ) == first_neg;
+		const int base = s * k_max_snap;
+		int lo = 0, hi = n_full[ s ];
+		if ( best_s != s ) {
+			/* the other side already landed shorter: only a strictly shorter prefix here matters */
+			hi = best_n - 1;
+			if ( hi < 1 || !chain( cmd, hi, neg, false, base ) )
+				continue;
+			keep( hi, s );
 		}
-	for ( int s = 0; s < 2; s++ )
-		if ( full[ s ] && !out( ) && chain( cmd, m_max_ticks, ( s == 0 ) == first_neg, true, s * k_max_snap ) )
-			return true;
-	return false;
+		while ( hi - lo > 1 && !out( ) ) {
+			const int mid = ( lo + hi ) / 2;
+			if ( chain( cmd, mid, neg, false, base ) )
+				keep( hi = mid, s );
+			else
+				lo = mid;
+		}
+	}
+	if ( best_s < 0 )
+		return false;
+	std::copy_n( m_best, m_best_last + 1, m_plan );
+	m_last     = m_best_last;
+	m_land_pos = m_best_land;
+	m_jb_plan  = m_best_jb;
+	return true;
 }
 
 void n_edge_catch::impl_t::search( c_user_cmd* cmd )
@@ -411,8 +444,10 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 		reset( );
 		return;
 	}
-	if ( m_start_move_type != move_type_walk || g_air_stuck_owns_cmd || g_wall_climb.caught( cmd ) || ps_latched( ) || bind_cmd_taken( ) ||
-	     g_edge_skip.active( ) ) {
+	if ( const char* gate = m_start_move_type != move_type_walk ? "mt" : g_air_stuck_owns_cmd ? "as" : g_wall_climb.caught( cmd ) ? "wc" :
+	                        ps_latched( ) ? "ps" : bind_cmd_taken( ) ? "bind" : g_edge_skip.active( ) ? "es" : nullptr ) {
+		if ( m_active )
+			botox_dbg_log( "EC: cut by=%s at %d/%d jb=%d\n", gate, m_hit, m_last, m_jb_plan ? 1 : 0 );
 		reset( );
 		return;
 	}
@@ -432,22 +467,28 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 		return;
 	}
 	if ( m_active ) {
+		/* backup_data origin = abs origin = render interp, lags a falling player up to 2 ticks ( 11-12 log: drop dist=7.6 at
+		   vz -223 = 2 ticks of fall ). the plan compares against the predicted START, same as edge skip */
+		restore_start( );
+		const c_vector clean = local->get_origin( );
 		if ( m_jb_plan && m_hit == m_last + 1 ) {
-			const bool on_lip = start.m_z >= m_ground_z - 2.f;
+			const bool on_lip = clean.m_z >= m_ground_z - 2.f;
 			if ( on_lip )
 				++g_ec_fired;
-			botox_dbg_log( "EC: jb last=%d gz=%.2f z=%.2f ducked=%d lip=%d\n", m_last, m_ground_z, start.m_z, ( m_start_flags & fl_ducking ) ? 1 : 0,
+			botox_dbg_log( "EC: jb last=%d gz=%.2f z=%.2f ducked=%d lip=%d\n", m_last, m_ground_z, clean.m_z, ( m_start_flags & fl_ducking ) ? 1 : 0,
 			               on_lip ? 1 : 0 );
 			reset( );
 			return;
 		} else if ( m_hit > m_last ) {
-			botox_dbg_log( "EC: missed spent=%d z=%.2f gz=%.2f\n", m_last, start.m_z, m_ground_z );
+			botox_dbg_log( "EC: missed spent=%d z=%.2f gz=%.2f\n", m_last, clean.m_z, m_ground_z );
 			reset( );
-		} else if ( const float dist = start.dist_to( m_plan[ m_hit ].origin ); dist > 1.f ) {
+		} else if ( const float dist = clean.dist_to( m_plan[ m_hit ].origin ); dist > 1.f ) {
 			int left = 0;
 			for ( int i = m_hit; i <= m_last; i++ )
 				left += m_plan[ i ].strafe ? 1 : 0;
-			botox_dbg_log( "EC: drop at %d/%d dist=%.3f left=%d jb=%d\n", m_hit, m_last, dist, left, m_jb_plan ? 1 : 0 );
+			const c_vector d = clean - m_plan[ m_hit ].origin;
+			botox_dbg_log( "EC: drop at %d/%d dist=%.3f dz=%.3f dxy=%.3f interp=%.3f left=%d jb=%d\n", m_hit, m_last, dist, d.m_z, d.length_2d( ),
+			               start.dist_to( m_plan[ m_hit ].origin ), left, m_jb_plan ? 1 : 0 );
 			m_dropped = true;
 			m_drop_gz = m_ground_z;
 			reset( );

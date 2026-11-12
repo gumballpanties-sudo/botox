@@ -89,6 +89,15 @@ namespace n_hooks
 		c_detour_hook m_tier0_warning{ };
 		c_detour_hook m_random_int{ };
 
+		/* libpango-1.0-0.dll: capture panorama's PangoFontMap for the live hud font ( hacks/misc/hud_font ) */
+		c_detour_hook m_pango_list_families{ };
+		c_detour_hook m_pango_layout_set_font_description{ };
+		c_detour_hook m_pango_desc_from_string{ };
+		c_detour_hook m_pango_attr_family_new{ };
+		c_detour_hook m_pango_desc_set_size{ };
+		c_detour_hook m_pango_attr_size_new{ };
+		c_detour_hook m_ft_load_glyph{ }; /* libfreetype-6.dll: hinting mode for every glyph panorama rasterizes */
+
 		c_detour_hook m_loose_files_allowed{ };
 		c_detour_hook m_check_for_pure_server_whitelist{ };
 		c_detour_hook m_aaa_bypass{ };
@@ -195,5 +204,13 @@ namespace n_detoured_functions
 
 	void __cdecl tier0_warning( const char* format, ... );
 	int __cdecl random_int( int min, int max );
+
+	void __cdecl pango_font_map_list_families( void* fontmap, void*** families, int* n_families );
+	void __cdecl pango_layout_set_font_description( void* layout, const void* desc );
+	void* __cdecl pango_font_description_from_string( const char* str );
+	void* __cdecl pango_attr_family_new( const char* family );
+	void __cdecl pango_font_description_set_size( void* desc, int size );
+	void* __cdecl pango_attr_size_new( int size );
+	int __cdecl ft_load_glyph( void* face, unsigned int glyph_index, int load_flags );
 
 }

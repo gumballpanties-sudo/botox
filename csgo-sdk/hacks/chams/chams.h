@@ -41,13 +41,14 @@ namespace n_chams
 		chams_material_aurora,
 		chams_material_aquarium,
 		chams_material_sky,
+		chams_material_grid, /* botox 11-12: bind pose grid lines that ride the model */
 		chams_material_max
 	};
 
 	inline const char* material_names[ chams_material_max ] = { "original", "flat",     "shaded",      "wireframe", "glow",     "metallic", "pearlescent",
 		                                                        "ambient",  "gold",     "damascus",    "crystal",   "wet",      "lsd",      "two tone",
 		                                                        "fresnel",  "lava",     "pearl",       "bubble",    "neon",     "network",  "soap",
-		                                                        "aurora",   "aquarium", "sky" };
+		                                                        "aurora",   "aquarium", "sky",      "grid" };
 
 	constexpr bool is_atlas( const int index )
 	{
@@ -287,7 +288,7 @@ namespace n_chams
 			}
 			}
 
-			/* last atlas carrier (sky) is the last built slot */
+			/* last shader carrier (grid) is the last built slot */
 			if ( ++this->m_build_index >= chams_material_max - 2 )
 				this->m_created = true;
 		}

@@ -52,7 +52,11 @@ namespace
 	constexpr float k_wide_rings[ ]   = { 36.f, 54.f, 72.f };
 	constexpr int k_wide_ring_rays[ ] = { 16, 20, 24 };
 	constexpr int k_wide_max          = 16 + 20 + 24;
-	constexpr float k_glide_near      = 8.f;
+	/* brake curve runs at this share of the modelled air authority: real authority 25% under the model ( stamina/duck/0.25 band
+	   read wrong, server accel ) still stops ON the spot. cost = brake starts ~1.2x earlier, a few ticks of hover */
+	constexpr float k_brake_margin    = 0.75f;
+	/* scans ( lookahead / wide ) stop while one flight still fits: a 1 s flight = one hull trace per tick ( snap forces 1-tick steps ) */
+	constexpr long long k_fly_reserve_us = 1000ll;
 	constexpr float k_aim_span        = 8.f;
 	constexpr int k_aim_steps         = 6;
 	constexpr float k_side_max        = 20.f; /* deg off the fall line the bounce may throw you */
@@ -103,7 +107,7 @@ namespace
 			float v = w, vz = vz_start, d = w * dt;
 			for ( int k = 0; k < 256 && v > 0.f; ++k ) {
 				vz -= g * dt;
-				v = std::max( v - 0.9f * n_air::accel_speed( world, k + 1 ) * n_air::friction( vz, world ), 0.f );
+				v = std::max( v - k_brake_margin * n_air::accel_speed( world, k + 1 ) * n_air::friction( vz, world ), 0.f );
 				d += v * dt;
 			}
 			return d;
@@ -117,25 +121,6 @@ namespace
 			( travel( mid ) <= dist ? lo : hi ) = mid;
 		}
 		return lo;
-	}
-
-	// drop in perp gain: best run-then-brake distance, upper bound (the flight decides). straight closing caps at 30
-	float ab_gain_reach( const float speed, const float ttc, const n_air::world_t& world )
-	{
-		const float dt    = world.dt;
-		const float accel = n_air::accel_speed( world );
-		const float a     = std::min( accel, k_air_veer_cap );
-		const float brake = std::max( 0.9f * accel / dt, 1.f );
-		const int ticks   = std::min( static_cast< int >( ttc / dt ), 512 );
-
-		float v = speed, d = 0.f, best = 0.f;
-		for ( int k = 0; k <= ticks; ++k ) {
-			if ( static_cast< float >( k ) * dt + v / brake <= ttc )
-				best = std::max( best, d + v * v / ( 2.f * brake ) );
-			d += v * dt;
-			v = v < k_air_veer_cap ? v + k_air_veer_cap : std::sqrt( v * v + a * a );
-		}
-		return best * 1.2f + 4.f;
 	}
 
 	float ab_time_to_contact( const float vz, const float drop )
@@ -165,21 +150,6 @@ namespace
 	float ab_bounce( const c_vector& xy, const float vz_hit, const c_vector& n )
 	{
 		return ab_keep_speed( ab_clip_xy( c_vector( xy.m_x, xy.m_y, -vz_hit ), n ), n.m_z );
-	}
-
-	// drop in glides in on time unless the approach runs uphill (clip eats it, dash + stop keeps more)
-	bool ab_glides( const c_vector& to, const float dist, const c_vector& n )
-	{
-		return dist < k_glide_near || to.m_x * n.m_x + to.m_y * n.m_y >= 0.f;
-	}
-
-	c_vector ab_glide_xy( const c_vector& origin, const c_vector& at, const float ttc, const c_vector& n )
-	{
-		const c_vector to( at.m_x - origin.m_x, at.m_y - origin.m_y, 0.f );
-		if ( !ab_glides( to, to.length_2d( ), n ) )
-			return c_vector( 0.f, 0.f, 0.f );
-		const float t = std::max( ttc, ab_phys_dt( ) );
-		return c_vector( to.m_x / t, to.m_y / t, 0.f );
 	}
 
 	// angle between the bounce's exit xy and straight downhill
@@ -477,7 +447,7 @@ namespace
 	}
 
 	bool ab_plan_stop_at( const c_vector& origin, const c_vector& velocity, const c_vector& patch, const float probe, const float need,
-	                      const float max_ttc, const c_vector& mins, const c_vector& maxs, ab_plan_t& out, const bool gain = false )
+	                      const float max_ttc, const c_vector& mins, const c_vector& maxs, ab_plan_t& out )
 	{
 		ab_contact_t c{ };
 		c_vector flush{ };
@@ -493,31 +463,29 @@ namespace
 		out.m_vz_hit = std::sqrt( velocity.m_z * velocity.m_z + 2.f * ab_gravity( ) * out.m_drop );
 		out.m_ttc    = ab_time_to_contact( velocity.m_z, out.m_drop );
 		out.m_floor  = ab_bounce( c_vector( 0.f, 0.f, 0.f ), out.m_vz_hit, c.m_normal );
-		out.m_result = gain ? ab_bounce( ab_glide_xy( origin, c.m_pos, out.m_ttc, c.m_normal ), out.m_vz_hit, c.m_normal ) : out.m_floor;
+		out.m_result = out.m_floor; /* stop over the patch, straight fall: the face pays from vz alone */
 
 		const c_vector to( c.m_pos.m_x - origin.m_x, c.m_pos.m_y - origin.m_y, 0.f );
 		const float dist   = to.length_2d( );
 		const float toward = dist > 1.f ? std::max( ( velocity.m_x * to.m_x + velocity.m_y * to.m_y ) / dist, 0.f ) : 0.f;
 
-		const bool reachable = dist <= ( toward + k_air_veer_cap ) * out.m_ttc + 1.f ||
-		                       ( gain && dist <= ab_gain_reach( velocity.length_2d( ), out.m_ttc, n_air::read_world( mins, maxs ) ) );
+		const bool reachable = dist <= ( toward + k_air_veer_cap ) * out.m_ttc + 1.f;
 
 		out.m_valid = out.m_result >= need && out.m_ttc <= max_ttc && reachable;
 		return out.m_valid;
 	}
 
-	float ab_ray_score( const c_vector& origin, const c_vector& velocity, const ab_hit_t& hit, const bool glide )
+	float ab_ray_score( const c_vector& origin, const c_vector& velocity, const ab_hit_t& hit )
 	{
 		const float ray_drop = std::max( origin.m_z - hit.m_pos.m_z, 0.f );
 		const float vz_hit   = std::sqrt( velocity.m_z * velocity.m_z + 2.f * ab_gravity( ) * ray_drop );
-		const c_vector xy    = glide ? ab_glide_xy( origin, hit.m_pos, ab_time_to_contact( velocity.m_z, ray_drop ), hit.m_normal ) : c_vector( 0.f, 0.f, 0.f );
-		return ab_bounce( xy, vz_hit, hit.m_normal );
+		return ab_bounce( c_vector( 0.f, 0.f, 0.f ), vz_hit, hit.m_normal );
 	}
 
 	bool ab_plan_stop( const c_vector& origin, const c_vector& velocity, const ab_hit_t& hit, const c_vector& patch, const float need,
-	                   const float max_ttc, const c_vector& mins, const c_vector& maxs, ab_plan_t& out, const bool gain = false )
+	                   const float max_ttc, const c_vector& mins, const c_vector& maxs, ab_plan_t& out )
 	{
-		out.m_result = ab_ray_score( origin, velocity, hit, gain );
+		out.m_result = ab_ray_score( origin, velocity, hit );
 		if ( out.m_result < need )
 			return false;
 
@@ -534,7 +502,7 @@ namespace
 			const auto plan_at = [ & ]( const float k, ab_plan_t& p ) {
 				const float back = support - k;
 				const c_vector at( hit.m_pos.m_x - up.m_x * back, hit.m_pos.m_y - up.m_y * back, hit.m_pos.m_z );
-				ab_plan_stop_at( origin, velocity, at, probe, need, max_ttc, mins, maxs, p, gain );
+				ab_plan_stop_at( origin, velocity, at, probe, need, max_ttc, mins, maxs, p );
 				p.m_place = k;
 				return p.m_normal.dot_product( hit.m_normal ) >= k_same_face;
 			};
@@ -577,7 +545,7 @@ namespace
 			}
 		}
 
-		return ab_plan_stop_at( origin, velocity, patch, ray_drop + 64.f, need, max_ttc, mins, maxs, out, gain );
+		return ab_plan_stop_at( origin, velocity, patch, ray_drop + 64.f, need, max_ttc, mins, maxs, out );
 	}
 
 	/* drop in: rings beside us, each ray hit its own patch ( the "highest face" rule only holds under the hull ).
@@ -598,7 +566,7 @@ namespace
 		int count = 0, n_ref = 0;
 
 		const auto offer = [ & ]( const ab_hit_t& hit ) {
-			const float score = ab_ray_score( origin, velocity, hit, true );
+			const float score = ab_ray_score( origin, velocity, hit );
 			if ( score >= need )
 				cands[ count++ ] = { hit, score };
 		};
@@ -608,7 +576,7 @@ namespace
 			const int rays = k_wide_ring_rays[ ri ];
 			ab_ray_t ring[ 24 ];
 			int cast = 0;
-			for ( ; cast < rays && !budget.expired( ); ++cast ) {
+			for ( ; cast < rays && !budget.cannot_fit( k_fly_reserve_us ); ++cast ) {
 				const float ang = ( static_cast< float >( cast ) + ( ri & 1 ? 0.5f : 0.f ) ) / static_cast< float >( rays ) * two_pi;
 				const c_vector start( origin.m_x + std::cos( ang ) * r, origin.m_y + std::sin( ang ) * r, origin.m_z + 2.f );
 
@@ -622,7 +590,7 @@ namespace
 				offer( ab_make_hit( tr ) );
 			}
 
-			for ( int j = 0; j < rays && n_ref < k_refine_wide && cast == rays && !budget.expired( ); ++j ) {
+			for ( int j = 0; j < rays && n_ref < k_refine_wide && cast == rays && !budget.cannot_fit( k_fly_reserve_us ); ++j ) {
 				const int k = ( j + 1 ) % rays;
 				if ( !ab_lip( ring[ j ], ring[ k ] ) )
 					continue;
@@ -635,9 +603,9 @@ namespace
 
 		std::sort( cands, cands + count, [ ]( const ray_cand_t& a, const ray_cand_t& b ) { return a.score > b.score; } );
 
-		for ( int i = 0; i < count && !budget.expired( ); ++i ) {
+		for ( int i = 0; i < count && !budget.cannot_fit( k_fly_reserve_us ); ++i ) {
 			ab_plan_t cand{ };
-			if ( !ab_plan_stop( origin, velocity, cands[ i ].hit, cands[ i ].hit.m_pos, need, 1e9f, mins, maxs, cand, true ) )
+			if ( !ab_plan_stop( origin, velocity, cands[ i ].hit, cands[ i ].hit.m_pos, need, 1e9f, mins, maxs, cand ) )
 				continue;
 
 			trace_t wall{ };
@@ -722,23 +690,13 @@ namespace
 		float want_speed = 0.f;
 
 		if ( dist > 0.5f ) {
-			const bool glide    = drop_in && ab_glides( to_target, dist, normal );
-			const float arrive  = glide ? std::max( ttc, ab_phys_dt( ) ) : drop_in ? ab_phys_dt( ) : std::max( ttc * k_arrive_frac, ab_phys_dt( ) );
+			/* drop in: over the patch asap, dead stop, straight fall ( no glide: moving at contact + the late duck's x0.34 brake = fly past ) */
+			const float arrive  = drop_in ? ab_phys_dt( ) : std::max( ttc * k_arrive_frac, ab_phys_dt( ) );
 			const float profile = std::min( dist / arrive, ab_stop_speed( dist, velocity.m_z, world ) );
 			const float speed   = velocity.length_2d( );
+			/* no perp dash ( 10-04 ): it accelerated sideways at far spots, the user reads that as "never brakes" */
 			want_speed = std::min( profile, speed + k_air_veer_cap );
 			want       = c_vector( to_target.m_x / dist * want_speed, to_target.m_y / dist * want_speed, 0.f );
-
-			// aimed + under the profile: straight adds nothing past 30, a perp push grows |v|^2 by a^2 a tick
-			const float perp_gain = std::min( n_air::accel_speed( world ) * n_air::friction( velocity.m_z, world ), k_air_veer_cap );
-			if ( drop_in && speed >= 28.f && profile >= std::sqrt( speed * speed + perp_gain * perp_gain ) &&
-			     velocity.m_x * to_target.m_x + velocity.m_y * to_target.m_y >= 0.94f * speed * dist ) {
-				const float cross   = velocity.m_x * to_target.m_y - velocity.m_y * to_target.m_x;
-				const c_vector perp = cross >= 0.f ? c_vector( -velocity.m_y / speed, velocity.m_x / speed, 0.f )
-				                                   : c_vector( velocity.m_y / speed, -velocity.m_x / speed, 0.f );
-				want       = c_vector( velocity.m_x + perp.m_x * 450.f, velocity.m_y + perp.m_y * 450.f, 0.f );
-				want_speed = want.length_2d( );
-			}
 		}
 
 		if ( out_dist )
@@ -774,7 +732,7 @@ namespace
 	}
 
 	struct ab_gates_t {
-		int yield = 0, off = 0, ground = 0, settle = 0, noscan = 0, noplan = 0, refused = 0, armed = 0, hold = 0, side = 0, blk = 0, snap = 0;
+		int yield = 0, off = 0, ground = 0, settle = 0, noscan = 0, noplan = 0, refused = 0, armed = 0, hold = 0, side = 0, blk = 0, snap = 0, nofly = 0;
 		float best = -1.f, need = 0.f, spd = 0.f, ang = -1.f, rang = -1.f;
 		unsigned long long next = 0ull;
 	} g_gates;
@@ -788,8 +746,8 @@ namespace
 		auto& g = g_gates;
 		if ( GET_VARIABLE( g_variables.m_debug_log, bool ) &&
 		     ( g.yield || g.off || g.ground || g.settle || g.noscan || g.noplan || g.refused || g.armed || g.hold ) )
-			botox_dbg_log( "[ab] gates yield=%d off=%d ground=%d settle=%d noscan=%d noplan=%d refused=%d side=%d blk=%d snap=%d armed=%d hold=%d best=%.0f need=%.0f spd=%.0f ang=%.1f rang=%.1f\n",
-			               g.yield, g.off, g.ground, g.settle, g.noscan, g.noplan, g.refused, g.side, g.blk, g.snap, g.armed, g.hold, g.best, g.need, g.spd, g.ang, g.rang );
+			botox_dbg_log( "[ab] gates yield=%d off=%d ground=%d settle=%d noscan=%d noplan=%d refused=%d nofly=%d side=%d blk=%d snap=%d armed=%d hold=%d best=%.0f need=%.0f spd=%.0f ang=%.1f rang=%.1f\n",
+			               g.yield, g.off, g.ground, g.settle, g.noscan, g.noplan, g.refused, g.nofly, g.side, g.blk, g.snap, g.armed, g.hold, g.best, g.need, g.spd, g.ang, g.rang );
 		g      = ab_gates_t{ };
 		g.next = now + 1000ull;
 	}
@@ -1036,9 +994,14 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 		if ( !c.m_valid || c.m_floor < gain_min || c.m_normal.m_z > k_min_face_nz || ( c.m_target - origin ).length_2d( ) > reach )
 			return false;
 
+		/* budget gone before the flight = no plan. log 11-12: analytic fallback armed a 233u spot after 58 lookahead steps,
+		   dashed at it, held flights refused it, released, re-armed the next = sideways jerks, never a brake */
 		n_air::result_t r = ab_fly( start, world, c, drop_in, &budget );
-		if ( !r.valid )
-			return c.m_floor >= need;
+		if ( !r.valid ) {
+			++g_gates.nofly;
+			c.m_valid = false;
+			return false;
+		}
 
 		/* pixel strip: flight lands off the face -> bisect the target along the slope ( landed higher = too far uphill ) */
 		const float flat = std::sqrt( c.m_normal.m_x * c.m_normal.m_x + c.m_normal.m_y * c.m_normal.m_y );
@@ -1127,7 +1090,7 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 	bool seen_below = false;
 	if ( !armed ) {
 		seen_below = ab_scan_below( origin, radius, rays, depth, hit, &patch, &budget );
-		if ( seen_below && ab_plan_stop( origin, velocity, hit, patch, need, stop_max_ttc, mins, maxs, stop, drop_in ) )
+		if ( seen_below && ab_plan_stop( origin, velocity, hit, patch, need, stop_max_ttc, mins, maxs, stop ) )
 			accept( stop );
 	}
 	const float best_below = stop.m_result;
@@ -1137,7 +1100,7 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 	bool held_refused = false;
 	if ( armed && !data.m_keep ) {
 		if ( ab_plan_stop_at( origin, velocity, data.m_target, std::max( origin.m_z - data.m_target.m_z, 0.f ) + 64.f, need, stop_max_ttc, mins,
-		                      maxs, stop, drop_in ) )
+		                      maxs, stop ) )
 			accept( stop );
 		held_refused = stop.m_flown && !stop.m_valid;
 	}
@@ -1148,7 +1111,7 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 		const int max_ticks = static_cast< int >( k_lookahead_time / dt + 0.5f );
 		const int step      = std::max( static_cast< int >( k_lookahead_step / dt + 0.5f ), 1 );
 
-		for ( int t = step; t <= max_ticks && !budget.expired( ); t += step ) {
+		for ( int t = step; t <= max_ticks && !budget.cannot_fit( k_fly_reserve_us ); t += step ) {
 			const float time = static_cast< float >( t ) * dt;
 			if ( speed_2d * time > reach )
 				break;
@@ -1157,7 +1120,7 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 
 			ab_plan_t cand{ };
 			if ( ab_scan_below( p, radius, rays, depth, hit, &patch, &budget ) &&
-			     ab_plan_stop( origin, velocity, hit, patch, need, stop_max_ttc, mins, maxs, cand, drop_in ) && beats( cand ) && accept( cand ) ) {
+			     ab_plan_stop( origin, velocity, hit, patch, need, stop_max_ttc, mins, maxs, cand ) && beats( cand ) && accept( cand ) ) {
 				cand.m_lookahead = t;
 				take( cand );
 			}

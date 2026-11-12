@@ -61,9 +61,10 @@ namespace n_tick
 		return c.QuadPart;
 	}
 
-	constexpr double k_cmd_total_s = 0.6 / 128.0;
+	/* share of the REAL tick, not fixed wall time: 0.6/128 s was 30% of the game thread at 64 and 60% at 128 ( 2x cmds/s ) */
+	constexpr double k_cmd_share = 0.3;
 
-	enum e_search : int { search_none = -1, search_eb, search_tb, search_as, search_aa, search_wc, search_pf, search_ab, search_ba, search_psa, search_es, search_tung, search_pja, search_ec };
+	enum e_search : int { search_none = -1, search_eb, search_tb, search_as, search_aa, search_wc, search_pf, search_ab, search_ba, search_psa, search_es, search_tung, search_pja, search_ec, search_ps };
 
 	inline unsigned s_hungry_prev = 0u, s_hungry_now = 0u, s_started_now = 0u;
 	inline unsigned s_fair_cuts = 0u;
@@ -74,7 +75,7 @@ namespace n_tick
 	inline void begin_cmd_clock( )
 	{
 		s_cmd_start = qpc_now( );
-		s_cmd_span  = static_cast< long long >( static_cast< double >( qpc_freq( ) ) * k_cmd_total_s );
+		s_cmd_span  = static_cast< long long >( static_cast< double >( qpc_freq( ) ) * static_cast< double >( engine_interval( ) ) * k_cmd_share );
 		s_cmd_clock_live = true;
 		s_hungry_prev    = s_hungry_now;
 		s_hungry_now = s_started_now = 0u;

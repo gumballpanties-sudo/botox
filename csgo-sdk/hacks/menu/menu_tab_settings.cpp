@@ -3,6 +3,7 @@
 #include "../misc/chat_extras.h"
 #include "../misc/minesweeper.h"
 #include "../misc/names_pure.h"
+#include "../misc/hud_font/hud_font.h"
 #include "../network/botox_net.h"
 #include "../../game/sdk/includes/includes.h"
 
@@ -856,13 +857,24 @@ void n_menu::impl_t::tab_fonts( )
 		menu_columns_begin( );
 
 		if ( menu_group_begin( "default hud font" ) ) {
-			font_family_input( font_var, def_font_buffer, sizeof( def_font_buffer ) );
+			/* live: picking a FILE ( same list as the other pickers ) applies in game within ~0.5 s, no fonts.conf
+			   edit, no restart ( g_hud_font ) */
+			text_buffer_sync( "font file", font_var, def_font_buffer, sizeof( def_font_buffer ) );
 
-			if ( ImGui::Button( "apply to default hud (restart game after)", ImVec2( -1.f, 15.f ) ) )
-				g_chud.register_def_hud_font( );
+			ImGui::SliderFloat( "font scale", &GET_VARIABLE( g_variables.m_def_hud_font_scale, float ), 50.f, 150.f, "%.0f%%" );
+			ImGui::SliderFloat( "text nudge x", &GET_VARIABLE( g_variables.m_def_hud_font_nudge_x, float ), -20.f, 20.f, "%.0f" );
+			ImGui::SliderFloat( "text nudge y", &GET_VARIABLE( g_variables.m_def_hud_font_nudge_y, float ), -20.f, 20.f, "%.0f" );
 
-			if ( ImGui::Button( "back to stratum2", ImVec2( -1.f, 15.f ) ) )
-				g_chud.clear_def_hud_font( );
+			/* FT_Load_Glyph hinting for every panorama glyph, stock font included ( g_hud_font.glyph_flags ) */
+			ImGui::Combo( "text quality", &GET_VARIABLE( g_variables.m_def_hud_font_quality, int ), "stock\0sharp (full hinting)\0smooth (light hinting)\0unhinted\0" );
+
+			if ( ImGui::Button( "apply again", ImVec2( -1.f, 15.f ) ) )
+				g_hud_font.apply_now( );
+
+			if ( ImGui::Button( "back to stratum2", ImVec2( -1.f, 15.f ) ) ) {
+				font_var.clear( );
+				def_font_buffer[ 0 ] = '\0';
+			}
 
 			if ( ImGui::Button( "restore stock fonts.conf", ImVec2( -1.f, 15.f ) ) )
 				g_chud.restore_fonts_conf( );
@@ -871,8 +883,23 @@ void n_menu::impl_t::tab_fonts( )
 
 		menu_columns_next( );
 
-		if ( menu_group_begin( "font list" ) )
-			render_system_font_list( font_var, def_font_buffer, sizeof( def_font_buffer ), def_font_search_filter );
+		if ( menu_group_begin( "font list" ) ) {
+			def_font_search_filter.Draw( "search for a font" );
+
+			if ( ImGui::BeginListBox( "##font list", ImVec2( 0.f, 300.f ) ) ) {
+				for ( const auto& iterator : g_fonts.m_font_file_names ) {
+					if ( def_font_search_filter.PassFilter( iterator.c_str( ) ) )
+						if ( ImGui::Selectable( iterator.c_str( ), HASH_RT( font_var.c_str( ) ) == HASH_RT( iterator.c_str( ) ) ) ) {
+							font_var             = iterator;
+							const std::size_t len = ImMin( font_var.size( ), sizeof( def_font_buffer ) - 1 );
+							std::memcpy( def_font_buffer, font_var.c_str( ), len );
+							def_font_buffer[ len ] = '\0';
+							g_hud_font.apply_now( ); /* click = on the hud next frame */
+						}
+				}
+				ImGui::EndListBox( );
+			}
+		}
 		menu_group_end( );
 
 		menu_columns_end( );

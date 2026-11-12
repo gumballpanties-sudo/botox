@@ -1697,6 +1697,10 @@ namespace n_variables
 		ADD_VARIABLE( float, m_chud_hud_font_scale, 100.f );
 
 		ADD_VARIABLE( std::string, m_def_hud_font, "" );
+		ADD_VARIABLE( float, m_def_hud_font_scale, 100.f );
+		ADD_VARIABLE( float, m_def_hud_font_nudge_x, 0.f );
+		ADD_VARIABLE( float, m_def_hud_font_nudge_y, 0.f );
+		ADD_VARIABLE( int, m_def_hud_font_quality, 0 );
 
 		ADD_VARIABLE( bool, m_mc_hud, false );
 		ADD_VARIABLE( bool, m_mc_hud_crosshair, true );

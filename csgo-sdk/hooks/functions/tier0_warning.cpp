@@ -1,4 +1,5 @@
 #include "../../globals/includes/includes.h"
+#include "../../globals/logger/logger.h"
 #include "../hooks.h"
 
 #include <cstdarg>
@@ -28,6 +29,10 @@ void __cdecl n_detoured_functions::tier0_warning( const char* format, ... )
 		if ( std::strstr( buffer, spam ) )
 			return;
 	}
+
+	/* panorama js ( $.Warning ) -> debug log: hud_font walk counts */
+	if ( std::strstr( buffer, "HUDFONT:" ) )
+		botox_dbg_log( "%s", buffer );
 
 	original( "%s", buffer );
 }

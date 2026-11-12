@@ -67,6 +67,7 @@
     <ClCompile Include="hacks\misc\scaleform\scaleform.cpp" />
     <ClCompile Include="hacks\misc\scaleform\image_cache.cpp" />
     <ClCompile Include="hacks\misc\scaleform\moi_hud.cpp" />
+    <ClCompile Include="hacks\misc\hud_font\hud_font.cpp" />
     <ClCompile Include="hooks\functions\load_file_into_buffer.cpp" />
     <ClCompile Include="hacks\chud_hud\chud_hud.cpp" />
     <ClCompile Include="hacks\mc_hud\mc_hud.cpp" />
@@ -184,6 +185,7 @@
     <ClCompile Include="hooks\functions\set_visuals_data.cpp" />
     <ClCompile Include="hooks\functions\sv_pure.cpp" />
     <ClCompile Include="hooks\functions\tier0_warning.cpp" />
+    <ClCompile Include="hooks\functions\pango_fonts.cpp" />
     <ClCompile Include="hooks\functions\view_draw_fade.cpp" />
     <ClCompile Include="hooks\functions\draw_world_lists.cpp" />
     <ClCompile Include="hooks\functions\paint_traverse.cpp" />
@@ -464,6 +466,7 @@
     <ClInclude Include="hacks\misc\scaleform\moi_manifest.h" />
     <ClInclude Include="hacks\misc\scaleform\moi_transform.h" />
     <ClInclude Include="hacks\misc\scaleform\scaleform_track.h" />
+    <ClInclude Include="hacks\misc\hud_font\hud_font.h" />
     <ClInclude Include="hacks\chud_hud\chud_hud.h" />
     <ClInclude Include="hacks\chud_hud\chud_hud_js.h" />
     <ClInclude Include="hacks\mc_hud\mc_hud.h" />

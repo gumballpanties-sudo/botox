@@ -8,6 +8,7 @@
 #include "../../hacks/aimbot/grenade_aim.h"
 #include "../../hacks/chud_hud/chud_hud.h"
 #include "../../hacks/misc/scaleform/scaleform.h"
+#include "../../hacks/misc/hud_font/hud_font.h"
 #include "../../hacks/debug/debug.h"
 #include "../../hacks/indicators/indicators.h"
 #include "../../hacks/lua/lua.h"
@@ -83,6 +84,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 				g_misc.on_level_shutdown( );
 				g_misc.on_eject( );
 				g_scaleform.on_eject( );
+				g_hud_font.on_createmove( );
 				g_esp_preview.on_eject( );
 				g_chud.on_createmove( );
 				g_edicts.fog( true );

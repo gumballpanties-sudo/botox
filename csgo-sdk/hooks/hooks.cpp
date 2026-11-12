@@ -93,6 +93,26 @@ bool n_hooks::impl_t::on_attach( )
 	initialise_hook( m_random_int, g_modules[ VSTDLIB_DLL ].find_export( HASH_BT( "RandomInt" ) ), &n_detoured_functions::random_int,
 	                 "vstdlib::RandomInt()" );
 
+	/* panorama's text stack, plain exports. skipped ( warning only ) when the dll is not there */
+	if ( const HMODULE pango = GetModuleHandleA( "libpango-1.0-0.dll" ) ) {
+		initialise_hook( m_pango_list_families, reinterpret_cast< void* >( GetProcAddress( pango, "pango_font_map_list_families" ) ),
+		                 &n_detoured_functions::pango_font_map_list_families, "pango_font_map_list_families()" );
+		initialise_hook( m_pango_layout_set_font_description,
+		                 reinterpret_cast< void* >( GetProcAddress( pango, "pango_layout_set_font_description" ) ),
+		                 &n_detoured_functions::pango_layout_set_font_description, "pango_layout_set_font_description()" );
+		initialise_hook( m_pango_desc_from_string, reinterpret_cast< void* >( GetProcAddress( pango, "pango_font_description_from_string" ) ),
+		                 &n_detoured_functions::pango_font_description_from_string, "pango_font_description_from_string()" );
+		initialise_hook( m_pango_attr_family_new, reinterpret_cast< void* >( GetProcAddress( pango, "pango_attr_family_new" ) ),
+		                 &n_detoured_functions::pango_attr_family_new, "pango_attr_family_new()" );
+		initialise_hook( m_pango_desc_set_size, reinterpret_cast< void* >( GetProcAddress( pango, "pango_font_description_set_size" ) ),
+		                 &n_detoured_functions::pango_font_description_set_size, "pango_font_description_set_size()" );
+		initialise_hook( m_pango_attr_size_new, reinterpret_cast< void* >( GetProcAddress( pango, "pango_attr_size_new" ) ),
+		                 &n_detoured_functions::pango_attr_size_new, "pango_attr_size_new()" );
+	}
+	if ( const HMODULE freetype = GetModuleHandleA( "libfreetype-6.dll" ) )
+		initialise_hook( m_ft_load_glyph, reinterpret_cast< void* >( GetProcAddress( freetype, "FT_Load_Glyph" ) ), &n_detoured_functions::ft_load_glyph,
+		                 "FT_Load_Glyph()" );
+
 	initialise_hook( m_alloc_key_values_memory, safe_vfunc( g_interfaces.m_key_values_system, 2 ), &n_detoured_functions::alloc_key_values_memory,
 	                 "IKeyValuesSystem::AllocKeyValuesMemory()" );
 

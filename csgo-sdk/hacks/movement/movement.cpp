@@ -3480,17 +3480,52 @@ void n_movement::impl_t::pixel_surf( float  )
 		return;
 
 	c_user_cmd* cmd   = g_ctx.m_cmd;
+
+	/* 11-12: hunts ran with no budget, 3 x ( ticks( 8 ) + 1 ) sims a tick at 2x the ticks = the 128 fps drop. cut = hands off this
+	   tick ( hunt -2, never read as a miss ); a complete miss with the same keys skips the next tick at 128 ( ticks( 1 ) > 1 ), the
+	   lip it would find is still >= 15 ticks out */
+	static int s_miss_tick = -1, s_miss_buttons = 0;
+	static int st_sims = 0, st_cuts = 0, st_skips = 0;
+	static unsigned long long st_next = 0ull;
+	if ( const unsigned long long now = GetTickCount64( ); now >= st_next ) {
+		st_next = now + 1000ull;
+		if ( st_sims || st_cuts || st_skips )
+			botox_dbg_log( "PSU: sims=%d cuts=%d skips=%d", st_sims, st_cuts, st_skips );
+		st_sims = st_cuts = st_skips = 0;
+	}
+	if ( !latched && n_tick::ticks( 1 ) > 1 && s_miss_tick >= 0 && cmd->m_tick_count - s_miss_tick == 1 && s_miss_buttons == cmd->m_buttons ) {
+		++st_skips;
+		return;
+	}
+	const auto miss = [ & ]( ) {
+		s_miss_tick    = cmd->m_tick_count;
+		s_miss_buttons = cmd->m_buttons;
+	};
+	struct sim_tally_t {
+		int& out;
+		unsigned before = g_prediction.m_sim_count;
+		~sim_tally_t( ) { out += static_cast< int >( g_prediction.m_sim_count - before ); }
+	} sim_tally{ st_sims };
+	n_tick::c_sim_budget budget;
+	budget.start( 0.3f, 0.f, n_tick::search_ps );
+
 	const int frame   = g_interfaces.m_prediction->m_commands_predicted - 1;
 	const float pin   = g_prediction.get_engine_target_predict_z_velocity( );
 	/* xy < 1 = wall hang ( stuck ), not a surf. 10-07 21:28 log: all 3 rides spd 0, one hung 53 ticks */
 	const auto pinned = [ pin ]( const c_vector& v ) { return std::fabsf( v.m_z - pin ) < 0.01f && v.length_2d( ) >= 1.f; };
 
+	/* -1 = no pin in n ticks, -2 = budget cut ( unknown ) */
 	const auto hunt = [ & ]( const int buttons, const int n, const int delay = 0 ) {
 		const int live = cmd->m_buttons;
 		g_prediction.restore_entity_to_predicted_frame( frame );
 		const int base = g_ctx.m_local->get_tick_base( );
 		int found = -1, run = 0;
 		for ( int z = 0; z <= n && found < 0; z++ ) {
+			if ( budget.expired( ) ) {
+				found = -2;
+				++st_cuts;
+				break;
+			}
 			cmd->m_buttons                  = z < delay ? live : buttons;
 			g_ctx.m_local->get_tick_base( ) = base + z;
 			g_prediction.begin( g_ctx.m_local, cmd );
@@ -3586,20 +3621,23 @@ void n_movement::impl_t::pixel_surf( float  )
 		log_hold( held );
 		if ( held )
 			return;
-		if ( hunt( cmd->m_buttons, n_tick::ticks( 8 ) ) >= 0 )
+		if ( hunt( cmd->m_buttons, n_tick::ticks( 8 ) ) != -1 )
 			return;
 		const int flip_buttons = holds_duck ? cmd->m_buttons & ~in_duck : cmd->m_buttons | in_duck;
 		const int live_buttons = cmd->m_buttons;
 		int flip               = hunt( flip_buttons, n_tick::ticks( 8 ) );
+		if ( flip == -2 )
+			return;
 		/* your crouch is dropped only on the last tick that still catches: one more crouched tick still pins = wait,
 		   so a guess 8 ticks out never uncrouches you (path / keys change before the lip = nothing lost) */
-		if ( holds_duck && flip >= 0 && hunt( flip_buttons, n_tick::ticks( 8 ), 1 ) >= 0 )
+		if ( holds_duck && flip >= 0 && hunt( flip_buttons, n_tick::ticks( 8 ), 1 ) != -1 )
 			return;
 		if ( flip < 0 ) {
 			cmd->m_buttons = flip_buttons;
 			const int by   = hold( );
 			if ( by < 2 ) {
 				cmd->m_buttons = live_buttons;
+				miss( );
 				return;
 			}
 			log_hold( by );
@@ -3629,8 +3667,9 @@ void n_movement::impl_t::pixel_surf( float  )
 		unpinned = pinned( v0 ) ? 0 : unpinned + 1;
 		if ( unpinned < 2 )
 			return;
-		if ( hunt( cmd->m_buttons, n_tick::ticks( 4 ) ) >= 0 ) {
-			unpinned = 0;
+		if ( const int h = hunt( cmd->m_buttons, n_tick::ticks( 4 ) ); h != -1 ) {
+			if ( h >= 0 )
+				unpinned = 0;
 			return;
 		}
 	}

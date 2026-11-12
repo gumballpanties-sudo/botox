@@ -9,6 +9,7 @@
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/misc/chat_extras.h"
 #include "../../hacks/misc/scaleform/scaleform.h"
+#include "../../hacks/misc/hud_font/hud_font.h"
 #include "../../hacks/chud_hud/chud_hud.h"
 #include "../../hacks/movement/edgebug.h"
 #include "../../hacks/movement/edge_skip.h"
@@ -367,6 +368,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 	{
 		PERF_ZONE( zone_cmd_scaleform );
 		g_scaleform.on_createmove( );
+		g_hud_font.on_createmove( );
 	}
 
 	{
