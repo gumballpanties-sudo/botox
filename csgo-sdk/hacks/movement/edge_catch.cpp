@@ -53,8 +53,9 @@ void n_edge_catch::impl_t::reset( const bool forget )
 {
 	m_active = false;
 	m_hit    = 0;
+	m_fail   = false;
 	if ( forget )
-		m_yaw_valid = m_had_ground = false;
+		m_yaw_valid = m_had_ground = m_dropped = false;
 }
 
 void n_edge_catch::impl_t::render( ) const
@@ -318,7 +319,8 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 	const float predict_time = std::clamp( GET_VARIABLE( g_variables.m_edge_catch_predict_time, float ), 0.05f, 1.f );
 	m_max_ticks = std::clamp( static_cast< int >( std::round( predict_time / n_tick::interval( ) ) ), 2, k_max_ticks );
 	m_reach     = std::clamp( GET_VARIABLE( g_variables.m_edge_catch_reach, float ), 0.5f, 64.f );
-	m_budget.start( 0.15f, 1.f / 128.f, n_tick::search_ec );
+	/* 11-11 log: 0.15 of 1/128 s cut 27/48 searches before n >= 3 strafes */
+	m_budget.start( 0.25f, n_tick::engine_interval( ), n_tick::search_ec );
 	m_sims = m_chains = 0;
 	m_kind = 0;
 	m_jb   = jb_bind( );
@@ -364,11 +366,18 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 	} bounds_guard;
 
 	const bool miss  = reach && baseline( cmd );
-	bool found       = miss && family( cmd, m_turn_left );
+	/* full search already failed on this lip: fewer ticks now, it can't land */
+	const bool known = miss && m_fail && m_kind == m_fail_kind && std::fabs( m_ground_z - m_fail_gz ) < 0.5f;
+	bool found       = miss && !known && family( cmd, m_turn_left );
 	/* strafe alone can't reach: hold duck ( feet +9 u ) */
-	if ( miss && !found && GET_VARIABLE( g_variables.m_edge_catch_duck, bool ) && !( m_buttons0 & in_duck ) && !out( ) ) {
+	if ( miss && !known && !found && GET_VARIABLE( g_variables.m_edge_catch_duck, bool ) && !( m_buttons0 & in_duck ) && !out( ) ) {
 		m_duck = true;
 		found  = family( cmd, m_turn_left );
+	}
+	if ( !known ) {
+		m_fail      = miss && !found && !out( );
+		m_fail_kind = m_kind;
+		m_fail_gz   = m_ground_z;
 	}
 
 	cmd->m_view_point       = m_view;
@@ -380,14 +389,15 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 	if ( m_sims > 0 )
 		restore_start( );
 
-	if ( miss )
+	if ( miss && !known )
 		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f evz=%.2f reach=%.1f win=%d turn=%d chains=%d sims=%d us=%lld found=%d last=%d strafe=%d jb=%d/%d duck=%d\n",
 		               m_kind, m_miss, m_ground_z, org0.m_z, vel0.m_z, m_miss_vz, m_reach, m_max_ticks, m_turn_left ? 1 : 0, m_chains, m_sims, m_budget.used_us( ),
 		               found ? 1 : 0, found ? m_last : -1, found ? strafed( ) : 0, m_jb ? 1 : 0, found && m_jb_plan ? 1 : 0, m_duck ? ( found ? 2 : 1 ) : 0 );
 	if ( !found )
 		return;
-	m_active = true;
-	m_hit    = 0;
+	m_active  = true;
+	m_hit     = 0;
+	m_dropped = false;
 	for ( int i = 0; i <= m_last; i++ )
 		m_viz[ i ] = m_plan[ i ].origin;
 	m_viz[ m_last + 1 ] = m_land_pos;
@@ -415,6 +425,9 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 				++g_ec_fired;
 			botox_dbg_log( "EC: landed hit=%d last=%d gz=%.2f z=%.2f lip=%d\n", m_hit - 1, m_last, m_ground_z, start.m_z, on_lip ? 1 : 0 );
 		}
+		else if ( m_dropped )
+			botox_dbg_log( "EC: after drop gz=%.2f z=%.2f lip=%d\n", m_drop_gz, start.m_z, start.m_z >= m_drop_gz - 2.f ? 1 : 0 );
+		m_dropped = false;
 		reset( );
 		return;
 	}
@@ -434,7 +447,9 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 			int left = 0;
 			for ( int i = m_hit; i <= m_last; i++ )
 				left += m_plan[ i ].strafe ? 1 : 0;
-			botox_dbg_log( "EC: drop at %d/%d dist=%.3f left=%d\n", m_hit, m_last, dist, left );
+			botox_dbg_log( "EC: drop at %d/%d dist=%.3f left=%d jb=%d\n", m_hit, m_last, dist, left, m_jb_plan ? 1 : 0 );
+			m_dropped = true;
+			m_drop_gz = m_ground_z;
 			reset( );
 		}
 	}

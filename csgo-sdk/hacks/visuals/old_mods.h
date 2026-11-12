@@ -29,12 +29,17 @@ namespace n_old_mods
 		// game thread: esp preview root model + its standing sequence while the old player pack is mounted, nullptr = stock setup
 		const char* preview_model( int& sequence ) const;
 
+		// game thread: old player pack mounted ( skins: gloves changer off, arms fallback picks sleeves = the old hands )
+		bool players_mounted( ) const;
+
 		pack_state_t m_packs[ k_max_packs ]{ };
 		std::atomic< bool > m_any_mounted{ false }; // sv_pure.cpp: pure mode 0 rejects every loose pack file
 		std::atomic< bool > m_serial{ false };      // misc performance(): leave mat_queue_mode alone while set
 
 	private:
 		void serial_step( );
+		void fix_arms( );
+		void hide_gloves( );
 
 		static constexpr int k_untouched = -99;
 		int m_serial_phase = 0; // 1 queue draining, 2 reloaded, restoring
@@ -43,6 +48,8 @@ namespace n_old_mods
 		std::string m_serial_cmd{ };
 		std::vector< std::string > m_serial_particles{ }, m_serial_images{ }, m_serial_models{ };
 		std::vector< int > m_serial_remove{ };
+		std::string m_arms_backup{ }, m_arms_pick{ }; // local m_szArmsModel before / after fix_arms wrote it
+		std::vector< unsigned int > m_hidden{ };      // entity handles hide_gloves set EF_NODRAW on
 	};
 }
 

@@ -209,6 +209,12 @@ bool n_hooks::impl_t::on_attach( )
 	initialise_hook( m_list_leaves_in_box, g_modules[ ENGINE_DLL ].find_pattern( "55 8B EC 83 EC ? 8B 4D ? 8D 55" ),
 	                 &n_detoured_functions::list_leaves_in_box, "CEngineBSPTree::ListLeavesInBox()" );
 
+	/* "CStaticPropMgr::DrawStaticProps" vprof push, ret 18h ( props, instances, count, shadow, ssao, wireframe ) */
+	initialise_hook( m_draw_static_props,
+	                 g_modules[ ENGINE_DLL ].find_pattern( "55 8B EC 56 57 8B F9 8B 0D ? ? ? ? 8B B1 ? ? ? ? 85 F6 74 ? 6A 04 6A 00 68 ? ? ? ? 6A 00 68 ? ? ? ? "
+	                                                       "FF 15 ? ? ? ? A1 ? ? ? ? B9 ? ? ? ? FF 50 34 85 C0 0F 84" ),
+	                 &n_detoured_functions::draw_static_props, "CStaticPropMgr::DrawStaticProps()" );
+
 	/* CClientState vtable slot 24, "Received voice from: %d" */
 	initialise_hook( m_svc_msg_voice_data, g_modules[ ENGINE_DLL ].find_pattern( "55 8B EC 83 E4 F8 A1 ? ? ? ? 81 EC 84 01 00" ),
 	                 &n_detoured_functions::svc_msg_voice_data, "CClientState::SVCMsg_VoiceData()" );

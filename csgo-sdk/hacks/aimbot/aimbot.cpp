@@ -51,27 +51,28 @@ namespace
 	};
 
 	struct class_vars_t {
-		std::uint32_t m_override = 0, m_fov = 0, m_smooth = 0, m_rcs = 0, m_hitboxes = 0;
+		std::uint32_t m_override = 0, m_fov = 0, m_smooth = 0, m_rcs = 0, m_hitboxes = 0, m_lethal = 0;
 		bool m_sniper = false;
 	};
 
 	const class_vars_t* weapon_class_vars( const short id )
 	{
 		static const class_vars_t pistol{ g_variables.m_aimbot_pistol_override, g_variables.m_aimbot_pistol_fov, g_variables.m_aimbot_pistol_smooth,
-			                              g_variables.m_aimbot_pistol_rcs, g_variables.m_aimbot_pistol_hitboxes };
+			                              g_variables.m_aimbot_pistol_rcs, g_variables.m_aimbot_pistol_hitboxes, g_variables.m_aimbot_pistol_lethal_body };
 		static const class_vars_t heavy_pistol{ g_variables.m_aimbot_heavy_pistol_override, g_variables.m_aimbot_heavy_pistol_fov,
 			                                    g_variables.m_aimbot_heavy_pistol_smooth, g_variables.m_aimbot_heavy_pistol_rcs,
-			                                    g_variables.m_aimbot_heavy_pistol_hitboxes };
+			                                    g_variables.m_aimbot_heavy_pistol_hitboxes, g_variables.m_aimbot_heavy_pistol_lethal_body };
 		static const class_vars_t smg{ g_variables.m_aimbot_smg_override, g_variables.m_aimbot_smg_fov, g_variables.m_aimbot_smg_smooth,
-			                           g_variables.m_aimbot_smg_rcs, g_variables.m_aimbot_smg_hitboxes };
+			                           g_variables.m_aimbot_smg_rcs, g_variables.m_aimbot_smg_hitboxes, g_variables.m_aimbot_smg_lethal_body };
 		static const class_vars_t rifle{ g_variables.m_aimbot_rifle_override, g_variables.m_aimbot_rifle_fov, g_variables.m_aimbot_rifle_smooth,
-			                             g_variables.m_aimbot_rifle_rcs, g_variables.m_aimbot_rifle_hitboxes };
+			                             g_variables.m_aimbot_rifle_rcs, g_variables.m_aimbot_rifle_hitboxes, g_variables.m_aimbot_rifle_lethal_body };
 		static const class_vars_t sniper{ g_variables.m_aimbot_sniper_override, g_variables.m_aimbot_sniper_fov, g_variables.m_aimbot_sniper_smooth,
-			                              g_variables.m_aimbot_sniper_rcs, g_variables.m_aimbot_sniper_hitboxes, true };
+			                              g_variables.m_aimbot_sniper_rcs, g_variables.m_aimbot_sniper_hitboxes, g_variables.m_aimbot_sniper_lethal_body,
+			                              true };
 		static const class_vars_t scout{ g_variables.m_aimbot_scout_override, g_variables.m_aimbot_scout_fov, g_variables.m_aimbot_scout_smooth,
-			                             g_variables.m_aimbot_scout_rcs, g_variables.m_aimbot_scout_hitboxes, true };
+			                             g_variables.m_aimbot_scout_rcs, g_variables.m_aimbot_scout_hitboxes, g_variables.m_aimbot_scout_lethal_body, true };
 		static const class_vars_t heavy{ g_variables.m_aimbot_heavy_override, g_variables.m_aimbot_heavy_fov, g_variables.m_aimbot_heavy_smooth,
-			                             g_variables.m_aimbot_heavy_rcs, g_variables.m_aimbot_heavy_hitboxes };
+			                             g_variables.m_aimbot_heavy_rcs, g_variables.m_aimbot_heavy_hitboxes, g_variables.m_aimbot_heavy_lethal_body };
 
 		switch ( id ) {
 		case weapon_glock:
@@ -195,6 +196,11 @@ namespace
 			out.add( hitbox_head );
 
 		return out;
+	}
+
+	bool lethal_body( const class_vars_t* vars )
+	{
+		return GET_VARIABLE( vars && GET_VARIABLE( vars->m_override, bool ) ? vars->m_lethal : g_variables.m_aimbot_lethal_body, bool );
 	}
 
 	matrix3x4_t* live_bones( c_base_entity* entity )
@@ -606,12 +612,14 @@ namespace
 		n_lagcomp::impl_t::record_t* m_record = nullptr;
 		int m_hitbox                          = hitbox_head;
 		c_vector m_position{ };
-        float m_fov=180.f;
+        float m_fov=180.f,m_hc=1.f;
 	};
 
 	struct scan_t {
 		fov_scorer_t m_scorer{ };
 		hitbox_list_t m_hitboxes{ };
+		/* boxes past this index = body added by "bodyshot if lethal", only taken when the hit kills */
+		int m_lethal_from = 16;
 		cone_t m_cone{ };
 		float m_fov         = 180.f;
 		bool m_live         = true;
@@ -642,39 +650,70 @@ namespace
             auto* records=scan.m_records?g_lagcomp.m_records[index]:nullptr;
             const int count=records?g_ctx.m_max_allocations:0;
             target_t entity_best{};entity_best.m_fov=scan.m_fov;
+            target_t preferred{};preferred.m_fov=scan.m_fov;
+            int prefer=-1;
+            if(scan.m_sticky&&index==scan.m_prefer_entity&&scan.m_prefer_hitbox>=0)
+                for(int slot=0;slot<scan.m_hitboxes.m_count;++slot)if(scan.m_hitboxes.m_boxes[slot]==scan.m_prefer_hitbox)prefer=slot;
+            auto consider=[&](int slot,n_lagcomp::impl_t::record_t* record,matrix3x4_t* matrix,const c_vector& origin,target_t& pick,bool any_fov){
+                const int hitbox=scan.m_hitboxes.m_boxes[slot];const bool lethal=slot>=scan.m_lethal_from;
+                if(hitbox<0||hitbox>=resolver.m_set->m_hit_boxes)return false;
+                const auto* box=resolver.m_set->get_hitbox(hitbox);
+                if(!box||box->m_bone<0||box->m_bone>=128)return false;
+                const auto position=resolver.position(hitbox,matrix);
+                if(position.is_zero()||!position.is_valid()||position.dist_to_squared(origin)>160.f*160.f)return false;
+                auto angle=g_math.calculate_angle(eye,position);angle-=punch;
+                const float fov=n_lumia_aim::calculate_fov(scan.m_scorer.m_view,angle);
+                if(!std::isfinite(fov)||fov>scan.m_fov||(!any_fov&&pick.m_entity&&fov>=pick.m_fov))return false;
+                bool valid=false;
+                const float health=float(entity->get_health());
+                if(record){
+                    valid=passes_gate(entity,position,eye,true,box->m_group);
+                    if(valid&&lethal)valid=g_auto_wall.get_record_damage(position,entity,box->m_group)>=health;
+                }else{
+                    fire_bullet_data_t bullet{};const float damage=g_auto_wall.get_damage(position,&bullet);
+                    const bool wall=bullet.m_penetrate_count<4;
+                    const bool aw=GET_VARIABLE(g_variables.m_aimbot_autowall,bool);
+                    valid=std::isfinite(damage)&&damage>=float(aw?GET_VARIABLE(g_variables.m_aimbot_min_damage,int):1)&&
+                        bullet.m_enter_trace.m_hit_entity==entity&&(!wall||aw)&&(!lethal||damage>=health);
+                }
+                if(!valid){++g_dbg_gated;return false;}
+                pick={entity,record,hitbox,position,fov};
+                return true;
+            };
+            // wide cone: on the picked pose aim at the enabled box most of the cone lands on ( 10-09 hit share )
+            auto refine=[&](target_t& pick){
+                if(!pick.m_entity||!scan.m_cone.wide())return;
+                auto* matrix=pick.m_record?pick.m_record->m_matrix:live;
+                const auto origin=pick.m_record?pick.m_record->m_vec_origin:entity->get_origin();
+                capsules_t body{};body.build(resolver,matrix);
+                const float fov=pick.m_fov;
+                pick.m_hc=hit_chance(body,eye,pick.m_position,scan.m_cone);
+                float best_score=pick.m_hc+k_hc_keep;
+                for(int slot=0;slot<scan.m_hitboxes.m_count;++slot){
+                    const int hitbox=scan.m_hitboxes.m_boxes[slot];
+                    if(hitbox==pick.m_hitbox||hitbox<0||hitbox>=resolver.m_set->m_hit_boxes)continue;
+                    const auto position=resolver.position(hitbox,matrix);
+                    if(position.is_zero()||!position.is_valid())continue;
+                    const float hc=hit_chance(body,eye,position,scan.m_cone);
+                    const float score=hc+(index==scan.m_prefer_entity&&hitbox==scan.m_prefer_hitbox?k_hc_keep:0.f);
+                    if(score<=best_score)continue;
+                    target_t moved{};
+                    if(!consider(slot,pick.m_record,matrix,origin,moved,true))continue;
+                    pick=moved;pick.m_hc=hc;best_score=score;
+                }
+                pick.m_fov=fov;
+            };
             for(int pose=live_ready?-1:0;pose<count;++pose){
                 auto* record=pose<0?nullptr:&records[pose];
                 if(record&&!g_lagcomp.usable(entity,record->m_sim_time))continue;
                 auto* matrix=record?record->m_matrix:live;
                 const auto origin=record?record->m_vec_origin:entity->get_origin();
-                auto consider=[&](int hitbox,target_t& pick){
-                    if(hitbox<0||hitbox>=resolver.m_set->m_hit_boxes)return;
-                    const auto* box=resolver.m_set->get_hitbox(hitbox);
-                    if(!box||box->m_bone<0||box->m_bone>=128)return;
-                    const auto position=resolver.position(hitbox,matrix);
-                    if(position.is_zero()||!position.is_valid()||position.dist_to_squared(origin)>160.f*160.f)return;
-                    auto angle=g_math.calculate_angle(eye,position);angle-=punch;
-                    const float fov=n_lumia_aim::calculate_fov(scan.m_scorer.m_view,angle);
-                    if(!std::isfinite(fov)||fov>scan.m_fov||(pick.m_entity&&fov>=pick.m_fov))return;
-                    bool valid=false;
-                    if(record)valid=passes_gate(entity,position,eye,true,box->m_group);
-                    else{
-                        fire_bullet_data_t bullet{};const float damage=g_auto_wall.get_damage(position,&bullet);
-                        const bool wall=bullet.m_penetrate_count<4;
-                        const bool aw=GET_VARIABLE(g_variables.m_aimbot_autowall,bool);
-                        valid=std::isfinite(damage)&&damage>=float(aw?GET_VARIABLE(g_variables.m_aimbot_min_damage,int):1)&&
-                            bullet.m_enter_trace.m_hit_entity==entity&&(!wall||aw);
-                    }
-                    if(!valid){++g_dbg_gated;return;}
-                    pick={entity,record,hitbox,position,fov};
-                };
-                if(scan.m_sticky&&index==scan.m_prefer_entity&&scan.m_prefer_hitbox>=0){
-                    bool enabled=false;for(int box:scan.m_hitboxes)enabled|=box==scan.m_prefer_hitbox;
-                    target_t preferred{};if(enabled)consider(scan.m_prefer_hitbox,preferred);
-                    if(preferred.m_entity)return preferred;
-                }
-                for(int hitbox:scan.m_hitboxes)consider(hitbox,entity_best);
+                // sticky box = nearest pose over live + every record, not the first ring slot
+                if(prefer>=0)consider(prefer,record,matrix,origin,preferred,false);
+                if(!preferred.m_entity)for(int slot=0;slot<scan.m_hitboxes.m_count;++slot)consider(slot,record,matrix,origin,entity_best,false);
             }
+            if(preferred.m_entity){refine(preferred);return preferred;}
+            refine(entity_best);
             if(entity_best.m_entity&&(!best.m_entity||entity_best.m_fov<best.m_fov))best=entity_best;
         }
         return best;
@@ -830,9 +869,9 @@ void n_aimbot::impl_t::nospread_mark_shot( )
 		const float off_pitch = std::remainderf( g_ctx.m_cmd->m_view_point.m_x - g_ctx.old_view_point.m_x, 360.f );
 		const float off_yaw   = std::remainderf( g_ctx.m_cmd->m_view_point.m_y - g_ctx.old_view_point.m_y, 360.f );
 
-		botox_dbg_log( "SHOT: gate=%s hb=%d rec=%d lv=%d gated=%d age=%.1fms ok=%d centre=%.0fms tick=%d srv=%.3f push=%d ns=%d lat=%.0f/%.0f "
+		botox_dbg_log( "SHOT: gate=%s ent=%d hb=%d rec=%d lv=%d gated=%d age=%.1fms ok=%d centre=%.0fms tick=%d srv=%.3f push=%d ns=%d lat=%.0f/%.0f "
 		               "off=%.1f pen=%.3f gnd=%d vz=%.0f wpn=%d spd=%.0f inacc=%.4f hc=%.2f cone=%.4f",
-		                   g_dbg_gate ? g_dbg_gate : "-", m_target_hitbox, ( int )record_shot, ( int )live_shot, g_dbg_gated, record_age,
+		                   g_dbg_gate ? g_dbg_gate : "-", m_lock_index, m_target_hitbox, ( int )record_shot, ( int )live_shot, g_dbg_gated, record_age,
 		                   ( int )accepted, g_lagcomp.window_center( ) * 1000.f, g_ctx.m_cmd->m_tick_count, server_now,
 		                   g_lagcomp.push_ticks( ), ( int )GET_VARIABLE( g_variables.m_nospread_enable, bool ), latency_in, latency_out,
 		                   std::sqrtf( off_pitch * off_pitch + off_yaw * off_yaw ), weapon->get_accuracy_penalty( ),
@@ -961,6 +1000,7 @@ void n_aimbot::impl_t::on_create_move_post( )
 		scan_t scan{ };
 		scan.m_scorer.setup( silent ? g_ctx.old_view_point : camera, g_ctx.m_local->get_punch()*recoil_scale() );
 		scan.m_fov           = settings.m_fov;
+		scan.m_cone          = weapon_cone( weapon );
 
 		scan.m_prefer_entity = m_lock_index;
 		scan.m_prefer_hitbox = consecutive?previous.hitbox:-1;
@@ -974,6 +1014,16 @@ void n_aimbot::impl_t::on_create_move_post( )
 			scan.m_hitboxes.add( hitbox_pelvis );
 		} else
 			scan.m_hitboxes = enabled_hitboxes( class_vars );
+
+		scan.m_lethal_from = scan.m_hitboxes.m_count;
+		if ( lethal_body( class_vars ) )
+			for ( const int box : { hitbox_chest, hitbox_stomach, hitbox_pelvis } ) {
+				bool has = false;
+				for ( const int selected : scan.m_hitboxes )
+					has |= selected == box;
+				if ( !has )
+					scan.m_hitboxes.add( box );
+			}
 
 		g_dbg_best  = -2.f;
 		g_dbg_gated = 0;
@@ -1006,6 +1056,7 @@ void n_aimbot::impl_t::on_create_move_post( )
 		}
 
 		g_ctx.m_record = found.m_record;
+		g_dbg_hc       = found.m_entity ? found.m_hc : 1.f;
 
 		if ( !found.m_entity ) {
 			dbg_gate( "notarget" );
@@ -1045,7 +1096,8 @@ void n_aimbot::impl_t::on_create_move_post( )
         if(std::fabs(moved.m_x)>1e-4f||std::fabs(moved.m_y)>1e-4f)g_interfaces.m_engine_client->set_view_angles(camera);
         publish(g_ctx.old_view_point+moved);return;
     }
-    auto aim=g_math.calculate_angle(g_ctx.m_local->get_eye_position(false),target.m_position)-want;
+    // silent: the bullet leaves at cmd view + punch*scale, only full comp lands on the point ( rcs slider is for the camera )
+    auto aim=g_math.calculate_angle(g_ctx.m_local->get_eye_position(false),target.m_position)-( silent ? g_ctx.m_local->get_punch( ) * recoil_scale( ) : want );
     if(!std::isfinite(aim.m_x)||!std::isfinite(aim.m_y))return;
     aim.normalize();aim.clamp();
     const auto input=silent?g_ctx.old_view_point:camera;auto from=input;
@@ -1056,11 +1108,18 @@ void n_aimbot::impl_t::on_create_move_post( )
     // Lumia settles on the actual selected native hitbox, then tracks target
     // motion without repeatedly adding the acquisition delay.
     bool settled=smoothing>0&&same&&previous.settled;
-    if(smoothing>0&&!settled&&!target.m_record){
+    if(smoothing>0&&!settled){
         c_vector direction{};g_math.angle_vectors(result+g_ctx.m_local->get_punch()*recoil_scale(),&direction);
-        trace_t trace{};const auto eye=g_ctx.m_local->get_eye_position(false);
-        g_interfaces.m_engine_trace->clip_ray_to_entity(ray_t(eye,eye+direction*8192.f),mask_shot,target.m_entity,&trace);
-        settled=trace.m_hit_entity==target.m_entity&&trace.m_hitbox==target.m_hitbox;
+        const auto eye=g_ctx.m_local->get_eye_position(false);
+        if(target.m_record){
+            // record pose is not where the live model sits: test the ray on its own matrix
+            hitbox_resolver_t resolver{};int hitbox=-1;
+            settled=resolver.setup(target.m_entity)&&ray_depth(resolver,target.m_record->m_matrix,eye,direction,hitbox)>0.f&&hitbox==target.m_hitbox;
+        }else{
+            trace_t trace{};
+            g_interfaces.m_engine_trace->clip_ray_to_entity(ray_t(eye,eye+direction*8192.f),mask_shot,target.m_entity,&trace);
+            settled=trace.m_hit_entity==target.m_entity&&trace.m_hitbox==target.m_hitbox;
+        }
     }
     if(settled)result=aim;
     if(silent){
@@ -1074,7 +1133,10 @@ void n_aimbot::impl_t::on_create_move_post( )
     }
     if(!publish(result))return;
     s_lumia_smoothing={target.m_entity->get_ref_ehandle(),weapon->get_ref_ehandle(),g_ctx.m_cmd->m_command_number,target.m_hitbox,input,result,silent,settled};
-    if(silent&&can_fire&&trigger)g_lagcomp.commit_shot(target.m_record);
+    // shot still short of the point (smooth / step): run_backtrack picks the tick off the real ray
+    auto miss=result-aim;miss.normalize();
+    const bool on_aim=std::fabs(miss.m_x)<1e-3f&&std::fabs(miss.m_y)<1e-3f;
+    if(silent&&can_fire&&trigger&&on_aim)g_lagcomp.commit_shot(target.m_record);
 }
 
 

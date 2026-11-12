@@ -148,6 +148,7 @@
     <ClCompile Include="hooks\functions\draw_model_execute.cpp" />
     <ClCompile Include="hooks\functions\draw_filled_rect.cpp" />
     <ClCompile Include="hooks\functions\draw_set_color.cpp" />
+    <ClCompile Include="hooks\functions\draw_static_props.cpp" />
     <ClCompile Include="hooks\functions\draw_view_models.cpp" />
     <ClCompile Include="hooks\functions\push_2d_view.cpp" />
     <ClCompile Include="hooks\functions\world_to_screen_matrix.cpp" />
@@ -491,6 +492,7 @@
     <ClInclude Include="hacks\movement\assist_predict.h" />
     <ClInclude Include="hacks\chat_hud.h" />
     <ClInclude Include="hacks\visuals\edicts\edicts.h" />
+    <ClInclude Include="hacks\visuals\edicts\lighting_modulation.h" />
     <ClInclude Include="hacks\visuals\grenade\grenade_path.h" />
     <ClInclude Include="hacks\visuals\bullets\bullets.h" />
     <ClInclude Include="game\sdk\classes\c_view_render_beams.h" />

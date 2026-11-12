@@ -1,4 +1,5 @@
 #include "edicts.h"
+#include "lighting_modulation.h"
 #include "mc_sky.h"
 #include "../../../game/sdk/includes/includes.h"
 #include "../../../globals/includes/includes.h"
@@ -30,6 +31,13 @@ static std::unordered_map< c_base_entity*, stored_fog_t > g_map_fog{ };
 static std::string g_map_sky{ };
 static std::string g_written_sky{ };
 
+/* old map's props are freed at level shutdown: their pointers must never be matched against the new map's */
+static std::vector< n_lighting_modulation::point_t > g_lamps{ };
+static std::unordered_map< void*, bool > g_lamp_seen{ };
+static std::unordered_map< const void*, bool > g_lamp_model{ };
+static int g_lamp_lit[ 64 ]{ };
+static int g_lamp_lit_count = 0;
+
 void n_edicts::impl_t::on_frame_stage_notify( int stage )
 {
 	// eject: paint_traverse already restored fog / sky, don't write again
@@ -46,6 +54,7 @@ void n_edicts::impl_t::on_frame_stage_notify( int stage )
 		this->sun_angle( );
 		this->fullbright( );
 		this->dlights( );
+		this->lamp_lights( );
 		break;
 	}
 	}
@@ -66,6 +75,11 @@ void n_edicts::impl_t::reset( )
 {
 	g_skybox_fog_captured = false;
 	g_map_fog.clear( );
+
+	g_lamps.clear( );
+	g_lamp_seen.clear( );
+	g_lamp_model.clear( );
+	g_lamp_lit_count = 0;
 
 	this->remove_precipitation( );
 }
@@ -722,6 +736,108 @@ void n_edicts::impl_t::dlights( )
 		light->m_inner_angle = 0.f;
 		light->m_outer_angle = 0.f;
 	}
+}
+
+/* lamp static props are only recorded during the draw (never read back later), lit nearest first by lamp_lights */
+void n_edicts::impl_t::record_lamps( void** props, int count )
+{
+	constexpr std::size_t max_lamps = 1024;
+	if ( g_lamps.size( ) >= max_lamps || !g_interfaces.m_model_info )
+		return;
+
+	for ( int i = 0; i < count; i++ ) {
+		auto* renderable = static_cast< c_client_renderable* >( props[ i ] );
+		if ( !renderable )
+			continue;
+
+		auto seen = g_lamp_seen.try_emplace( renderable, false );
+		if ( !seen.second )
+			continue;
+
+		const model_t* model = renderable->get_model( );
+		if ( !model )
+			continue;
+
+		auto lamp = g_lamp_model.find( model );
+		if ( lamp == g_lamp_model.end( ) )
+			lamp = g_lamp_model.emplace( model, n_lighting_modulation::is_lamp_model( g_interfaces.m_model_info->get_model_name( model ) ) ).first;
+		if ( !lamp->second )
+			continue;
+
+		c_vector mins{ }, maxs{ };
+		renderable->get_render_bounds_worldspace( mins, maxs );
+		const c_vector center = ( mins + maxs ) * 0.5f;
+		if ( maxs.m_x < mins.m_x || maxs.m_y < mins.m_y || maxs.m_z < mins.m_z || !std::isfinite( center.m_x ) || !std::isfinite( center.m_y ) ||
+		     !std::isfinite( center.m_z ) || std::fabs( center.m_x ) > 32768.f || std::fabs( center.m_y ) > 32768.f || std::fabs( center.m_z ) > 32768.f )
+			continue;
+
+		seen.first->second = true;
+		g_lamps.push_back( { center.m_x, center.m_y, center.m_z } );
+		if ( g_lamps.size( ) >= max_lamps )
+			break;
+	}
+}
+
+void n_edicts::impl_t::lamp_lights( )
+{
+	static void* effects = g_modules[ ENGINE_DLL ].find_interface( "VEngineEffects001" );
+	if ( !effects )
+		return;
+
+	constexpr int key_base = 0x4C470000;
+	const bool on          = GET_VARIABLE( g_variables.m_lighting_modulation, bool ) && GET_VARIABLE( g_variables.m_lighting_modulation_lamps, bool );
+
+	int pick[ 64 ];
+	int count = 0;
+
+	if ( on && !g_lamps.empty( ) ) {
+		const n_lighting_modulation::point_t eye{ m_lamp_eye[ 0 ], m_lamp_eye[ 1 ], m_lamp_eye[ 2 ] };
+		count = n_lighting_modulation::pick_lamps( g_lamps.data( ), static_cast< int >( g_lamps.size( ) ), eye,
+		                                           std::max( GET_VARIABLE( g_variables.m_lighting_modulation_distance, float ), 100.f ),
+		                                           std::clamp( GET_VARIABLE( g_variables.m_lighting_modulation_max, int ), 1, 16 ), pick );
+
+		const float radius   = std::clamp( GET_VARIABLE( g_variables.m_lighting_modulation_radius, float ), 25.f, 1000.f );
+		const int intensity  = std::clamp( GET_VARIABLE( g_variables.m_lighting_modulation_intensity, int ), 0, 10 );
+		const c_color color  = GET_VARIABLE( g_variables.m_lighting_modulation_color, c_color );
+		const float now      = g_interfaces.m_global_vars_base->m_current_time;
+
+		for ( int i = 0; i < count; i++ ) {
+			auto light = g_virtual.call< dlight_t* >( effects, 4, key_base + pick[ i ] );
+			if ( !light )
+				continue;
+
+			const auto& lamp     = g_lamps[ pick[ i ] ];
+			light->m_flags       = 0;
+			light->m_origin      = c_vector( lamp.x, lamp.y, lamp.z );
+			light->m_radius      = radius;
+			light->m_r           = color.get< color_type_r >( );
+			light->m_g           = color.get< color_type_g >( );
+			light->m_b           = color.get< color_type_b >( );
+			light->m_exponent    = static_cast< signed char >( intensity );
+			light->m_die         = now + 0.1f;
+			light->m_decay       = 0.f;
+			light->m_min_light   = 0.f;
+			light->m_key         = key_base + pick[ i ];
+			light->m_style       = 0;
+			light->m_direction   = c_vector( 0.f, 0.f, 0.f );
+			light->m_inner_angle = 0.f;
+			light->m_outer_angle = 0.f;
+		}
+	}
+
+	/* dropped lamps die now, never left up to their die time */
+	for ( int i = 0; i < g_lamp_lit_count; i++ ) {
+		if ( std::find( pick, pick + count, g_lamp_lit[ i ] ) != pick + count )
+			continue;
+
+		if ( auto light = g_virtual.call< dlight_t* >( effects, 4, key_base + g_lamp_lit[ i ] ) ) {
+			light->m_radius = 0.f;
+			light->m_die    = -1.f;
+		}
+	}
+
+	std::copy( pick, pick + count, g_lamp_lit );
+	g_lamp_lit_count = count;
 }
 
 // index must match e_skybox_type, entry 0 = off

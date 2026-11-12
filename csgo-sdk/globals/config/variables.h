@@ -365,6 +365,14 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( bool, e_aim_hitboxes::aim_hitbox_max, m_aimbot_sniper_hitboxes, true );
 		ADD_VARIABLE_VECTOR( bool, e_aim_hitboxes::aim_hitbox_max, m_aimbot_scout_hitboxes, true );
 		ADD_VARIABLE_VECTOR( bool, e_aim_hitboxes::aim_hitbox_max, m_aimbot_heavy_hitboxes, true );
+		ADD_VARIABLE( bool, m_aimbot_lethal_body, false );
+		ADD_VARIABLE( bool, m_aimbot_pistol_lethal_body, false );
+		ADD_VARIABLE( bool, m_aimbot_heavy_pistol_lethal_body, false );
+		ADD_VARIABLE( bool, m_aimbot_smg_lethal_body, false );
+		ADD_VARIABLE( bool, m_aimbot_rifle_lethal_body, false );
+		ADD_VARIABLE( bool, m_aimbot_sniper_lethal_body, false );
+		ADD_VARIABLE( bool, m_aimbot_scout_lethal_body, false );
+		ADD_VARIABLE( bool, m_aimbot_heavy_lethal_body, false );
 		ADD_VARIABLE( bool, m_aimbot_autowall, false );
 		ADD_VARIABLE( int, m_aimbot_min_damage, 1 );
 
@@ -708,6 +716,16 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_skybox_modulation_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( float, m_skybox_modulation_brightness, 100.f );
 
+		ADD_VARIABLE( bool, m_lighting_modulation, false );
+		ADD_VARIABLE( c_color, m_lighting_modulation_color, c_color( 255, 150, 60, 255 ) );
+		ADD_VARIABLE( bool, m_lighting_modulation_lamps, true );
+		ADD_VARIABLE( int, m_lighting_modulation_intensity, 3 );
+		ADD_VARIABLE( float, m_lighting_modulation_radius, 250.f );
+		ADD_VARIABLE( int, m_lighting_modulation_max, 8 );
+		ADD_VARIABLE( float, m_lighting_modulation_distance, 2500.f );
+		ADD_VARIABLE( bool, m_lighting_modulation_glows, true );
+		ADD_VARIABLE( float, m_lighting_modulation_glow_brightness, 100.f );
+
 		ADD_VARIABLE( bool, m_custom_smoke, false );
 		ADD_VARIABLE( c_color, m_custom_smoke_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( bool, m_custom_molotov, false );
@@ -756,6 +774,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_prop_texture, false );
 		ADD_VARIABLE( int, m_prop_texture_preset, 0 );
 		ADD_VARIABLE( std::string, m_prop_texture_custom, "" );
+		ADD_VARIABLE( bool, m_flat_textures, false );
 		ADD_VARIABLE( bool, m_remove_ragdolls, false );
 		ADD_VARIABLE( bool, m_remove_smoke, false );
 		ADD_VARIABLE( int, m_remove_smoke_mode, 0 );

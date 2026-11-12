@@ -3,6 +3,7 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../skins/skins_internal.h"
+#include "../visuals/old_mods.h"
 #include "../web/websurface.h"
 
 #include <algorithm>
@@ -1118,8 +1119,9 @@ void n_botox_net::impl_t::apply_gloves( )
 		auto& glove_state = m_gloves[ i ];
 		const auto player = g_interfaces.m_client_entity_list->get< c_base_entity >( i );
 
+		// old csgo players: old arms carry their own hands ( skins gloves_changer )
 		const bool want = i != local && player && fresh( glove_state.m_time, SKIN_TIMEOUT ) && glove_state.m_model > 0 &&
-		                  glove_state.m_model < GLOVE_COUNT;
+		                  glove_state.m_model < GLOVE_COUNT && !g_old_mods.players_mounted( );
 
 		if ( !want ) {
 			if ( glove_state.m_handle )

@@ -882,6 +882,34 @@ void n_menu::impl_t::tab_visuals( )
 			modulation_row( "skybox modulation", g_variables.m_skybox_modulation, g_variables.m_skybox_modulation_color,
 			                g_variables.m_skybox_modulation_brightness );
 
+			ImGui::Checkbox( "lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation, bool ) );
+			if ( GET_VARIABLE( g_variables.m_lighting_modulation, bool ) ) {
+				ImGui::OptionPopup(
+					"lighting modulation settings",
+					[ & ]( ) {
+						ImGui::ColorEdit4( "color##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_color, c_color ),
+						                   color_picker_no_alpha_flags );
+						ImGui::Checkbox( "lamp lights##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_lamps, bool ) );
+						if ( GET_VARIABLE( g_variables.m_lighting_modulation_lamps, bool ) ) {
+							ImGui::SliderInt( "intensity##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_intensity, int ), 0,
+							                  10, "%d", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "radius##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_radius, float ), 25.f,
+							                    1000.f, "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderInt( "max lights##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_max, int ), 1, 16,
+							                  "%d", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "max distance##lighting modulation",
+							                    &GET_VARIABLE( g_variables.m_lighting_modulation_distance, float ), 100.f, 8000.f, "%.0f u",
+							                    ImGuiSliderFlags_AlwaysClamp );
+						}
+						ImGui::Checkbox( "light glows##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_glows, bool ) );
+						if ( GET_VARIABLE( g_variables.m_lighting_modulation_glows, bool ) )
+							ImGui::SliderFloat( "glow brightness##lighting modulation",
+							                    &GET_VARIABLE( g_variables.m_lighting_modulation_glow_brightness, float ), 0.f, 400.f, "%.0f%%",
+							                    ImGuiSliderFlags_AlwaysClamp );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
 			ImGui::Checkbox( "old shaders", &GET_VARIABLE( g_variables.m_old_shaders, bool ) );
 			if ( GET_VARIABLE( g_variables.m_old_shaders, bool ) ) {
 				ImGui::OptionPopup(
@@ -1002,6 +1030,9 @@ void n_menu::impl_t::tab_visuals( )
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
+
+			/* every world material's base texture -> one pixel of its own colour ( wins over world texture ) */
+			ImGui::Checkbox( "flat textures", &GET_VARIABLE( g_variables.m_flat_textures, bool ) );
 
 			ImGui::Checkbox( "bullet tracers", &GET_VARIABLE( g_variables.m_bullet_tracers, bool ) );
 			if ( GET_VARIABLE( g_variables.m_bullet_tracers, bool ) ) {

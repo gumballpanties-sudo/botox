@@ -85,6 +85,10 @@ namespace n_edicts
 
 		void projectiles( );
 
+		/* CStaticPropMgr::DrawStaticProps, main thread: remembers lamp props, lit by lamp_lights */
+		void record_lamps( void** props, int count );
+		float m_lamp_eye[ 3 ]{ };
+
 		bool m_created = false;
 		int m_timer    = -1;
 
@@ -97,6 +101,7 @@ namespace n_edicts
 		void bomb( );
 
 		void dlights( );
+		void lamp_lights( );
 	};
 }
 

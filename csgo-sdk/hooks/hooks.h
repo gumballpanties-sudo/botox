@@ -68,6 +68,7 @@ namespace n_hooks
 		c_detour_hook m_load_file_into_buffer{ };
 		c_detour_hook m_draw_model_execute{ };
 		c_detour_hook m_list_leaves_in_box{ };
+		c_detour_hook m_draw_static_props{ };
 		c_detour_hook m_send_datagram{ };
 		c_detour_hook m_draw_view_models{ };
 		c_detour_hook m_is_hltv{ };
@@ -165,6 +166,8 @@ namespace n_detoured_functions
 	void __fastcall draw_model_execute( void* ecx, void* edx, void* context, void* state, model_render_info_t& info,
 	                                    matrix3x4_t* custom_bone_to_world );
 	int __fastcall list_leaves_in_box( void* ecx, void* edx, const c_vector& mins, const c_vector& maxs, unsigned short* list, int list_max );
+	void __fastcall draw_static_props( void* ecx, void* edx, void** props, const void* instances, int count, bool shadow_depth, bool ssao_depth,
+	                                   bool wireframe );
 	int __fastcall send_datagram( c_net_channel* net_channel, int edx, bf_write* datagram );
 	void __fastcall draw_view_models( void* ecx, void* edx, c_view_setup& setup, bool draw_view_model, bool draw_scope_lens_mask );
 	bool __fastcall is_hltv( void* ecx, void* edx );

@@ -495,6 +495,160 @@ const char* n_old_mods::impl_t::preview_model( int& sequence ) const
 	return k_preview_model;
 }
 
+bool n_old_mods::impl_t::players_mounted( ) const
+{
+	return m_packs[ k_preview_pack ].m_mounted;
+}
+
+/* old ct hands live in the sleeves ( pack ct gloves = 12 vertex stubs ). ct agents with no sleeve in their arm config
+   ( ctm_st6_varianti, ctm_diver_variantc ) = glove only = no hands. AddViewmodelArmModel ( client 0x10215570 ) takes
+   m_szArmsModel for an empty sleeve: point it at a precached pack sleeve, give the server's string back when done.
+   cfg = player + InvalidateViewModelArmConfig's [ edi + x ] ( 0x9ad8 ), +0xc sleeve; client.dll binary-checked 11-11 */
+void n_old_mods::impl_t::fix_arms( )
+{
+	const auto local = g_ctx.m_local;
+	char* const arms = local ? local->get_arms_model( ) : nullptr;
+	if ( !arms )
+		return;
+
+	static const std::uintptr_t cfg_offset = [ ]( ) -> std::uintptr_t {
+		const auto site = g_modules[ CLIENT_DLL ].find_pattern( "51 56 57 8B F9 33 F6 C7 87 ? ? ? ? 00 00 00 00 56 8B CF E8" );
+		return site ? *reinterpret_cast< std::uint32_t* >( site + 9 ) : 0;
+	}( );
+
+	char path[ 128 ]{ };
+	const char* pick = nullptr;
+	if ( players_mounted( ) && !g_ctx.m_eject_restoring && cfg_offset && local->is_alive( ) && local->get_team( ) == team_ct ) {
+		const auto cfg = *reinterpret_cast< std::uint8_t** >( reinterpret_cast< std::uintptr_t >( local ) + cfg_offset );
+		if ( !cfg )
+			return; // invalidated, the next addon update rebuilds it
+		const char* const sleeve = *reinterpret_cast< const char** >( cfg + 0xc );
+		static const std::uint8_t* logged_cfg = nullptr;
+		if ( cfg != logged_cfg ) {
+			logged_cfg              = cfg;
+			const char* const glove = *reinterpret_cast< const char** >( cfg + 8 );
+			botox_dbg_log( "OLD: cfg glove=%s sleeve=%s arms=%s", glove ? glove : "-", sleeve ? sleeve : "-", arms );
+		}
+		if ( !sleeve || !*sleeve ) {
+			const model_t* model = local->get_model( );
+			const char* body     = model ? g_interfaces.m_model_info->get_model_name( model ) : "";
+			// pass 0: the body's own family ( ctm_st6_* -> st6 ), pass 1: any precached one
+			for ( int pass = 0; !pick && pass < 2; ++pass )
+				for ( const char* family : { "sas", "st6", "swat", "fbi", "gsg9", "gign", "idf" } ) {
+					if ( pass == 0 && !std::strstr( body, family ) )
+						continue;
+					std::snprintf( path, sizeof( path ), "models/weapons/v_models/arms/%s/v_sleeve_%s.mdl", family, family );
+					if ( g_interfaces.m_model_info->get_model_index( path ) > 0 ) {
+						pick = path;
+						break;
+					}
+				}
+		}
+	}
+
+	if ( pick ) {
+		if ( std::strcmp( arms, pick ) == 0 )
+			return;
+		if ( m_arms_pick != arms )
+			m_arms_backup = arms; // server's string ( new local / resent )
+		std::snprintf( arms, 128, "%s", pick );
+		m_arms_pick = pick;
+	}
+	else {
+		if ( m_arms_pick.empty( ) )
+			return;
+		if ( m_arms_pick == arms )
+			std::snprintf( arms, 128, "%s", m_arms_backup.c_str( ) );
+		m_arms_pick.clear( );
+		m_arms_backup.clear( );
+	}
+
+	botox_dbg_log( "OLD: arms \"%s\" body=%s", arms, local->get_model( ) ? g_interfaces.m_model_info->get_model_name( local->get_model( ) ) : "?" );
+	if ( local->is_alive( ) )
+		rebuild_player_arms( local, nullptr, "old csgo sleeve" );
+}
+
+/* old arms + old bodies carry their own hands: every glove the pack does not serve draws a second pair. EF_NODRAW on
+   world glove wearables ( every player ) and on local viewmodel arm addons named *glove* that the pack doesn't serve.
+   addon list = C_BaseViewModel [ +x ] handles, count [ +y ] ( client 0x102154c0, binary-checked 11-11 ) */
+void n_old_mods::impl_t::hide_gloves( )
+{
+	constexpr int k_ef_nodraw = 0x20;
+
+	static const std::unordered_set< std::string > served = [ ]( ) {
+		std::unordered_set< std::string > out{ };
+		const pack_t& pack = k_packs[ k_preview_pack ];
+		for ( int i = 0; i < pack.m_count; ++i )
+			out.insert( pack.m_files[ i ].m_path );
+		for ( int i = 0; i < pack.m_alias_count; ++i )
+			out.insert( pack.m_aliases[ i ].m_path );
+		return out;
+	}( );
+	static const auto addons_site =
+		g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 53 56 8B D9 57 33 FF 39 BB ? ? ? ? 7E ? 8B 83 ? ? ? ? 8B 0C B8" );
+	static std::unordered_set< std::string > logged{ };
+
+	const auto name_of = [ ]( c_base_entity* entity ) -> std::string {
+		const model_t* model = entity ? entity->get_model( ) : nullptr;
+		std::string name     = model ? g_interfaces.m_model_info->get_model_name( model ) : "";
+		std::transform( name.begin( ), name.end( ), name.begin( ), [ ]( unsigned char c ) { return static_cast< char >( std::tolower( c ) ); } );
+		std::replace( name.begin( ), name.end( ), '\\', '/' );
+		return name;
+	};
+	const auto log_once = [ & ]( const char* what, const std::string& name, bool hidden ) {
+		if ( logged.size( ) < 256 && logged.insert( std::string( what ) + name ).second )
+			botox_dbg_log( "OLD: %s %s served=%d hidden=%d", what, name.c_str( ), served.count( name ) ? 1 : 0, hidden ? 1 : 0 );
+	};
+
+	const bool want = players_mounted( ) && !g_ctx.m_eject_restoring && g_interfaces.m_engine_client->is_in_game( );
+	if ( !want ) {
+		for ( const unsigned int handle : m_hidden )
+			if ( const auto entity = g_interfaces.m_client_entity_list->get< c_base_entity >( handle ) )
+				entity->get_effects( ) &= ~k_ef_nodraw;
+		m_hidden.clear( );
+		return;
+	}
+
+	const auto hide = [ & ]( c_base_entity* entity, unsigned int handle ) {
+		if ( entity->get_effects( ) & k_ef_nodraw )
+			return;
+		entity->get_effects( ) |= k_ef_nodraw;
+		m_hidden.push_back( handle );
+	};
+
+	for ( int i = 1; i <= 64; ++i ) {
+		const auto player = g_interfaces.m_client_entity_list->get< c_base_entity >( i );
+		if ( !player || player->is_dormant( ) )
+			continue;
+		log_once( "body", name_of( player ), false );
+		const auto wearables = player->get_wearables_handle( );
+		if ( !wearables )
+			continue;
+		if ( const auto glove = g_interfaces.m_client_entity_list->get< c_base_entity >( wearables[ 0 ] ) ) {
+			log_once( "world glove", name_of( glove ), true );
+			hide( glove, wearables[ 0 ] );
+		}
+	}
+
+	const auto local = g_ctx.m_local;
+	const auto viewmodel = local && addons_site ? g_interfaces.m_client_entity_list->get< c_base_entity >( local->get_view_model_handle( ) ) : nullptr;
+	if ( !viewmodel )
+		return;
+	const auto base   = reinterpret_cast< std::uint8_t* >( viewmodel );
+	const int count   = *reinterpret_cast< int* >( base + *reinterpret_cast< std::uint32_t* >( addons_site + 12 ) );
+	const auto list   = *reinterpret_cast< unsigned int** >( base + *reinterpret_cast< std::uint32_t* >( addons_site + 20 ) );
+	for ( int i = 0; list && i < count && i < 8; ++i ) {
+		const auto addon = g_interfaces.m_client_entity_list->get< c_base_entity >( list[ i ] );
+		if ( !addon )
+			continue;
+		const std::string name = name_of( addon );
+		const bool drop        = name.find( "glove" ) != std::string::npos && !served.count( name );
+		log_once( "vm addon", name, drop );
+		if ( drop )
+			hide( addon, list[ i ] );
+	}
+}
+
 float n_old_mods::impl_t::progress( int pack ) const
 {
 	return k_packs[ pack ].m_bytes ? std::min( 1.f, static_cast< float >( static_cast< double >( m_packs[ pack ].m_bytes_done ) /
@@ -544,6 +698,10 @@ void n_old_mods::impl_t::on_frame( )
 		serial_step( );
 		return;
 	}
+
+	if ( g_interfaces.m_engine_client->is_in_game( ) )
+		fix_arms( );
+	hide_gloves( );
 
 	if ( m_any_mounted && g_ctx.m_local ) {
 		static const model_t* logged = nullptr;

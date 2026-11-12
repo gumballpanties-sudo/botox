@@ -26,6 +26,7 @@
 #include "../menu/menu.h"
 #include "../movement/movement.h"
 #include "../visuals/old_mods.h"
+#include "../visuals/edicts/lighting_modulation.h"
 
 // never open a second logger on this file
 extern void botox_dbg_log( const char* fmt, ... );
@@ -2454,9 +2455,16 @@ namespace {
 		modulation_group_none  = -1,
 		modulation_group_world = 0,
 		modulation_group_props = 1,
-		modulation_group_sky   = 2,
-		modulation_group_max   = 3,
+		modulation_group_sky    = 2,
+		modulation_group_lights = 3,
+		modulation_group_max    = 4,
 	};
+
+	/* sky + light glows ride color_modulate ($color), no snapshot rebuild */
+	bool modulation_uses_color( int group )
+	{
+		return group == modulation_group_sky || group == modulation_group_lights;
+	}
 
 	struct modulated_material_t {
 		float m_original[ 3 ];
@@ -2468,6 +2476,9 @@ namespace {
 
 	int classify_modulation( const char* group, const char* name )
 	{
+		if ( n_lighting_modulation::is_light_glow_material( name ) )
+			return modulation_group_lights;
+
 		if ( group ) {
 			if ( std::strcmp( group, "SkyBox textures" ) == 0 )
 				return modulation_group_sky;
@@ -2506,7 +2517,7 @@ namespace {
 
 	bool write_modulation( c_material* material, int group, const float* color )
 	{
-		if ( group == modulation_group_sky ) {
+		if ( modulation_uses_color( group ) ) {
 			material->color_modulate( color[ 0 ], color[ 1 ], color[ 2 ] );
 			return false;
 		}
@@ -2529,7 +2540,7 @@ namespace {
 		if ( entry.m_has_applied && same_modulation( entry.m_applied, color ) )
 			return true;
 
-		const bool rebuilds = entry.m_group != modulation_group_sky;
+		const bool rebuilds = !modulation_uses_color( entry.m_group );
 
 		if ( rebuilds && rebuild_budget <= 0 )
 			return false;
@@ -2548,7 +2559,7 @@ namespace {
 	/* false = this material can not carry a tint at all, so it is never tracked and never written */
 	bool read_modulation( c_material* material, int group, float* out )
 	{
-		if ( group == modulation_group_sky ) {
+		if ( modulation_uses_color( group ) ) {
 			material->get_color_modulation( &out[ 0 ], &out[ 1 ], &out[ 2 ] );
 			return true;
 		}
@@ -2915,18 +2926,22 @@ void n_misc::impl_t::world_modulation( )
 		return;
 
 	const std::uint32_t enable_variables[ modulation_group_max ]     = { g_variables.m_world_modulation, g_variables.m_prop_modulation,
-		                                                                g_variables.m_skybox_modulation };
+		                                                                g_variables.m_skybox_modulation, g_variables.m_lighting_modulation_glows };
 	const std::uint32_t color_variables[ modulation_group_max ]      = { g_variables.m_world_modulation_color, g_variables.m_prop_modulation_color,
-		                                                                g_variables.m_skybox_modulation_color };
+		                                                                g_variables.m_skybox_modulation_color, g_variables.m_lighting_modulation_color };
 	const std::uint32_t brightness_variables[ modulation_group_max ] = { g_variables.m_world_modulation_brightness,
 		                                                                 g_variables.m_prop_modulation_brightness,
-		                                                                 g_variables.m_skybox_modulation_brightness };
+		                                                                 g_variables.m_skybox_modulation_brightness,
+		                                                                 g_variables.m_lighting_modulation_glow_brightness };
 
 	int mask = 0;
 	for ( int group = 0; group < modulation_group_max; group++ ) {
 		if ( GET_VARIABLE( enable_variables[ group ], bool ) )
 			mask |= 1 << group;
 	}
+
+	if ( !GET_VARIABLE( g_variables.m_lighting_modulation, bool ) )
+		mask &= ~( 1 << modulation_group_lights );
 
 	/* a group leaving the mask gets its colour back; originals never re-read while tracked
 	   ( see restore_modulated_materials ) */
@@ -3109,6 +3124,7 @@ namespace
 		c_texture* m_applied;
 		unsigned int m_name_hash;
 		int m_category;
+		bool m_flat_empty; /* flat applied, $basetexture had no colour to sample: still the original on purpose */
 	};
 
 	std::unordered_map< c_material*, world_texture_material_t > world_texture_saved;
@@ -3294,29 +3310,150 @@ namespace
 		transform->set_matrix( matrix );
 	}
 
+	/* flat textures ( UC onLevelInitPostEntity ): each world base -> a 1x1 of its own colour, through the world
+	   texture save / restore ( live toggle, the UC SetShaderAndParams rebuild is cut: it wipes every other param
+	   and never restores ). csgo has no CreateTextureFromBits ( TF2 branch only, not in csgosrc2019 ), so a
+	   procedural 1x1 + regenerator, the engine's own CTextureReference way ( refilled on device restore ).
+	   IVTFTexture slots off the csgo legacy materialsystem.dll CVTFTexture vtable ( RTTI, ret sizes ): Width 14,
+	   Height 15, Format 20, ImageData( ) 39 ( 37 / 38 = the 6 / 3 arg overloads, MSVC reverse order ) */
+	struct world_flat_regen_t final : c_texture_regenerator {
+		unsigned char m_rgb[ 3 ] = { };
+
+		void regenerate_texture_bytes( c_texture*, c_vtftexture* vtf, rect_t* ) override
+		{
+			const int width    = g_virtual.call< int >( vtf, 14 );
+			const int height   = g_virtual.call< int >( vtf, 15 );
+			const int format   = g_virtual.call< int >( vtf, 20 );
+			unsigned char* out = g_virtual.call< unsigned char* >( vtf, 39 );
+			if ( !out || ( format != image_format_rgba8888 && format != image_format_bgra8888 ) )
+				return;
+
+			const bool bgra = format == image_format_bgra8888;
+			for ( int i = 0; i < width * height; i++, out += 4 ) {
+				out[ 0 ] = m_rgb[ bgra ? 2 : 0 ];
+				out[ 1 ] = m_rgb[ 1 ];
+				out[ 2 ] = m_rgb[ bgra ? 0 : 2 ];
+				out[ 3 ] = 255;
+			}
+		}
+
+		void release( ) override { } /* owned by world_flat_cache until eject */
+	};
+
+	struct world_flat_t {
+		world_flat_regen_t m_regen;
+		c_texture* m_texture;
+	};
+
+	/* ponytail: one 1x1 per distinct colour, kept across maps ( a few hundred tiny textures ), freed on eject */
+	std::unordered_map< unsigned int, world_flat_t > world_flat_cache;
+	char world_flat_tag_byte;
+	/* entry.m_applied while flat: the textures are per material, so a tag, never dereferenced */
+	c_texture* const world_flat_tag = reinterpret_cast< c_texture* >( &world_flat_tag_byte );
+
+	c_texture* world_flat_texture( c_material* material, c_texture* original )
+	{
+		unsigned char rgb[ 4 ] = { 0, 0, 0, 255 };
+		float sum[ 3 ]         = { };
+		int samples            = 0;
+
+		for ( const float s : { 0.25f, 0.75f } ) {
+			for ( const float t : { 0.25f, 0.75f } ) {
+				float sample[ 3 ] = { -1.f, 0.f, 0.f }; /* left untouched = texture has no low-res image */
+				original->get_low_res_color_sample( s, t, sample );
+				if ( sample[ 0 ] < 0.f )
+					continue;
+
+				for ( int k = 0; k < 3; k++ )
+					sum[ k ] += sample[ k ];
+				samples++;
+			}
+		}
+
+		if ( samples > 0 ) {
+			for ( int k = 0; k < 3; k++ )
+				rgb[ k ] = static_cast< unsigned char >( std::clamp( sum[ k ] / samples, 0.f, 1.f ) * 255.f + 0.5f );
+		}
+		/* disk read of the vtf: fallback only */
+		else if ( material->get_preview_image( rgb, 1, 1, image_format_rgba8888 ) != material_preview_image_ok )
+			return nullptr;
+
+		const unsigned int key = rgb[ 0 ] | rgb[ 1 ] << 8 | rgb[ 2 ] << 16;
+		if ( const auto it = world_flat_cache.find( key ); it != world_flat_cache.end( ) )
+			return it->second.m_texture;
+
+		/* unordered_map nodes never move: the regenerator pointer handed to the texture stays valid */
+		world_flat_t& flat = world_flat_cache[ key ];
+		std::memcpy( flat.m_regen.m_rgb, rgb, sizeof( flat.m_regen.m_rgb ) );
+
+		/* NOMIP | NOLOD | SINGLECOPY | SKIP_INITIAL_DOWNLOAD ( vtf_declarations.h ): no checkerboard upload before the
+		   regenerator is in. Comes back already referenced ( MaterialSystemUtil.cpp InitProceduralTexture ). */
+		flat.m_texture = g_interfaces.m_material_system->create_procedural_texture( std::format( "_botox_flat_{:06x}", key ).c_str( ),
+		                                                                             TEXTURE_GROUP_WORLD, 1, 1, image_format_bgra8888, 0x01040300 );
+		if ( !flat.m_texture ) {
+			world_flat_cache.erase( key );
+			return nullptr;
+		}
+
+		flat.m_texture->set_texture_regenerator( &flat.m_regen, false );
+		flat.m_texture->download( );
+
+		return flat.m_texture;
+	}
+
+	/* eject only, after the restore: the regenerators live in this dll, a device restore would call into freed code */
+	void world_flat_release( )
+	{
+		for ( auto& [ key, flat ] : world_flat_cache ) {
+			flat.m_texture->set_texture_regenerator( nullptr, false );
+			flat.m_texture->release( );
+		}
+
+		world_flat_cache.clear( );
+	}
+
 	bool world_texture_apply( c_material* material, world_texture_material_t& entry, c_texture* texture, c_texture* flat_normal, c_texture* white )
 	{
 		world_texture_capture( material, entry );
 
 		/* textures not loaded yet (vars still strings): leave m_applied null so the next walk retries */
-		bool wrote = false;
+		const bool flat  = texture == world_flat_tag;
+		bool wrote       = false;
+		bool loaded      = false;
+		bool base_wrote  = false;
 		for ( std::size_t i = 0; i < std::size( world_texture_slots ); i++ ) {
 			if ( !entry.m_original[ i ] )
 				continue;
 
+			loaded = true;
+			/* flat: blend slots keep their own colour */
+			c_texture* slot_texture = flat ? world_flat_texture( material, entry.m_original[ i ] ) : texture;
+			if ( !slot_texture )
+				continue;
+
 			if ( auto* var = world_texture_var( material, world_texture_slots[ i ].m_texture ) ) {
-				var->set_texture( texture );
-				wrote = true;
+				var->set_texture( slot_texture );
+				wrote      = true;
+				base_wrote = base_wrote || i == 0;
 			}
 
-			if ( entry.m_scalable[ i ] ) {
+			/* a 1x1 has no texel density to keep */
+			if ( entry.m_scalable[ i ] && !flat ) {
 				if ( auto* transform = world_texture_var( material, world_texture_slots[ i ].m_transform ) )
 					world_texture_scale( transform, entry.m_original[ i ], texture );
 			}
 		}
 
-		if ( !wrote )
+		/* flat, a loaded slot with no colour to sample stays original: never re-sampled ( a vtf disk read ) every
+		   walk, and the revert check must not read $basetexture == original as a re-precache */
+		entry.m_flat_empty = flat && !base_wrote;
+
+		if ( !wrote ) {
+			if ( flat && loaded )
+				entry.m_applied = texture;
+
 			return false;
+		}
 
 		if ( flat_normal ) {
 			for ( std::size_t i = 0; i < std::size( world_texture_bumps ); i++ ) {
@@ -3330,7 +3467,9 @@ namespace
 
 		/* mode 1 = base * decal: white is a no-op; mode 0 = alpha over: the new texture covers it */
 		if ( entry.m_original_decal ) {
-			c_texture* decal = entry.m_decal_mode == 1 ? white : texture;
+			c_texture* decal = entry.m_decal_mode == 1 ? white
+			                   : flat                  ? ( entry.m_original[ 0 ] ? world_flat_texture( material, entry.m_original[ 0 ] ) : nullptr )
+			                                           : texture;
 			if ( auto* var = world_texture_var( material, "$decaltexture" ); var && decal )
 				var->set_texture( decal );
 		}
@@ -3392,7 +3531,8 @@ namespace
 				restore_var( var, entry.m_stripped[ i ] );
 		}
 
-		entry.m_applied = nullptr;
+		entry.m_applied    = nullptr;
+		entry.m_flat_empty = false;
 	}
 
 	void world_texture_release( world_texture_material_t& entry )
@@ -3611,6 +3751,11 @@ void n_misc::impl_t::world_texture( )
 		any                       = any || name;
 	}
 
+	/* flat textures win over the world presets; props keep theirs */
+	const bool flat = GET_VARIABLE( g_variables.m_flat_textures, bool );
+	signature       = signature * 31u + ( flat ? 0xf1a7u : 0u );
+	any             = any || flat;
+
 	const bool changed = signature != world_texture_last_signature;
 	const float now    = g_interfaces.m_global_vars_base->m_real_time;
 
@@ -3691,10 +3836,11 @@ void n_misc::impl_t::world_texture( )
 
 		matched[ entry.m_category ]++;
 
-		c_texture* want = wanted[ entry.m_category ];
+		c_texture* want = flat && entry.m_category < prop_slot ? world_flat_tag : wanted[ entry.m_category ];
 
 		/* re-precache rebuilds vars from the vmt behind our back */
-		if ( entry.m_applied && entry.m_original[ 0 ] && world_texture_read( material, "$basetexture" ) == entry.m_original[ 0 ] ) {
+		if ( entry.m_applied && !entry.m_flat_empty && entry.m_original[ 0 ] &&
+		     world_texture_read( material, "$basetexture" ) == entry.m_original[ 0 ] ) {
 			if ( reverted++ < 4 )
 				g_console.print( std::format( "[world texture] reverted {}", name ).c_str( ) );
 			entry.m_applied = nullptr;
@@ -3724,8 +3870,8 @@ void n_misc::impl_t::world_texture( )
 			counts.append( std::format( " {} {}", world_texture_categories[ category ], matched[ category ] ) );
 		counts.append( std::format( " props {}", matched[ prop_slot ] ) );
 
-		g_console.print( std::format( "[world texture] applied {} restored {} reverted {} |{} | flat normal {}{}{}", applied, restored, reverted, counts,
-		                              flat_normal ? 1 : 0, missing.empty( ) ? "" : " | missing", missing )
+		g_console.print( std::format( "[world texture] applied {} restored {} reverted {} |{} | flat normal {} | flat colours {}{}{}", applied, restored,
+		                              reverted, counts, flat_normal ? 1 : 0, world_flat_cache.size( ), missing.empty( ) ? "" : " | missing", missing )
 		                     .c_str( ) );
 	}
 }
@@ -3752,6 +3898,7 @@ void n_misc::impl_t::on_eject( )
 	// weapon_debug_spread_show, sv_lagpushticks, gpGlobals remote client
 	remove_smoke( );
 	remove_flash( );
+	world_flat_release( ); /* on_level_shutdown ran first: no material holds them now */
 	disable_post_processing( );
 	remove_panorama_blur( );
 	force_crosshair( );

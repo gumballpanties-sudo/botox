@@ -308,6 +308,13 @@ public:
 		return g_virtual.call< c_texture* >( this, 91, texture_name, texture_group_name, complain, additional_creation_flags );
 	}
 
+	/* csgosrc2019 imaterialsystem.h: FindTexture 91, IsTextureLoaded 92, CreateProceduralTexture 93
+	   ( csgo legacy materialsystem.dll CMaterialSystem vtable: ret 18h = 6 args, tail-calls TextureManager ) */
+	c_texture* create_procedural_texture( const char* name, const char* group, int width, int height, int format, int flags )
+	{
+		return g_virtual.call< c_texture* >( this, 93, name, group, width, height, format, flags );
+	}
+
 	c_material_render_context* get_render_context( )
 	{
 		return g_virtual.call< c_material_render_context* >( this, 115 );

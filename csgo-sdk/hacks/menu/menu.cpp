@@ -646,7 +646,36 @@ const menu_style_t k_menu_styles[ ] = {
 	{ "dna", IM_COL32( 9, 9, 9, 240 ), IM_COL32( 9, 9, 9, 240 ), IM_COL32( 20, 20, 20, 153 ), IM_COL32( 13, 13, 13, 255 ),
 	  IM_COL32( 26, 26, 26, 178 ), IM_COL32( 255, 255, 255, 8 ), IM_COL32( 20, 20, 20, 255 ), IM_COL32( 242, 242, 242, 255 ),
 	  IM_COL32( 77, 77, 77, 217 ), 4.f, 2.f, 4.f, e_font_names::font_name_dna_montserrat_15, e_font_names::font_name_dna_pt_root_bold_15 },
+	{ "gamesense", IM_COL32( 20, 20, 20, 255 ), IM_COL32( 12, 12, 12, 255 ), IM_COL32( 23, 23, 23, 255 ), IM_COL32( 35, 35, 35, 255 ),
+	  IM_COL32( 10, 10, 10, 255 ), IM_COL32( 10, 10, 10, 255 ), IM_COL32( 23, 23, 23, 255 ), IM_COL32( 205, 205, 205, 255 ),
+	  IM_COL32( 120, 120, 120, 255 ), 0.f, 0.f, 0.f, e_font_names::font_name_verdana_11, e_font_names::font_name_verdana_bd_11, true },
 };
+
+/* skeet look, layout untouched: 6 px frame outside the window ( 12 / 60 / 40 x3 / 60 ), 2 px bar over the band's top edge.
+   bar = majorkahook g_color1..3 ( 37b1da -> cc46cd -> cce335 ), two halves; second row same rgb, half alpha */
+static void gamesense_frame( ImDrawList* list, const ImVec2& pos, const ImVec2& size )
+{
+	static constexpr int k_layers[ 6 ] = { 12, 60, 40, 40, 40, 60 };
+
+	const ImVec2 max( pos.x + size.x, pos.y + size.y );
+	list->PushClipRect( ImVec2( pos.x - 6.f, pos.y - 6.f ), ImVec2( max.x + 6.f, max.y + 6.f ), false );
+
+	for ( int i = 0; i < 6; i++ ) {
+		const float o = 6.f - static_cast< float >( i );
+		list->AddRect( ImVec2( pos.x - o, pos.y - o ), ImVec2( max.x + o, max.y + o ), IM_COL32( k_layers[ i ], k_layers[ i ], k_layers[ i ], 255 ) );
+	}
+
+	const float mid = ImFloor( pos.x + size.x / 2.f );
+	for ( int row = 0; row < 2; row++ ) {
+		const int a    = row ? 128 : 255;
+		const float y  = pos.y + 1.f + static_cast< float >( row );
+		const ImU32 c1 = IM_COL32( 55, 177, 218, a ), c2 = IM_COL32( 204, 70, 205, a ), c3 = IM_COL32( 204, 227, 53, a );
+		list->AddRectFilledMultiColor( ImVec2( pos.x + 1.f, y ), ImVec2( mid, y + 1.f ), c1, c2, c2, c1 );
+		list->AddRectFilledMultiColor( ImVec2( mid, y ), ImVec2( max.x - 1.f, y + 1.f ), c2, c3, c3, c2 );
+	}
+
+	list->PopClipRect( );
+}
 
 const int k_menu_style_count = static_cast< int >( IM_ARRAYSIZE( k_menu_styles ) );
 
@@ -774,6 +803,9 @@ void n_menu::impl_t::on_end_scene( )
 
 		RenderFadedGradientLine( draw_list, ImVec2( position.x, position.y + size.y - bottom_band_height ), ImVec2( size.x, 1.f ),
 		                         ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ) );
+
+		if ( k_menu_styles[ ImClamp( GET_VARIABLE( g_variables.m_menu_style, int ), 0, k_menu_style_count - 1 ) ].m_gamesense )
+			gamesense_frame( draw_list, position, size );
 
 		constexpr float tab_width   = 100.f;
 		constexpr float tab_height  = 24.f;
@@ -1175,26 +1207,27 @@ void n_menu::impl_t::tab_aimbot( )
 {
 	struct weapon_config_t {
 		const char* m_name;
-		std::uint32_t m_override, m_fov, m_smooth, m_rcs, m_hitboxes;
+		std::uint32_t m_override, m_fov, m_smooth, m_rcs, m_hitboxes, m_lethal;
 	};
 
 	static const weapon_config_t weapon_configs[ aim_config_max ] = {
 		{ "general", 0, g_variables.m_aimbot_general_fov, g_variables.m_aimbot_general_smooth, g_variables.m_aimbot_general_rcs,
-		  g_variables.m_aimbot_hitboxes },
+		  g_variables.m_aimbot_hitboxes, g_variables.m_aimbot_lethal_body },
 		{ "pistol", g_variables.m_aimbot_pistol_override, g_variables.m_aimbot_pistol_fov, g_variables.m_aimbot_pistol_smooth,
-		  g_variables.m_aimbot_pistol_rcs, g_variables.m_aimbot_pistol_hitboxes },
+		  g_variables.m_aimbot_pistol_rcs, g_variables.m_aimbot_pistol_hitboxes, g_variables.m_aimbot_pistol_lethal_body },
 		{ "heavy pistol", g_variables.m_aimbot_heavy_pistol_override, g_variables.m_aimbot_heavy_pistol_fov,
-		  g_variables.m_aimbot_heavy_pistol_smooth, g_variables.m_aimbot_heavy_pistol_rcs, g_variables.m_aimbot_heavy_pistol_hitboxes },
+		  g_variables.m_aimbot_heavy_pistol_smooth, g_variables.m_aimbot_heavy_pistol_rcs, g_variables.m_aimbot_heavy_pistol_hitboxes,
+		  g_variables.m_aimbot_heavy_pistol_lethal_body },
 		{ "rifle", g_variables.m_aimbot_rifle_override, g_variables.m_aimbot_rifle_fov, g_variables.m_aimbot_rifle_smooth,
-		  g_variables.m_aimbot_rifle_rcs, g_variables.m_aimbot_rifle_hitboxes },
+		  g_variables.m_aimbot_rifle_rcs, g_variables.m_aimbot_rifle_hitboxes, g_variables.m_aimbot_rifle_lethal_body },
 		{ "smg", g_variables.m_aimbot_smg_override, g_variables.m_aimbot_smg_fov, g_variables.m_aimbot_smg_smooth, g_variables.m_aimbot_smg_rcs,
-		  g_variables.m_aimbot_smg_hitboxes },
+		  g_variables.m_aimbot_smg_hitboxes, g_variables.m_aimbot_smg_lethal_body },
 		{ "sniper", g_variables.m_aimbot_sniper_override, g_variables.m_aimbot_sniper_fov, g_variables.m_aimbot_sniper_smooth,
-		  g_variables.m_aimbot_sniper_rcs, g_variables.m_aimbot_sniper_hitboxes },
+		  g_variables.m_aimbot_sniper_rcs, g_variables.m_aimbot_sniper_hitboxes, g_variables.m_aimbot_sniper_lethal_body },
 		{ "scout", g_variables.m_aimbot_scout_override, g_variables.m_aimbot_scout_fov, g_variables.m_aimbot_scout_smooth,
-		  g_variables.m_aimbot_scout_rcs, g_variables.m_aimbot_scout_hitboxes },
+		  g_variables.m_aimbot_scout_rcs, g_variables.m_aimbot_scout_hitboxes, g_variables.m_aimbot_scout_lethal_body },
 		{ "heavy", g_variables.m_aimbot_heavy_override, g_variables.m_aimbot_heavy_fov, g_variables.m_aimbot_heavy_smooth,
-		  g_variables.m_aimbot_heavy_rcs, g_variables.m_aimbot_heavy_hitboxes },
+		  g_variables.m_aimbot_heavy_rcs, g_variables.m_aimbot_heavy_hitboxes, g_variables.m_aimbot_heavy_lethal_body },
 	};
 
 	menu_columns_begin( );
@@ -1230,6 +1263,7 @@ void n_menu::impl_t::tab_aimbot( )
 			const std::vector< const char* > hitbox_labels = { "head", "neck", "chest", "stomach", "pelvis", "arms", "legs" };
 			auto& hitboxes                                 = GET_VARIABLE( config.m_hitboxes, std::vector< bool > );
 			ImGui::MultiCombo( std::format( "hitboxes##{}", config.m_name ).c_str( ), hitboxes, hitbox_labels, hitboxes.size( ) );
+			ImGui::Checkbox( std::format( "bodyshot if lethal##{}", config.m_name ).c_str( ), &GET_VARIABLE( config.m_lethal, bool ) );
 		}
 	}
 	menu_group_end( );

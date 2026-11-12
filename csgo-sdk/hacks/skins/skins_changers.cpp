@@ -1,4 +1,5 @@
 #include "skins_internal.h"
+#include "../visuals/old_mods.h"
 
 void n_skins::impl_t::agent_changer( )
 {
@@ -120,9 +121,11 @@ void n_skins::impl_t::agent_changer( )
 		if ( g_interfaces.m_model_info->get_model_index( fb->m_own ) > 0 )
 			return;
 
-		// gloves changer on: it draws hands, spend the string on a sleeve; off: must be hands
-		const bool gloves_active = GET_VARIABLE( PLAYER_VAR( m_gloves_enable ), bool )
-		                        && GET_VARIABLE( PLAYER_VAR( m_gloves_model ), int ) > 0;
+		// gloves changer on: it draws hands, spend the string on a sleeve; off: must be hands.
+		// old csgo players: pack ct gloves are stubs, the sleeves are the old hands
+		const bool gloves_active = ( GET_VARIABLE( PLAYER_VAR( m_gloves_enable ), bool )
+		                             && GET_VARIABLE( PLAYER_VAR( m_gloves_model ), int ) > 0 )
+		                        || g_old_mods.players_mounted( );
 
 		const char* const* list = gloves_active ? fb->m_sleeves : fb->m_hands;
 
@@ -507,7 +510,9 @@ void n_skins::impl_t::gloves_changer( )
 
 	const int glove_model = GET_VARIABLE( PLAYER_VAR( m_gloves_model ), int );
 
-	const bool gloves_wanted = GET_VARIABLE( PLAYER_VAR( m_gloves_enable ), bool ) && glove_model > 0 && glove_model < GLOVE_COUNT;
+	// old csgo players: the old arms carry their own hands, a glove on top = two pairs
+	const bool gloves_wanted = GET_VARIABLE( PLAYER_VAR( m_gloves_enable ), bool ) && glove_model > 0 && glove_model < GLOVE_COUNT
+	                        && !g_old_mods.players_mounted( );
 
 	const auto wearables = local->get_wearables_handle( );
 	if ( !wearables )

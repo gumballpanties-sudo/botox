@@ -19,6 +19,8 @@
 #include <algorithm>
 #include <cstring>
 
+extern void botox_dbg_log( const char* fmt, ... );
+
 bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, game_event_t* game_event )
 {
 	static auto original = g_hooks.m_fire_event_intern.get_original< decltype( &n_detoured_functions::fire_event_intern ) >( );
@@ -222,6 +224,9 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 			m_group = game_event->get_int( "hitgroup" );
 			if ( m_group != hitgroup_gear && ( m_group < 0 || m_group > 8 ) )
 				m_group = 0;
+
+			/* pairs with the SHOT line before it: no HIT after a SHOT = miss */
+			botox_dbg_log( "HIT: ent=%d hg=%d dmg=%d hp=%d", m_victim, m_group, game_event->get_int( "dmg_health" ), game_event->get_int( "health" ) );
 
 			on_hit_marker( );
 			on_hit_sound( );
