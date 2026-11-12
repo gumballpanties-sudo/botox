@@ -67,7 +67,9 @@ public:
 	virtual void get_illumination_point( const model_t* p_model, c_client_renderable* p_renderable, const c_vector& vec_origin, const c_angle& angles,
 	                                     c_vector* p_lighting_center )                                                                 = 0;
 	virtual int get_model_contents( int n_model_index ) const                                                                          = 0;
-	virtual studiohdr_t* get_studio_model( const model_t* p_model )                                                                    = 0;
+	/* 11-12 20:37 crash: engine reads model->type with no null check, a just-spawned player has no model yet. every caller goes through the wrapper */
+	virtual studiohdr_t* get_studio_model_unchecked( const model_t* p_model )                                                          = 0;
+	studiohdr_t* get_studio_model( const model_t* p_model ) { return p_model ? get_studio_model_unchecked( p_model ) : nullptr; }
 	virtual int get_model_sprite_width( const model_t* p_model ) const                                                                 = 0;
 	virtual int get_model_sprite_height( const model_t* p_model ) const                                                                = 0;
 	virtual void set_level_screen_fade_range( float fl_min_size, float fl_max_size )                                                   = 0;

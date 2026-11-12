@@ -796,6 +796,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Checkbox( "prevent slow", &GET_VARIABLE( g_variables.m_wall_climb_prevent_slow, bool ) );
 						ImGui::Checkbox( "crouch catches", &GET_VARIABLE( g_variables.m_wall_climb_duck, bool ) );
 						ImGui::Checkbox( "pin catch ( stops on seams )", &GET_VARIABLE( g_variables.m_wall_climb_pin_catch, bool ) );
+						ImGui::SliderFloat( "park off brush walls ( 0 = flush )", &GET_VARIABLE( g_variables.m_wall_climb_park_margin, float ), 0.f, 0.004f, "%.4f u" );
 						ImGui::SliderInt( "spot reach", &GET_VARIABLE( g_variables.m_wall_climb_spot_reach, int ), 0, 32, "%d u" );
 						ImGui::Checkbox( "steer to seam", &GET_VARIABLE( g_variables.m_wall_climb_seam_steer, bool ) );
 						if ( GET_VARIABLE( g_variables.m_wall_climb_seam_steer, bool ) )

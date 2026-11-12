@@ -53,6 +53,13 @@ namespace
 	constexpr float k_leave_cos    = 0.5f;
 	constexpr int k_robust_parks   = 3; /* lab P62 */
 	constexpr float k_robust_vel   = 0.002f;
+	/* 11-12 18:35 log, mirage brush wall n ( 0.028, -1 ): the server START sits up to 3 x 2^-11 ( 0.0015u ) off the client's on the face axis
+	   ( WC DIV 30 / 50 ticks ). a flush park ( gap 0.0003 ) that then slides into the tilted face = server allsolid, xy 220 -> 0 ( 5 / 15 hops;
+	   lab `tick` replays the pin from the logged START shifted 2 steps ). brush walls: parks + your keys must END this far off the face, away
+	   rungs park too ( de-flush ). disp walls keep flush ( lips land from the first floats off the face; lab P94 disp -3% catches, +57% speed lost ).
+	   lab brushY P90 -> P94: pinned ticks 3250 -> 209 ( face drift 4% ), 1107 -> 0 ( online ), speed lost 22095 -> 10853 u/s. COST: a brush seam
+	   under 0.002 wide ( 11-12 lip -175.43, gap 3e-5 ) needs flush: slider m_wall_climb_park_margin, 0 = old flush */
+	constexpr float k_park_margin_max = 0.004f;
 	constexpr float k_snag_along   = 2.f;   /* lab P69: along wall speed a seam snag is judged on */
 	constexpr float k_snag_keep    = 0.25f; /* a sim that ends under this share of it snagged */
 	constexpr float k_spot_step    = 2.f;
@@ -84,7 +91,7 @@ namespace
 		wc_land, wc_flip, wc_pin_catch, wc_hold, wc_park, wc_keys, wc_along, wc_own, wc_leave, wc_aa_leave, wc_exit, wc_exit_none, wc_far, wc_rise,
 		wc_scan_cut, wc_cut, wc_div, wc_div_stomp, wc_stomp, wc_yield, wc_ramp, wc_skip, wc_jump_back, wc_jump_strip, wc_as_take, wc_pin_miss,
 		wc_park_keep, wc_away, wc_robust, wc_spot, wc_spot_sims, wc_hold_land, wc_low, wc_leave_hang, wc_seam, wc_seam_park, wc_pin_flip, wc_st_job, wc_st_pick,
-		wc_st_tick, wc_st_sims, wc_st_pre, wc_st_pre_drop, wc_wig, wc_hold_along, wc_frozen, wc_free, wc_exit_mem, wc_unglue, wc_cmiss_land, wc_cmiss_flip, wc_cmiss_pinc, wc_commit, wc_follow, wc_follow_land, wc_follow_off, wc_ticks, wc_sims, wc_max
+		wc_st_tick, wc_st_sims, wc_st_pre, wc_st_pre_drop, wc_wig, wc_hold_along, wc_frozen, wc_free, wc_exit_mem, wc_unglue, wc_cmiss_land, wc_cmiss_flip, wc_cmiss_pinc, wc_commit, wc_follow, wc_follow_land, wc_follow_off, wc_margin, wc_ticks, wc_sims, wc_max
 	};
 	int s_count[ wc_max ]{ };
 	long long s_us = 0ll, s_us_worst = 0ll;
@@ -124,6 +131,13 @@ namespace
 	}
 
 	float face_d( const c_vector& o, const c_vector& n ) { return o.m_x * n.m_x + o.m_y * n.m_y + o.m_z * n.m_z; }
+
+	/* hull gap to the face plane ( trace plane dist = the raw brush plane, CM_ClipBoxToBrush offsets the hull itself ): nearest hull corner,
+	   16 x 16, top at the hull height when the plane leans over. 0 = the engine's allsolid edge. lab fl_lab face_gap */
+	float face_gap( const c_vector& o, const c_vector& n, const float dist, const bool duck )
+	{
+		return face_d( o, n ) - dist - 16.f * ( std::fabsf( n.m_x ) + std::fabsf( n.m_y ) ) + ( n.m_z < 0.f ? n.m_z * ( duck ? 54.f : 72.f ) : 0.f );
+	}
 
 	void world_wish( const float yaw, const float f, const float s, float& x, float& y )
 	{
@@ -216,11 +230,11 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	if ( const unsigned long long now = GetTickCount64( ); now >= s_log_next ) {
 		s_log_next = now + 1000ull;
 		if ( s_count[ wc_ticks ] || s_count[ wc_yield ] || s_count[ wc_ramp ] || s_count[ wc_skip ] )
-			botox_dbg_log( "WC: land=%d flip=%d pinc=%d hold=%d park=%d keys=%d along=%d own=%d leave=%d aa=%d exit=%d/%d far=%d rise=%d scut=%d cut=%d div=%d/%d stomp=%d yield=%d ramp=%d skip=%d jump back=%d strip=%d as=%d miss=%d pk=%d away=%d robust=%d spot=%d/%d hland=%d low=%d lhang=%d seam=%d/%d pflip=%d steer=%d/%d/%d ssims=%d pre=%d/%d wig=%d holda=%d free=%d/%d xmem=%d glue=%d cmiss=%d/%d/%d fol=%d/%d/%d/%d ticks=%d sims=%d us=%lld worst=%lld",
+			botox_dbg_log( "WC: land=%d flip=%d pinc=%d hold=%d park=%d keys=%d along=%d own=%d leave=%d aa=%d exit=%d/%d far=%d rise=%d scut=%d cut=%d div=%d/%d stomp=%d yield=%d ramp=%d skip=%d jump back=%d strip=%d as=%d miss=%d pk=%d away=%d robust=%d spot=%d/%d hland=%d low=%d lhang=%d seam=%d/%d pflip=%d steer=%d/%d/%d ssims=%d pre=%d/%d wig=%d holda=%d free=%d/%d xmem=%d glue=%d cmiss=%d/%d/%d fol=%d/%d/%d/%d mgn=%d ticks=%d sims=%d us=%lld worst=%lld",
 			               s_count[ wc_land ], s_count[ wc_flip ], s_count[ wc_pin_catch ], s_count[ wc_hold ], s_count[ wc_park ], s_count[ wc_keys ],
 			               s_count[ wc_along ], s_count[ wc_own ], s_count[ wc_leave ], s_count[ wc_aa_leave ], s_count[ wc_exit ], s_count[ wc_exit_none ], s_count[ wc_far ],
 			               s_count[ wc_rise ], s_count[ wc_scan_cut ], s_count[ wc_cut ], s_count[ wc_div ], s_count[ wc_div_stomp ], s_count[ wc_stomp ], s_count[ wc_yield ], s_count[ wc_ramp ], s_count[ wc_skip ],
-			               s_count[ wc_jump_back ], s_count[ wc_jump_strip ], s_count[ wc_as_take ], s_count[ wc_pin_miss ], s_count[ wc_park_keep ], s_count[ wc_away ], s_count[ wc_robust ], s_count[ wc_spot ], s_count[ wc_spot_sims ], s_count[ wc_hold_land ], s_count[ wc_low ], s_count[ wc_leave_hang ], s_count[ wc_seam ], s_count[ wc_seam_park ], s_count[ wc_pin_flip ], s_count[ wc_st_job ], s_count[ wc_st_pick ], s_count[ wc_st_tick ], s_count[ wc_st_sims ], s_count[ wc_st_pre ], s_count[ wc_st_pre_drop ], s_count[ wc_wig ], s_count[ wc_hold_along ], s_count[ wc_free ], s_count[ wc_frozen ], s_count[ wc_exit_mem ], s_count[ wc_unglue ], s_count[ wc_cmiss_land ], s_count[ wc_cmiss_flip ], s_count[ wc_cmiss_pinc ], s_count[ wc_commit ], s_count[ wc_follow ], s_count[ wc_follow_land ], s_count[ wc_follow_off ], s_count[ wc_ticks ], s_count[ wc_sims ], s_us,
+			               s_count[ wc_jump_back ], s_count[ wc_jump_strip ], s_count[ wc_as_take ], s_count[ wc_pin_miss ], s_count[ wc_park_keep ], s_count[ wc_away ], s_count[ wc_robust ], s_count[ wc_spot ], s_count[ wc_spot_sims ], s_count[ wc_hold_land ], s_count[ wc_low ], s_count[ wc_leave_hang ], s_count[ wc_seam ], s_count[ wc_seam_park ], s_count[ wc_pin_flip ], s_count[ wc_st_job ], s_count[ wc_st_pick ], s_count[ wc_st_tick ], s_count[ wc_st_sims ], s_count[ wc_st_pre ], s_count[ wc_st_pre_drop ], s_count[ wc_wig ], s_count[ wc_hold_along ], s_count[ wc_free ], s_count[ wc_frozen ], s_count[ wc_exit_mem ], s_count[ wc_unglue ], s_count[ wc_cmiss_land ], s_count[ wc_cmiss_flip ], s_count[ wc_cmiss_pinc ], s_count[ wc_commit ], s_count[ wc_follow ], s_count[ wc_follow_land ], s_count[ wc_follow_off ], s_count[ wc_margin ], s_count[ wc_ticks ], s_count[ wc_sims ], s_us,
 			               s_us_worst );
 		for ( int& c : s_count )
 			c = 0;
@@ -1060,6 +1074,14 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 			const auto snags   = [ & ]( const c_vector& v ) {
 				return seam_on && ( v.m_x * ft.m_x + v.m_y * ft.m_y ) * ( along0 < 0.f ? -1.f : 1.f ) < k_snag_keep * std::fabsf( along0 );
 			};
+			// park margin ( lab P94, brush walls ): an END inside the margin of the face is no park and no keys win: the server START can
+			// sit in the face there ( 11-12 log pins ). your keys end 0.001 off a tilted face too, not 1/32
+			const float face_dist   = wall_tr.m_plane.m_distance;
+			const float park_margin = std::clamp( GET_VARIABLE( g_variables.m_wall_climb_park_margin, float ), 0.f, k_park_margin_max );
+			const bool margin_on    = !disp_wall && park_margin > 0.f;
+			const auto flush        = [ & ]( const sim_out_t& o ) {
+				return margin_on && face_gap( o.m_origin, wall_n, face_dist, ( o.m_flags & fl_ducking ) != 0 ) < park_margin;
+			};
 			// 1 caught, 0 go on, -1 out of clock
 			const auto test = [ & ]( const c_user_cmd& c, const bool flip, const bool park ) {
 				if ( !sim( c, last ) )
@@ -1111,7 +1133,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 					}
 					return 0;
 				}
-				if ( park && !flip && !slowed( last.m_vel ) ) {
+				if ( park && !flip && !slowed( last.m_vel ) && !flush( last ) ) {
 					const float d = face_d( last.m_origin, wall_n );
 					parks.push_back( { d, last.m_vel.length_2d( ), c, snags( last.m_vel ) } );
 					if ( d < best_d )
@@ -1142,7 +1164,8 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 						++s_count[ wc_rise ];
 					}
 				}
-			// park sits at contact, a lip lands 1-2 floats out ( 10-08 lab P54 ): away rungs land / pin catch only, never park
+			// park sits at contact, a lip lands 1-2 floats out ( 10-08 lab P54 ): away rungs land / pin catch only, never park. brush walls:
+			// they park ( the margin de-flush: a START inside the margin has no into press that ends outside it )
 			for ( size_t i = 1; i < fine.size( ) && !r; ++i ) {
 				if ( fine[ i ] < k_away_lo )
 					continue;
@@ -1150,7 +1173,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 					r = -1;
 					break;
 				}
-				r = test( with( wall_yaw, -fine[ i ] * F / ( user_duck ? 0.34f : 1.f ), user_duck ), false, false );
+				r = test( with( wall_yaw, -fine[ i ] * F / ( user_duck ? 0.34f : 1.f ), user_duck ), false, margin_on );
 				s_count[ wc_away ] += r > 0 && ( landed || held );
 			}
 			for ( const float m : k_coarse ) {
@@ -1204,6 +1227,8 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				const bool kok = sim( keys, k );
 				const bool kpin = kok && !( k.m_flags & fl_onground ) && pinned( k.m_vel );
 				const bool ksnag = kok && !kpin && !( k.m_flags & fl_onground ) && snags( k.m_vel );
+					const bool kflush = kok && !kpin && !( k.m_flags & fl_onground ) && flush( k );
+					s_count[ wc_margin ] += kflush && have_park;
 				// lab P69: every park snags ( or none is robust ) and your keys snag too = away rungs, one step out of DIST_EPSILON for the
 				// crossing tick ( 0.2 F = 1/160u clears a 0.0024 seam ). wallA seam snags 128 -> 27, first + rows +1%
 				bool seam_away = false;
@@ -1227,10 +1252,10 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 					if ( kpin )
 						exit_pin( );
 				} else if ( have_park ) {
-					if ( kok && !kpin && !( k.m_flags & fl_onground ) && face_d( k.m_origin, wall_n ) <= best_d + k_keys_ulp && !( ksnag && !best_snag ) ) {
+					if ( kok && !kpin && !kflush && !( k.m_flags & fl_onground ) && face_d( k.m_origin, wall_n ) <= best_d + k_keys_ulp && !( ksnag && !best_snag ) ) {
 						++s_count[ wc_keys ];
 						branch = "keys";
-					} else if ( kok && !kpin && !( k.m_flags & fl_onground ) && best_xy < k.m_vel.length_2d( ) - k_park_keep &&
+					} else if ( kok && !kpin && !kflush && !( k.m_flags & fl_onground ) && best_xy < k.m_vel.length_2d( ) - k_park_keep &&
 					            ( !wish_leaves_wall( keys, wall_n ) || best_xy < k_glue_xy ) ) {
 						// park sends ~0 wish: froze w+strafe gain ( 10-08 log u 37 s 32 x10 ) and sat in corners at xy 0. not auto align's push off
 						// ( 10-08 20:40 log: 18 / 40 sent it, wall lost 2-3 ticks ), unless the park is dead on the face: 11-05 14:56 log a pin under
@@ -1359,8 +1384,9 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 			raw( *cmd, s );
 		else
 			s = u;
-		botox_dbg_log( "WC T: %s g=%d n=%.2f,%.2f disp=%d xy=%.1f u=%.1f/%.1f/%d s=%.1f/%.1f/%d fs=%.9g,%.9g->%.9g,%.9g j=%d/%d d=%d/%d sims=%d%s org=%.9g,%.9g,%.9g vel=%.9g,%.9g,%.9g yaw=%.9g gz=%.3f",
-		               branch, on_ground, wall_n.m_x, wall_n.m_y, disp_wall ? 1 : 0, start_vel.length_2d( ), u.m_vel.length_2d( ), u.m_vel.m_z,
+		botox_dbg_log( "WC T: %s g=%d n=%.2f,%.2f disp=%d gp=%.5f xy=%.1f u=%.1f/%.1f/%d s=%.1f/%.1f/%d fs=%.9g,%.9g->%.9g,%.9g j=%d/%d d=%d/%d sims=%d%s org=%.9g,%.9g,%.9g vel=%.9g,%.9g,%.9g yaw=%.9g gz=%.3f",
+		               branch, on_ground, wall_n.m_x, wall_n.m_y, disp_wall ? 1 : 0, face_gap( origin, wall_n, wall_tr.m_plane.m_distance, user_duck ),
+		               start_vel.length_2d( ), u.m_vel.length_2d( ), u.m_vel.m_z,
 		               ( u.m_flags & fl_onground ) != 0, s.m_vel.length_2d( ), s.m_vel.m_z, ( s.m_flags & fl_onground ) != 0, keys.m_forward_move, keys.m_side_move,
 		               cmd->m_forward_move, cmd->m_side_move, ( keys.m_buttons & in_jump ) != 0, ( cmd->m_buttons & in_jump ) != 0, user_duck,
 		               ( cmd->m_buttons & in_duck ) != 0, sims, was_cut ? " CUT" : "", origin.m_x, origin.m_y, origin.m_z, start_vel.m_x, start_vel.m_y,

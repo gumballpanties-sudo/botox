@@ -1140,6 +1140,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_wall_climb_prevent_slow, true );
 		ADD_VARIABLE( bool, m_wall_climb_duck, true );
 		ADD_VARIABLE( bool, m_wall_climb_pin_catch, false ); /* pin on a seam + hold till the lip: climbs, xy 0 ( 11-05 "stuck on vertical seams" ) */
+		ADD_VARIABLE( float, m_wall_climb_park_margin, 0.002f ); /* brush walls: park / keys END gap floor, 0 = flush ( 11-12 server pins, lab P94 ) */
 		ADD_VARIABLE( int, m_wall_climb_spot_reach, 16 );
 		ADD_VARIABLE( bool, m_wall_climb_seam_steer, false );
 		ADD_VARIABLE( float, m_wall_climb_steer_scale, 1.f );
