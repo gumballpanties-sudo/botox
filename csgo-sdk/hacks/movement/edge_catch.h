@@ -54,6 +54,7 @@ namespace n_edge_catch
 		bool m_jb         = false;
 		bool m_jb_plan    = false;
 		bool m_duck       = false;
+		bool m_brake      = false; /* plan ticks wish straight back ( overshoot ), one side */
 		bool m_fail       = false; /* last full search on this lip found nothing */
 		int m_fail_kind   = 0;
 		float m_fail_gz   = 0.f;

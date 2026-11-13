@@ -608,6 +608,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderFloat( "predict time##ecptime", &GET_VARIABLE( g_variables.m_edge_catch_predict_time, float ), 0.05f, 1.f, "%.2f s" );
 						ImGui::SliderFloat( "max reach##ecreach", &GET_VARIABLE( g_variables.m_edge_catch_reach, float ), 0.5f, 64.f, "%.1f u" );
 						ImGui::Checkbox( "duck lift##ecduck", &GET_VARIABLE( g_variables.m_edge_catch_duck, bool ) );
+						ImGui::Checkbox( "air brake##ecbrake", &GET_VARIABLE( g_variables.m_edge_catch_brake, bool ) );
 						ImGui::Checkbox( "visualize##ecviz", &GET_VARIABLE( g_variables.m_edge_catch_visualize, bool ) );
 						if ( GET_VARIABLE( g_variables.m_edge_catch_visualize, bool ) ) {
 							ImGui::ColorEdit4( "outline color##ecvizcolor", &GET_VARIABLE( g_variables.m_edge_catch_visualize_color, c_color ),

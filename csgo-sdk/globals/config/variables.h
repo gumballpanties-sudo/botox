@@ -553,6 +553,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_glow_wave_speed, 0.5f );
 		ADD_VARIABLE( float, m_glow_wave_size, 0.35f );
 		ADD_VARIABLE( float, m_glow_wave_strength, 0.8f );
+		ADD_VARIABLE( bool, m_glow_wave_player, true ); /* wave rides each player's body, not the screen */
 		ADD_VARIABLE( bool, m_glow_pulse, false );
 		ADD_VARIABLE( float, m_glow_pulse_speed, 1.f );
 		ADD_VARIABLE( float, m_glow_pulse_min, 35.f );
@@ -565,6 +566,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_players_stencil_wave_speed, 0.5f );
 		ADD_VARIABLE( float, m_players_stencil_wave_size, 0.35f );
 		ADD_VARIABLE( float, m_players_stencil_wave_strength, 0.8f );
+		ADD_VARIABLE( bool, m_players_stencil_wave_player, true );
 		ADD_VARIABLE( bool, m_inner_glow, false );
 		ADD_VARIABLE( c_color, m_inner_glow_vis_color, c_color( 255, 255, 255, 200 ) );
 		ADD_VARIABLE( c_color, m_inner_glow_invis_color, c_color( 114, 155, 221, 200 ) );
@@ -1233,6 +1235,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_edge_catch_visualize_projected, false );
 		ADD_VARIABLE( float, m_edge_catch_visualize_size, 16.f );
 		ADD_VARIABLE( bool, m_edge_catch_duck, false );
+		ADD_VARIABLE( bool, m_edge_catch_brake, false );
 		ADD_VARIABLE( int, m_edge_bug_sound, 0 );
 		ADD_VARIABLE( std::string, m_edge_bug_sound_custom, "" );
 		ADD_VARIABLE( float, m_edge_bug_sound_volume, 1.f );

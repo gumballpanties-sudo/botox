@@ -74,6 +74,24 @@ static const char k_blur_shader[] =
 	"float2 m=tex2Dlod(s0,float4(uv,0,0)).rg;"
 	"return float4(gauss(uv,float2(c0.x,0),m),saturate(m.r+m.g),1);}";
 
+/* wave coordinate: screen diagonal, or ( on ) height along the nearest player's box ( 0 head .. 1 feet ) plus that
+   player's phase offset, so the sweep rides the body and turning the view never slides it. c15.y boxes in c16.., c48.. */
+#define WAVE_POS_FN                                                                                                              \
+	"float4 c15:register(c15);"                                                                                                  \
+	"float4 pb[32]:register(c16);"                                                                                               \
+	"float4 po[32]:register(c48);"                                                                                               \
+	"float wpos(float2 uv,float on){"                                                                                            \
+	"float t=uv.x*c0.y/c0.x+uv.y;"                                                                                               \
+	"if(on<0.5||c15.y<0.5)return t;"                                                                                             \
+	"float best=1e9;"                                                                                                            \
+	"[loop] for(int i=0;i<32;i++){"                                                                                              \
+	"if(i>=c15.y)break;"                                                                                                         \
+	"float4 b=pb[i];"                                                                                                            \
+	"float2 e=max(b.zw-b.xy,1e-4);"                                                                                              \
+	"float m=max(abs(uv.x-(b.x+b.z)*0.5)/e.x,abs(uv.y-(b.y+b.w)*0.5)/e.y);"                                                      \
+	"if(m<best){best=m;t=(uv.y-b.y)/e.y+po[i].x;}}"                                                                              \
+	"return t;}"
+
 static const char k_glow_shader[] =
 	"sampler2D s0:register(s0);"
 	"float4 c0:register(c0);"
@@ -83,7 +101,7 @@ static const char k_glow_shader[] =
 	"float4 c6:register(c6);"
 	"float4 c7:register(c7);"
 	"float4 c8:register(c8);"
-	"float4 c9:register(c9);" GAUSS_FN
+	"float4 c9:register(c9);" GAUSS_FN WAVE_POS_FN
 	"float3 soft(float3 x){return x*pow(1.0+pow(x,2.625),-0.381);}"
 	"float3 bright(float3 p){float3 e=p*dot(p,1.0);return min(e,pow(max(e,1.0),0.35));}"
 	"float4 main(float2 uv:TEXCOORD0):COLOR0{"
@@ -93,7 +111,7 @@ static const char k_glow_shader[] =
 	"float g=saturate((a-c7.x)*c7.y);"
 	"float4 v=lerp(float4(c5.rgb*c5.a,c5.a),float4(c3.rgb*c3.a,c3.a),g);"
 	"float4 h=lerp(float4(c6.rgb*c6.a,c6.a),float4(c4.rgb*c4.a,c4.a),g);"
-	"float w=0.5+0.5*cos(6.2831853*((uv.x*c0.y/c0.x+uv.y)*c8.z-c8.y));"
+	"float w=0.5+0.5*cos(6.2831853*(wpos(uv,c15.x)*c8.z-c8.y));"
 	"float k=w*w*w*c8.w*c8.x;"
 	"v.rgb=lerp(v.rgb,c9.rgb*v.a,k);"
 	"h.rgb=lerp(h.rgb,c9.rgb*h.a,k);"
@@ -141,11 +159,11 @@ static const char k_columns_shader[] =
 	"float4 c1:register(c1);"
 	"float4 c2:register(c2);"
 	"float4 c12:register(c12);"
-	"float4 c13:register(c13);" COLUMN_DISTANCE_FN
+	"float4 c13:register(c13);" COLUMN_DISTANCE_FN WAVE_POS_FN
 	"float4 main(float2 uv:TEXCOORD0):COLOR0{"
 	"float3 k=dist(uv);"
 	"float4 col=lerp(c2,c1,saturate(0.5+0.5*(k.y-k.x)));"
-	"float w=0.5+0.5*cos(6.2831853*((uv.x*c0.y/c0.x+uv.y)*c12.z-c12.y));"
+	"float w=0.5+0.5*cos(6.2831853*(wpos(uv,c15.z)*c12.z-c12.y));"
 	"col.rgb=lerp(col.rgb,c13.rgb,w*w*w*c12.w*c12.x);"
 	"return float4(col.rgb,col.a*saturate(c0.w+1.0-min(k.x,k.y))*(1.0-k.z));}";
 
@@ -335,19 +353,93 @@ void n_player_stencil::impl_t::run( const view_matrix_t* world_to_screen, const 
 		std::min( std::clamp( GET_VARIABLE( g_variables.m_inner_glow_size, float ), k_min_glow_radius, k_max_glow_radius ) * scale, 31.f );
 	settings.m_inner_bones = settings.m_inner && GET_VARIABLE( g_variables.m_inner_glow_bones, bool );
 
-	if ( settings.m_inner_bones && ( given || g_ctx.m_local ) ) {
-		const view_matrix_t& m = world_to_screen ? *world_to_screen : g_interfaces.m_engine_client->get_world_to_screen_matrix( );
+	const bool anchor_glow    = GET_VARIABLE( g_variables.m_glow_wave, bool ) && GET_VARIABLE( g_variables.m_glow_wave_player, bool );
+	const bool anchor_outline = GET_VARIABLE( g_variables.m_players_stencil_wave, bool ) && GET_VARIABLE( g_variables.m_players_stencil_wave_player, bool );
+	const bool have_view      = given || g_ctx.m_local;
+
+	const view_matrix_t m = !have_view ? view_matrix_t{ } : world_to_screen ? *world_to_screen : g_interfaces.m_engine_client->get_world_to_screen_matrix( );
+
+	const auto project = [ & ]( const c_vector& p, float( &ndc )[ 2 ], float& w ) {
+		w = m[ 3 ][ 0 ] * p.m_x + m[ 3 ][ 1 ] * p.m_y + m[ 3 ][ 2 ] * p.m_z + m[ 3 ][ 3 ];
+		if ( w < 1.f )
+			return false;
+		ndc[ 0 ] = ( m[ 0 ][ 0 ] * p.m_x + m[ 0 ][ 1 ] * p.m_y + m[ 0 ][ 2 ] * p.m_z + m[ 0 ][ 3 ] ) / w;
+		ndc[ 1 ] = ( m[ 1 ][ 0 ] * p.m_x + m[ 1 ][ 1 ] * p.m_y + m[ 1 ][ 2 ] * p.m_z + m[ 1 ][ 3 ] ) / w;
+		return true;
+	};
+
+	/* wave anchor boxes: ndc bounds of each player, preview = the given capsules, live = the collision hull corners */
+	if ( ( anchor_glow || anchor_outline ) && have_view ) {
+		int n = 0;
+
+		const auto add_box = [ & ]( const float( &lo )[ 2 ], const float( &hi )[ 2 ], const float phase ) {
+			if ( n >= settings_t::k_max_boxes )
+				return;
+			settings.m_boxes[ n ][ 0 ]    = lo[ 0 ];
+			settings.m_boxes[ n ][ 1 ]    = lo[ 1 ];
+			settings.m_boxes[ n ][ 2 ]    = hi[ 0 ];
+			settings.m_boxes[ n ][ 3 ]    = hi[ 1 ];
+			settings.m_box_phase[ n ][ 0 ] = phase;
+			++n;
+		};
+
+		if ( given ) {
+			float lo[ 2 ] = { 1e9f, 1e9f }, hi[ 2 ] = { -1e9f, -1e9f };
+			bool any      = false;
+
+			for ( const auto& capsule : *given ) {
+				for ( const c_vector* p : { &capsule.m_a, &capsule.m_b } ) {
+					float ndc[ 2 ], w;
+					if ( !project( *p, ndc, w ) )
+						continue;
+					lo[ 0 ] = std::min( lo[ 0 ], ndc[ 0 ] );
+					lo[ 1 ] = std::min( lo[ 1 ], ndc[ 1 ] );
+					hi[ 0 ] = std::max( hi[ 0 ], ndc[ 0 ] );
+					hi[ 1 ] = std::max( hi[ 1 ], ndc[ 1 ] );
+					any     = true;
+				}
+			}
+
+			if ( any )
+				add_box( lo, hi, 0.f );
+		} else
+			g_entity_cache.enumerate( e_enumeration_type::type_players, [ & ]( c_base_entity* entity ) {
+			if ( !entity || entity == g_ctx.m_local || !entity->is_alive( ) || entity->is_dormant( ) )
+				return;
+
+			const auto renderable = entity->get_client_renderable( );
+			const auto unknown    = renderable ? renderable->get_client_unknown( ) : nullptr;
+			const auto collideable = unknown ? unknown->get_collideable( ) : nullptr;
+			if ( !collideable )
+				return;
+
+			const c_vector mins       = collideable->get_obb_mins( );
+			const c_vector maxs       = collideable->get_obb_maxs( );
+			const matrix3x4_t& frame  = entity->get_coordinate_frame( );
+			float lo[ 2 ] = { 1e9f, 1e9f }, hi[ 2 ] = { -1e9f, -1e9f };
+
+			for ( int i = 0; i < 8; ++i ) {
+				const c_vector corner( ( i & 1 ) ? maxs.m_x : mins.m_x, ( i & 2 ) ? maxs.m_y : mins.m_y, ( i & 4 ) ? maxs.m_z : mins.m_z );
+				float ndc[ 2 ], w;
+				if ( !project( g_math.vector_transform( corner, frame ), ndc, w ) )
+					return; /* a corner behind the camera: no box, the pixel falls to its neighbour or the screen sweep */
+				lo[ 0 ] = std::min( lo[ 0 ], ndc[ 0 ] );
+				lo[ 1 ] = std::min( lo[ 1 ], ndc[ 1 ] );
+				hi[ 0 ] = std::max( hi[ 0 ], ndc[ 0 ] );
+				hi[ 1 ] = std::max( hi[ 1 ], ndc[ 1 ] );
+			}
+
+			add_box( lo, hi, static_cast< float >( entity->get_index( ) ) * 0.17f );
+		} );
+
+		settings.m_wave_anchor[ 0 ] = anchor_glow ? 1.f : 0.f;
+		settings.m_wave_anchor[ 1 ] = static_cast< float >( n );
+		settings.m_wave_anchor[ 2 ] = anchor_outline ? 1.f : 0.f;
+	}
+
+	if ( settings.m_inner_bones && have_view ) {
 		const float focal      = std::sqrt( m[ 1 ][ 0 ] * m[ 1 ][ 0 ] + m[ 1 ][ 1 ] * m[ 1 ][ 1 ] + m[ 1 ][ 2 ] * m[ 1 ][ 2 ] );
 		const float width      = std::clamp( GET_VARIABLE( g_variables.m_inner_glow_bone_width, float ), 10.f, 150.f ) / 100.f;
-
-		const auto project = [ & ]( const c_vector& p, float( &ndc )[ 2 ], float& w ) {
-			w = m[ 3 ][ 0 ] * p.m_x + m[ 3 ][ 1 ] * p.m_y + m[ 3 ][ 2 ] * p.m_z + m[ 3 ][ 3 ];
-			if ( w < 1.f )
-				return false;
-			ndc[ 0 ] = ( m[ 0 ][ 0 ] * p.m_x + m[ 0 ][ 1 ] * p.m_y + m[ 0 ][ 2 ] * p.m_z + m[ 0 ][ 3 ] ) / w;
-			ndc[ 1 ] = ( m[ 1 ][ 0 ] * p.m_x + m[ 1 ][ 1 ] * p.m_y + m[ 1 ][ 2 ] * p.m_z + m[ 1 ][ 3 ] ) / w;
-			return true;
-		};
 
 		const auto add_capsule = [ & ]( const c_vector& a, const c_vector& b, const float radius ) {
 			settings_t::capsule_t capsule{ };
@@ -494,7 +586,9 @@ bool n_player_stencil::impl_t::draw( IDirect3DDevice9* device, IDirect3DSurface9
 	D3DVIEWPORT9 old_viewport{ };
 	RECT old_scissor{ };
 	DWORD fvf = 0;
-	float old_constants[ 14 ][ 4 ]{ };
+	/* c0..c13 settings, c15 wave anchor, c16..c47 player boxes, c48..c79 their phases */
+	constexpr UINT k_constant_count = 80;
+	float old_constants[ k_constant_count ][ 4 ]{ };
 
 	constexpr D3DRENDERSTATETYPE k_states[ ] = { D3DRS_STENCILENABLE,   D3DRS_TWOSIDEDSTENCILMODE, D3DRS_STENCILFUNC,      D3DRS_STENCILREF,
 		                                         D3DRS_STENCILMASK,     D3DRS_STENCILWRITEMASK,    D3DRS_STENCILFAIL,      D3DRS_STENCILZFAIL,
@@ -538,7 +632,7 @@ bool n_player_stencil::impl_t::draw( IDirect3DDevice9* device, IDirect3DSurface9
 	device->GetFVF( &fvf );
 	device->GetViewport( &old_viewport );
 	device->GetScissorRect( &old_scissor );
-	device->GetPixelShaderConstantF( 0, old_constants[ 0 ], 14 );
+	device->GetPixelShaderConstantF( 0, old_constants[ 0 ], k_constant_count );
 	device->GetTexture( 0, &old_texture );
 
 	for ( size_t i = 0; i < std::size( k_states ); ++i ) {
@@ -599,6 +693,25 @@ bool n_player_stencil::impl_t::draw( IDirect3DDevice9* device, IDirect3DSurface9
 	device->SetPixelShaderConstantF( 11, settings.m_inner_invisible, 1 );
 	device->SetPixelShaderConstantF( 12, settings.m_outline_wave, 1 );
 	device->SetPixelShaderConstantF( 13, settings.m_outline_wave_color, 1 );
+	device->SetPixelShaderConstantF( 15, settings.m_wave_anchor, 1 );
+
+	/* player boxes: ndc -> this target's uv through the view rect, like the capsules */
+	if ( const int boxes = static_cast< int >( settings.m_wave_anchor[ 1 ] ); boxes > 0 ) {
+		const float half_width  = 0.5f * static_cast< float >( old_viewport.Width );
+		const float half_height = 0.5f * static_cast< float >( old_viewport.Height );
+		float uv_boxes[ settings_t::k_max_boxes ][ 4 ]{ };
+
+		for ( int i = 0; i < boxes && i < settings_t::k_max_boxes; ++i ) {
+			const float* b     = settings.m_boxes[ i ];
+			uv_boxes[ i ][ 0 ] = ( view_left + ( b[ 0 ] + 1.f ) * half_width ) / width;
+			uv_boxes[ i ][ 1 ] = ( view_top + ( 1.f - b[ 3 ] ) * half_height ) / height;
+			uv_boxes[ i ][ 2 ] = ( view_left + ( b[ 2 ] + 1.f ) * half_width ) / width;
+			uv_boxes[ i ][ 3 ] = ( view_top + ( 1.f - b[ 1 ] ) * half_height ) / height;
+		}
+
+		device->SetPixelShaderConstantF( 16, uv_boxes[ 0 ], boxes );
+		device->SetPixelShaderConstantF( 48, settings.m_box_phase[ 0 ], boxes );
+	}
 
 	device->SetRenderTarget( 0, this->m_msaa_surface ? this->m_msaa_surface : this->m_mask_surface );
 	device->Clear( 0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_ARGB( 0, 0, 0, 0 ), 1.f, 0 );
@@ -739,7 +852,7 @@ bool n_player_stencil::impl_t::draw( IDirect3DDevice9* device, IDirect3DSurface9
 	device->SetViewport( &old_viewport );
 	device->SetScissorRect( &old_scissor );
 
-	device->SetPixelShaderConstantF( 0, old_constants[ 0 ], 14 );
+	device->SetPixelShaderConstantF( 0, old_constants[ 0 ], k_constant_count );
 	device->SetPixelShader( old_pixel_shader );
 	device->SetVertexShader( old_vertex_shader );
 

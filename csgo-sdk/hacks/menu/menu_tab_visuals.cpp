@@ -366,6 +366,8 @@ void n_menu::impl_t::tab_visuals( )
 								                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
 							ImGui::SliderFloat( "wave strength##player glow wave", &GET_VARIABLE( g_variables.m_glow_wave_strength, float ), 0.f,
 							                    1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							if ( !legacy )
+								ImGui::Checkbox( "follow player##player glow wave", &GET_VARIABLE( g_variables.m_glow_wave_player, bool ) );
 						}
 
 						ImGui::Checkbox( "edge pulse##player glow", &GET_VARIABLE( g_variables.m_glow_pulse, bool ) );
@@ -420,6 +422,7 @@ void n_menu::impl_t::tab_visuals( )
 							                    2.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
 							ImGui::SliderFloat( "wave strength##player stencil wave", &GET_VARIABLE( g_variables.m_players_stencil_wave_strength, float ),
 							                    0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::Checkbox( "follow player##player stencil wave", &GET_VARIABLE( g_variables.m_players_stencil_wave_player, bool ) );
 						}
 					},
 					ImVec2( 220.f, -1.f ) );

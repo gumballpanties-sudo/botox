@@ -203,7 +203,7 @@ namespace n_tb
 			if ( ( handle >> 16 ) == ( 1u << 15 ) )
 				return true;
 			const int index = static_cast< int >( handle & 0xFFFF );
-			if ( index >= 1 && index <= 64 && g_interfaces.m_client_entity_list->get< c_base_entity >( index ) == entity )
+			if ( index >= 1 && index <= 64 && g_interfaces.m_client_entity_list->get< c_base_entity >( index ) == entity && entity->is_player( ) )
 				return false;
 			if ( auto* collideable = entity->get_collideable( ) )
 				if ( collideable->get_solid_flags( ) & ( k_fsolid_trigger | k_fsolid_not_solid ) )

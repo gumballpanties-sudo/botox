@@ -2462,7 +2462,7 @@ void n_movement::impl_t::blockbot( c_user_cmd* cmd )
 
 	for ( int i = 1; i < g_interfaces.m_global_vars_base->m_max_clients; i++ ) {
 		auto entity = reinterpret_cast< c_base_entity* >( g_interfaces.m_client_entity_list->get_client_entity( i ) );
-		if ( !entity || entity->is_dormant( ) || !entity->is_alive( ) || entity == g_ctx.m_local )
+		if ( !entity || entity->is_dormant( ) || !entity->is_alive( ) || entity == g_ctx.m_local || !entity->is_player( ) )
 			continue;
 
 		float dist = g_ctx.m_local->get_abs_origin( ).dist_to( entity->get_abs_origin( ) );

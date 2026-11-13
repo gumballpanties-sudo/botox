@@ -261,8 +261,9 @@ int n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool n
 			const c_vector vel  = local->get_velocity( );
 			const float ang     = n_edge_skip::perfect_angle( vel, local->get_surface_friction( ), local->get_max_speed( ) );
 			const float vel_yaw = rad2deg( atan2f( vel.m_y, vel.m_x ) );
-			t.yaw               = neg ? vel_yaw - ang : vel_yaw + ang;
-			t.side              = neg ? -450.f : 450.f;
+			/* brake: side -450 = wish at yaw + 90 = straight back, air accel caps it at ~5.6 u/s per tick ( forward travel -10 u / 15 ticks ) */
+			t.yaw               = m_brake ? vel_yaw + 90.f : neg ? vel_yaw - ang : vel_yaw + ang;
+			t.side              = m_brake || neg ? -450.f : 450.f;
 		}
 		if ( save && k < k_max_snap )
 			m_seed[ side ][ k ] = t;
@@ -306,8 +307,10 @@ bool n_edge_catch::impl_t::family( c_user_cmd* cmd, const bool first_neg )
 		m_best_jb   = m_jb_plan;
 	};
 	const int n_max = std::min( m_miss + 2, m_max_ticks - 1 );
+	/* brake wishes straight back: both sides = the same chain, run one */
+	const int sides = m_brake ? 1 : 2;
 	int full[ 2 ]{ }, n_full[ 2 ]{ };
-	for ( int s = 0; s < 2; s++ ) {
+	for ( int s = 0; s < sides; s++ ) {
 		m_saved[ s ] = 0;
 		full[ s ]    = chain( cmd, m_max_ticks, ( s == 0 ) == first_neg, true, s * k_max_snap );
 		/* prefix count the full chain stands for ( strafes every tick up to the landing ) */
@@ -316,7 +319,7 @@ bool n_edge_catch::impl_t::family( c_user_cmd* cmd, const bool first_neg )
 			keep( n_full[ s ], s );
 	}
 	/* ponytail: full pull misses = that side skipped; a ledge only a shorter pull hits ( narrow, far side ) is lost */
-	for ( int s = 0; s < 2 && !out( ); s++ ) {
+	for ( int s = 0; s < sides && !out( ); s++ ) {
 		if ( !full[ s ] )
 			continue;
 		const bool neg = ( s == 0 ) == first_neg;
@@ -359,6 +362,7 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 	m_jb   = jb_bind( );
 	m_jb_plan = false;
 	m_duck    = false;
+	m_brake   = false;
 	m_view     = cmd->m_view_point;
 	m_fwd0     = cmd->m_forward_move;
 	m_side0    = cmd->m_side_move;
@@ -407,6 +411,12 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 		m_duck = true;
 		found  = family( cmd, m_turn_left );
 	}
+	/* silent plans can't shorten the flight ( strafe = lateral only ): opt-in air brake, last resort, costs speed */
+	if ( miss && !known && !found && GET_VARIABLE( g_variables.m_edge_catch_brake, bool ) && !out( ) ) {
+		m_duck  = false;
+		m_brake = true;
+		found   = family( cmd, m_turn_left );
+	}
 	if ( !known ) {
 		m_fail      = miss && !found && !out( );
 		m_fail_kind = m_kind;
@@ -423,9 +433,10 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 		restore_start( );
 
 	if ( miss && !known )
-		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f evz=%.2f reach=%.1f win=%d turn=%d chains=%d sims=%d us=%lld found=%d last=%d strafe=%d jb=%d/%d duck=%d\n",
+		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f evz=%.2f reach=%.1f win=%d turn=%d chains=%d sims=%d us=%lld found=%d last=%d strafe=%d jb=%d/%d duck=%d brake=%d\n",
 		               m_kind, m_miss, m_ground_z, org0.m_z, vel0.m_z, m_miss_vz, m_reach, m_max_ticks, m_turn_left ? 1 : 0, m_chains, m_sims, m_budget.used_us( ),
-		               found ? 1 : 0, found ? m_last : -1, found ? strafed( ) : 0, m_jb ? 1 : 0, found && m_jb_plan ? 1 : 0, m_duck ? ( found ? 2 : 1 ) : 0 );
+		               found ? 1 : 0, found ? m_last : -1, found ? strafed( ) : 0, m_jb ? 1 : 0, found && m_jb_plan ? 1 : 0, m_duck ? ( found ? 2 : 1 ) : 0,
+		               m_brake ? ( found ? 2 : 1 ) : 0 );
 	if ( !found )
 		return;
 	m_active  = true;

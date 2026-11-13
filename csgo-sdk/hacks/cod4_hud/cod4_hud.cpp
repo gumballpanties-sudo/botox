@@ -1716,7 +1716,7 @@ void n_cod4_hud::impl_t::on_paint_traverse( )
 			if ( i == me )
 				continue;
 			auto* const p = g_interfaces.m_client_entity_list->get< c_base_entity >( i );
-			if ( !p || p->is_dormant( ) || !p->is_alive( ) )
+			if ( !p || p->is_dormant( ) || !p->is_alive( ) || !p->is_player( ) )
 				continue;
 			const int team = p->get_team( );
 			if ( team != 2 && team != 3 )

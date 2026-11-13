@@ -44,6 +44,13 @@ namespace n_player_stencil
 			float m_wave[ 4 ]       = { };
 			float m_wave_color[ 4 ] = { };
 
+			/* wave anchored to each player's body, not the screen: c15 = glow anchor, box count, outline anchor.
+			   boxes = ndc bounds per player ( x0 y0 x1 y1, main thread ), phase = per-player wave offset */
+			static constexpr int k_max_boxes = 32;
+			float m_wave_anchor[ 4 ]              = { };
+			float m_boxes[ k_max_boxes ][ 4 ]     = { };
+			float m_box_phase[ k_max_boxes ][ 4 ] = { };
+
 			bool m_inner                 = false;
 			float m_inner_reach[ 4 ]     = { };
 			float m_inner_visible[ 4 ]   = { };

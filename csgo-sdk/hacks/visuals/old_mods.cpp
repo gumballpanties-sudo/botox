@@ -618,7 +618,7 @@ void n_old_mods::impl_t::hide_gloves( )
 
 	for ( int i = 1; i <= 64; ++i ) {
 		const auto player = g_interfaces.m_client_entity_list->get< c_base_entity >( i );
-		if ( !player || player->is_dormant( ) )
+		if ( !player || player->is_dormant( ) || !player->is_player( ) )
 			continue;
 		log_once( "body", name_of( player ), false );
 		const auto wearables = player->get_wearables_handle( );

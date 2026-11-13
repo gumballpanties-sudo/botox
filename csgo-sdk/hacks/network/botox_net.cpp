@@ -413,7 +413,7 @@ void n_botox_net::impl_t::send_esp( )
 		m_esp_cursor    = index % max_clients + 1;
 
 		const auto player = g_interfaces.m_client_entity_list->get< c_base_entity >( index );
-		if ( !player || player->is_dormant( ) || !player->is_alive( ) )
+		if ( !player || player->is_dormant( ) || !player->is_alive( ) || !player->is_player( ) )
 			continue;
 
 		const c_vector& origin = player->get_abs_origin( );
@@ -1130,7 +1130,7 @@ void n_botox_net::impl_t::apply_gloves( )
 		}
 
 		/* our glove is client-only: never goes dormant / dies with its owner, keeps drawing on the old bones = floats on the map */
-		if ( player->is_dormant( ) || !player->is_alive( ) ) {
+		if ( player->is_dormant( ) || !player->is_alive( ) || !player->is_player( ) ) {
 			if ( glove_state.m_handle )
 				release_glove( i, false );
 			continue;

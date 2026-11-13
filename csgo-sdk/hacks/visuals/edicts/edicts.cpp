@@ -707,7 +707,7 @@ void n_edicts::impl_t::dlights( )
 
 	for ( int index = 1; index <= g_interfaces.m_global_vars_base->m_max_clients; index++ ) {
 		const auto player = g_interfaces.m_client_entity_list->get< c_base_entity >( index );
-		if ( !player || player->is_dormant( ) || !player->is_alive( ) )
+		if ( !player || player->is_dormant( ) || !player->is_alive( ) || !player->is_player( ) )
 			continue;
 
 		const bool is_local = player == g_ctx.m_local;
