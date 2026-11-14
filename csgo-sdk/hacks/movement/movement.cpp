@@ -3399,7 +3399,7 @@ void n_movement::impl_t::strafe_optimizer_mouse( float* x )
 	*x -= add / m_yaw;
 }
 
-float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, float cap, const c_vector* dir );
+float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, float cap, const c_vector* dir, float accel = 0.f );
 
 static bool ps_wall_ahead( const int n, c_vector* normal = nullptr )
 {
@@ -3421,24 +3421,40 @@ static bool ps_wall_ahead( const int n, c_vector* normal = nullptr )
 	return hit;
 }
 
-static bool ps_wall_touch( c_vector& normal )
+/* steep = also tilted walls / props ( n.z != 0 ), callers that need the face exact must skip them */
+static int ps_wall_touches( c_vector ( &normals )[ 4 ], float ( &fracs )[ 4 ], const bool steep = false )
 {
 	const auto col = g_ctx.m_local ? g_ctx.m_local->get_collideable( ) : nullptr;
 	if ( !col )
-		return false;
+		return 0;
 	const c_vector from = g_ctx.m_local->get_origin( );
 	const float dx[ 4 ] = { 0.05f, -0.05f, 0.f, 0.f }, dy[ 4 ] = { 0.f, 0.f, 0.05f, -0.05f };
 	c_trace_filter fil( g_ctx.m_local );
-	float best = 1.f;
+	int cnt = 0;
 	for ( int k = 0; k < 4; k++ ) {
 		trace_t tr;
 		ray_t ray( from, c_vector( from.m_x + dx[ k ], from.m_y + dy[ k ], from.m_z ), col->get_obb_mins( ), col->get_obb_maxs( ) );
 		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &fil, &tr );
-		if ( tr.did_hit( ) && !tr.m_start_solid && tr.m_plane.m_normal.m_z == 0.f && tr.m_fraction < best ) {
-			best   = tr.m_fraction;
-			normal = tr.m_plane.m_normal;
+		const float nz = tr.m_plane.m_normal.m_z;
+		if ( tr.did_hit( ) && !tr.m_start_solid && ( nz == 0.f || ( steep && std::fabsf( nz ) < 0.7f ) ) && tr.m_fraction < 1.f ) {
+			normals[ cnt ] = tr.m_plane.m_normal;
+			fracs[ cnt++ ] = tr.m_fraction;
 		}
 	}
+	return cnt;
+}
+
+static bool ps_wall_touch( c_vector& normal )
+{
+	c_vector ns[ 4 ];
+	float fr[ 4 ];
+	const int cnt = ps_wall_touches( ns, fr );
+	float best    = 1.f;
+	for ( int k = 0; k < cnt; k++ )
+		if ( fr[ k ] < best ) {
+			best   = fr[ k ];
+			normal = ns[ k ];
+		}
 	return best < 1.f;
 }
 
@@ -3452,10 +3468,14 @@ void n_movement::impl_t::pixel_surf( float  )
 
 	static int ticks    = 0;
 	static int unpinned = 0;
+	static c_vector s_surf_n{ }, s_bounce_dir{ };
+	static int s_surf_tick = 0, s_bounce_tick = 0;
+	static int s_leg_n = 0, s_leg_alt = 0, s_leg_cut = 0;
+	static float s_leg_top = 0.f;
 	if ( !g_ctx.m_local )
 		return;
 	if ( !g_ctx.m_local->is_alive( ) ) {
-		ticks = 0;
+		ticks = s_surf_tick = s_bounce_tick = 0;
 		return;
 	}
 	if ( g_ctx.m_local->get_move_type( ) == move_type_noclip || g_ctx.m_local->get_move_type( ) == move_type_ladder ) {
@@ -3542,6 +3562,8 @@ void n_movement::impl_t::pixel_surf( float  )
 		return found;
 	};
 
+	c_vector kp_v{ };
+	int kp_z = -1, kp_gnd = 0;
 	const auto keeps_pin = [ & ]( ) {
 		g_prediction.restore_entity_to_predicted_frame( frame );
 		const int base = g_ctx.m_local->get_tick_base( );
@@ -3551,29 +3573,153 @@ void n_movement::impl_t::pixel_surf( float  )
 			g_prediction.begin( g_ctx.m_local, cmd );
 			g_prediction.end( g_ctx.m_local );
 			ok = !( g_ctx.m_local->get_flags( ) & 1 ) && pinned( g_ctx.m_local->get_velocity( ) );
+			kp_v   = g_ctx.m_local->get_velocity( );
+			kp_z   = z;
+			kp_gnd = g_ctx.m_local->get_flags( ) & 1;
 		}
 		g_prediction.restore_entity_to_predicted_frame( frame );
 		return ok;
 	};
 
 	const bool keys_free = !m_auto_bounce_data.m_owns_cmd && !m_fireman_data.owns_cmd;
+	const bool bounce_on = GET_VARIABLE( g_variables.m_pixel_surf_bounce, bool );
 	const auto hold      = [ & ]( ) -> int {
 		g_prediction.restore_entity_to_predicted_frame( frame );
-		c_vector n{ };
-		if ( !keys_free || !ps_wall_touch( n ) )
+		c_vector ns[ 4 ];
+		float fr[ 4 ];
+		const int cnt = keys_free ? ps_wall_touches( ns, fr, bounce_on ) : 0;
+		int pick      = -1;
+		for ( int k = 0; k < cnt; k++ )
+			if ( ns[ k ].m_z == 0.f && ( pick < 0 || fr[ k ] < fr[ pick ] ) )
+				pick = k;
+		if ( pick < 0 )
 			return 0;
+		/* tick_count resets on map change: a stale stamp ahead of it is never recent */
+		const int tick     = cmd->m_tick_count;
+		const auto recent  = [ tick ]( const int at ) { return tick - at >= 0 && tick - at <= 2; };
+		const auto same    = []( const c_vector& a, const c_vector& b ) { return a.m_z == 0.f && a.m_x * b.m_x + a.m_y * b.m_y > 0.99f; };
+		bool bouncing      = bounce_on && recent( s_bounce_tick );
+		bool on_surf_wall  = false;
+		if ( bounce_on && ( bouncing || recent( s_surf_tick ) ) )
+			for ( int k = 0; k < cnt && !on_surf_wall; k++ )
+				if ( same( ns[ k ], s_surf_n ) ) {
+					pick         = k;
+					on_surf_wall = true;
+				}
+		const c_vector n    = ns[ pick ];
+		const c_vector& vel = g_prediction.backup_data.m_velocity;
+		if ( bounce_on && pinned( vel ) ) {
+			bool one = true;
+			for ( int k = 0; k < cnt; k++ )
+				one &= same( ns[ k ], n );
+			if ( one || on_surf_wall ) {
+				s_surf_n    = n;
+				s_surf_tick = tick;
+			}
+		}
 		const float fwd = cmd->m_forward_move, side = cmd->m_side_move;
 		const float y   = deg2rad( cmd->m_view_point.m_y );
 		const c_vector wish( fwd * std::cosf( y ) + side * std::sinf( y ), fwd * std::sinf( y ) - side * std::cosf( y ), 0.f );
 		const float len = wish.length_2d( );
+		/* AirAccelerate accelspeed of a 450 press ( cs_gamemovement.cpp, surface friction 1 in air ) */
+		const float air_accel = g_convars.float_or( HASH_BT( "sv_airaccelerate" ), 12.f ) * std::min( 450.f, air_wish_speed( cmd ) ) * n_tick::engine_interval( );
 		constexpr float k_leave_dot = 0.5f;
-		if ( len > 0.01f && ( wish.m_x * n.m_x + wish.m_y * n.m_y ) / len > k_leave_dot )
+		if ( len > 0.01f && ( wish.m_x * n.m_x + wish.m_y * n.m_y ) / len > k_leave_dot ) {
+			s_bounce_tick = 0;
 			return 0;
+		}
+		const auto leg_flush = [ ]( ) {
+			if ( s_leg_n )
+				botox_dbg_log( "PSU: bounce leg ticks=%d alt=%d cut=%d top=%.1f", s_leg_n, s_leg_alt, s_leg_cut, s_leg_top );
+			s_leg_n = s_leg_alt = s_leg_cut = 0;
+			s_leg_top = 0.f;
+		};
+		if ( !bouncing )
+			leg_flush( );
+		bool fresh = false;
+		if ( !on_surf_wall )
+			bouncing = false;
+		else if ( vel.length_2d( ) < 1.f && std::fabsf( vel.m_z - pin ) < 0.01f )
+			for ( int k = 0; k < cnt; k++ ) {
+				const float d = ns[ k ].m_x * n.m_x + ns[ k ].m_y * n.m_y;
+				const c_vector a( ns[ k ].m_x - n.m_x * d, ns[ k ].m_y - n.m_y * d, 0.f );
+				const float al = a.length_2d( );
+				if ( al <= 0.5f )
+					continue;
+				leg_flush( );
+				s_bounce_dir = c_vector( a.m_x / al, a.m_y / al, 0.f );
+				bouncing = fresh = true;
+				botox_dbg_log( "PSU: bounce dir=%.2f,%.2f wall=%.2f,%.2f,%.2f surf=%.2f,%.2f wish=%.0f,%.0f", s_bounce_dir.m_x, s_bounce_dir.m_y, ns[ k ].m_x,
+				               ns[ k ].m_y, ns[ k ].m_z, n.m_x, n.m_y, wish.m_x, wish.m_y );
+				break;
+			}
+		if ( bouncing ) {
+			const float sg = -n.m_y * s_bounce_dir.m_x + n.m_x * s_bounce_dir.m_y < 0.f ? -1.f : 1.f;
+			s_bounce_dir   = c_vector( -n.m_y * sg, n.m_x * sg, 0.f );
+			/* hang = frozen float pin ( ref air stuck ): one 450 along press slides off it, fan angle into the face + push size */
+			const float away = rad2deg( std::atan2f( s_bounce_dir.m_y, s_bounce_dir.m_x ) );
+			const float into = rad2deg( std::atan2f( -n.m_y, -n.m_x ) );
+			const float turn = std::remainderf( into - away, 360.f );
+			const float gain = tb_wallstrafe_yaw( n, vel, g_convars.float_or( HASH_BT( "sv_air_max_wishspeed" ), 30.f ), &s_bounce_dir, air_accel );
+			float cy[ 14 ], cf[ 14 ];
+			int nc         = 0;
+			const auto add = [ & ]( const float yw, const float f ) {
+				if ( yw == FLT_MAX )
+					return;
+				for ( int j = 0; j < nc; j++ )
+					if ( cf[ j ] == f && std::fabsf( std::remainderf( yw - cy[ j ], 360.f ) ) < 0.01f )
+						return;
+				cy[ nc ]   = yw;
+				cf[ nc++ ] = f;
+			};
+			constexpr float k_tilt[ 3 ] = { 5.f, 10.f, 20.f };
+			constexpr float k_phi[ 5 ]  = { 0.f, 20.f, 40.f, 60.f, 80.f };
+			constexpr float k_push[ 2 ] = { 450.f, 45.f };
+			add( gain, 450.f );
+			if ( gain != FLT_MAX )
+				for ( const float dl : k_tilt )
+					if ( const float left = std::remainderf( into - gain, 360.f ); std::fabsf( left ) > dl )
+						add( gain + std::copysignf( dl, left ), 450.f );
+			for ( const float f : k_push )
+				for ( const float phi : k_phi )
+					add( away + turn * phi / 90.f, f );
+			/* try 0 runs even past the budget: a cut must never drop a ride mid leg */
+			int i = 0;
+			for ( ; i < nc; i++ ) {
+				if ( i > 0 && budget.expired( ) )
+					break;
+				set_move_toward_yaw( cmd, cy[ i ], cf[ i ] );
+				if ( !keeps_pin( ) ) {
+					if ( fresh )
+						botox_dbg_log( "PSU: bounce try yaw=%.1f f=%.0f t=%d v=%.2f,%.2f,%.3f gnd=%d", cy[ i ], cf[ i ], kp_z, kp_v.m_x, kp_v.m_y, kp_v.m_z, kp_gnd );
+					continue;
+				}
+				const float r       = deg2rad( cy[ i ] - g_ctx.old_view_point.m_y );
+				cmd->m_forward_move = std::cosf( r ) * cf[ i ];
+				cmd->m_side_move    = -std::sinf( r ) * cf[ i ];
+				s_bounce_tick       = tick;
+				++s_leg_n;
+				s_leg_alt += i > 0;
+				s_leg_top = std::max( s_leg_top, vel.length_2d( ) );
+				if ( fresh )
+					botox_dbg_log( "PSU: bounce go yaw=%.1f f=%.0f try=%d", cy[ i ], cf[ i ], i + 1 );
+				return 5;
+			}
+			cmd->m_forward_move = fwd;
+			cmd->m_side_move    = side;
+			if ( i < nc )
+				++s_leg_cut;
+			else {
+				botox_dbg_log( "PSU: bounce none tries=%d", nc );
+				leg_flush( );
+				s_bounce_tick = 0;
+			}
+		}
 		/* strafing into the face = 450 at the best along-wall strafe yaw ( wall eats the into part ), toward the side your
 		   keys point along the wall ( straight in = velocity side ), only if it keeps the pin */
 		constexpr float k_gain_dot = 0.25f;
 		if ( GET_VARIABLE( g_variables.m_pixel_surf_wall_strafe, bool ) && len > 0.01f && -( wish.m_x * n.m_x + wish.m_y * n.m_y ) / len > k_gain_dot ) {
-			const float gy = tb_wallstrafe_yaw( n, g_prediction.backup_data.m_velocity, g_convars.float_or( HASH_BT( "sv_air_max_wishspeed" ), 30.f ), &wish );
+			const float gy = tb_wallstrafe_yaw( n, g_prediction.backup_data.m_velocity, g_convars.float_or( HASH_BT( "sv_air_max_wishspeed" ), 30.f ), &wish, air_accel );
 			if ( gy != FLT_MAX ) {
 				set_move_toward_yaw( cmd, gy, 450.f );
 				if ( keeps_pin( ) ) {
@@ -3611,7 +3757,7 @@ void n_movement::impl_t::pixel_surf( float  )
 	const auto log_hold = [ & ]( const int by ) {
 		data.m_ps_hold |= by != 0 || latched;
 		if ( by != last_by )
-			botox_dbg_log( "PSU: hold by=%s fwd=%.0f side=%.0f vz=%.2f", by == 0 ? "none" : by == 1 ? "keys" : by == 2 ? "wish" : by == 3 ? "wall" : "gain",
+			botox_dbg_log( "PSU: hold by=%s fwd=%.0f side=%.0f vz=%.2f", by == 0 ? "none" : by == 1 ? "keys" : by == 2 ? "wish" : by == 3 ? "wall" : by == 4 ? "gain" : "bounce",
 			               cmd->m_forward_move, cmd->m_side_move, g_prediction.backup_data.m_velocity.m_z );
 		last_by = by;
 	};

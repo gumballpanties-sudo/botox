@@ -168,14 +168,19 @@ void n_menu::impl_t::tab_visuals( )
 					ImGui::OptionPopup(
 						"health bar settings##player health bar settings",
 						[ & ]( ) {
-							ImGui::Combo( "bar side##player health bar", &GET_VARIABLE( g_variables.m_players_health_bar_side, int ),
-						                  "left\0right\0top\0bottom\0corner\0" );
+							ImGui::Combo( "bar style##player health bar", &GET_VARIABLE( g_variables.m_players_health_bar_style, int ),
+						                  "default\0interwebz\0" );
+							const bool interwebz = GET_VARIABLE( g_variables.m_players_health_bar_style, int ) == 1;
 
-							if ( GET_VARIABLE( g_variables.m_players_health_bar_side, int ) == e_bar_side::bar_side_corner )
+							if ( !interwebz )
+								ImGui::Combo( "bar side##player health bar", &GET_VARIABLE( g_variables.m_players_health_bar_side, int ),
+							                  "left\0right\0top\0bottom\0corner\0" );
+
+							if ( !interwebz && GET_VARIABLE( g_variables.m_players_health_bar_side, int ) == e_bar_side::bar_side_corner )
 								ImGui::Combo( "which corner##player health bar", &GET_VARIABLE( g_variables.m_players_health_bar_corner_pick, int ),
 								              "bottom left\0bottom right\0top left\0top right\0" );
 
-							if ( GET_VARIABLE( g_variables.m_players_health_bar_side, int ) == e_bar_side::bar_side_corner &&
+							if ( !interwebz && GET_VARIABLE( g_variables.m_players_health_bar_side, int ) == e_bar_side::bar_side_corner &&
 							     !GET_VARIABLE( g_variables.m_players_box, bool ) ) {
 								ImGui::SliderFloat( "corner rounding##player health bar",
 								                    &GET_VARIABLE( g_variables.m_players_health_bar_corner_rounding, float ), 0.f, 20.f, "%.0f px",
@@ -185,22 +190,26 @@ void n_menu::impl_t::tab_visuals( )
 								                    ImGuiSliderFlags_AlwaysClamp );
 							}
 
-							ImGui::SliderFloat( "bar thickness##player health bar",
-						                        &GET_VARIABLE( g_variables.m_players_health_bar_thickness, float ), 1.f, 10.f, "%.0f px",
-						                        ImGuiSliderFlags_AlwaysClamp );
+							if ( !interwebz ) {
+								ImGui::SliderFloat( "bar thickness##player health bar",
+								                    &GET_VARIABLE( g_variables.m_players_health_bar_thickness, float ), 1.f, 10.f, "%.0f px",
+								                    ImGuiSliderFlags_AlwaysClamp );
 
-							ImGui::Checkbox( "health bar outline", &GET_VARIABLE( g_variables.m_players_health_bar_outline, bool ) );
+								ImGui::Checkbox( "health bar outline", &GET_VARIABLE( g_variables.m_players_health_bar_outline, bool ) );
+							}
 							ImGui::Checkbox( "custom health bar color",
 						                     &GET_VARIABLE( g_variables.m_players_health_bar_custom_color, bool ) );
 
 							if ( GET_VARIABLE( g_variables.m_players_health_bar_custom_color, bool ) ) {
-								ImGui::ColorEdit4( GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool ) ? "top color##health bar color"
-								                                                                                   : "bar color##health bar color",
+								ImGui::ColorEdit4( !interwebz && GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool )
+								                       ? "top color##health bar color"
+								                       : "bar color##health bar color",
 								                   &GET_VARIABLE( g_variables.m_players_health_bar_color, c_color ), color_picker_alpha_flags );
 
-								ImGui::Checkbox( "gradient##health bar", &GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool ) );
+								if ( !interwebz )
+									ImGui::Checkbox( "gradient##health bar", &GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool ) );
 
-								if ( GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool ) )
+								if ( !interwebz && GET_VARIABLE( g_variables.m_players_health_bar_gradient, bool ) )
 									ImGui::ColorEdit4( "bottom color##health bar bottom color",
 									                   &GET_VARIABLE( g_variables.m_players_health_bar_bottom_color, c_color ),
 									                   color_picker_alpha_flags );
@@ -275,7 +284,7 @@ void n_menu::impl_t::tab_visuals( )
 						[ & ]( ) {
 							ImGui::MultiCombo( "flags##player flag list", GET_VARIABLE( g_variables.m_player_flags, std::vector< bool > ),
 						                       { "money", "armor", "helmet", "defuse kit", "defusing", "walking", "scoped", "flashed",
-						                         "carrying bomb", "grabbing hostage", "immune", "wallbangable" },
+						                         "carrying bomb", "grabbing hostage", "immune", "wallbangable", "flashkill" },
 						                       GET_VARIABLE( g_variables.m_player_flags, std::vector< bool > ).size( ) );
 
 							ImGui::ColorEdit4( "flag color##player flag color", &GET_VARIABLE( g_variables.m_players_flags_color, c_color ),

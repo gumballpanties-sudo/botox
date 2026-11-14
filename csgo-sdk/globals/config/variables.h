@@ -17,6 +17,7 @@ enum e_player_flags {
 	player_flag_hostage,
 	player_flag_immunity,
 	player_flag_wallbangable,
+	player_flag_flashkill, /* hp <= 2, flash impact kills. keep last: saved configs index by order */
 	player_flags_max
 };
 
@@ -315,6 +316,27 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_grenade_aim_color, c_color( 255, 200, 60, 255 ) );
 		ADD_VARIABLE( int, m_aimbot_weapon_settings, 0 );
 
+		ADD_VARIABLE( bool, m_triggerbot, false );
+		ADD_VARIABLE( key_bind_t, m_triggerbot_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( int, m_triggerbot_weapon_settings, 0 );
+		/* per e_aim_config slot; hitboxes = slot * 5 + { head, chest, stomach, arms, legs } */
+		ADD_VARIABLE_VECTOR( bool, aim_config_max, m_triggerbot_override, false );
+		ADD_VARIABLE_VECTOR( bool, aim_config_max, m_triggerbot_filter_flash, false );
+		ADD_VARIABLE_VECTOR( int, aim_config_max, m_triggerbot_filter_flash_min, 1 );
+		ADD_VARIABLE_VECTOR( bool, aim_config_max, m_triggerbot_filter_smoke, false );
+		ADD_VARIABLE_VECTOR( bool, aim_config_max, m_triggerbot_filter_teammates, true );
+		ADD_VARIABLE_VECTOR( bool, aim_config_max, m_triggerbot_filter_self_air, false );
+		ADD_VARIABLE_VECTOR( bool, aim_config_max, m_triggerbot_filter_enemy_air, false );
+		ADD_VARIABLE_VECTOR( bool, aim_config_max * 5, m_triggerbot_hitboxes, true );
+		ADD_VARIABLE_VECTOR( int, aim_config_max, m_triggerbot_min_damage, 1 );
+		ADD_VARIABLE_VECTOR( bool, aim_config_max, m_triggerbot_through_walls, false );
+		ADD_VARIABLE_VECTOR( bool, aim_config_max, m_triggerbot_hitchance, false );
+		ADD_VARIABLE_VECTOR( int, aim_config_max, m_triggerbot_hitchance_amount, 0 );
+		ADD_VARIABLE_VECTOR( int, aim_config_max, m_triggerbot_shot_delay, 0 );
+		/* own backtrack, independent of m_backtrack_enable / m_backtrack_time_limit */
+		ADD_VARIABLE_VECTOR( bool, aim_config_max, m_triggerbot_backtrack, false );
+		ADD_VARIABLE_VECTOR( int, aim_config_max, m_triggerbot_backtrack_time, 200 );
+
 		ADD_VARIABLE( float, m_aimbot_pistol_fov, 5.f );
 		ADD_VARIABLE( float, m_aimbot_pistol_smooth, 5.f );
 		ADD_VARIABLE( float, m_aimbot_pistol_rcs, 100.f );
@@ -498,6 +520,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_players_box_fill_gradient, false );
 		ADD_VARIABLE( c_color, m_players_box_fill_bottom_color, c_color( 0, 0, 0, 0 ) );
 		ADD_VARIABLE( bool, m_players_health_bar, false );
+		ADD_VARIABLE( int, m_players_health_bar_style, 0 );
 		ADD_VARIABLE( int, m_players_health_bar_side, e_bar_side::bar_side_left );
 		ADD_VARIABLE( float, m_players_health_bar_thickness, 2.f );
 		ADD_VARIABLE( float, m_players_health_bar_corner_rounding, 6.f );
@@ -1130,6 +1153,7 @@ namespace n_variables
 		ADD_VARIABLE( int, m_pixel_surf_predict_ticks, 12 );
 		ADD_VARIABLE( bool, m_pixel_surf_stay, false );
 		ADD_VARIABLE( bool, m_pixel_surf_wall_strafe, true );
+		ADD_VARIABLE( bool, m_pixel_surf_bounce, false );
 		ADD_VARIABLE( bool, m_tung_surf, false );
 		ADD_VARIABLE( key_bind_t, m_tung_surf_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( bool, m_tung_surf_y6, false );

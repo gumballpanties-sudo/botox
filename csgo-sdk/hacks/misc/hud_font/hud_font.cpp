@@ -265,6 +265,8 @@ std::string n_hud_font::impl_t::add_file( const std::string& display_name )
 		botox_dbg_log( "HUDFONT: \"%s\" is no file (%s), using as family", display_name.c_str( ), path.c_str( ) );
 		family = display_name;
 	} else if ( std::find( m_in_set.begin( ), m_in_set.end( ), path ) == m_in_set.end( ) ) {
+		/* query + substitute only touch the new pattern ( and read config ): fine here. the add is queued */
+		std::vector< void* > faces;
 		int count = 1;
 		for ( int id = 0; id < count; ++id ) { /* .ttc = several faces */
 			void* pattern = api.freetype_query( reinterpret_cast< const unsigned char* >( path.c_str( ) ), id, api.get_blanks( config ), &count );
@@ -279,16 +281,19 @@ std::string n_hud_font::impl_t::add_file( const std::string& display_name )
 			if ( family.empty( ) )
 				family = got;
 
-			const int added = api.font_set_add( set, pattern ); /* set owns the pattern now */
-			botox_dbg_log( "HUDFONT: add %s face %d/%d \"%s\" %s -> %d", path.c_str( ), id, count, got.c_str( ),
-			               pattern_string( api, pattern, "style" ).c_str( ), added );
-			if ( !added )
-				api.pattern_destroy( pattern );
+			botox_dbg_log( "HUDFONT: queue %s face %d/%d \"%s\" %s", path.c_str( ), id, count, got.c_str( ), pattern_string( api, pattern, "style" ).c_str( ) );
+			faces.push_back( pattern );
 		}
 
-		if ( !family.empty( ) ) {
+		if ( family.empty( ) ) {
+			for ( void* pattern : faces )
+				api.pattern_destroy( pattern );
+		} else {
 			m_in_set.push_back( path );
-			m_need_clear = true; /* pango's family list / fontsets predate this face */
+			std::lock_guard< std::mutex > lock( m_job_mutex );
+			m_job_patterns.insert( m_job_patterns.end( ), faces.begin( ), faces.end( ) );
+			m_job_clear  = true; /* pango's family list / fontsets predate this face */
+			m_job_queued = true;
 		}
 	}
 
@@ -307,14 +312,68 @@ std::string n_hud_font::impl_t::add_file( const std::string& display_name )
 		return { };
 	}
 
-	/* what pango gets for this family now */
-	std::string file;
-	const std::string got = match_family( api, config, family, &file );
-	botox_dbg_log( "HUDFONT: match \"%s\" -> \"%s\" %s", family.c_str( ), got.c_str( ), file.c_str( ) );
-	if ( lower( got ) != lower( family ) )
-		g_logger.print( "\"" + family + "\" added but fontconfig still picks \"" + got + "\"\n", "[hud font]" );
+	/* what pango gets for this family: FcFontMatch reads the sets the add writes, so it runs after it, text thread */
+	{
+		std::lock_guard< std::mutex > lock( m_job_mutex );
+		m_job_family = family;
+		m_job_queued = true;
+	}
 
 	return family;
+}
+
+void n_hud_font::impl_t::on_text_thread( void* layout )
+{
+	if ( layout )
+		note_layout( layout );
+
+	if ( !m_job_queued.load( std::memory_order_acquire ) )
+		return;
+
+	std::vector< void* > patterns;
+	std::string family;
+	bool clear      = false;
+	void* fontmap   = m_fontmap.load( );
+	const auto& pga = pango( );
+	{
+		std::lock_guard< std::mutex > lock( m_job_mutex );
+		patterns.swap( m_job_patterns );
+		family.swap( m_job_family );
+		/* no fontmap yet ( attr call before any layout ): the clear waits for the next call. no export: dropped */
+		if ( m_job_clear && ( fontmap || !pga.fc_cache_clear ) ) {
+			clear       = pga.fc_cache_clear != nullptr;
+			m_job_clear = false;
+		}
+		m_job_queued = m_job_clear;
+	}
+
+	/* our own mutex is released: none of this may re-enter a pango detour while we hold it. fc( ) only when add_file
+	   queued work: it built fc( )'s static first ( /Zc:threadSafeInit- = no guard on a first call from two threads ) */
+	const bool fc_work = !patterns.empty( ) || !family.empty( );
+	const auto* api    = fc_work ? &fc( ) : nullptr;
+	void* config       = api && api->ok ? api->get_current( ) : nullptr;
+	void* set          = config ? api->get_fonts( config, k_set_application ) : nullptr;
+	for ( void* pattern : patterns ) {
+		const int added = set ? api->font_set_add( set, pattern ) : 0; /* set owns the pattern now */
+		botox_dbg_log( "HUDFONT: add face -> %d (set %p)", added, set );
+		if ( !added )
+			api->pattern_destroy( pattern );
+	}
+
+	if ( !family.empty( ) && config ) {
+		std::string file;
+		const std::string got = match_family( *api, config, family, &file );
+		botox_dbg_log( "HUDFONT: match \"%s\" -> \"%s\" %s", family.c_str( ), got.c_str( ), file.c_str( ) );
+		if ( lower( got ) != lower( family ) ) {
+			std::lock_guard< std::mutex > lock( m_job_mutex );
+			m_job_warning = "\"" + family + "\" added but fontconfig still picks \"" + got + "\"\n";
+		}
+	}
+
+	if ( clear ) {
+		pga.fc_cache_clear( fontmap );
+		botox_dbg_log( "HUDFONT: pango_fc_font_map_cache_clear %p (text thread)", fontmap );
+	}
 }
 
 void n_hud_font::impl_t::note_fontmap( void* fontmap, int n_families )
@@ -371,18 +430,11 @@ const char* n_hud_font::impl_t::rewrite_request( const char* str, bool with_size
 	return m_hook_out.c_str( );
 }
 
-bool n_hud_font::impl_t::clear_pango_cache( )
+void n_hud_font::impl_t::queue_cache_clear( )
 {
-	void* fontmap   = m_fontmap.load( );
-	const auto& api = pango( );
-	if ( !fontmap || !api.fc_cache_clear ) {
-		botox_dbg_log( "HUDFONT: cache clear waits (fontmap %p cache_clear %p)", fontmap, api.fc_cache_clear );
-		return false;
-	}
-
-	api.fc_cache_clear( fontmap );
-	botox_dbg_log( "HUDFONT: pango_fc_font_map_cache_clear %p", fontmap );
-	return true;
+	std::lock_guard< std::mutex > lock( m_job_mutex );
+	m_job_clear  = true;
+	m_job_queued = true;
 }
 
 bool n_hud_font::impl_t::resolve_root( )
@@ -499,6 +551,14 @@ void n_hud_font::impl_t::on_createmove( )
 {
 	const float now = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_real_time : 0.f;
 
+	std::string warning;
+	{
+		std::lock_guard< std::mutex > lock( m_job_mutex );
+		warning.swap( m_job_warning );
+	}
+	if ( !warning.empty( ) )
+		g_logger.print( warning, "[hud font]" );
+
 	std::string name = g_ctx.m_eject_restoring ? std::string( ) : GET_VARIABLE( g_variables.m_def_hud_font, std::string );
 
 	/* typing in the menu: wait until the name sat still 0.5 s. a list click / apply button skips the wait */
@@ -529,11 +589,11 @@ void n_hud_font::impl_t::on_createmove( )
 	if ( quality != m_hook_quality.load( std::memory_order_relaxed ) ) {
 		m_hook_quality   = quality;
 		m_quality_dirty  = true;
-		m_scale_dirty_at = now + 0.15f;
+		m_scale_dirty_at = g_ctx.m_eject_restoring ? now : now + 0.15f; /* eject pass may be the last call: no debounce */
 	}
 	if ( m_quality_dirty && m_scale_dirty_at > 0.f && now >= m_scale_dirty_at && resolve_root( ) ) {
 		m_quality_dirty = false;
-		clear_pango_cache( );
+		queue_cache_clear( ); /* runs on the first relayout the poke below causes, before its font load */
 		botox_dbg_log( "HUDFONT: quality %d, poke", quality );
 		walk( name.empty( ) ? "off" : "poke", false );
 		m_scale_dirty_at = 0.f;
@@ -553,8 +613,9 @@ void n_hud_font::impl_t::on_createmove( )
 		m_added.clear( );
 		m_family.clear( );
 		m_poke_at        = 0.f;
-		m_xf_dirty       = false;
-		m_scale_dirty_at = 0.f;
+		m_xf_dirty = false;
+		if ( !m_quality_dirty ) /* stock font: a pending quality change keeps its clock, else its cache clear never runs */
+			m_scale_dirty_at = 0.f;
 		return;
 	}
 
@@ -569,14 +630,8 @@ void n_hud_font::impl_t::on_createmove( )
 	if ( m_family.empty( ) )
 		return;
 
-	/* new face in fontconfig -> pango must forget its family list / fontsets first. fontmap arrives from the pango
-	   hooks, so this may wait a frame or two */
-	if ( m_need_clear ) {
-		if ( !clear_pango_cache( ) )
-			return;
-		m_need_clear = false;
-	}
-
+	/* no wait for the queued add + cache clear: the swapped family only reaches pango inside a layout build, and the
+	   build runs the queue ( set_font_description / attr_family_new ) before its font load */
 	read_js_log( );
 
 	if ( m_family != m_applied ) {

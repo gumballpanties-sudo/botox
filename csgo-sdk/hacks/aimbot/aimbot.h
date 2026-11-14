@@ -12,6 +12,8 @@ namespace n_aimbot
 	struct impl_t {
 		void on_create_move_post( );
 
+		void run_triggerbot( );
+
 		void run_backtrack( );
 
 		void run_zeusbug( );
@@ -53,6 +55,9 @@ namespace n_aimbot
 		float m_ns_window_end  = 0.f;
 
 		void nospread_apply( bool on );
+
+		/* real_time the trigger target was first seen, -1 = none ( shot delay ) */
+		float m_trigger_since = -1.f;
 
 		int m_zb_select = 0;
 		int m_zb_cmd    = 0;

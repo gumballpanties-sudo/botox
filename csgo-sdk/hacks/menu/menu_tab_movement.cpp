@@ -639,6 +639,7 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Label( "pixel surf keybind" );
 						ImGui::Keybind( "pixel surf key", &GET_VARIABLE( g_variables.m_pixel_surf_key, key_bind_t ) );
 						ImGui::Checkbox( "strafe into wall##pswallstrafe", &GET_VARIABLE( g_variables.m_pixel_surf_wall_strafe, bool ) );
+						ImGui::Checkbox( "bounce off end wall##psbounce", &GET_VARIABLE( g_variables.m_pixel_surf_bounce, bool ) );
 
 						ImGui::Combo( "detection sound##pssound", &GET_VARIABLE( g_variables.m_pixel_surf_sound, int ),
 					                  "none\0arena switch\0button\0money\0beep\0custom\0" );

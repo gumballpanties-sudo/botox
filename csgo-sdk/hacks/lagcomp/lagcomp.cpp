@@ -190,6 +190,10 @@ void n_lagcomp::impl_t::on_frame_stage_notify( )
 	bool build = true;
 	if ( GET_VARIABLE( g_variables.m_performance, bool ) &&GET_VARIABLE( g_variables.m_performance_skip_unused_records, bool ) )
 		build = GET_VARIABLE( g_variables.m_backtrack_enable, bool ) || GET_VARIABLE( g_variables.m_players_backtrack_trail, bool ) ||
+		        ( GET_VARIABLE( g_variables.m_triggerbot, bool ) && [ ] {
+			        const auto& on = GET_VARIABLE( g_variables.m_triggerbot_backtrack, std::vector< bool > );
+			        return std::find( on.begin( ), on.end( ), true ) != on.end( );
+		        }( ) ) ||
 		        ( GET_VARIABLE( g_variables.m_chams_enable, bool ) &&
 		          n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_backtrack_layers, std::vector< int > ) ) );
 

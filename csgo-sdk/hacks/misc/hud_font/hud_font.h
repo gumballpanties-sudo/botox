@@ -34,6 +34,11 @@ namespace n_hud_font
 		/* pango hooks ( panorama's text thread ) */
 		void note_fontmap( void* fontmap, int n_families );
 		void note_layout( void* layout );
+		/* pango_layout_set_font_description / pango_attr_family_new, BEFORE the original, ONLY when the caller is
+		   panorama_text_pango ( its sites sit inside its global text mutex 0x100a3448, held by every font load / extents /
+		   render there; libpangoft2's get_metrics also calls set_font_description, mid font work = skipped ).
+		   runs the queued FcFontSetAdd + match check + pango_fc_font_map_cache_clear. layout may be null */
+		void on_text_thread( void* layout );
 		/* "Stratum2 Bold, 'Arial Unicode MS,Arial" -> "<family>, 'Arial Unicode MS,Arial". logs every distinct request once */
 		const char* rewrite_request( const char* str, bool with_size );
 		/* pango size ( 1/1024 pt ) x font scale while a font is active; a transform scale would just blow the bitmap up */
@@ -44,7 +49,7 @@ namespace n_hud_font
 	private:
 		bool resolve_root( );
 		std::string add_file( const std::string& display_name ); /* -> family name, "" = fontconfig refused */
-		bool clear_pango_cache( );
+		void queue_cache_clear( );
 		/* mode: "poke" = relayout every text panel + transform, "tick" = transform on untagged rows only, "off" = undo */
 		void walk( const char* mode, bool report );
 		void read_js_log( );
@@ -52,7 +57,16 @@ namespace n_hud_font
 
 		std::atomic< void* > m_fontmap{ nullptr }; /* PangoFT2FontMap panorama made */
 		std::atomic< int > m_list_calls{ 0 };
-		bool m_need_clear = false;
+
+		/* RULE game thread never writes pango / fontconfig state ( no FcFontSetAdd, no FcFontMatch, no cache clear ): a
+		   cache clear from create_move tore pango's hash tables under a font load on the mat queue thread = endless probe
+		   loop, main thread waits on the queue forever ( 11-14 mid-game inject hang ). it queues here, on_text_thread runs it */
+		std::mutex m_job_mutex;
+		std::atomic< bool > m_job_queued{ false };
+		std::vector< void* > m_job_patterns{ }; /* FcFreeTypeQuery faces, FcFontSetAdd takes them */
+		std::string m_job_family{ };            /* FcFontMatch check after the add */
+		bool m_job_clear = false;
+		std::string m_job_warning{ };           /* match miss, printed by the game thread ( g_logger has no lock ) */
 
 		c_ui_engine* m_uiengine = nullptr;
 		c_uipanel* m_root       = nullptr;

@@ -17,7 +17,8 @@ namespace n_auto_wall
 {
 	struct impl_t {
 	public:
-		static float get_damage(const c_vector& point, fire_bullet_data_t* data_out = nullptr );
+		/* any_player: first live player stops the bullet ( triggerbot ), else only is_valid_aim_target */
+		static float get_damage( const c_vector& point, fire_bullet_data_t* data_out = nullptr, bool any_player = false );
 
 		static void scale_damage( const int hit_group, c_base_entity* entity, const float weapon_armor_ratio, const float weapon_head_shot_multiplier,
 		                          float& damage );
@@ -26,7 +27,7 @@ namespace n_auto_wall
 		static float get_record_damage( const c_vector& point, c_base_entity* target, int hit_group );
 
 		static bool simulate_fire_bullet( c_base_entity* weapon, fire_bullet_data_t& data, c_base_entity* record_target = nullptr, int hit_group = 0,
-		                                  const c_vector* record_point = nullptr );
+		                                  const c_vector* record_point = nullptr, bool any_player = false );
 
 	private:
 		static void clip_trace_to_players( const c_vector& abs_start, const c_vector& abs_end, const unsigned int mask, c_trace_filter* filter,

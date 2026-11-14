@@ -819,7 +819,7 @@ void n_menu::impl_t::on_end_scene( )
 		};
 
 		static const menu_tab_t tabs[ ] = {
-			{ "aimbot", { } }, { "visuals", { "esp", "world", "screen" } }, { "movement", { "main", "indicators", "calculator", "recorder", "points" } },
+			{ "aimbot", { "main", "triggerbot" } }, { "visuals", { "esp", "world", "screen" } }, { "movement", { "main", "indicators", "calculator", "recorder", "points" } },
 			{ "misc", { "main", "player list", "cvars" } },   { "inventory", { "weapons", "player" } }, { "fonts", { "indicators", "esp", "chud hud", "default hud", "net graph" } },
 			{ "settings", { "main", "lua" } },
 		};
@@ -1129,7 +1129,7 @@ void n_menu::impl_t::search_page( )
 
 	/* skipped: calculator, recorder, points, player list, cvars, lua = lists + previews, not rows */
 	static const search_tab_t tabs[ ] = {
-		{ "aimbot", 0, { 0 } },        { "visuals", 1, { 0, 1, 2 } }, { "movement", 2, { 0, 1 } },        { "misc", 3, { 0 } },
+		{ "aimbot", 0, { 0, 1 } },     { "visuals", 1, { 0, 1, 2 } }, { "movement", 2, { 0, 1 } },        { "misc", 3, { 0 } },
 		{ "inventory", 4, { 0, 1 } }, { "fonts", 5, { 0, 1, 2, 3, 4 } }, { "settings", 6, { 0 } },
 	};
 
@@ -1203,8 +1203,82 @@ void n_menu::impl_t::search_page( )
 	this->m_subtab = saved_subtab;
 }
 
+static void triggerbot_page( )
+{
+	auto& selected = GET_VARIABLE( g_variables.m_triggerbot_weapon_settings, int );
+	selected       = ImClamp( selected, 0, aim_config_max - 1 );
+
+	const auto check = [ &selected ]( const char* label, const std::uint32_t variable ) {
+		auto& values = GET_VARIABLE( variable, std::vector< bool > );
+		bool value   = values[ selected ];
+		if ( ImGui::Checkbox( label, &value ) )
+			values[ selected ] = value;
+		return value;
+	};
+
+	const auto slider = [ &selected ]( const char* label, const std::uint32_t variable, const int min, const int max, const char* format ) {
+		ImGui::SliderInt( label, &GET_VARIABLE( variable, std::vector< int > )[ selected ], min, max, format );
+	};
+
+	menu_columns_begin( );
+
+	if ( menu_group_begin( "master" ) ) {
+		ImGui::Checkbox( "enable triggerbot", &GET_VARIABLE( g_variables.m_triggerbot, bool ) );
+		ImGui::Keybind( "trigger key", &GET_VARIABLE( g_variables.m_triggerbot_key, key_bind_t ) );
+
+		ImGui::Combo( "weapon##triggerbot", &selected, "general\0pistols\0heavy pistols\0rifles\0smg\0sniper\0scout\0heavy\0" );
+		if ( selected != aim_config_general )
+			check( "override general##triggerbot", g_variables.m_triggerbot_override );
+	}
+	menu_group_end( );
+
+	if ( menu_group_begin( "filters" ) ) {
+		if ( check( "filter flashes", g_variables.m_triggerbot_filter_flash ) ) {
+			ImGui::OptionPopup(
+				"filter flashes settings", [ & ]( ) { slider( "min flash amount", g_variables.m_triggerbot_filter_flash_min, 1, 100, "%d%%" ); },
+				ImVec2( 220.f, -1.f ) );
+		}
+		check( "filter smokes", g_variables.m_triggerbot_filter_smoke );
+		check( "filter teammates", g_variables.m_triggerbot_filter_teammates );
+		check( "filter self in air", g_variables.m_triggerbot_filter_self_air );
+		check( "filter enemy in air", g_variables.m_triggerbot_filter_enemy_air );
+	}
+	menu_group_end( );
+
+	menu_columns_next( );
+
+	if ( menu_group_begin( "targets" ) ) {
+		const std::vector< const char* > hitbox_labels = { "head", "chest", "stomach", "arms", "legs" };
+		auto& all                                      = GET_VARIABLE( g_variables.m_triggerbot_hitboxes, std::vector< bool > );
+		std::vector< bool > hitboxes( all.begin( ) + selected * 5, all.begin( ) + selected * 5 + 5 );
+		ImGui::MultiCombo( "hitboxes##triggerbot", hitboxes, hitbox_labels, 5 );
+		std::copy( hitboxes.begin( ), hitboxes.end( ), all.begin( ) + selected * 5 );
+		slider( "minimum damage", g_variables.m_triggerbot_min_damage, 0, 100, "%d hp" );
+		slider( "shot delay", g_variables.m_triggerbot_shot_delay, 0, 500, "%d ms" );
+		check( "through walls", g_variables.m_triggerbot_through_walls );
+		if ( check( "backtrack##triggerbot", g_variables.m_triggerbot_backtrack ) ) {
+			ImGui::OptionPopup(
+				"triggerbot backtrack settings", [ & ]( ) { slider( "backtrack time##triggerbot", g_variables.m_triggerbot_backtrack_time, 0, 200, "%d ms" ); },
+				ImVec2( 220.f, -1.f ) );
+		}
+		if ( check( "use hitchance", g_variables.m_triggerbot_hitchance ) ) {
+			ImGui::OptionPopup(
+				"use hitchance settings", [ & ]( ) { slider( "hit chance", g_variables.m_triggerbot_hitchance_amount, 0, 100, "%d%%" ); },
+				ImVec2( 220.f, -1.f ) );
+		}
+	}
+	menu_group_end( );
+
+	menu_columns_end( );
+}
+
 void n_menu::impl_t::tab_aimbot( )
 {
+	if ( this->m_subtab == 1 ) {
+		triggerbot_page( );
+		return;
+	}
+
 	struct weapon_config_t {
 		const char* m_name;
 		std::uint32_t m_override, m_fov, m_smooth, m_rcs, m_hitboxes, m_lethal;

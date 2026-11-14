@@ -5,7 +5,7 @@
 
 #include <algorithm>
 
-float n_auto_wall::impl_t::get_damage( const c_vector& point, fire_bullet_data_t* data_out )
+float n_auto_wall::impl_t::get_damage( const c_vector& point, fire_bullet_data_t* data_out, const bool any_player )
 {
 	const auto position = g_ctx.m_local->get_eye_position( );
 
@@ -14,7 +14,7 @@ float n_auto_wall::impl_t::get_damage( const c_vector& point, fire_bullet_data_t
 	data.m_direction        = ( point - position ).normalized( );
 
 	if ( const auto weapon = g_interfaces.m_client_entity_list->get< c_base_entity >( g_ctx.m_local->get_active_weapon_handle( ) );
-	     !weapon || !simulate_fire_bullet( weapon, data ) )
+	     !weapon || !simulate_fire_bullet( weapon, data, nullptr, 0, nullptr, any_player ) )
 		return -1.0f;
 
 	if ( data_out )
@@ -319,7 +319,7 @@ float n_auto_wall::impl_t::get_record_damage( const c_vector& point, c_base_enti
 }
 
 bool n_auto_wall::impl_t::simulate_fire_bullet( c_base_entity* weapon, fire_bullet_data_t& data, c_base_entity* record_target, const int hit_group,
-                                                const c_vector* record_point )
+                                                const c_vector* record_point, const bool any_player )
 {
 	const auto weapon_data = g_interfaces.m_weapon_system->get_weapon_data( weapon->get_item_definition_index( ) );
 	if ( !weapon_data )
@@ -368,7 +368,10 @@ bool n_auto_wall::impl_t::simulate_fire_bullet( c_base_entity* weapon, fire_bull
 
 		/* CCSPlayer::FireBullet: the hit lands first, the 3000u / modifier cut only stops further penetration */
 		if ( data.m_enter_trace.m_hit_group != hitgroup_generic && data.m_enter_trace.m_hit_group != hitgroup_gear &&
-		     data.m_enter_trace.m_hit_entity && data.m_enter_trace.m_hit_entity->is_valid_aim_target( ) ) {
+		     data.m_enter_trace.m_hit_entity &&
+		     ( any_player ? data.m_enter_trace.m_hit_entity->is_player( ) && data.m_enter_trace.m_hit_entity->is_alive( ) &&
+		                        !data.m_enter_trace.m_hit_entity->is_dormant( )
+		                  : data.m_enter_trace.m_hit_entity->is_valid_aim_target( ) ) ) {
 			scale_damage( data.m_enter_trace.m_hit_group, data.m_enter_trace.m_hit_entity, weapon_data->m_armor_ratio,
 			              weapon_data->m_head_shot_multiplier, data.m_current_damage );
 			return true;

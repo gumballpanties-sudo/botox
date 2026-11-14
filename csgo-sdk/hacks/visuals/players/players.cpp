@@ -838,6 +838,7 @@ void n_players::impl_t::players( )
 			flags[ e_player_flags::player_flag_immunity ]     = player.m_god;
 			flags[ e_player_flags::player_flag_wallbangable ] =
 				flag_enabled( e_player_flags::player_flag_wallbangable ) && !shared && this->wallbangable( entity, index );
+			flags[ e_player_flags::player_flag_flashkill ] = player.m_health > 0 && player.m_health <= 2;
 		}
 
 		matrix3x4_t bone_matrix[ 128 ]{ };
@@ -1279,6 +1280,7 @@ void n_players::draw_player( const esp_player_t& player, const projector_t& w2s,
 			{ money_text, false }, { "armor", false },   { "helmet", false },  { "kit", false },
 			{ "defusing", true },  { "walking", false }, { "scoped", false },  { "flashed", true },
 			{ "bomb", true },      { "hostage", false }, { "immune", false },  { "wallbangable", true },
+			{ "flashkill", true },
 		};
 
 		float flag_y = box.m_top;
@@ -1299,8 +1301,64 @@ void n_players::draw_player( const esp_player_t& player, const projector_t& w2s,
 		}
 	}
 
-	if ( GET_VARIABLE( g_variables.m_players_health_bar, bool ) &&
-	     GET_VARIABLE( g_variables.m_players_health_bar_side, int ) == e_bar_side::bar_side_corner ) {
+	if ( GET_VARIABLE( g_variables.m_players_health_bar, bool ) && GET_VARIABLE( g_variables.m_players_health_bar_style, int ) == 1 ) {
+		// interwebz CESP.cpp DrawHealthBox + DrawHeader, same calls same order
+		const double w      = static_cast< double >( box.m_right - box.m_left );
+		const int    hp     = static_cast< int >( std::lround( std::clamp( factor, 0.f, 1.f ) * 100.f ) );
+		const int    x      = box.m_left, y = box.m_bottom + 5;
+		const int    bar_w  = static_cast< int >( 100 * ( w * 0.5 * 0.1 ) * 0.2 ) + 2;
+		const int    fill_w = static_cast< int >( hp * ( w * 0.5 * 0.1 ) * 0.2 ) + 2;
+
+		const c_color esp = GET_VARIABLE( g_variables.m_players_health_bar_custom_color, bool )
+		                        ? GET_VARIABLE( g_variables.m_players_health_bar_color, c_color )
+		                    : GET_VARIABLE( g_variables.m_players_box_visibility_colors, bool )
+		                        ? ( is_player_visible( ) ? GET_VARIABLE( g_variables.m_players_box_visible_color, c_color )
+		                                                 : GET_VARIABLE( g_variables.m_players_box_invisible_color, c_color ) )
+		                        : GET_VARIABLE( g_variables.m_players_box_color, c_color );
+
+		const ImU32 fill_color = esp.get_u32( alpha );
+		const ImU32 dark_color = c_color( static_cast< int >( esp[ 0 ] / 1.5f ), static_cast< int >( esp[ 1 ] / 1.5f ),
+		                                  static_cast< int >( esp[ 2 ] / 1.5f ), static_cast< int >( esp[ 3 ] ) )
+		                             .get_u32( alpha );
+		const ImU32 white = c_color( 255, 255, 255, static_cast< int >( esp[ 3 ] ) ).get_u32( alpha );
+		const ImU32 black = GET_VARIABLE( g_variables.m_players_health_bar_bg_color, c_color ).get_u32( alpha );
+
+		out.emplace_back( e_draw_type::draw_type_callback,
+		                  std::make_any< callback_draw_object_t >( callback_draw_object_t{
+							  [ x, y, bar_w, fill_w, fill_color, dark_color, white, black ]( ImDrawList* draw_list ) {
+								  const auto fill_rgba = [ draw_list ]( const int px, const int py, const int pw, const ImU32 color ) {
+									  draw_list->AddRectFilled( ImVec2( static_cast< float >( px ), static_cast< float >( py ) ),
+								                                ImVec2( static_cast< float >( px + pw ), static_cast< float >( py + 1 ) ), color );
+								  };
+
+								  for ( int i = 0; i < 5; i++ ) {
+									  fill_rgba( x - i, y + i, bar_w, black );
+									  fill_rgba( x - i, y + i, fill_w, fill_color );
+									  fill_rgba( x - 3, y + 3, fill_w, dark_color );
+									  fill_rgba( x - 4, y + 4, fill_w, dark_color );
+								  }
+
+								  fill_rgba( x, y, bar_w, white );
+								  fill_rgba( x - 4, y + 5, bar_w, white );
+
+								  for ( int i = 0; i < 5; i++ )
+									  fill_rgba( x - i, y + i, 1, white );
+								  for ( int i = 1; i < 5; i++ )
+									  fill_rgba( x + bar_w - i, y + i, 1, white );
+							  } } ) );
+
+		if ( GET_VARIABLE( g_variables.m_players_health_text, bool ) && GET_VARIABLE( g_variables.m_players_health_text_style, int ) == 1 &&
+		     health_font ) {
+			const auto text_size = health_font->CalcTextSizeA( health_font->FontSize, FLT_MAX, 0.f, hp_text.c_str( ) );
+
+			out.emplace_back( e_draw_type::draw_type_text,
+			                  std::make_any< text_draw_object_t >(
+								  health_font, c_vector_2d( static_cast< float >( x + bar_w + 2 ), y + 3.f - text_size.y * 0.5f ), hp_text,
+								  health_text_color( c_color( 1.f, 1.f, 1.f ) ).get_u32( alpha ), ImColor( 0.f, 0.f, 0.f, alpha ),
+								  text_flag_dropshadow ) );
+		}
+	} else if ( GET_VARIABLE( g_variables.m_players_health_bar, bool ) &&
+	            GET_VARIABLE( g_variables.m_players_health_bar_side, int ) == e_bar_side::bar_side_corner ) {
 		const float bar_thickness = GET_VARIABLE( g_variables.m_players_health_bar_thickness, float );
 		const bool  bar_outline   = GET_VARIABLE( g_variables.m_players_health_bar_outline, bool );
 		const bool  box_on        = GET_VARIABLE( g_variables.m_players_box, bool );

@@ -56,8 +56,9 @@ static int s_sent_cmd = -1;
 static c_vector s_sent_org{ }, s_sent_vel{ };
 
 // Auto-align also uses this yaw helper. Texturebug itself uses predicted inputs.
-/* dir = along-wall side to strafe toward ( your keys ); null or ~straight into wall = velocity side */
-float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, const float cap, const c_vector* dir )
+/* dir = along-wall side to strafe toward ( your keys ); null or ~straight into wall = velocity side.
+   accel = AirAccelerate accelspeed this tick ( 0 = unknown ): under cap / 2 ( crouched 128 tick ) it binds first, best c = ( cap - accel ) / s */
+float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, const float cap, const c_vector* dir, const float accel )
 {
 	const float nl = std::sqrt( n.m_x * n.m_x + n.m_y * n.m_y );
 	const float nx = n.m_x / nl, ny = n.m_y / nl;
@@ -74,6 +75,10 @@ float tb_wallstrafe_yaw( const c_vector& n, const c_vector& vel, const float cap
 	float c = 1.f, sn = 0.f;
 	if ( s >= cap * 0.5f ) {
 		c  = std::clamp( cap / ( s * 2.f ), -1.f, 1.f );
+		sn = std::sqrt( 1.f - c * c );
+	}
+	if ( accel > 0.f && accel < cap * 0.5f ) {
+		c  = s > cap - accel ? ( cap - accel ) / s : 1.f;
 		sn = std::sqrt( 1.f - c * c );
 	}
 	return rad2deg( std::atan2f( c * ty - sn * ny, c * tx - sn * nx ) );

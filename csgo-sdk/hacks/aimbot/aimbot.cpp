@@ -55,25 +55,9 @@ namespace
 		bool m_sniper = false;
 	};
 
-	const class_vars_t* weapon_class_vars( const short id )
+	/* e_aim_config of a weapon, general = no class */
+	int weapon_group( const short id )
 	{
-		static const class_vars_t pistol{ g_variables.m_aimbot_pistol_override, g_variables.m_aimbot_pistol_fov, g_variables.m_aimbot_pistol_smooth,
-			                              g_variables.m_aimbot_pistol_rcs, g_variables.m_aimbot_pistol_hitboxes, g_variables.m_aimbot_pistol_lethal_body };
-		static const class_vars_t heavy_pistol{ g_variables.m_aimbot_heavy_pistol_override, g_variables.m_aimbot_heavy_pistol_fov,
-			                                    g_variables.m_aimbot_heavy_pistol_smooth, g_variables.m_aimbot_heavy_pistol_rcs,
-			                                    g_variables.m_aimbot_heavy_pistol_hitboxes, g_variables.m_aimbot_heavy_pistol_lethal_body };
-		static const class_vars_t smg{ g_variables.m_aimbot_smg_override, g_variables.m_aimbot_smg_fov, g_variables.m_aimbot_smg_smooth,
-			                           g_variables.m_aimbot_smg_rcs, g_variables.m_aimbot_smg_hitboxes, g_variables.m_aimbot_smg_lethal_body };
-		static const class_vars_t rifle{ g_variables.m_aimbot_rifle_override, g_variables.m_aimbot_rifle_fov, g_variables.m_aimbot_rifle_smooth,
-			                             g_variables.m_aimbot_rifle_rcs, g_variables.m_aimbot_rifle_hitboxes, g_variables.m_aimbot_rifle_lethal_body };
-		static const class_vars_t sniper{ g_variables.m_aimbot_sniper_override, g_variables.m_aimbot_sniper_fov, g_variables.m_aimbot_sniper_smooth,
-			                              g_variables.m_aimbot_sniper_rcs, g_variables.m_aimbot_sniper_hitboxes, g_variables.m_aimbot_sniper_lethal_body,
-			                              true };
-		static const class_vars_t scout{ g_variables.m_aimbot_scout_override, g_variables.m_aimbot_scout_fov, g_variables.m_aimbot_scout_smooth,
-			                             g_variables.m_aimbot_scout_rcs, g_variables.m_aimbot_scout_hitboxes, g_variables.m_aimbot_scout_lethal_body, true };
-		static const class_vars_t heavy{ g_variables.m_aimbot_heavy_override, g_variables.m_aimbot_heavy_fov, g_variables.m_aimbot_heavy_smooth,
-			                             g_variables.m_aimbot_heavy_rcs, g_variables.m_aimbot_heavy_hitboxes, g_variables.m_aimbot_heavy_lethal_body };
-
 		switch ( id ) {
 		case weapon_glock:
 		case weapon_elite:
@@ -83,10 +67,10 @@ namespace
 		case weapon_usp_silencer:
 		case weapon_hkp2000:
 		case weapon_fiveseven:
-			return &pistol;
+			return aim_config_pistol;
 		case weapon_deagle:
 		case weapon_revolver:
-			return &heavy_pistol;
+			return aim_config_heavy_pistol;
 		case weapon_mac10:
 		case weapon_mp7:
 		case weapon_ump45:
@@ -94,7 +78,7 @@ namespace
 		case weapon_bizon:
 		case weapon_mp9:
 		case weapon_mp5sd:
-			return &smg;
+			return aim_config_smg;
 		case weapon_ak47:
 		case weapon_aug:
 		case weapon_famas:
@@ -102,23 +86,64 @@ namespace
 		case weapon_m4a1:
 		case weapon_m4a1_silencer:
 		case weapon_sg556:
-			return &rifle;
+			return aim_config_rifle;
 		case weapon_awp:
 		case weapon_g3sg1:
 		case weapon_scar20:
-			return &sniper;
+			return aim_config_sniper;
 		case weapon_ssg08:
-			return &scout;
+			return aim_config_scout;
 		case weapon_nova:
 		case weapon_xm1014:
 		case weapon_sawedoff:
 		case weapon_m249:
 		case weapon_negev:
 		case weapon_mag7:
-			return &heavy;
+			return aim_config_heavy;
 		default:
-			return nullptr;
+			return aim_config_general;
 		}
+	}
+
+	const class_vars_t* weapon_class_vars( const short id )
+	{
+		static const class_vars_t vars[ aim_config_max ] = {
+			{ },
+			{ g_variables.m_aimbot_pistol_override, g_variables.m_aimbot_pistol_fov, g_variables.m_aimbot_pistol_smooth, g_variables.m_aimbot_pistol_rcs,
+			  g_variables.m_aimbot_pistol_hitboxes, g_variables.m_aimbot_pistol_lethal_body },
+			{ g_variables.m_aimbot_heavy_pistol_override, g_variables.m_aimbot_heavy_pistol_fov, g_variables.m_aimbot_heavy_pistol_smooth,
+			  g_variables.m_aimbot_heavy_pistol_rcs, g_variables.m_aimbot_heavy_pistol_hitboxes, g_variables.m_aimbot_heavy_pistol_lethal_body },
+			{ g_variables.m_aimbot_rifle_override, g_variables.m_aimbot_rifle_fov, g_variables.m_aimbot_rifle_smooth, g_variables.m_aimbot_rifle_rcs,
+			  g_variables.m_aimbot_rifle_hitboxes, g_variables.m_aimbot_rifle_lethal_body },
+			{ g_variables.m_aimbot_smg_override, g_variables.m_aimbot_smg_fov, g_variables.m_aimbot_smg_smooth, g_variables.m_aimbot_smg_rcs,
+			  g_variables.m_aimbot_smg_hitboxes, g_variables.m_aimbot_smg_lethal_body },
+			{ g_variables.m_aimbot_sniper_override, g_variables.m_aimbot_sniper_fov, g_variables.m_aimbot_sniper_smooth, g_variables.m_aimbot_sniper_rcs,
+			  g_variables.m_aimbot_sniper_hitboxes, g_variables.m_aimbot_sniper_lethal_body, true },
+			{ g_variables.m_aimbot_scout_override, g_variables.m_aimbot_scout_fov, g_variables.m_aimbot_scout_smooth, g_variables.m_aimbot_scout_rcs,
+			  g_variables.m_aimbot_scout_hitboxes, g_variables.m_aimbot_scout_lethal_body, true },
+			{ g_variables.m_aimbot_heavy_override, g_variables.m_aimbot_heavy_fov, g_variables.m_aimbot_heavy_smooth, g_variables.m_aimbot_heavy_rcs,
+			  g_variables.m_aimbot_heavy_hitboxes, g_variables.m_aimbot_heavy_lethal_body },
+		};
+
+		const int group = weapon_group( id );
+		return group != aim_config_general ? &vars[ group ] : nullptr;
+	}
+
+	/* trigger config slot: weapon class when it overrides general, else general */
+	int trigger_config( const short id )
+	{
+		const int group = weapon_group( id );
+		return group != aim_config_general && GET_VARIABLE( g_variables.m_triggerbot_override, std::vector< bool > )[ group ] ? group : aim_config_general;
+	}
+
+	bool trig_bool( const std::uint32_t variable, const int config )
+	{
+		return GET_VARIABLE( variable, std::vector< bool > )[ config ];
+	}
+
+	int trig_int( const std::uint32_t variable, const int config )
+	{
+		return GET_VARIABLE( variable, std::vector< int > )[ config ];
 	}
 
 	float scale_fov_with_scope( const float fov_degrees )
@@ -602,6 +627,97 @@ namespace
 		return static_cast< float >( hits ) / spread_samples_t::k_count;
 	}
 
+	/* client.dll LineGoesThroughSmoke( Vector, Vector, bool ), cdecl, vectors by value */
+	bool line_through_smoke( const c_vector& from, const c_vector& to )
+	{
+		using fn_t           = bool( __cdecl* )( c_vector, c_vector, bool );
+		static const auto fn = reinterpret_cast< fn_t >( g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 EC 08 8B 15 ? ? ? ? 0F 57 C0" ) );
+		return fn && fn( from, to, true );
+	}
+
+	/* FX_FireBullets draws per seed 1..256 ( fx_cs_shared.cpp:414 ): x = m_x0 * inaccuracy + m_x1 * spread */
+	struct seed_spread_t {
+		static constexpr int k_count = 256;
+
+		float m_x0[ k_count ]{ }, m_x1[ k_count ]{ }, m_y0[ k_count ]{ }, m_y1[ k_count ]{ };
+		bool m_ok = false;
+	};
+
+	const seed_spread_t& seed_spread( )
+	{
+		static const seed_spread_t table = [ ] {
+			seed_spread_t out{ };
+
+			const auto seed   = reinterpret_cast< void( __cdecl* )( int ) >( g_modules[ VSTDLIB_DLL ].find_export( HASH_BT( "RandomSeed" ) ) );
+			const auto random = reinterpret_cast< float( __cdecl* )( float, float ) >( g_modules[ VSTDLIB_DLL ].find_export( HASH_BT( "RandomFloat" ) ) );
+			if ( !seed || !random )
+				return out;
+
+			for ( int i = 0; i < seed_spread_t::k_count; i++ ) {
+				seed( i + 1 );
+				const float r0 = random( 0.f, 1.f ), t0 = random( 0.f, 6.2831855f );
+				const float r1 = random( 0.f, 1.f ), t1 = random( 0.f, 6.2831855f );
+
+				out.m_x0[ i ] = r0 * std::cos( t0 );
+				out.m_y0[ i ] = r0 * std::sin( t0 );
+				out.m_x1[ i ] = r1 * std::cos( t1 );
+				out.m_y1[ i ] = r1 * std::sin( t1 );
+			}
+
+			out.m_ok = true;
+			return out;
+		}( );
+
+		return table;
+	}
+
+	/* hitgroup -> menu box { head, chest, stomach, arms, legs }, neck = head ( clarity case 7 ) */
+	bool trigger_box_on( const int hit_group, const int config )
+	{
+		int box = -1;
+		switch ( hit_group ) {
+		case hitgroup_head:
+		case hitgroup_neck: box = 0; break;
+		case hitgroup_chest: box = 1; break;
+		case hitgroup_stomach: box = 2; break;
+		case hitgroup_leftarm:
+		case hitgroup_rightarm: box = 3; break;
+		case hitgroup_leftleg:
+		case hitgroup_rightleg: box = 4; break;
+		default: return false;
+		}
+
+		return trig_bool( g_variables.m_triggerbot_hitboxes, config * 5 + box );
+	}
+
+	bool trigger_hit( const c_vector& eye, const c_vector& end, const int config )
+	{
+		fire_bullet_data_t bullet{ };
+		const float damage = g_auto_wall.get_damage( end, &bullet, true );
+		auto* const entity = bullet.m_enter_trace.m_hit_entity;
+
+		if ( damage < 0.f || !entity || !player_list_aim_allowed( entity->get_index( ) ) )
+			return false;
+
+		if ( trig_bool( g_variables.m_triggerbot_filter_smoke, config ) && line_through_smoke( eye, end ) )
+			return false;
+
+		if ( trig_bool( g_variables.m_triggerbot_filter_enemy_air, config ) && !( entity->get_flags( ) & e_flags::fl_onground ) )
+			return false;
+
+		if ( !trig_bool( g_variables.m_triggerbot_through_walls, config ) && bullet.m_penetrate_count < 4 )
+			return false;
+
+		if ( trig_bool( g_variables.m_triggerbot_filter_teammates, config ) && !entity->is_enemy( g_ctx.m_local ) )
+			return false;
+
+		const int dealt = static_cast< int >( damage );
+		if ( dealt < entity->get_health( ) && dealt < trig_int( g_variables.m_triggerbot_min_damage, config ) )
+			return false;
+
+		return trigger_box_on( bullet.m_enter_trace.m_hit_group, config );
+	}
+
 	/* crosshair-nearest box and the box the lock holds keep it unless another lands this much more ( head taps, no head <-> chest flick ) */
 	constexpr float k_hc_keep       = 0.1f;
 	constexpr int k_hc_candidates   = 12;
@@ -954,6 +1070,195 @@ bool n_aimbot::impl_t::shot_leaves( )
 	/* weapon_csbase.cpp:992, m_iShotsFired clears on release */
 	return data->m_full_auto || g_ctx.m_local->get_shots_fired( ) == 0 || weapon->get_burst_shots_remaining( ) > 0 ||
 	       weapon->get_item_definition_index( ) == e_item_definition_index::weapon_revolver;
+}
+
+/* trigger backtrack: deepest record the centre ray runs through, own time limit, trigger_hit filters on it.
+   need >= 0: share of the cone on that record's capsules, else the centre ray alone */
+static n_lagcomp::impl_t::record_t* trigger_record( const c_vector& eye, const c_vector& forward, const c_vector& right, const c_vector& up,
+                                                    const float range, const int config, const cone_t& cone, const int need )
+{
+	const float limit = std::clamp( static_cast< float >( trig_int( g_variables.m_triggerbot_backtrack_time, config ) ) / 1000.f, 0.f,
+	                                n_lagcomp::impl_t::k_max_backtrack ) +
+	                    g_lagcomp.extend( );
+
+	struct pick_t {
+		c_base_entity* m_entity               = nullptr;
+		n_lagcomp::impl_t::record_t* m_record = nullptr;
+		hitbox_resolver_t m_resolver{ };
+		float m_depth = 0.f;
+		int m_hitbox  = -1;
+	} best{ };
+
+	g_entity_cache.enumerate( e_enumeration_type::type_players, [ & ]( c_base_entity* entity ) {
+		if ( !entity || !entity->is_valid_aim_target( ) || !player_list_aim_allowed( entity->get_index( ) ) )
+			return;
+
+		if ( trig_bool( g_variables.m_triggerbot_filter_teammates, config ) && !entity->is_enemy( g_ctx.m_local ) )
+			return;
+
+		if ( trig_bool( g_variables.m_triggerbot_filter_enemy_air, config ) && !( entity->get_flags( ) & e_flags::fl_onground ) )
+			return;
+
+		auto* const records = g_lagcomp.m_records[ entity->get_index( ) ];
+		hitbox_resolver_t resolver{ };
+		if ( !records || !resolver.setup( entity ) )
+			return;
+
+		for ( int i = 0; i < g_ctx.m_max_allocations; i++ ) {
+			auto* const record = &records[ i ];
+			if ( record->m_sim_time <= 0.f || !g_lagcomp.is_valid( record->m_sim_time ) ||
+			     entity->get_simulation_time( ) - record->m_sim_time > limit + 1e-3f )
+				continue;
+
+			int hitbox        = -1;
+			const float depth = ray_depth( resolver, record->m_matrix, eye, forward, hitbox );
+			if ( hitbox >= 0 && depth >= 0.f && ( !best.m_entity || depth > best.m_depth ) )
+				best = { entity, record, resolver, depth, hitbox };
+		}
+	} );
+
+	if ( !best.m_entity )
+		return nullptr;
+
+	const auto* const box = best.m_resolver.m_set->get_hitbox( best.m_hitbox );
+	if ( !box || !trigger_box_on( box->m_group, config ) )
+		return nullptr;
+
+	const float along = ( best.m_resolver.position( best.m_hitbox, best.m_record->m_matrix ) - eye ).dot_product( forward );
+	if ( along <= 0.f || along > range )
+		return nullptr;
+
+	const c_vector point = eye + forward * along;
+
+	if ( trig_bool( g_variables.m_triggerbot_filter_smoke, config ) && line_through_smoke( eye, point ) )
+		return nullptr;
+
+	if ( !trig_bool( g_variables.m_triggerbot_through_walls, config ) && !record_visible( best.m_entity, point, eye ) )
+		return nullptr;
+
+	const int dealt = static_cast< int >( g_auto_wall.get_record_damage( point, best.m_entity, box->m_group ) );
+	if ( dealt < best.m_entity->get_health( ) && dealt < trig_int( g_variables.m_triggerbot_min_damage, config ) )
+		return nullptr;
+
+	if ( need >= 0 ) {
+		const auto& table = seed_spread( );
+		capsules_t body{ };
+		body.build( best.m_resolver, best.m_record->m_matrix );
+
+		bool pass = false;
+		for ( int i = 0, hits = 0; table.m_ok && i < seed_spread_t::k_count && !pass; i++ ) {
+			const float x = table.m_x0[ i ] * cone.m_inaccuracy + table.m_x1[ i ] * cone.m_spread;
+			const float y = table.m_y0[ i ] * cone.m_inaccuracy + table.m_y1[ i ] * cone.m_spread;
+
+			if ( body.hit( eye, ( forward + right * x + up * y ).normalized( ) ) )
+				pass = ++hits >= need;
+
+			if ( hits + seed_spread_t::k_count - 1 - i < need )
+				break;
+		}
+
+		if ( !pass )
+			return nullptr;
+	}
+
+	return best.m_record;
+}
+
+/* 0 = no target, 1 = can't fire yet ( target unknown ), 2 = fire. config = trigger slot of the held gun, record = backtrack shot */
+static int trigger_state( int& config, n_lagcomp::impl_t::record_t*& record )
+{
+	if ( !GET_VARIABLE( g_variables.m_triggerbot, bool ) || !g_input.check_input( &GET_VARIABLE( g_variables.m_triggerbot_key, key_bind_t ) ) )
+		return 0;
+
+	if ( !g_ctx.m_local || !g_ctx.m_cmd || !g_ctx.m_local->is_alive( ) )
+		return 0;
+
+	const auto weapon = g_interfaces.m_client_entity_list->get< c_base_entity >( g_ctx.m_local->get_active_weapon_handle( ) );
+	const auto data   = weapon ? g_interfaces.m_weapon_system->get_weapon_data( weapon->get_item_definition_index( ) ) : nullptr;
+	if ( !data || !data->is_gun( ) )
+		return 0;
+
+	config = trigger_config( weapon->get_item_definition_index( ) );
+
+	/* m_flFlashOverlayAlpha = m_flFlashMaxAlpha - 0x8 ( c_cs_player.h ). NaN ( max 0 ) blocks, as clarity */
+	const float& max_alpha = g_ctx.m_local->get_flash_max_alpha( );
+	const float flashed    = *reinterpret_cast< const float* >( reinterpret_cast< std::uintptr_t >( &max_alpha ) - 0x8 ) / max_alpha * 100.f;
+	if ( trig_bool( g_variables.m_triggerbot_filter_flash, config ) &&
+	     !( flashed < static_cast< float >( trig_int( g_variables.m_triggerbot_filter_flash_min, config ) ) ) )
+		return 0;
+
+	if ( trig_bool( g_variables.m_triggerbot_filter_self_air, config ) && !( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) )
+		return 0;
+
+	/* r8: fire ready time = FLT_MAX until attack is held ( ItemPostFrame_RevolverResetHaulback ), so hold through the haul-back */
+	if ( weapon->get_item_definition_index( ) == e_item_definition_index::weapon_revolver ) {
+		const float server_time = g_interfaces.m_global_vars_base->m_interval_per_tick * static_cast< float >( g_ctx.m_local->get_tick_base( ) );
+		if ( weapon->get_ammo( ) <= 0 || g_ctx.m_local->get_next_attack( ) > server_time || weapon->get_next_primary_attack( ) > server_time )
+			return 1;
+	} else if ( !g_ctx.m_local->can_shoot( weapon ) )
+		return 1;
+
+	const c_vector eye = g_ctx.m_local->get_eye_position( );
+
+	c_vector forward{ }, right{ }, up{ };
+	g_math.angle_vectors( g_ctx.m_cmd->m_view_point, &forward, &right, &up );
+
+	const bool hitchance = trig_bool( g_variables.m_triggerbot_hitchance, config );
+	const cone_t cone    = hitchance ? weapon_cone( weapon ) : cone_t{ };
+	const int need = hitchance ? static_cast< int >( static_cast< float >( trig_int( g_variables.m_triggerbot_hitchance_amount, config ) ) / 100.f * 256.f ) : -1;
+
+	bool pass = false;
+	if ( !hitchance )
+		pass = trigger_hit( eye, eye + forward * data->m_range, config );
+	else {
+		const auto& table = seed_spread( );
+
+		for ( int i = 0, hits = 0; table.m_ok && i < seed_spread_t::k_count && !pass; i++ ) {
+			const float x = table.m_x0[ i ] * cone.m_inaccuracy + table.m_x1[ i ] * cone.m_spread;
+			const float y = table.m_y0[ i ] * cone.m_inaccuracy + table.m_y1[ i ] * cone.m_spread;
+
+			if ( trigger_hit( eye, eye + ( forward + right * x + up * y ).normalized( ) * data->m_range, config ) )
+				pass = ++hits >= need;
+
+			if ( hits + seed_spread_t::k_count - 1 - i < need )
+				break;
+		}
+	}
+
+	if ( !pass && trig_bool( g_variables.m_triggerbot_backtrack, config ) )
+		pass = ( record = trigger_record( eye, forward, right, up, data->m_range, config, cone, need ) ) != nullptr;
+
+	return pass ? 2 : 0;
+}
+
+void n_aimbot::impl_t::run_triggerbot( )
+{
+	int config                          = aim_config_general;
+	n_lagcomp::impl_t::record_t* record = nullptr;
+	const int state                     = trigger_state( config, record );
+	if ( state == 0 ) {
+		m_trigger_since = -1.f;
+		return;
+	}
+
+	if ( state == 1 )
+		return;
+
+	const float now = g_interfaces.m_global_vars_base->m_real_time;
+	if ( m_trigger_since < 0.f )
+		m_trigger_since = now;
+
+	if ( ( now - m_trigger_since ) * 1000.f < static_cast< float >( trig_int( g_variables.m_triggerbot_shot_delay, config ) ) )
+		return;
+
+	g_ctx.m_cmd->m_buttons |= in_attack;
+
+	/* run_backtrack bails once m_shot is set, so this record keeps the tick */
+	if ( record ) {
+		g_lagcomp.commit_shot( record );
+		botox_dbg_log( "TRIG: bt ent=%d age=%.0fms tick=%d", record->m_player, ( g_lagcomp.server_time( ) - record->m_sim_time ) * 1000.f,
+		               g_ctx.m_cmd->m_tick_count );
+	}
 }
 
 void n_aimbot::impl_t::on_create_move_post( )

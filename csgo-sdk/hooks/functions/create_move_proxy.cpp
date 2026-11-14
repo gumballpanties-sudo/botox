@@ -456,6 +456,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 
 		{
 			PERF_ZONE( zone_cmd_aimbot );
+			g_aimbot.run_triggerbot( );
 			g_aimbot.on_create_move_post( );
 			g_grenade_aim.on_create_move( );
 		}
