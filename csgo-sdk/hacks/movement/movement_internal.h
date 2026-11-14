@@ -8,6 +8,7 @@
 #include "../../globals/interfaces/interfaces.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 void CorrectMovement( c_user_cmd* cmd, c_angle wish_angle, c_angle old_angles );
 void start_movement_fix( c_user_cmd* cmd );
@@ -19,8 +20,18 @@ extern bool should_align;
 extern int aa_gate_skips;
 extern int aa_reach_skips;
 extern int aa_fail_skips;
-enum e_aa_out { aa_out_near, aa_out_face, aa_out_away, aa_out_angle, aa_out_pin, aa_out_touch, aa_out_miss, aa_out_fine, aa_out_park, aa_out_unstick, aa_out_keep, aa_out_tb, aa_out_stomp, aa_out_park_off, aa_out_slant, aa_out_lip, aa_out_pj, aa_out_count };
+enum e_aa_out { aa_out_near, aa_out_face, aa_out_away, aa_out_angle, aa_out_pin, aa_out_touch, aa_out_miss, aa_out_fine, aa_out_park, aa_out_unstick, aa_out_keep, aa_out_tb, aa_out_stomp, aa_out_park_off, aa_out_slant, aa_out_lip, aa_out_pj, aa_out_prop, aa_out_guard, aa_out_count };
 extern int aa_outs[ aa_out_count ];
+
+/* auto align, both styles. prop = studio hull ( .phy convex at any yaw, vphysics trace ): a press meets it on a corner and wedges,
+   and its traces split client vs server. brush ents ( func_brush, doors ) are brushes = walls */
+inline bool aa_prop( const trace_t& t ) { return t.surface.m_name && strstr( t.surface.m_name, "**studio**" ); }
+/* slanted = non-axial face: hull vs plane dot rounds per build ( 10-07 23:40 log plan 0.000036 got 0.001072 ), a hull left inside the
+   DIST_EPSILON shell there is a coin flip for the server's end-pos stuck box ( gamemovement.cpp TryPlayerMove ) */
+inline bool aa_slanted( const c_vector& n ) { return std::fminf( std::fabsf( n.m_x ), std::fabsf( n.m_y ) ) > 1e-3f; }
+/* this tick's wall can wedge the AABB ( slanted face = corner contact, or a prop in the ring ). only then is an xy 0 pin a stuck:
+   on a square face a head-on pixelsurf zeroes xy too ( wall clip + lip clip, crease d <= 0 ). set by the styles, read by aa_guard */
+extern bool aa_wedge_risk;
 
 extern bool g_air_stuck_noclip_active;
 extern bool g_air_stuck_owns_cmd;

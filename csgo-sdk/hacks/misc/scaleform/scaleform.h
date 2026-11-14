@@ -3,6 +3,7 @@
 #include "../../../globals/includes/includes.h"
 
 #include <cstdint>
+#include <deque>
 #include <string>
 
 template< auto V >
@@ -44,6 +45,8 @@ namespace n_scaleform
 		void ammo_pip_color( );
 
 		void weapon_icon_color( );
+
+		void air_kill_icon( );
 
 		void keep_killfeed( );
 
@@ -89,6 +92,11 @@ namespace n_scaleform
 		bool m_should_update_winpanel         = false;
 		bool m_should_update_deathnotices     = false;
 		bool m_killfeed_round_reset           = false;
+
+		// air kill icon: one entry per player_death since the last pass ( true = killer off ground ), game thread only
+		std::deque< bool > m_air_kills{ };
+		bool m_air_primed = false; // rows older than the feature are stamped as seen
+		float m_air_hold_until = 0.f;
 
 		// set by menu (render thread), consumed in on_createmove: panorama is game thread only
 		bool m_should_dump_panels = false;

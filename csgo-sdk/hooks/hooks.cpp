@@ -187,6 +187,15 @@ bool n_hooks::impl_t::on_attach( )
 	initialise_hook( m_world_to_screen_matrix, safe_vfunc( g_interfaces.m_engine_client, 37 ), &n_detoured_functions::world_to_screen_matrix,
 	                 "IVEngineClient::WorldToScreenMatrix()" );
 
+	/* `view` global off CHLClient::RenderView ( mov ecx,[view] ), slot 6 = CViewRender::RenderView( view, hud view, clear, what ), ret 0x10 */
+	{
+		void* view_render = nullptr;
+		if ( unsigned char* site = g_modules[ CLIENT_DLL ].find_pattern( "8B 0D ? ? ? ? FF 75 0C 8B 45 08" ) )
+			view_render = **reinterpret_cast< void*** >( site + 2 );
+
+		initialise_hook( m_render_view, safe_vfunc( view_render, 6 ), &n_detoured_functions::render_view, "CViewRender::RenderView()" );
+	}
+
 	initialise_hook( m_glow_effect_spectator, g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 EC 14 53 8B 5D 0C 56 57 85 DB 74" ),
 	                 &n_detoured_functions::glow_effect_spectator, "CCSPlayer::GlowEffectSpectator()" );
 

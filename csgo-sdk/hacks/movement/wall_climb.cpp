@@ -254,7 +254,18 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		m_ground_cmd = cmd->m_command_number, m_steer.valid = m_steer.steer = false;
 	if ( local->get_flags( ) & fl_onground )
 		m_ground_z = local->get_abs_origin( ).m_z;
-	if ( !g_input.check_input( &GET_VARIABLE( g_variables.m_wall_climb_key, key_bind_t ) ) ) {
+	// key edge: 11-13 log, bind went up 2-5 ticks into every hop ( key held ), no input path drops a held key. vk + style + raw state name it
+	auto& bind     = GET_VARIABLE( g_variables.m_wall_climb_key, key_bind_t );
+	const bool key = g_input.check_input( &bind );
+	static bool s_key = false;
+	if ( key != s_key ) {
+		s_key = key;
+		const int vk = bind.m_key & 0xff;
+		botox_dbg_log( "WC KEY: %s vk=%d style=%d state=%d seq=%u g=%d air=%d blocked=%d", key ? "down" : "up", bind.m_key, bind.m_key_style,
+		               static_cast< int >( g_input.m_key_state[ vk ] ), g_input.m_release_seq[ vk ], ( local->get_flags( ) & fl_onground ) != 0,
+		               cmd->m_command_number - m_ground_cmd, g_input.keys_blocked( ) ? 1 : 0 );
+	}
+	if ( !key ) {
 		m_holding = false;
 		return;
 	}

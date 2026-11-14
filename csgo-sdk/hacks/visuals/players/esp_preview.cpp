@@ -238,16 +238,16 @@ namespace
 		*job->m_capsules = n_players::hitbox_capsules( agent, 0, s_bones, job->m_agent_bones );
 		job->m_agent     = agent;
 	}
+}
 
-	IDirect3DTexture9* raw_texture( c_texture* texture )
-	{
-		if ( !texture )
-			return nullptr;
+IDirect3DTexture9* n_esp_preview::raw_texture( c_texture* texture )
+{
+	if ( !texture )
+		return nullptr;
 
-		/* CTexture::m_pTextureHandles +0x50 ( GetTextureHandle reads it ), handle = shaderapi Texture_t*, its d3d texture +0xC */
-		std::uint8_t** const handles = *reinterpret_cast< std::uint8_t*** >( reinterpret_cast< std::uint8_t* >( texture ) + 0x50 );
-		return handles && handles[ 0 ] ? *reinterpret_cast< IDirect3DTexture9** >( handles[ 0 ] + 0xC ) : nullptr;
-	}
+	/* CTexture::m_pTextureHandles +0x50 ( GetTextureHandle reads it ), handle = shaderapi Texture_t*, its d3d texture +0xC */
+	std::uint8_t** const handles = *reinterpret_cast< std::uint8_t*** >( reinterpret_cast< std::uint8_t* >( texture ) + 0x50 );
+	return handles && handles[ 0 ] ? *reinterpret_cast< IDirect3DTexture9** >( handles[ 0 ] + 0xC ) : nullptr;
 }
 
 /* one step per call ( paint, <= 60 a second ): sig scans, target, each mdl, finish. false until ready */

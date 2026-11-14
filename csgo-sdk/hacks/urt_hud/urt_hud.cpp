@@ -1634,6 +1634,7 @@ void n_urt_hud::impl_t::on_event( game_event_t* event )
 				o.m_weapon = wp_knife;
 			if ( auto* a = g_interfaces.m_client_entity_list->get< c_base_entity >( attacker ) )
 				o.m_attacker_health = std::clamp( a->get_health( ), 0, 100 );
+			o.m_air = n_air_wings::killer_in_air( attacker, victim );
 		}
 		// cg_drawKillLog >= 5 place: teammates of the reference player with a higher score
 		const int ref = o.m_me_attacker ? attacker : victim;

@@ -2,6 +2,7 @@
 #include "../../globals/includes/includes.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/movement/movement.h"
+#include "../../hacks/visuals/players/players.h"
 #include "../../hacks/visuals/screen/ambient_occlusion.h"
 #include "../../hacks/visuals/screen/bloom.h"
 #include "../../hacks/visuals/screen/depth_of_field.h"
@@ -9,6 +10,7 @@
 #include "../../hacks/visuals/screen/depth_warp.h"
 #include "../../hacks/visuals/screen/flip_world.h"
 #include "../../hacks/visuals/screen/player_stencil.h"
+#include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../../hacks/visuals/screen/reflections.h"
 #include "../../hacks/visuals/screen/true_motion_blur.h"
 #include "../../hacks/web/websurface.h"
@@ -21,6 +23,10 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 
 	HOOK_SCOPE_OR_BAIL( original( ecx, edx, setup ) );
 
+	/* ClientModeCSNormal::DoPostScreenSpaceEffects = glow only: a second glow pass a frame doubles its pulse / health fades */
+	if ( g_rear_mirror.drawing( ) )
+		return;
+
 	original( ecx, edx, setup );
 
 	if ( setup ) {
@@ -31,7 +37,7 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 	// inject splash up: no screen pass (their first shader builds stall frames)
 	const bool passes = !boot_screen_active( );
 
-	if ( passes )
+	if ( passes && n_players::esp_on( ) )
 		g_player_stencil.after_glow( );
 
 	PERF_ZONE( zone_screen_pass );

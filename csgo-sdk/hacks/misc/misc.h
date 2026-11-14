@@ -42,6 +42,10 @@ namespace n_misc
 	};
 	std::vector< clantag_frame_t > parse_clantag_frames( const std::string& value, float fallback_hold );
 	std::string join_clantag_frames( const std::vector< clantag_frame_t >& frames );
+	/* engine shows broken utf-8 as '?': keeps valid code points only ( no U+FFFD ), cesu-8 pairs joined, controls -> space */
+	std::string clantag_clean( const std::string& text );
+	/* server keeps 15 bytes ( MAX_CLAN_TAG_LENGTH 16 ) */
+	constexpr size_t k_clantag_bytes = 15;
 
 	/* trimmed, empties dropped */
 	std::vector< std::string > split_cvars( const std::string& value, char separator );

@@ -47,15 +47,21 @@ namespace
 
 	/* bounce align ( clarity cfg_misc_bounce_auto_align: its bounce sim aligns into walls within 0.1u ). per cmd */
 	bool g_ab_align = false;
-	constexpr float k_lookahead_time = 1.f; /* hard cap, menu reach ends it first */
+	constexpr float k_lookahead_time = 2.f; /* hard cap = k_fly_max, menu reach ends it first */
 	constexpr float k_lookahead_step = 0.03125f;
+	constexpr float k_lookahead_gap  = 8.f;  /* u of xy between scans: slow = fewer steps, standing still = none ( was 32 scans of one spot ) */
+	constexpr int k_scan_faces       = 4;    /* under scan: sloped faces outside the top group, each its own plan */
+	constexpr float k_fine_above     = 24.f; /* flight: per tick + ground trace only this close over the target z */
+	constexpr float k_drop_min_pay   = 100.f; /* drop in: a face paying under this is trim, not a bounce ( slider raises it ) */
+	constexpr int k_wide_flights     = 6;
 	constexpr float k_wide_rings[ ]   = { 36.f, 54.f, 72.f };
 	constexpr int k_wide_ring_rays[ ] = { 16, 20, 24 };
 	constexpr int k_wide_max          = 16 + 20 + 24;
 	/* brake curve runs at this share of the modelled air authority: real authority 25% under the model ( stamina/duck/0.25 band
 	   read wrong, server accel ) still stops ON the spot. cost = brake starts ~1.2x earlier, a few ticks of hover */
 	constexpr float k_brake_margin    = 0.75f;
-	/* scans ( lookahead / wide ) stop while one flight still fits: a 1 s flight = one hull trace per tick ( snap forces 1-tick steps ) */
+	/* scans ( lookahead / wide ) stop while one flight still fits. floor only: the real reserve = longest flight timed this cmd
+	   ( snap = move + ground trace per tick, a 1 s flight is ~130 hull traces at 64 ) */
 	constexpr long long k_fly_reserve_us = 1000ll;
 	constexpr float k_aim_span        = 8.f;
 	constexpr int k_aim_steps         = 6;
@@ -286,8 +292,16 @@ namespace
 		return a.flat && b.flat && std::fabs( a.z - b.z ) > k_refine_dz;
 	}
 
+	bool ab_same_plane( const ab_hit_t& a, const ab_hit_t& b )
+	{
+		return a.m_normal.dot_product( b.m_normal ) >= k_same_face && std::fabs( ( a.m_pos - b.m_pos ).dot_product( b.m_normal ) ) < 1.f;
+	}
+
+	/* out = best face of the top group ( what a straight fall meets ). faces = the other slopes the rays saw: the ring is 8u wider
+	   than the hull, so a ledge / wall trim beside you is "top" and used to hide the slope far under you */
 	bool ab_scan_below( const c_vector& at, const float radius, const int rays, const float depth, ab_hit_t& out,
-	                    c_vector* patch_avg = nullptr, const n_tick::c_sim_budget* budget = nullptr )
+	                    c_vector* patch_avg = nullptr, const n_tick::c_sim_budget* budget = nullptr, ab_hit_t* faces = nullptr,
+	                    int* n_faces = nullptr )
 	{
 		constexpr float two_pi   = 6.28318530717958647692f;
 		constexpr int k_max_rays = 64;
@@ -365,6 +379,19 @@ namespace
 				}
 			}
 			*patch_avg = sum / static_cast< float >( sum_count );
+		}
+
+		if ( faces ) {
+			*n_faces = 0;
+			for ( int i = 0; i < count && *n_faces < k_scan_faces; ++i ) {
+				if ( hits[ i ].m_normal.m_z > k_min_face_nz || ab_same_plane( hits[ i ], out ) )
+					continue;
+				bool dup = false;
+				for ( int j = 0; j < *n_faces && !dup; ++j )
+					dup = ab_same_plane( hits[ i ], faces[ j ] );
+				if ( !dup )
+					faces[ ( *n_faces )++ ] = hits[ i ];
+			}
 		}
 
 		return true;
@@ -549,10 +576,10 @@ namespace
 	}
 
 	/* drop in: rings beside us, each ray hit its own patch ( the "highest face" rule only holds under the hull ).
-	   hull must fly there level ( no patch through a wall ). best analytic first, first whose flight pays ( accept ) wins */
+	   hull must fly there level ( no patch through a wall ). best analytic first, best FLOWN wins ( one flight per face ) */
 	template < class A >
 	bool ab_plan_wide( const c_vector& origin, const c_vector& velocity, const float need, const float reach, const c_vector& mins,
-	                   const c_vector& maxs, const n_tick::c_sim_budget& budget, A&& accept, ab_plan_t& out )
+	                   const c_vector& maxs, const n_tick::c_sim_budget& budget, const long long& reserve, A&& accept, ab_plan_t& out )
 	{
 		constexpr float two_pi = 6.28318530717958647692f;
 		constexpr int k_rings  = static_cast< int >( sizeof( k_wide_rings ) / sizeof( k_wide_rings[ 0 ] ) );
@@ -576,7 +603,7 @@ namespace
 			const int rays = k_wide_ring_rays[ ri ];
 			ab_ray_t ring[ 24 ];
 			int cast = 0;
-			for ( ; cast < rays && !budget.cannot_fit( k_fly_reserve_us ); ++cast ) {
+			for ( ; cast < rays && !budget.cannot_fit( reserve ); ++cast ) {
 				const float ang = ( static_cast< float >( cast ) + ( ri & 1 ? 0.5f : 0.f ) ) / static_cast< float >( rays ) * two_pi;
 				const c_vector start( origin.m_x + std::cos( ang ) * r, origin.m_y + std::sin( ang ) * r, origin.m_z + 2.f );
 
@@ -590,7 +617,7 @@ namespace
 				offer( ab_make_hit( tr ) );
 			}
 
-			for ( int j = 0; j < rays && n_ref < k_refine_wide && cast == rays && !budget.cannot_fit( k_fly_reserve_us ); ++j ) {
+			for ( int j = 0; j < rays && n_ref < k_refine_wide && cast == rays && !budget.cannot_fit( reserve ); ++j ) {
 				const int k = ( j + 1 ) % rays;
 				if ( !ab_lip( ring[ j ], ring[ k ] ) )
 					continue;
@@ -603,23 +630,32 @@ namespace
 
 		std::sort( cands, cands + count, [ ]( const ray_cand_t& a, const ray_cand_t& b ) { return a.score > b.score; } );
 
-		for ( int i = 0; i < count && !budget.cannot_fit( k_fly_reserve_us ); ++i ) {
+		ab_hit_t won{ };
+		int flights = 0;
+		for ( int i = 0; i < count && flights < k_wide_flights && !budget.cannot_fit( reserve ); ++i ) {
+			/* more rays on the face that already flew = the same plan again */
+			if ( out.m_valid && ab_same_plane( cands[ i ].hit, won ) )
+				continue;
+
 			ab_plan_t cand{ };
-			if ( !ab_plan_stop( origin, velocity, cands[ i ].hit, cands[ i ].hit.m_pos, need, 1e9f, mins, maxs, cand ) )
+			if ( !ab_plan_stop( origin, velocity, cands[ i ].hit, cands[ i ].hit.m_pos, need, 1e9f, mins, maxs, cand ) ||
+			     ( out.m_valid && cand.m_result + k_plan_hyst <= out.m_pred ) )
 				continue;
 
 			trace_t wall{ };
 			ray_t level( origin, c_vector( cand.m_target.m_x, cand.m_target.m_y, origin.m_z ), mins, maxs );
 			g_interfaces.m_engine_trace->trace_ray( level, mask_playersolid, &filter, &wall );
 			const bool slide_ok = g_ab_align && !wall.m_start_solid && std::fabs( wall.m_plane.m_normal.m_z ) < k_wall_nz;
-			if ( wall.m_start_solid || ( wall.m_fraction < 1.f && !slide_ok ) || !accept( cand ) )
+			if ( wall.m_start_solid || ( wall.m_fraction < 1.f && !slide_ok ) || ( ++flights, !accept( cand ) ) )
 				continue;
 
-			out             = cand;
-			out.m_lookahead = -1;
-			return true;
+			if ( !out.m_valid || cand.m_pred > out.m_pred ) {
+				out             = cand;
+				out.m_lookahead = -1;
+				won             = cands[ i ].hit;
+			}
 		}
-		return false;
+		return out.m_valid;
 	}
 
 	// keep: sweep current xy, strip the into-face part, re-sweep (must meet the same face).
@@ -713,7 +749,11 @@ namespace
 	                        const n_tick::c_sim_budget* budget, c_vector* path = nullptr, int* path_n = nullptr )
 	{
 		const float horizon = std::min( plan.m_ttc + k_fly_slack, k_fly_max );
-		return n_air::fly( from, w, horizon, k_coast_chord, 1.f, budget, [ & ]( const n_air::state_t& s, c_vector& want ) {
+		/* far below: a 1 s fall was ~130 hull traces ( move + ground trace per tick ) = budget dead = nofly */
+		n_air::world_t fw = w;
+		if ( !plan.m_keep )
+			fw.fine_z = plan.m_target.m_z + k_fine_above;
+		return n_air::fly( from, fw, horizon, k_coast_chord, 1.f, budget, [ & ]( const n_air::state_t& s, c_vector& want ) {
 			if ( path && *path_n < k_viz_max )
 				path[ ( *path_n )++ ] = s.origin;
 			want = plan.m_keep ? ab_keep_velocity( s.velocity, plan.m_normal )
@@ -734,6 +774,7 @@ namespace
 	struct ab_gates_t {
 		int yield = 0, off = 0, ground = 0, settle = 0, noscan = 0, noplan = 0, refused = 0, armed = 0, hold = 0, side = 0, blk = 0, snap = 0, nofly = 0;
 		float best = -1.f, need = 0.f, spd = 0.f, ang = -1.f, rang = -1.f;
+		long long fly_us = 0ll, span_us = 0ll; /* longest flight / smallest budget span seen: nofly high + flyus > span = starved */
 		unsigned long long next = 0ull;
 	} g_gates;
 
@@ -746,8 +787,8 @@ namespace
 		auto& g = g_gates;
 		if ( GET_VARIABLE( g_variables.m_debug_log, bool ) &&
 		     ( g.yield || g.off || g.ground || g.settle || g.noscan || g.noplan || g.refused || g.armed || g.hold ) )
-			botox_dbg_log( "[ab] gates yield=%d off=%d ground=%d settle=%d noscan=%d noplan=%d refused=%d nofly=%d side=%d blk=%d snap=%d armed=%d hold=%d best=%.0f need=%.0f spd=%.0f ang=%.1f rang=%.1f\n",
-			               g.yield, g.off, g.ground, g.settle, g.noscan, g.noplan, g.refused, g.nofly, g.side, g.blk, g.snap, g.armed, g.hold, g.best, g.need, g.spd, g.ang, g.rang );
+			botox_dbg_log( "[ab] gates yield=%d off=%d ground=%d settle=%d noscan=%d noplan=%d refused=%d nofly=%d side=%d blk=%d snap=%d armed=%d hold=%d best=%.0f need=%.0f spd=%.0f ang=%.1f rang=%.1f flyus=%lld span=%lld\n",
+			               g.yield, g.off, g.ground, g.settle, g.noscan, g.noplan, g.refused, g.nofly, g.side, g.blk, g.snap, g.armed, g.hold, g.best, g.need, g.spd, g.ang, g.rang, g.fly_us, g.span_us );
 		g      = ab_gates_t{ };
 		g.next = now + 1000ull;
 	}
@@ -917,21 +958,23 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 	}
 	const bool armed = data.m_armed_tick > 0;
 
-	/* gain over your own xy ( clarity ). old max( entry, 250 ) floor + 1.1 jump crop left only 275 exact: slow drops never armed */
+	const int raw_mode = GET_VARIABLE( g_variables.m_auto_bounce_mode, int );
+	const int mode     = raw_mode >= 0 && raw_mode <= 2 ? raw_mode : 0;
+	const bool drop_in = mode == 0;
+	const bool keep_on = mode == 1;
+
+	/* gain over your own xy ( clarity ). drop in brakes to a dead stop first, so its bounce is judged alone: entry + gain meant
+	   that at 260+ no walkable face ( 1.1 jump crop = 275 ) could ever arm = "flies over slopes when fast" */
 	const float entry    = armed ? data.m_entry_speed : speed_2d;
-	const float base     = entry;
+	const float base     = drop_in ? 0.f : entry;
 	const float gain_min = std::max( GET_VARIABLE( g_variables.m_auto_bounce_min_gain, float ), 1.f );
-	const float need     = base + gain_min;
+	const float need     = std::max( base + gain_min, drop_in ? k_drop_min_pay : 0.f );
 
 	const float radius = k_scan_radius;
 	const int rays     = k_scan_rays;
 	const float depth  = k_scan_depth;
 	const float reach  = std::max( GET_VARIABLE( g_variables.m_auto_bounce_reach, float ), 16.f );
 
-	const int raw_mode = GET_VARIABLE( g_variables.m_auto_bounce_mode, int );
-	const int mode     = raw_mode >= 0 && raw_mode <= 2 ? raw_mode : 0;
-	const bool drop_in = mode == 0;
-	const bool keep_on = mode == 1;
 	const auto lock_input = [ & ]( ) {
 		cmd->m_up_move = 0.f;
 		cmd->m_buttons &= ~in_speed;
@@ -962,6 +1005,12 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 
 	n_tick::c_sim_budget budget{ };
 	budget.start( k_budget_share, 0.f, n_tick::search_ab );
+	{
+		const long long span_us = budget.left_us( );
+		g_gates.span_us        = g_gates.span_us > 0ll ? std::min( g_gates.span_us, span_us ) : span_us;
+	}
+	/* scan loops stop while the longest flight timed this cmd still fits ( floor k_fly_reserve_us ) */
+	long long fly_us = k_fly_reserve_us;
 
 	n_air::world_t world = n_air::read_world( mins, maxs );
 	/* owned cmds fly unducked ( drop in strips it, crouch ducks only the last ~2 ticks ).
@@ -996,12 +1045,17 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 
 		/* budget gone before the flight = no plan. log 11-12: analytic fallback armed a 233u spot after 58 lookahead steps,
 		   dashed at it, held flights refused it, released, re-armed the next = sideways jerks, never a brake */
-		n_air::result_t r = ab_fly( start, world, c, drop_in, &budget );
+		const long long fly_t0 = budget.used_us( );
+		n_air::result_t r      = ab_fly( start, world, c, drop_in, &budget );
+		fly_us                 = std::max( fly_us, budget.used_us( ) - fly_t0 );
+		g_gates.fly_us         = std::max( g_gates.fly_us, fly_us );
 		if ( !r.valid ) {
 			++g_gates.nofly;
 			c.m_valid = false;
 			return false;
 		}
+		/* a flight cut by the budget inside the aim / snap search is no verdict either: refused would count toward RELEASE */
+		bool starved = false;
 
 		/* pixel strip: flight lands off the face -> bisect the target along the slope ( landed higher = too far uphill ) */
 		const float flat = std::sqrt( c.m_normal.m_x * c.m_normal.m_x + c.m_normal.m_y * c.m_normal.m_y );
@@ -1015,8 +1069,10 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 				p.m_aim     = ( lo + hi ) * 0.5f;
 				p.m_target  = c_vector( base.m_x + up.m_x * p.m_aim, base.m_y + up.m_y * p.m_aim, base.m_z );
 				const n_air::result_t t = ab_fly( start, world, p, drop_in, &budget );
-				if ( !t.valid )
+				if ( !t.valid ) {
+					starved = true;
 					break;
+				}
 				if ( on_face( t, p ) ) {
 					c = p;
 					r = t;
@@ -1035,19 +1091,27 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 				const float rise    = flat / std::max( c.m_normal.m_z, 0.1f );
 				const c_vector base = c.m_target;
 				for ( const float s : k_phase_shifts ) {
-					if ( budget.expired( ) )
-						break;
 					ab_plan_t p = c;
 					p.m_aim     = c.m_aim + s;
 					p.m_target  = c_vector( base.m_x + up.m_x * s, base.m_y + up.m_y * s, base.m_z + s * rise );
 					const n_air::result_t t = ab_fly( start, world, p, drop_in, &budget );
-					if ( t.valid && t.hit && !t.snapped && on_face( t, p ) ) {
+					if ( !t.valid ) {
+						starved = true;
+						break;
+					}
+					if ( t.hit && !t.snapped && on_face( t, p ) ) {
 						c = p;
 						r = t;
 						break;
 					}
 				}
 			}
+		}
+
+		if ( starved ) {
+			++g_gates.nofly;
+			c.m_valid = false;
+			return false;
 		}
 
 		++flown;
@@ -1085,16 +1149,34 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 			stop = c;
 	};
 
-	ab_hit_t hit{ };
-	c_vector patch = origin;
+	/* one scan spot: the top face + every other slope its rays saw, each planned + flown, best flown kept ( t = lookahead tick ) */
+	float best_below = 0.f, best_ang = -1.f;
+	const auto scan_at = [ & ]( const c_vector& at, const int t ) {
+		ab_hit_t hit{ }, faces[ k_scan_faces ];
+		c_vector patch = at;
+		int n_faces    = 0;
+		if ( !ab_scan_below( at, radius, rays, depth, hit, &patch, &budget, faces, &n_faces ) )
+			return false;
+
+		for ( int i = -1; i < n_faces && ( i < 0 || !budget.cannot_fit( fly_us ) ); ++i ) {
+			const ab_hit_t& h = i < 0 ? hit : faces[ i ];
+			ab_plan_t cand{ };
+			const bool planned = ab_plan_stop( origin, velocity, h, i < 0 ? patch : h.m_pos, need, stop_max_ttc, mins, maxs, cand );
+			if ( t == 0 && cand.m_result > best_below ) {
+				best_below = cand.m_result;
+				best_ang   = h.m_angle;
+			}
+			if ( planned && beats( cand ) && accept( cand ) ) {
+				cand.m_lookahead = t;
+				take( cand );
+			}
+		}
+		return true;
+	};
+
 	bool seen_below = false;
-	if ( !armed ) {
-		seen_below = ab_scan_below( origin, radius, rays, depth, hit, &patch, &budget );
-		if ( seen_below && ab_plan_stop( origin, velocity, hit, patch, need, stop_max_ttc, mins, maxs, stop ) )
-			accept( stop );
-	}
-	const float best_below = stop.m_result;
-	const float best_ang   = seen_below ? hit.m_angle : -1.f;
+	if ( !armed )
+		seen_below = scan_at( origin, 0 );
 
 	/* armed: committed spot only, never re-picked. release after k_refuse_release flights in a row say it can't pay */
 	bool held_refused = false;
@@ -1106,30 +1188,27 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 	}
 
 	if ( !armed ) {
+		/* wide first: cheap rays, best analytic flown first. it used to run after the lookahead, which spent the budget down to the
+		   reserve every cmd ( log 11-12: dead at la=58 ) = wide cast 0 rays, every cmd */
+		if ( drop_in ) {
+			ab_plan_t wide{ };
+			if ( ab_plan_wide( origin, velocity, need, reach, mins, maxs, budget, fly_us, [ & ]( ab_plan_t& c ) { return beats( c ) && accept( c ); }, wide ) )
+				take( wide );
+		}
+
 		const float dt      = ab_phys_dt( );
 		const float grav    = ab_gravity( );
 		const int max_ticks = static_cast< int >( k_lookahead_time / dt + 0.5f );
-		const int step      = std::max( static_cast< int >( k_lookahead_step / dt + 0.5f ), 1 );
+		const float gap     = std::max( k_lookahead_step, k_lookahead_gap / std::max( speed_2d, 1.f ) );
+		const int step      = std::max( static_cast< int >( gap / dt + 0.5f ), 1 );
 
-		for ( int t = step; t <= max_ticks && !budget.cannot_fit( k_fly_reserve_us ); t += step ) {
+		for ( int t = step; t <= max_ticks && !budget.cannot_fit( fly_us ); t += step ) {
 			const float time = static_cast< float >( t ) * dt;
 			if ( speed_2d * time > reach )
 				break;
-			const c_vector p( origin.m_x + velocity.m_x * time, origin.m_y + velocity.m_y * time,
-			                  origin.m_z + velocity.m_z * time - 0.5f * grav * time * time );
-
-			ab_plan_t cand{ };
-			if ( ab_scan_below( p, radius, rays, depth, hit, &patch, &budget ) &&
-			     ab_plan_stop( origin, velocity, hit, patch, need, stop_max_ttc, mins, maxs, cand ) && beats( cand ) && accept( cand ) ) {
-				cand.m_lookahead = t;
-				take( cand );
-			}
-		}
-
-		if ( drop_in ) {
-			ab_plan_t wide{ };
-			if ( ab_plan_wide( origin, velocity, need, reach, mins, maxs, budget, [ & ]( ab_plan_t& c ) { return beats( c ) && accept( c ); }, wide ) )
-				take( wide );
+			scan_at( c_vector( origin.m_x + velocity.m_x * time, origin.m_y + velocity.m_y * time,
+			                   origin.m_z + velocity.m_z * time - 0.5f * grav * time * time ),
+			         t );
 		}
 	}
 
@@ -1155,7 +1234,7 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 		}
 		/* flight keeps saying the held drop misses / throws sideways: braking on only eats your speed */
 		/* held spot pays under your entry speed: holding the brake only loses speed ( log 3409: 148 braked to 51, bounced 138 ) */
-		const bool losing = !data.m_keep && !held_refused && stop.m_result < data.m_entry_speed;
+		const bool losing = !data.m_keep && !held_refused && stop.m_result < ( drop_in ? need : base );
 		if ( losing || ( held_refused && ++data.m_refused >= k_refuse_release ) ) {
 			if ( debug )
 				botox_dbg_log( "[ab] RELEASE spd=%.0f vz=%.0f rang=%.1f sd=%.1f%s\n", speed_2d, velocity.m_z, g_gates.rang, stop.m_side,
@@ -1236,12 +1315,12 @@ void n_movement::impl_t::auto_bounce( c_user_cmd* cmd, const bool yield )
 
 	if ( debug )
 		botox_dbg_log( "[ab] %s ang=%.1f drop=%.1f vz=%.0f->%.0f res=%.0f flr=%.0f (keep=%.0f%s stop=%.0f%s) gain=%.0f base=%.0f entry=%.0f "
-		               "spd=%.0f dist=%.1f want=%.0f ttc=%.3f la=%d pl=%.2f aim=%.2f al=%d sd=%.1f rm=%.2f fwd=%.0f side=%.0f fly=%d/%d pred=%.0f(%d) eng=%.0f(%d) err=%.2f auth=%.1f us=%lld%s%s\n",
+		               "spd=%.0f dist=%.1f want=%.0f ttc=%.3f la=%d pl=%.2f aim=%.2f al=%d sd=%.1f rm=%.2f fwd=%.0f side=%.0f fly=%d/%d pred=%.0f(%d) eng=%.0f(%d) err=%.2f auth=%.1f us=%lld rsv=%lld%s%s\n",
 		               plan->m_keep ? "KEEP" : drop_in ? "DROP" : "STOP", data.m_angle, plan->m_drop, velocity.m_z, plan->m_vz_hit, plan->m_result,
 		               plan->m_floor, keep.m_result, keep.m_valid ? "" : "x", stop.m_result, stop.m_valid ? "" : "x", data.m_gain, base,
 		               data.m_entry_speed, speed_2d, dist, want, plan->m_ttc, plan->m_lookahead, plan->m_place, plan->m_aim, g_ab_align ? plan->m_slides : -1,
 		               plan->m_side, plan->m_room, cmd->m_forward_move, cmd->m_side_move,
-		               flown, refused, plan->m_pred, plan->m_pred_ticks, v.pred, v.ticks, v.err, n_air::accel_speed( world ), budget.used_us( ), budget.expired( ) ? " BUDGET" : "",
+		               flown, refused, plan->m_pred, plan->m_pred_ticks, v.pred, v.ticks, v.err, n_air::accel_speed( world ), budget.used_us( ), fly_us, budget.expired( ) ? " BUDGET" : "",
 		               ( cmd->m_buttons & in_duck ) ? " DUCK" : "" );
 }
 

@@ -8,6 +8,7 @@
 
 class c_texture;
 struct studiohdr_t;
+struct IDirect3DTexture9;
 
 /* visuals > esp "esp preview" box right of the menu: a CMergedMDL agent ( the game's own inventory / main menu model renderer, no
    entity, works in the main menu ) drawn into an own render target with the live chams passes, the 2d esp from n_players::draw_player
@@ -16,6 +17,9 @@ namespace n_esp_preview
 {
 	constexpr float k_width  = 260.f;
 	constexpr float k_height = 400.f;
+
+	/* render thread: the d3d texture behind a material system render target, null while it has none */
+	IDirect3DTexture9* raw_texture( c_texture* texture );
 
 	struct impl_t {
 		/* game thread, MatSystemTopPanel paint: model + chams into the target, esp into the draw list */

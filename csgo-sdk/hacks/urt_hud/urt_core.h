@@ -3,6 +3,7 @@
 #include "urt_logic.h"
 
 #include "../../dependencies/imgui/imgui.h"
+#include "../misc/air_wings.h"
 
 #include <algorithm>
 #include <atomic>
@@ -330,6 +331,16 @@ namespace n_urt
 
 	inline bool color_code( const char* p ) { return p[ 0 ] == '^' && p[ 1 ] >= '0' && p[ 1 ] <= '9'; }
 
+	// byte 1 in a line = the cs2 jumpshot wings ( killer off the ground ). names never hold it: to_q3 drops < 32.
+	// square, 1.2 x the 'A' glyph tall, virtual x advance keeps it square on screen
+	inline constexpr char k_air_wings = 1;
+	inline float air_wings_height( const font_t& f, float use ) { return static_cast< float >( f.m_glyphs[ 'A' ].m_h ) * use * 1.2f; }
+	inline float air_wings_advance( const font_t& f, float use )
+	{
+		const float sq = g_draw.m_sx > 0.f ? g_draw.m_sy / g_draw.m_sx : 1.f;
+		return air_wings_height( f, use ) * sq + static_cast< float >( f.m_glyphs[ ' ' ].m_xskip ) * use * 0.5f;
+	}
+
 	inline int text_width( const char* text, float scale, int limit, const cvars_t& cv )
 	{
 		const font_t& f   = pick_font( scale, cv );
@@ -340,6 +351,11 @@ namespace n_urt
 		for ( int n = 0; text && *text && n < count; ) {
 			if ( color_code( text ) ) {
 				text += 2;
+				continue;
+			}
+			if ( *text == k_air_wings ) {
+				out += air_wings_advance( f, use ) / use;
+				++text, ++n;
 				continue;
 			}
 			out += static_cast< float >( f.m_glyphs[ static_cast< unsigned char >( *text ) ].m_xskip );
@@ -396,6 +412,18 @@ namespace n_urt
 				cur[ 3 ] = a;
 				set_color( cur );
 				text += 2;
+				continue;
+			}
+			if ( *text == k_air_wings ) {
+				// 'A' cap height box, grown 1.2x around its middle
+				const glyph_t& cap = f.m_glyphs[ 'A' ];
+				const float s      = air_wings_height( f, use );
+				const float top    = y - use * static_cast< float >( cap.m_top ) - ( s - use * static_cast< float >( cap.m_h ) ) * 0.5f;
+				const int a        = static_cast< int >( std::clamp( cur[ 3 ], 0.f, 1.f ) * 255.f );
+				n_air_wings::draw( g_draw.m_list, x * g_draw.m_sx, top * g_draw.m_sy, s * g_draw.m_sy, IM_COL32( 255, 255, 255, a ), IM_COL32( 0, 0, 0, a ),
+				                   std::max( 1.f, std::round( s * g_draw.m_sy / 22.f ) ) );
+				x += air_wings_advance( f, use ) + adjust;
+				++text, ++n;
 				continue;
 			}
 			const float yadj = use * static_cast< float >( g.m_top );

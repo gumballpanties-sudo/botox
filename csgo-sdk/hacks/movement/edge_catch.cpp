@@ -318,14 +318,25 @@ bool n_edge_catch::impl_t::family( c_user_cmd* cmd, const bool first_neg )
 		if ( full[ s ] && ( best_s < 0 || n_full[ s ] < best_n ) )
 			keep( n_full[ s ], s );
 	}
-	/* ponytail: full pull misses = that side skipped; a ledge only a shorter pull hits ( narrow, far side ) is lost */
 	for ( int s = 0; s < sides && !out( ); s++ ) {
-		if ( !full[ s ] )
-			continue;
 		const bool neg = ( s == 0 ) == first_neg;
 		const int base = s * k_max_snap;
 		int lo = 0, hi = n_full[ s ];
-		if ( best_s != s ) {
+		if ( !full[ s ] ) {
+			/* full pull passed the ledge ( narrow ): anchors 3/4, 1/2, 1/4 of it, first landing bisects below. snapshots exist up to n_full */
+			hi = 0;
+			for ( int q = 3, prev = n_full[ s ]; q >= 1 && !hi && !out( ); q-- ) {
+				const int n = n_full[ s ] * q / 4;
+				if ( n < 1 || n == prev || ( best_s >= 0 && n >= best_n ) )
+					continue;
+				prev = n;
+				if ( chain( cmd, n, neg, false, base ) )
+					hi = n, m_anchors++;
+			}
+			if ( !hi )
+				continue;
+			keep( hi, s );
+		} else if ( best_s != s ) {
 			/* the other side already landed shorter: only a strictly shorter prefix here matters */
 			hi = best_n - 1;
 			if ( hi < 1 || !chain( cmd, hi, neg, false, base ) )
@@ -357,7 +368,7 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 	m_reach     = std::clamp( GET_VARIABLE( g_variables.m_edge_catch_reach, float ), 0.5f, 64.f );
 	/* 11-11 log: 0.15 of 1/128 s cut 27/48 searches before n >= 3 strafes */
 	m_budget.start( 0.25f, n_tick::engine_interval( ), n_tick::search_ec );
-	m_sims = m_chains = 0;
+	m_sims = m_chains = m_anchors = 0;
 	m_kind = 0;
 	m_jb   = jb_bind( );
 	m_jb_plan = false;
@@ -433,8 +444,8 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 		restore_start( );
 
 	if ( miss && !known )
-		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f evz=%.2f reach=%.1f win=%d turn=%d chains=%d sims=%d us=%lld found=%d last=%d strafe=%d jb=%d/%d duck=%d brake=%d\n",
-		               m_kind, m_miss, m_ground_z, org0.m_z, vel0.m_z, m_miss_vz, m_reach, m_max_ticks, m_turn_left ? 1 : 0, m_chains, m_sims, m_budget.used_us( ),
+		botox_dbg_log( "EC: kind=%d miss=%d gz=%.2f z=%.2f vz=%.2f evz=%.2f reach=%.1f win=%d turn=%d chains=%d anc=%d sims=%d us=%lld found=%d last=%d strafe=%d jb=%d/%d duck=%d brake=%d\n",
+		               m_kind, m_miss, m_ground_z, org0.m_z, vel0.m_z, m_miss_vz, m_reach, m_max_ticks, m_turn_left ? 1 : 0, m_chains, m_anchors, m_sims, m_budget.used_us( ),
 		               found ? 1 : 0, found ? m_last : -1, found ? strafed( ) : 0, m_jb ? 1 : 0, found && m_jb_plan ? 1 : 0, m_duck ? ( found ? 2 : 1 ) : 0,
 		               m_brake ? ( found ? 2 : 1 ) : 0 );
 	if ( !found )

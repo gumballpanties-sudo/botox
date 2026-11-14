@@ -83,6 +83,7 @@ namespace n_hooks
 		c_detour_hook m_push_2d_view{ };
 		c_detour_hook m_draw_world_lists{ };
 		c_detour_hook m_world_to_screen_matrix{ };
+		c_detour_hook m_render_view{ };
 		c_detour_hook m_get_local_view_angles{ };
 		c_detour_hook m_get_player_info{ };
 
@@ -201,6 +202,7 @@ namespace n_detoured_functions
 	                              void* frustum );
 	void __fastcall draw_world_lists( void* ecx, void* edx, void* render_context, void* list, unsigned long flags, float water_z_adjust );
 	const view_matrix_t& __fastcall world_to_screen_matrix( void* ecx, void* edx );
+	void __fastcall render_view( void* ecx, void* edx, c_view_setup& setup, c_view_setup& hud_setup, int clear_flags, int what_to_draw );
 
 	void __cdecl tier0_warning( const char* format, ... );
 	int __cdecl random_int( int min, int max );

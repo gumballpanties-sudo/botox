@@ -48,6 +48,7 @@ namespace n_player_stencil
 			   boxes = ndc bounds per player ( x0 y0 x1 y1, main thread ), phase = per-player wave offset */
 			static constexpr int k_max_boxes = 32;
 			float m_wave_anchor[ 4 ]              = { };
+			float m_wave_angle[ 4 ]               = { 1.f, 0.f, 1.f, 0.f }; /* c14: glow cos sin, outline cos sin */
 			float m_boxes[ k_max_boxes ][ 4 ]     = { };
 			float m_box_phase[ k_max_boxes ][ 4 ] = { };
 

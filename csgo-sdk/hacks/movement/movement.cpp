@@ -451,13 +451,14 @@ void n_movement::impl_t::on_create_move_pre( )
 					if ( aa_calls )
 						botox_dbg_log(
 						    "AA: calls=%lld avg=%lldus worst=%lldus total=%lldus/s sims=%lld simavg=%.1f simworst=%lld gate=%d reach=%d fail=%d ipt=%.5f "
-						    "nowall=%d noface=%d away=%d angle=%d pin=%d touch=%d miss=%d fine=%d park=%d unstick=%d keep=%d tb=%d stomp=%d poff=%d slant=%d lip=%d pj=%d",
+						    "nowall=%d noface=%d away=%d angle=%d pin=%d touch=%d miss=%d fine=%d park=%d unstick=%d keep=%d tb=%d stomp=%d poff=%d slant=%d lip=%d pj=%d prop=%d guard=%d lumia=%d",
 						    aa_calls, aa_total / aa_calls, aa_worst, aa_total, aa_sim_total,
 						    static_cast< float >( aa_sim_total ) / static_cast< float >( aa_calls ), aa_sim_worst, aa_gate_skips, aa_reach_skips,
 						    aa_fail_skips, n_tick::interval( ), aa_outs[ aa_out_near ], aa_outs[ aa_out_face ], aa_outs[ aa_out_away ],
 						    aa_outs[ aa_out_angle ], aa_outs[ aa_out_pin ], aa_outs[ aa_out_touch ], aa_outs[ aa_out_miss ], aa_outs[ aa_out_fine ],
 						    aa_outs[ aa_out_park ], aa_outs[ aa_out_unstick ], aa_outs[ aa_out_keep ], aa_outs[ aa_out_tb ], aa_outs[ aa_out_stomp ], aa_outs[ aa_out_park_off ],
-							    aa_outs[ aa_out_slant ], aa_outs[ aa_out_lip ], aa_outs[ aa_out_pj ] );
+							    aa_outs[ aa_out_slant ], aa_outs[ aa_out_lip ], aa_outs[ aa_out_pj ], aa_outs[ aa_out_prop ], aa_outs[ aa_out_guard ],
+							    GET_VARIABLE( g_variables.m_auto_align_type, int ) );
 					aa_total = aa_calls = aa_worst = aa_sim_total = aa_sim_worst = 0ll;
 					aa_gate_skips = aa_reach_skips = aa_fail_skips = 0;
 					std::fill( std::begin( aa_outs ), std::end( aa_outs ), 0 );
@@ -4736,15 +4737,19 @@ void play_trick_sound( const int sound_index, const float volume, const char* cu
 	if ( !path )
 		return;
 
-	/* custom found in C:\botox\sounds wins over csgo/sound. engine always opens "sound\" + name from game dir,
-	   so climb out: extra ".." clamp at drive root ( csgo must be on C: ) */
+	/* custom found in C:\botox\sounds wins over csgo/sound. engine opens "sound\" + name on GAME paths and rejects ".." above
+	   a path root, so C:\botox\sounds = GAME search path ( IFileSystem 11 AddSearchPath, tail ) and "sound\..\name" = name there */
 	std::string botox_path;
 	if ( sound_index == 5 ) {
 		std::error_code ec;
-		if ( std::filesystem::is_regular_file( std::filesystem::path( "C:\\botox\\sounds" ) / path, ec ) ) {
-			botox_path = "..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\..\\botox\\sounds\\";
-			botox_path += path;
-			path = botox_path.c_str( );
+		if ( g_interfaces.m_file_system && std::filesystem::is_regular_file( std::filesystem::path( "C:\\botox\\sounds" ) / path, ec ) ) {
+			static bool mounted = false;
+			if ( !mounted ) {
+				g_virtual.call< void >( g_interfaces.m_file_system, 11, "C:\\botox\\sounds", "GAME", 1 );
+				mounted = true;
+			}
+			botox_path = std::string( "..\\" ) + path;
+			path       = botox_path.c_str( );
 		}
 	}
 

@@ -5,6 +5,7 @@
 #include "../entity_cache/entity_cache.h"
 #include "../menu/menu.h"
 #include "../misc/scaleform/scaleform.h"
+#include "../misc/scaleform/image_cache.h"
 #include "../misc/misc.h"
 
 extern bool point_menu_is_opened( );
@@ -1115,6 +1116,8 @@ void n_chud::impl_t::tick( )
 		replace_all( js, "${victim}", escape_js( kill.m_victim ) );
 		replace_all( js, "${weapon}", escape_js( kill.m_weapon ) );
 		replace_all( js, "${headshot}", kill.m_headshot ? "true" : "false" );
+		replace_all( js, "${inAir}", kill.m_in_air && !n_image_cache::air_kill_icon( ).empty( ) ? "true" : "false" );
+		replace_all( js, "${airIcon}", n_image_cache::air_kill_icon( ) );
 		replace_all( js, "${hasAttacker}", kill.m_attacker.empty( ) ? "false" : "true" );
 		replace_all( js, "${outline}", outline );
 		replace_all( js, "${fg}", fg );
@@ -1316,7 +1319,7 @@ void n_chud::impl_t::tick( )
 // event feeds, called from hooks, may be off the game thread
 
 void n_chud::impl_t::on_player_death( const std::string& attacker, const std::string& victim, const std::string& weapon, bool headshot,
-                                      bool local_involved, bool local_killer )
+                                      bool local_involved, bool local_killer, bool in_air )
 {
 	if ( !GET_VARIABLE( g_variables.m_chud_hud, bool ) )
 		return;
@@ -1328,6 +1331,7 @@ void n_chud::impl_t::on_player_death( const std::string& attacker, const std::st
 	kill.m_headshot       = headshot;
 	kill.m_local_involved = local_involved;
 	kill.m_local_killer   = local_killer;
+	kill.m_in_air         = in_air;
 
 	m_pending_kills.push_back( kill );
 

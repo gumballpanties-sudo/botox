@@ -324,8 +324,9 @@ IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARA
             io.KeysDown[wParam] = 0;
         return 0;
     case WM_CHAR:
-        // You can also use ToAscii()+GetKeyboardState() to retrieve characters.
-        io.AddInputCharacter((unsigned int)wParam);
+        // botox: proc is W ( SetWindowLongPtrW ), wParam = one utf-16 unit; emoji / math letters come as 2 surrogates
+        if (wParam > 0 && wParam < 0x10000)
+            io.AddInputCharacterUTF16((unsigned short)wParam);
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(lParam) == HTCLIENT && ImGui_ImplWin32_UpdateMouseCursor())

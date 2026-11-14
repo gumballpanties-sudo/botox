@@ -1,6 +1,7 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../../hacks/menu/menu.h"
+#include "../../hacks/visuals/players/players.h"
 #include "../../hacks/visuals/players/sound_esp/sound_esp.h"
 #include "../../hacks/visuals/screen/player_stencil.h"
 #include "../hooks.h"
@@ -14,7 +15,7 @@ bool __cdecl n_detoured_functions::glow_effect_spectator( c_base_entity* player,
 		player, local, style, glow_color, alpha_start, alpha, time_start, time_target, animate ) );
 
 	const bool glow_enabled = GET_VARIABLE( g_variables.m_glow_enable, bool );
-	const bool glow_wanted  = GET_VARIABLE( g_variables.m_players, bool ) && ( glow_enabled || GET_VARIABLE( g_variables.m_players_stencil, bool ) || GET_VARIABLE( g_variables.m_inner_glow, bool ) ) &&
+	const bool glow_wanted  = n_players::esp_on( ) && ( glow_enabled || GET_VARIABLE( g_variables.m_players_stencil, bool ) || GET_VARIABLE( g_variables.m_inner_glow, bool ) ) &&
 	                         player && local && player != local && local->is_enemy( player );
 	if ( !glow_wanted )
 		return false;

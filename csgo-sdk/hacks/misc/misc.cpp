@@ -1707,10 +1707,8 @@ std::vector< n_misc::clantag_frame_t > n_misc::parse_clantag_frames( const std::
 		if ( std::isnan( frame.m_hold ) )
 			frame.m_hold = 1.f;
 		frame.m_hold = std::clamp( frame.m_hold, 0.1f, 10.f );
-		if ( line.length( ) > 24 )
-			line.resize( 24 );
 
-		frame.m_text = line;
+		frame.m_text = g_utilities.truncate_utf8( clantag_clean( line ), 24 );
 		frames.push_back( frame );
 		line.clear( );
 	}
@@ -1731,6 +1729,78 @@ std::string n_misc::join_clantag_frames( const std::vector< clantag_frame_t >& f
 	}
 
 	return joined;
+}
+
+/* mirrors Q_UTF8ToUChar32 + Q_IsValidUChar32 ( tier1 strtools_unicode.cpp ): what it rejects, the scoreboard draws as '?' */
+std::string n_misc::clantag_clean( const std::string& text )
+{
+	const auto* s     = reinterpret_cast< const unsigned char* >( text.data( ) );
+	const size_t size = text.size( );
+
+	const auto decode = [ & ]( const size_t at, unsigned& cp ) -> size_t {
+		const unsigned char lead = s[ at ];
+		const size_t n           = lead < 0x80 ? 1 : lead >= 0xC2 && lead <= 0xDF ? 2 : lead >= 0xE0 && lead <= 0xEF ? 3 : lead >= 0xF0 && lead <= 0xF4 ? 4 : 0;
+		if ( !n || at + n > size )
+			return 0;
+
+		cp = n == 1 ? lead : lead & ( 0x7Fu >> n );
+		for ( size_t i = 1; i < n; i++ ) {
+			if ( ( s[ at + i ] & 0xC0 ) != 0x80 )
+				return 0;
+			cp = cp << 6 | ( s[ at + i ] & 0x3F );
+		}
+
+		constexpr unsigned k_min[] = { 0, 0, 0x80, 0x800, 0x10000 };
+		return cp >= k_min[ n ] && cp <= 0x10FFFF ? n : 0;
+	};
+
+	std::string out;
+	for ( size_t at = 0; at < size; ) {
+		unsigned cp    = 0;
+		const size_t n = decode( at, cp );
+		at += n ? n : 1;
+		if ( !n )
+			continue;
+
+		/* old imgui WM_CHAR path stored each utf-16 half as its own 3-byte char */
+		if ( cp >= 0xD800 && cp <= 0xDBFF ) {
+			unsigned low   = 0;
+			const size_t m = at < size ? decode( at, low ) : 0;
+			if ( !m || low < 0xDC00 || low > 0xDFFF )
+				continue;
+
+			at += m;
+			cp = 0x10000 + ( ( cp - 0xD800 ) << 10 ) + ( low - 0xDC00 );
+		}
+		else if ( cp >= 0xDC00 && cp <= 0xDFFF )
+			continue;
+
+		/* + U+FFFD: engine takes it but draws a '?' box, only ever a decode leftover */
+		if ( ( cp & 0xFFFE ) == 0xFFFE || ( cp >= 0xFDD0 && cp <= 0xFDEF ) || cp == 0xFFFD )
+			continue;
+		if ( cp < 0x20 )
+			cp = ' ';
+
+		if ( cp < 0x80 )
+			out += static_cast< char >( cp );
+		else if ( cp < 0x800 ) {
+			out += static_cast< char >( 0xC0 | cp >> 6 );
+			out += static_cast< char >( 0x80 | ( cp & 0x3F ) );
+		}
+		else if ( cp < 0x10000 ) {
+			out += static_cast< char >( 0xE0 | cp >> 12 );
+			out += static_cast< char >( 0x80 | ( cp >> 6 & 0x3F ) );
+			out += static_cast< char >( 0x80 | ( cp & 0x3F ) );
+		}
+		else {
+			out += static_cast< char >( 0xF0 | cp >> 18 );
+			out += static_cast< char >( 0x80 | ( cp >> 12 & 0x3F ) );
+			out += static_cast< char >( 0x80 | ( cp >> 6 & 0x3F ) );
+			out += static_cast< char >( 0x80 | ( cp & 0x3F ) );
+		}
+	}
+
+	return out;
 }
 
 void n_misc::impl_t::update_clantag( )
@@ -1779,11 +1849,29 @@ void n_misc::impl_t::update_clantag( )
 		last_sent.clear( );
 	}
 
-	std::string base = GET_VARIABLE( g_variables.m_clantag_text, std::string );
+	/* > 15 bytes only shows through scroll */
+	std::string base = g_utilities.truncate_utf8( n_misc::clantag_clean( GET_VARIABLE( g_variables.m_clantag_text, std::string ) ), 64 );
 	if ( base.empty( ) )
 		base = "botox";
-	else if ( base.length( ) > 24 )
-		base.resize( 24 );
+
+	/* one entry per code point: typewriter + scroll never show half a glyph */
+	const auto split = []( const std::string& text ) {
+		std::vector< std::string > chars;
+		for ( size_t i = 0; i < text.size( ); ) {
+			size_t n = 1;
+			while ( i + n < text.size( ) && ( static_cast< unsigned char >( text[ i + n ] ) & 0xC0 ) == 0x80 )
+				n++;
+			chars.push_back( text.substr( i, n ) );
+			i += n;
+		}
+		return chars;
+	};
+	const auto join = []( const std::vector< std::string >& chars, size_t from, const size_t to ) {
+		std::string out;
+		for ( ; from < to; from++ )
+			out += chars[ from ];
+		return out;
+	};
 
 	const double time = GetTickCount64( ) / 1000.0;
 	std::string tag;
@@ -1804,14 +1892,16 @@ void n_misc::impl_t::update_clantag( )
 	if ( speed < 0.1f )
 		speed = 0.1f;
 
-	const std::string song_title = anim == 4 && g_media_player.m_has_media ? g_utilities.truncate_utf8( g_media_player.get_title( ), 96 ) : std::string{ };
+	/* kopuz titles are raw protobuf bytes: clean like the tag text */
+	const std::string song_title =
+		anim == 4 && g_media_player.m_has_media ? g_utilities.truncate_utf8( n_misc::clantag_clean( g_media_player.get_title( ) ), 96 ) : std::string{ };
 
 	if ( anim == 4 && !song_title.empty( ) ) {
 		/* title, scroll left into artist, loop. each part waits 1 s once its end is shown.
 		   server keeps 15 bytes ( MAX_CLAN_TAG_LENGTH 16 ), 1 goes to the trailing space below */
 		constexpr int k_window_bytes = 14;
 
-		const std::string artist = g_utilities.truncate_utf8( g_media_player.get_artist( ), 96 );
+		const std::string artist = g_utilities.truncate_utf8( n_misc::clantag_clean( g_media_player.get_artist( ) ), 96 );
 
 		std::vector< std::string > chars;
 		std::vector< std::pair< int, int > > parts;
@@ -1904,8 +1994,8 @@ void n_misc::impl_t::update_clantag( )
 		}
 	}
 	else if ( anim == 2 ) {
-		const std::string loop = base;
-		const int loop_length  = static_cast< int >( loop.length( ) );
+		const auto chars      = split( base );
+		const int loop_length = static_cast< int >( chars.size( ) );
 
 		stage %= loop_length;
 		if ( time - last_step >= speed ) {
@@ -1913,10 +2003,12 @@ void n_misc::impl_t::update_clantag( )
 			stage     = ( stage + 1 ) % loop_length;
 		}
 
-		tag = loop.substr( stage ) + loop.substr( 0, stage );
+		tag = join( chars, stage, loop_length ) + join( chars, 0, stage );
 	}
 	else if ( anim == 1 ) {
-		const int text_length      = static_cast< int >( base.length( ) );
+		/* past 15 bytes the typing would stall unseen */
+		const auto chars           = split( g_utilities.truncate_utf8( base, n_misc::k_clantag_bytes ) );
+		const int text_length      = static_cast< int >( chars.size( ) );
 		const int typing_end_stage = text_length - 1;
 		const int pause_stage      = typing_end_stage + 1;
 		const int delete_end_stage = pause_stage + text_length;
@@ -1936,23 +2028,22 @@ void n_misc::impl_t::update_clantag( )
 		}
 
 		if ( stage <= typing_end_stage )
-			tag = base.substr( 0, stage + 1 );
+			tag = join( chars, 0, stage + 1 );
 		else if ( stage == pause_stage )
-			tag = base;
+			tag = join( chars, 0, text_length );
 		else if ( stage <= delete_end_stage ) {
 			const int deleted = stage - pause_stage;
 			if ( deleted < text_length )
-				tag = base.substr( deleted );
+				tag = join( chars, deleted, text_length );
 		}
 	}
 	else
 		tag = base;
 
-	if ( !tag.empty( ) )
+	/* server Q_strncpy cuts at byte 15, mid-glyph = '?': cut on a glyph edge here. space only if it still fits */
+	tag = g_utilities.truncate_utf8( tag, n_misc::k_clantag_bytes );
+	if ( !tag.empty( ) && tag.size( ) < n_misc::k_clantag_bytes )
 		tag += ' ';
-
-	if ( tag.length( ) > 32 )
-		return;
 
 	/* engine re-sends its cl_clanid tag on full connect + every team change ( c_cs_player.cpp TeamChange,
 	   cl_main.cpp CL_FullyConnected ); first load it lands after ours, so resend while the server echo differs */

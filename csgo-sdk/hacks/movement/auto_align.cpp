@@ -320,6 +320,55 @@ namespace
 		ticks = ticks_to( top + k_pj_catch );
 		return ticks > 0;
 	}
+
+	/* air stuck = TryPlayerMove zeroed the move ( allFraction 0, 3+ planes, crease reversal, end-pos stuck box: gamemovement.cpp
+	   TryPlayerMove ) = xy 0, and FinishGravity's half step makes vz read as a pin. a corner wedged in a prop / slanted face.
+	   our move does it this tick or held one more where the cmd we got doesn't = the cmd we got back. both styles */
+	bool aa_guard( c_user_cmd* cmd, const c_user_cmd& got )
+	{
+		if ( cmd->m_forward_move == got.m_forward_move && cmd->m_side_move == got.m_side_move && cmd->m_buttons == got.m_buttons )
+			return false;
+		c_base_entity* local = g_ctx.m_local;
+		if ( !local || !g_interfaces.m_prediction )
+			return false;
+		const int frame = g_interfaces.m_prediction->m_commands_predicted - 1;
+		/* later features read these off the last sim: hand them back as the style left them */
+		const float bounds0 = g_prediction.m_bounds_max_speed, last0 = g_prediction.m_last_max_speed, real0 = g_prediction.m_real_max_speed;
+		const float face0 = g_prediction.m_last_face_dz, pin0 = g_prediction.m_pin_face_dz;
+		const auto stalls = [ & ]( const c_user_cmd& c ) {
+			g_prediction.restore_entity_to_predicted_frame( frame );
+			float bounds = g_prediction.m_real_max_speed;
+			bool stuck   = false;
+			for ( int t = 0; t < 2 && !stuck; ++t ) {
+				c_user_cmd k                    = c;
+				g_prediction.m_bounds_max_speed = bounds;
+				g_prediction.begin( local, &k );
+				g_prediction.end( local );
+				bounds = g_prediction.m_last_max_speed;
+				if ( local->get_move_type( ) != e_move_types::move_type_walk || ( local->get_flags( ) & e_flags::fl_onground ) )
+					break;
+				/* vz too: a slow creep / park / corner crease is xy < 1 with a live vz, a wedge is the pin */
+				const c_vector v = local->get_velocity( );
+				stuck            = v.length_2d( ) < 1.f && g_prediction.is_target_predict_z_velocity( v.m_z );
+			}
+			g_prediction.m_bounds_max_speed = 0.f;
+			return stuck;
+		};
+		const bool back = stalls( *cmd ) && !stalls( got );
+		g_prediction.restore_entity_to_predicted_frame( frame );
+		n_tb::s_pred_dirty              = true;
+		g_prediction.m_bounds_max_speed = bounds0;
+		g_prediction.m_last_max_speed   = last0;
+		g_prediction.m_real_max_speed   = real0;
+		g_prediction.m_last_face_dz     = face0;
+		g_prediction.m_pin_face_dz      = pin0;
+		if ( back ) {
+			cmd->m_forward_move = got.m_forward_move;
+			cmd->m_side_move    = got.m_side_move;
+			cmd->m_buttons      = got.m_buttons;
+		}
+		return back;
+	}
 }
 
 /* end of create_move: a later feature ( fireman / wc ... ) rewrote our park = no server verdict, never grow the margin off it.
@@ -348,9 +397,27 @@ void n_movement::impl_t::auto_align_sent( const c_user_cmd* cmd )
 	}
 }
 
+bool aa_wedge_risk = false;
+
 void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 {
-    if(GET_VARIABLE(g_variables.m_auto_align_type,int)==1){wall_detected=false;auto_align_lumia(cmd);return;}
+	const c_user_cmd got = *cmd;
+	aa_wedge_risk        = false;
+	if ( GET_VARIABLE( g_variables.m_auto_align_type, int ) == 1 ) {
+		wall_detected = false;
+		auto_align_lumia( cmd );
+	} else
+		auto_align_botox( cmd );
+	/* square wall, no prop = no wedge: native behaviour, no extra sims. reverted = never sent: no park / pj verdict off it */
+	if ( aa_wedge_risk && aa_guard( cmd, got ) ) {
+		aa_outs[ aa_out_guard ]++;
+		aa_flush_drop( );
+		s_pj_armed = false;
+	}
+}
+
+void n_movement::impl_t::auto_align_botox( c_user_cmd* cmd )
+{
 	wall_detected = false;
 
 	if ( !g_ctx.m_local || !g_ctx.m_local->is_alive( ) )
@@ -381,7 +448,8 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 	const c_vector start_pos = g_ctx.m_local->get_abs_origin( );
 	const auto mins          = col->get_obb_mins( );
 	const auto maxs          = col->get_obb_maxs( );
-	c_trace_filter_world fil;
+	/* what ProcessMovement hits: world-only skipped props + brush ents ( vz walk read open air, ref-trace-world-only-skips-props ) */
+	n_tb::c_trace_filter_tb_world_props fil( g_ctx.m_local );
 
 	static float start_circle = 0.f;
 	static float warm_fwd = 0.f, warm_side = 0.f;
@@ -413,27 +481,36 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 		}
 	}
 
-	/* all 16 from last tick's wall angle, wrapping: a corner's lower angle used to cost a tick + the warm move */
+	/* all 16 from last tick's wall angle, wrapping: a corner's lower angle used to cost a tick + the warm move. first brush wall wins
+	   ( a prop is never the wall, like the old world-only scan ), no early out: a prop face anywhere in the ring = wedge risk */
+	bool prop_near     = false;
+	const float circle0 = start_circle; /* the loop moves start_circle on a hit, rays walk off the copy */
 	for ( int s = 0; s < 16; s++ ) {
-		const float a  = std::fmod( start_circle + step * static_cast< float >( s ), max_radians );
+		const float a  = std::fmod( circle0 + step * static_cast< float >( s ), max_radians );
 		const float ca = std::cosf( a );
 		const float sa = std::sinf( a );
-		c_vector end_pos;
-		end_pos.m_x = ca + start_pos.m_x;
-		end_pos.m_y = sa + start_pos.m_y;
-		end_pos.m_z = start_pos.m_z;
-		saved_cos   = ca * 64.f;
-		saved_sin   = sa * 64.f;
-
-		ray_t ray( start_pos, end_pos, mins, maxs );
-		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &fil, &trace );
-		if ( trace.m_fraction != 1.f && trace.m_plane.m_normal.m_z == 0.f ) {
+		trace_t tr;
+		ray_t ray( start_pos, c_vector( start_pos.m_x + ca, start_pos.m_y + sa, start_pos.m_z ), mins, maxs );
+		g_interfaces.m_engine_trace->trace_ray( ray, mask_playersolid, &fil, &tr );
+		if ( tr.m_fraction == 1.f )
+			continue;
+		if ( aa_prop( tr ) ) {
+			prop_near |= tr.m_start_solid || std::fabsf( tr.m_plane.m_normal.m_z ) < 0.7f;
+			continue;
+		}
+		/* startsolid = zero normal ( a door closing on you ), no wall direction */
+		if ( !wall_detected && !tr.m_start_solid && tr.m_plane.m_normal.m_z == 0.f ) {
 			wall_detected  = true;
+			trace          = tr;
 			start_circle   = a;
 			save_start_pos = start_pos;
-			break;
+			saved_cos      = ca * 64.f;
+			saved_sin      = sa * 64.f;
 		}
 	}
+
+	if ( prop_near )
+		aa_outs[ aa_out_prop ]++;
 
 	if ( !wall_detected ) {
 		start_circle = 0.f;
@@ -442,6 +519,8 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 		aa_outs[ aa_out_face ]++;
 		return;
 	}
+	/* ponytail: tb filter has no ShouldCollide, a walk-through debris prop also counts. costs only guard sims */
+	aa_wedge_risk = prop_near || aa_slanted( trace.m_plane.m_normal );
 
 	/* tb key held: tb's ladder / park run after us with flips + lookahead. lab 4 maps x 64/128: our pushes under tb cost
 	   inferno64 rides 749 -> 668, hands off = tb alone everywhere. wall_detected stays set for pixel_surf */
@@ -725,6 +804,8 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 		}
 	}
 
+	/* slanted faces too: the engine park ( 0.03125 off ) is outside every tighter lip. 11-14 log: skipping it held n -0.71 -0.71 at
+	   0.03115, lips missed. stucks = aa_guard's */
 	if ( !detect && contact_reachable && !fail_skip ) {
 		for ( int i = 5; i >= 1 && !aa_spent( ); i-- ) {
 			g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );

@@ -54,7 +54,34 @@ static struct {
 	bool valid = false;
 	int cmd    = -1;
 	float pitch = 0.0f, yaw = 0.0f, fwd = 0.0f, side = 0.0f;
+	c_vector origin{ }, velocity{ };                            /* the START it went out from */
+	float w_pitch = 0.0f, w_yaw = 0.0f, w_fwd = 0.0f, w_side = 0.0f; /* its wire bits as publish wrote them */
 } s_last;
+
+/* the server refused a client-proven pin ( offline `AS: lost` the tick after it ). the listen server is deterministic: same START +
+   same wire cmd = same refusal. 11-13 18:52 log: 40 cycles of pin -> hold -> lost on ONE START ( same xy, 1.17u lower each cycle =
+   the slide ). lost vel . n = 1/32 every time = the server's ClipVelocity hit adjust < 0 and pushed out by DIST_EPSILON
+   ( gamemovement.cpp:3533 ) where the client's clip did not ( client.dll vs server.dll float bits ), and the same hold went out again.
+   refused pairs are skipped, the next candidate goes out. key = START xy + velocity ( z never enters a vertical wall's d ) + wire */
+struct as_refuse_t {
+	float x = 0.0f, y = 0.0f;
+	c_vector vel{ };
+	float pitch = 0.0f, yaw = 0.0f, fwd = 0.0f, side = 0.0f;
+};
+static as_refuse_t s_refuse[ 64 ];
+static int s_refuse_n = 0, s_refuse_next = 0;
+static c_vector s_wall_n{ }; /* last tick's wall normal: the `lost` push signature */
+
+static bool as_refused( const c_vector& o, const c_vector& v, const float pitch, const float yaw, const float fwd, const float side )
+{
+	for ( int i = 0; i < s_refuse_n; ++i ) {
+		const as_refuse_t& r = s_refuse[ i ];
+		if ( r.x == o.m_x && r.y == o.m_y && r.vel.m_x == v.m_x && r.vel.m_y == v.m_y && r.vel.m_z == v.m_z && r.pitch == pitch && r.yaw == yaw &&
+		     r.fwd == fwd && r.side == side )
+			return true;
+	}
+	return false;
+}
 
 /* consecutive ticks the plane model predicted crossings the engine refused ( lab PREDBAD: first bump moves 0.0005u = a neighbouring
    coplanar brush an ulp off the probe's plane ). the model is a hint: after 2 misses the engine-verified fan owns this contact */
@@ -373,6 +400,12 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			cmd->m_side_move      = side;
 		}
 		cmd->m_buttons            = live_buttons;
+		s_last.origin             = origin;
+		s_last.velocity           = live_velocity;
+		s_last.w_pitch            = cmd->m_view_point.m_x;
+		s_last.w_yaw              = cmd->m_view_point.m_y;
+		s_last.w_fwd              = cmd->m_forward_move;
+		s_last.w_side             = cmd->m_side_move;
 		g_air_stuck_stamp_yaw     = yaw;
 		g_air_stuck_stamp_forward = move;
 		g_air_stuck_stamp_side    = side;
@@ -386,6 +419,16 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		if ( stuck && !was_stuck && GET_VARIABLE( g_variables.m_air_stuck_display_screen, bool ) )
 			movement_add_window( 5, std::format( "stuck with fw={:.3f} sm={:.3f} yaw={:.3f}", cmd->m_forward_move, cmd->m_side_move, yaw ) );
 		was_stuck = stuck;
+	};
+	/* the server already refused ( yaw, move ) from this START: its wire form exactly as publish would write it */
+	const auto refused_cmd = [ & ]( const float yaw, const float move, const float pitch, const float side ) {
+		if ( !s_refuse_n )
+			return false;
+		if ( send_forced )
+			return as_refused( origin, live_velocity, pitch, yaw, move, side );
+		float f = 0.0f, s = 0.0f;
+		stamp_rotate( live_view.m_y, yaw, move, side, f, s );
+		return as_refused( origin, live_velocity, live_view.m_x, live_view.m_y, f, s );
 	};
 
 	const float pin_vz    = g_prediction.get_engine_target_predict_z_velocity( );
@@ -459,7 +502,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		bool got   = false;
 		int tries  = 0;
 		const auto attempt = [ & ]( const float af, const float as ) {
-			if ( got || tries >= 40 || ( tries > 0 && clock.expired( ) ) )
+			if ( got || tries >= 40 || ( tries > 0 && clock.expired( ) ) || as_refused( origin, live_velocity, live_view.m_x, live_view.m_y, af, as ) )
 				return;
 			++tries;
 			if ( sim_raw( af, as, sims ) ) {
@@ -529,13 +572,29 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		return pin_held( ) && same_o( g_ctx.m_local->get_abs_origin( ), o );
 	};
 
-	/* last tick sent a proven pin that did not hold: d = real START - our sim end */
+	/* last tick sent a proven pin that did not hold: d = real START - our sim end. offline this START is the server's END of exactly that
+	   cmd = a refusal to remember. wire bits read back from the input ring ( what really left; post=1 = a later writer changed it ).
+	   online the refused cmd is cp ticks back and its server START is not ours: nothing recorded */
 	if ( s_expect.valid ) {
 		s_expect.valid = false;
 		if ( !vel_pinned( live_velocity ) ) {
-			const c_vector d = origin - s_expect.origin;
-			botox_dbg_log( "AS: lost d=%.6f,%.6f,%.6f vel=%.3f,%.3f,%.3f cp=%d", d.m_x, d.m_y, d.m_z, live_velocity.m_x, live_velocity.m_y, live_velocity.m_z,
-			               g_interfaces.m_prediction->m_commands_predicted );
+			const c_vector d   = origin - s_expect.origin;
+			const float vn_out = live_velocity.m_x * s_wall_n.m_x + live_velocity.m_y * s_wall_n.m_y;
+			const bool push    = std::fabsf( vn_out - 0.03125f ) < 1e-3f; /* ClipVelocity adjust = -DIST_EPSILON */
+			const int cp_now   = g_interfaces.m_prediction->m_commands_predicted;
+			int post           = -1;
+			if ( cp_now == 0 && s_last.valid && s_last.cmd == cmd->m_command_number - 1 ) {
+				if ( const c_user_cmd* const sent = g_interfaces.m_input->get_user_cmd( s_last.cmd ) ) {
+					s_refuse[ s_refuse_next ] = { s_last.origin.m_x, s_last.origin.m_y, s_last.velocity, sent->m_view_point.m_x, sent->m_view_point.m_y,
+					                              sent->m_forward_move, sent->m_side_move };
+					s_refuse_next = ( s_refuse_next + 1 ) % 64;
+					s_refuse_n    = std::min( s_refuse_n + 1, 64 );
+					post          = sent->m_view_point.m_x != s_last.w_pitch || sent->m_view_point.m_y != s_last.w_yaw || sent->m_forward_move != s_last.w_fwd ||
+					                sent->m_side_move != s_last.w_side;
+				}
+			}
+			botox_dbg_log( "AS: lost d=%.6f,%.6f,%.6f vel=%.3f,%.3f,%.3f cp=%d vn=%.5f push=%d ref=%d post=%d", d.m_x, d.m_y, d.m_z, live_velocity.m_x,
+			               live_velocity.m_y, live_velocity.m_z, cp_now, vn_out, ( int )push, post >= 0 ? s_refuse_n : 0, post );
 		}
 	}
 
@@ -579,9 +638,13 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	}
 	/* hold: START pinned by last tick's pin = replay it in the latched view, 1 sim proves the fixed point */
 	else if ( hold_armed && vel_pinned( live_velocity ) ) {
-		int sims        = 0;
-		const bool held = sim_pins( s_hold.yaw, s_hold.fwd, s_hold.pitch, sims );
+		int sims          = 0;
+		/* the server already refused this hold from this START ( offline = deterministic ): never resend it, solve another */
+		const bool refuse = refused_cmd( s_hold.yaw, s_hold.fwd, s_hold.pitch, s_hold.side );
+		const bool held   = !refuse && sim_pins( s_hold.yaw, s_hold.fwd, s_hold.pitch, sims );
 		restore( );
+		if ( refuse )
+			botox_dbg_log( "AS: hold refused t=%d yaw=%.2f fwd=%.4f pitch=%.2f n=%d", s_hold.ticks, s_hold.yaw, s_hold.fwd, s_hold.pitch, s_refuse_n );
 		if ( !held && hold_rescue( s_hold.yaw, s_hold.fwd, s_hold.side, sims ) )
 			return;
 		/* bullet tick, nothing proven in your view: keep the forced pin ( proven frame ) and fire next tick instead ( 13:23 log: 46 rescues
@@ -589,7 +652,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		if ( !held && bullet && send_fix ) {
 			send_forced = true;
 			send_fix    = false;
-			const bool forced_held = sim_pins( s_hold.yaw, s_hold.fwd, s_hold.pitch, sims );
+			const bool forced_held = !refused_cmd( s_hold.yaw, s_hold.fwd, s_hold.pitch, s_hold.side ) && sim_pins( s_hold.yaw, s_hold.fwd, s_hold.pitch, sims );
 			restore( );
 			if ( forced_held ) {
 				++s_hold.ticks;
@@ -625,14 +688,15 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			s_expect      = { true, origin };
 			return;
 		}
-		botox_dbg_log( "AS: hold break t=%d yaw=%.1f fwd=%.4f pitch=%.2f b=%x pinned=%d cp=%d", s_hold.ticks, s_hold.yaw, s_hold.fwd, s_hold.pitch, live_buttons,
-		               ( int )vel_pinned( live_velocity ), g_interfaces.m_prediction->m_commands_predicted );
+		botox_dbg_log( "AS: hold break t=%d yaw=%.1f fwd=%.4f pitch=%.2f b=%x pinned=%d cp=%d ref=%d", s_hold.ticks, s_hold.yaw, s_hold.fwd, s_hold.pitch, live_buttons,
+		               ( int )vel_pinned( live_velocity ), g_interfaces.m_prediction->m_commands_predicted, ( int )refuse );
 	}
 	s_hold.ticks = 0;
 	s_hold_win   = 0;
 	/* pinned START, no armed hold: the last cmd ( unproven press / park / resend ) pinned us. replay it before anything new
 	   ( 11-10 11:31 nuke crane: the engine pinned on the fallback press twice, both lost next tick to a fresh fan ) */
-	if ( !hold_armed && vel_pinned( live_velocity ) && s_last.valid && s_last.cmd == cmd->m_command_number - 1 ) {
+	if ( !hold_armed && vel_pinned( live_velocity ) && s_last.valid && s_last.cmd == cmd->m_command_number - 1 &&
+	     !refused_cmd( s_last.yaw, s_last.fwd, s_last.pitch, s_last.side ) ) {
 		int sims         = 0;
 		const bool held  = sim_pins( s_last.yaw, s_last.fwd, s_last.pitch, sims );
 		const bool fixed = held && sim_again( sims );
@@ -704,6 +768,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		return;
 	}
 	const plane_t P{ best_tr.m_plane.m_normal, best_tr.m_plane.m_distance };
+	s_wall_n         = P.n;
 	const int ent    = best_tr.m_hit_entity ? best_tr.m_hit_entity->get_index( ) : 0;
 	const bool world = ent == 0 && best_tr.m_disp_flags == 0;
 	const bool axis_wall_pre = std::fabsf( P.n.m_x ) == 1.0f || std::fabsf( P.n.m_y ) == 1.0f;
@@ -724,7 +789,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	const c_vector t( -P.n.m_y, P.n.m_x, 0.0f );
 	const auto sim_fan = [ & ]( const char* why ) {
 		const int cap = pinned_search ? 144 : 48;
-		int sims = 0, tried = 0;
+		int sims = 0, tried = 0, skipped = 0;
 		bool got = false, g_fixed = false;
 		float g_yaw = 0.0f, g_fwd = 0.0f;
 		/* fallback: the slowest vz-pin seen ( xy still moving ), taken only when no full stop exists in the whole sweep */
@@ -745,11 +810,15 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			const float f  = k_fwds[ idx % 9 ];
 			const int s    = si ^ side0;
 			const float sg = s ? -1.0f : 1.0f;
-			++tried;
 			/* tangent direction sg * t, rotated k_leans toward -n */
 			const c_vector w( t.m_x * sg, t.m_y * sg, 0.0f );
 			const float lean = ( w.m_x * -P.n.m_y - w.m_y * -P.n.m_x ) > 0.0f ? -k_leans[ li ] : k_leans[ li ];
 			const float yaw  = std::remainder( rad2deg( std::atan2( w.m_y, w.m_x ) ) + lean, 360.0f );
+			if ( refused_cmd( yaw, f, live_view.m_x, 0.0f ) ) {
+				++skipped;
+				continue;
+			}
+			++tried;
 			if ( !sim_pins( yaw, f, live_view.m_x, sims ) ) {
 				if ( vz_held( ) ) {
 					const float xy = g_ctx.m_local->get_velocity( ).length_2d( );
@@ -768,12 +837,12 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			break;
 		}
 		if ( !pinned_search )
-			s_fan_off = ( s_fan_off + tried ) % k_total;
+			s_fan_off = ( s_fan_off + tried + skipped ) % k_total;
 		restore( );
-		botox_dbg_log( "AS: fan %s ent=%d disp=%d n=%.3f,%.3f d=%.4f pin=%d fixed=%d yaw=%.2f fwd=%.2f vzpin_xy=%.1f tries=%d/%d sims=%d vxy=%.1f vz=%.1f cp=%d us=%lld org=%.7f,%.7f,%.7f vel=%.4f,%.4f pitch=%.2f b=%x surf=%s",
+		botox_dbg_log( "AS: fan %s ent=%d disp=%d n=%.3f,%.3f d=%.4f pin=%d fixed=%d yaw=%.2f fwd=%.2f vzpin_xy=%.1f tries=%d/%d sims=%d vxy=%.1f vz=%.1f cp=%d us=%lld org=%.7f,%.7f,%.7f vel=%.4f,%.4f pitch=%.2f b=%x surf=%s ref=%d",
 		               why, ent, ( int )best_tr.m_disp_flags, P.n.m_x, P.n.m_y, best_frac, ( int )got, ( int )g_fixed, g_yaw, g_fwd, r_xy < FLT_MAX ? r_xy : -1.0f, tried, cap,
 		               sims, live_velocity.length_2d( ), live_velocity.m_z, cp, clock.used_us( ), origin.m_x, origin.m_y, origin.m_z, live_velocity.m_x,
-		               live_velocity.m_y, live_view.m_x, live_buttons, best_tr.surface.m_name ? best_tr.surface.m_name : "" );
+		               live_velocity.m_y, live_view.m_x, live_buttons, best_tr.surface.m_name ? best_tr.surface.m_name : "", skipped );
 		if ( got ) {
 			publish( g_yaw, g_fwd, true, live_view.m_x, true );
 			s_expect = { true, origin };
@@ -791,7 +860,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	   ( fwd 1, 4 deg in, drift side ) */
 	const auto fan_approach = [ & ]( ) {
 		/* pinned START and the whole family falls: keep the cmd that pinned ( server noise online may hold it ) rather than a new press */
-		if ( pinned_search && s_last.valid && s_last.cmd == cmd->m_command_number - 1 ) {
+		if ( pinned_search && s_last.valid && s_last.cmd == cmd->m_command_number - 1 && !refused_cmd( s_last.yaw, s_last.fwd, s_last.pitch, s_last.side ) ) {
 			botox_dbg_log( "AS: pinned resend yaw=%.2f fwd=%.4f", s_last.yaw, s_last.fwd );
 			publish( s_last.yaw, s_last.fwd, true, s_last.pitch, false, s_last.side );
 			s_proof.valid = false;
@@ -899,19 +968,24 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		build( origin, live_velocity, P, H, A, pin_vz, fwd_cap, 0.003f, &cands, 120 );
 	if ( !cands.empty( ) ) {
 		std::stable_sort( cands.begin( ), cands.end( ), [ ]( const cand_t& a, const cand_t& b ) { return a.score != b.score ? a.score > b.score : a.a < b.a; } );
-		int sims = 0, tried = 0;
+		int sims = 0, tried = 0, skipped = 0;
 		for ( const cand_t& c : cands ) {
 			/* a pinned START gets 4x the verified tries ( losing it costs the hold ), a wall that already refused the model 3x */
 			if ( tried >= ( pinned_search ? 16 : s_miss_streak ? 12 : 4 ) || ( tried > 0 && clock.expired( ) ) )
 				break;
+			/* refused by the server from this START before: costs no sim, no try */
+			if ( refused_cmd( c.yaw, c.fwd, live_view.m_x, 0.0f ) ) {
+				++skipped;
+				continue;
+			}
 			++tried;
 			if ( !sim_pins( c.yaw, c.fwd, live_view.m_x, sims ) )
 				continue;
 			const bool fixd = sim_again( sims );
 			restore( );
-			botox_dbg_log( "AS: pin yaw=%.2f fwd=%.4f a=%.3f sc=%d fixed=%d d=%.3g true=%.3g q=%.3g vn=%.3f vxy=%.1f vz=%.1f cands=%zu try=%d sims=%d cp=%d touch=%d surf=%s us=%lld",
+			botox_dbg_log( "AS: pin yaw=%.2f fwd=%.4f a=%.3f sc=%d fixed=%d d=%.3g true=%.3g q=%.3g vn=%.3f vxy=%.1f vz=%.1f cands=%zu try=%d sims=%d cp=%d touch=%d surf=%s us=%lld ref=%d",
 			               c.yaw, c.fwd, c.a, c.score, ( int )fixd, d1, dt1, grid_q( origin, P, H ), vn, live_velocity.length_2d( ), live_velocity.m_z, cands.size( ), tried,
-			               sims, cp, ( int )touching, best_tr.surface.m_name ? best_tr.surface.m_name : "", clock.used_us( ) );
+			               sims, cp, ( int )touching, best_tr.surface.m_name ? best_tr.surface.m_name : "", clock.used_us( ), skipped );
 			publish( c.yaw, c.fwd, true, live_view.m_x, true );
 			s_expect      = { true, origin };
 			s_miss_streak = 0;
@@ -919,7 +993,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		}
 		restore( );
 		++s_miss_streak;
-		botox_dbg_log( "AS: pin miss d=%.3g true=%.3g cands=%zu try=%d sims=%d streak=%d us=%lld", d1, dt1, cands.size( ), tried, sims, s_miss_streak, clock.used_us( ) );
+		botox_dbg_log( "AS: pin miss d=%.3g true=%.3g cands=%zu try=%d sims=%d streak=%d us=%lld ref=%d", d1, dt1, cands.size( ), tried, sims, s_miss_streak,
+		               clock.used_us( ), skipped );
 		/* the model keeps missing here: the engine decides ( same fan as entity / axis walls ) */
 		if ( s_miss_streak >= 2 && sim_fan( "pred" ) ) {
 			s_miss_streak = 0;
@@ -927,7 +1002,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		}
 	}
 	/* pinned START, nothing re-proven: never park a hull that sits on a fixed point ( 12:37 log: park to=1.5e-07 then `lost` ). keep the cmd */
-	if ( pinned_search && s_last.valid && s_last.cmd == cmd->m_command_number - 1 ) {
+	if ( pinned_search && s_last.valid && s_last.cmd == cmd->m_command_number - 1 && !refused_cmd( s_last.yaw, s_last.fwd, s_last.pitch, s_last.side ) ) {
 		botox_dbg_log( "AS: pinned resend yaw=%.2f fwd=%.4f", s_last.yaw, s_last.fwd );
 		publish( s_last.yaw, s_last.fwd, true, s_last.pitch, false, s_last.side );
 		s_proof.valid = false;

@@ -1,4 +1,5 @@
 #include "../../globals/globals.h"
+#include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../../hacks/visuals/screen/screen.h"
 #include "../../hacks/visuals/viewmodel_fps.h"
 #include "../hooks.h"
@@ -7,6 +8,9 @@ void __fastcall n_detoured_functions::draw_view_models( void* ecx, void* edx, c_
 {
 	static auto original = g_hooks.m_draw_view_models.get_original< decltype( &n_detoured_functions::draw_view_models ) >( );
 	HOOK_SCOPE_OR_BAIL( original( ecx, edx, setup, draw_view_model, draw_scope_lens_mask ) );
+
+	if ( g_rear_mirror.drawing( ) )
+		return original( ecx, edx, setup, draw_view_model, draw_scope_lens_mask );
 
 	g_screen.on_draw_view_models( setup );
 

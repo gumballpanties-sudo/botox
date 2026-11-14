@@ -491,6 +491,7 @@ namespace n_movement
 			c_vector left_point{ };
 			c_vector left_normal{ };
 			int left_ground_ticks = 0;
+			bool left_ours        = false;
 			bool player_trick = false;
 			bool side_valid  = false;
 			int side_ground_ticks = 0;
@@ -945,6 +946,7 @@ namespace n_movement
 		void pixel_surf( float target_ps_velocity );
 		void detect_edgebug( c_user_cmd* cmd );
 		void auto_align( c_user_cmd* cmd );
+		void auto_align_botox( c_user_cmd* cmd );
         void auto_align_lumia( c_user_cmd* cmd );
 		void AutoStrafe( c_user_cmd* cmd );
 		void strafe_optimizer( c_user_cmd* cmd );

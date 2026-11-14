@@ -97,6 +97,8 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 	g_debugger.on_frame_stage_notify( stage );
 #endif
 	if ( stage == net_update_end ) {
+		g_ctx.m_local_net_air = !( g_ctx.m_local->get_flags( ) & fl_onground );
+
 		for ( auto events = g_interfaces.m_client_state->m_events; events; events = events->m_next ) {
 			if ( events->m_class_id )
 				break;

@@ -615,11 +615,14 @@ namespace n_cod4
 		h = ratio == 2 ? 0.7f : 1.4f;
 	}
 
+	// icon material for the cs2 jumpshot wings ( killer off the ground ), drawn as a mesh, never a material / glyph
+	inline constexpr int k_air_wings_material = -0x7fffffff - 1;
+
 	// obituary line (0x45b3e0): "^<c>attacker^7 " + "^\x01|\x02 w h [material]" + " ^<c>victim".
 	// material < 0 = a csgo weapon icon glyph (-codepoint) the hud draws outlined; extra = a second icon right after it
-	// (the headshot icon next to a csgo weapon icon)
+	// (the headshot icon next to a csgo weapon icon); air = the wings icon right before the weapon icon
 	inline std::string obituary_line( std::string_view attacker, char attacker_color, std::string_view victim, char victim_color, int material, float w,
-	                                  float h, bool flip, int extra = -1 )
+	                                  float h, bool flip, int extra = -1, bool air = false )
 	{
 		std::string s{ };
 		if ( !attacker.empty( ) ) {
@@ -627,6 +630,13 @@ namespace n_cod4
 			s += attacker_color;
 			s += attacker;
 			s += "^7 ";
+		}
+		if ( air ) {
+			s += '^';
+			s += static_cast< char >( 1 );
+			s += static_cast< char >( icon_byte( 1.4f ) );
+			s += static_cast< char >( icon_byte( 1.4f ) );
+			s.append( reinterpret_cast< const char* >( &k_air_wings_material ), 4 );
 		}
 		s += '^';
 		s += static_cast< char >( flip ? 2 : 1 );

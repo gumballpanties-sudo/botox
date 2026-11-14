@@ -13,6 +13,7 @@
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/misc/misc.h"
+#include "../../hacks/misc/air_wings.h"
 #include "../../hacks/skins/skins.h"
 #include "../../utilities/console/console.h"
 
@@ -170,10 +171,18 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 
 			const bool has_attacker = got_attacker && attacker_id > 0 && attacker_id != victim_id;
 
+			const bool killer_in_air = has_attacker && n_air_wings::killer_in_air( attacker_id, victim_id );
+			if ( GET_VARIABLE( g_variables.m_killfeed_air_icon, bool ) ) {
+				// every death, not just air ones: the row pass maps events to rows by count
+				g_scaleform.m_air_kills.push_back( killer_in_air );
+				while ( g_scaleform.m_air_kills.size( ) > 16 )
+					g_scaleform.m_air_kills.pop_front( );
+			}
+
 			if ( got_victim ) {
 				g_chud.on_player_death( has_attacker ? attacker_info.m_name : "", victim_info.m_name, game_event->get_string( "weapon" ),
 				                        game_event->get_bool( "headshot" ), attacker_id == local_id || victim_id == local_id,
-				                        has_attacker && attacker_id == local_id );
+				                        has_attacker && attacker_id == local_id, killer_in_air );
 			}
 
 			g_mc_hud.on_player_death( attacker_id, victim_id, game_event->get_string( "weapon" ) );

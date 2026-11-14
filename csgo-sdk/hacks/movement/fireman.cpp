@@ -1908,6 +1908,7 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			m_fireman_data.left_valid        = true;
 			m_fireman_data.left_normal       = c_vector( fling.m_x / fling_h, fling.m_y / fling_h, 0.f );
 			m_fireman_data.left_ground_ticks = 0;
+			m_fireman_data.left_ours         = ours_exit;
 			m_fireman_data.recall_valid = false;
 			m_fireman_data.side_valid   = false;
 			m_fireman_data.steer_ticks  = 0;
@@ -2145,6 +2146,13 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 		// climb it stays the player's, style 0 binds are always on)
 		const bool left_face = fireman_latch_is_left( origin, maxs, guard_normal, m_fireman_data.left_valid, m_fireman_data.left_point,
 		                                              m_fireman_data.left_normal );
+		// alien exit (66): the hunt skips that ladder, so eating the press = nobody grabs. player's ladder, player's keys
+		if ( left_face && !m_fireman_data.left_ours ) {
+			static int alien_guard_log = 0;
+			if ( ( alien_guard_log++ % 16 ) == 0 )
+				botox_dbg_log( "[fr] guard alien left kept yaw=%.0f vz=%.0f", wish_yaw, g_prediction.backup_data.m_velocity.m_z );
+			return;
+		}
 		if ( !left_face && g_prediction.backup_data.m_velocity.m_z >= 0.f )
 			return;
 
@@ -2154,8 +2162,8 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 
 		static int guard_log = 0;
 		if ( ( guard_log++ % 16 ) == 0 )
-			botox_dbg_log( "[fr] guard yaw=%.0f fwd=%.0f side=%.0f vz=%.0f launch=%d", wish_yaw, fwd, side, g_prediction.backup_data.m_velocity.m_z,
-			                   m_fireman_data.launch_ticks );
+			botox_dbg_log( "[fr] guard yaw=%.0f fwd=%.0f side=%.0f vz=%.0f launch=%d left=%d", wish_yaw, fwd, side, g_prediction.backup_data.m_velocity.m_z,
+			                   m_fireman_data.launch_ticks, ( int )left_face );
 	} };
 
 	if ( move_type == move_type_ladder ) {
@@ -2426,9 +2434,14 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			else if ( flings_now && m_fireman_data.yaw_valid && ride_drop > fireman_ride_floor_probe && ride_drop <= fling_ok &&
 			          fireman_ride_next_sticks( origin, mins, maxs, descend_step, ladder_normal ) ) {
 				// :3713 fling is z 0: free fall from rest, then the landing press. climbing down + floor press jumps sooner
-				const float descend_rate = std::fabsf( ladder_normal.m_z ) < 0.05f ? -fast_vz : descend_speed;
+				// the step actually sent (62: slant pitch scan, not 156): 156 refused slants at vz > ~500 in band
+				const float descend_rate = descend_step.m_z < -1.f ? -descend_step.m_z : descend_speed;
 				const float fall_time    = sqrtf( 2.f * ride_drop / std::max( fireman_gravity( ), 1.f ) );
 				bool falls_off           = ride_drop / descend_rate + phys_dt_ride <= fall_time;
+
+				static int rate_log = 0;
+				if ( !falls_off && ( rate_log++ % 8 ) == 0 )
+					botox_dbg_log( "[fr] floor end rate=%.0f drop=%.1f fall=%.3f nz=%.2f", descend_rate, ride_drop, fall_time, ladder_normal.m_z );
 
 				if ( !falls_off ) {
 					const float n_len = sqrtf( ladder_normal.m_x * ladder_normal.m_x + ladder_normal.m_y * ladder_normal.m_y );

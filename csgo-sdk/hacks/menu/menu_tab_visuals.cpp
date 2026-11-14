@@ -39,6 +39,9 @@ void n_menu::impl_t::tab_visuals( )
 				ImGui::OptionPopup(
 					"esp settings##player esp settings",
 					[ & ]( ) {
+						ImGui::Label( "esp keybind" );
+						ImGui::Keybind( "esp key##players", &GET_VARIABLE( g_variables.m_players_key, key_bind_t ) );
+
 						ImGui::Checkbox( "include teammates", &GET_VARIABLE( g_variables.m_players_teammates, bool ) );
 
 						ImGui::SliderFloat( "max distance##player esp", &GET_VARIABLE( g_variables.m_players_max_distance, float ), 0.f,
@@ -366,8 +369,11 @@ void n_menu::impl_t::tab_visuals( )
 								                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
 							ImGui::SliderFloat( "wave strength##player glow wave", &GET_VARIABLE( g_variables.m_glow_wave_strength, float ), 0.f,
 							                    1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
-							if ( !legacy )
+							if ( !legacy ) {
+								ImGui::SliderFloat( "wave angle##player glow wave", &GET_VARIABLE( g_variables.m_glow_wave_angle, float ), -180.f,
+								                    180.f, "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
 								ImGui::Checkbox( "follow player##player glow wave", &GET_VARIABLE( g_variables.m_glow_wave_player, bool ) );
+							}
 						}
 
 						ImGui::Checkbox( "edge pulse##player glow", &GET_VARIABLE( g_variables.m_glow_pulse, bool ) );
@@ -422,6 +428,8 @@ void n_menu::impl_t::tab_visuals( )
 							                    2.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
 							ImGui::SliderFloat( "wave strength##player stencil wave", &GET_VARIABLE( g_variables.m_players_stencil_wave_strength, float ),
 							                    0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "wave angle##player stencil wave", &GET_VARIABLE( g_variables.m_players_stencil_wave_angle, float ),
+							                    -180.f, 180.f, "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
 							ImGui::Checkbox( "follow player##player stencil wave", &GET_VARIABLE( g_variables.m_players_stencil_wave_player, bool ) );
 						}
 					},
@@ -814,6 +822,24 @@ void n_menu::impl_t::tab_visuals( )
 			ImGui::Checkbox( "flip world", &GET_VARIABLE( g_variables.m_flip_world, bool ) );
 			if ( GET_VARIABLE( g_variables.m_flip_world, bool ) )
 				ImGui::Checkbox( "gun other side##flip world", &GET_VARIABLE( g_variables.m_flip_world_mirror_hand, bool ) );
+
+			ImGui::Checkbox( "rear view mirror", &GET_VARIABLE( g_variables.m_rear_mirror, bool ) );
+			if ( GET_VARIABLE( g_variables.m_rear_mirror, bool ) ) {
+				ImGui::OptionPopup(
+					"rear view mirror settings",
+					[ & ]( ) {
+						ImGui::SliderInt( "width##rear mirror", &GET_VARIABLE( g_variables.m_rear_mirror_width, int ), 80, 1280, "%d px",
+						                  ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderInt( "height##rear mirror", &GET_VARIABLE( g_variables.m_rear_mirror_height, int ), 40, 720, "%d px",
+						                  ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "fov##rear mirror", &GET_VARIABLE( g_variables.m_rear_mirror_fov, float ), 30.f, 150.f, "%.0f deg",
+						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "rounding##rear mirror", &GET_VARIABLE( g_variables.m_rear_mirror_rounding, float ), 0.f, 60.f, "%.0f px",
+						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::Checkbox( "mirror image##rear mirror", &GET_VARIABLE( g_variables.m_rear_mirror_flip, bool ) );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
 
 			ImGui::Checkbox( "dlight", &GET_VARIABLE( g_variables.m_dlight, bool ) );
 			if ( GET_VARIABLE( g_variables.m_dlight, bool ) ) {
@@ -2346,6 +2372,8 @@ void n_menu::impl_t::tab_visuals( )
 			}
 
 			ImGui::Checkbox( "keep killfeed", &GET_VARIABLE( g_variables.m_keep_killfeed, bool ) );
+
+			ImGui::Checkbox( "air kill icon", &GET_VARIABLE( g_variables.m_killfeed_air_icon, bool ) );
 
 			ImGui::Checkbox( "scaleform", &GET_VARIABLE( g_variables.m_scaleform, bool ) );
 

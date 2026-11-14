@@ -1,6 +1,7 @@
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../../hacks/visuals/screen/mc_clouds.h"
+#include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../hooks.h"
 
 void __fastcall n_detoured_functions::draw_world_lists( void* ecx, void* edx, void* render_context, void* list, unsigned long flags,
@@ -12,5 +13,6 @@ void __fastcall n_detoured_functions::draw_world_lists( void* ecx, void* edx, vo
 
 	original( ecx, edx, render_context, list, flags, water_z_adjust );
 
-	g_mc_clouds.on_draw_world_lists( flags );
+	if ( !g_rear_mirror.drawing( ) )
+		g_mc_clouds.on_draw_world_lists( flags );
 }

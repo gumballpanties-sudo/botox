@@ -48,7 +48,10 @@ inline void text_buffer_sync( const char* widget_id, std::string& var, char* buf
 	if ( changed )
 		var = buffer;
 	else if ( !ImGui::IsItemActive( ) && var != buffer ) {
-		const std::size_t len = var.size( ) < buffer_size - 1 ? var.size( ) : buffer_size - 1;
+		std::size_t len = var.size( ) < buffer_size - 1 ? var.size( ) : buffer_size - 1;
+		/* cut on a glyph edge: half a utf-8 char comes back as U+FFFD on the next edit */
+		while ( len > 0 && len < var.size( ) && ( static_cast< unsigned char >( var[ len ] ) & 0xC0 ) == 0x80 )
+			--len;
 		std::memcpy( buffer, var.c_str( ), len );
 		buffer[ len ] = '\0';
 	}

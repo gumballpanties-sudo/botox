@@ -473,6 +473,7 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( float, 170, m_weapon_skins_sticker_rotation_tside, 0.f );
 
 		ADD_VARIABLE( bool, m_players, false );
+		ADD_VARIABLE( key_bind_t, m_players_key, key_bind_t( 0, 0 ) ); /* style 0 = always on */
 		ADD_VARIABLE( bool, m_players_teammates, false );
 		ADD_VARIABLE( float, m_players_max_distance, 0.f );
 		ADD_VARIABLE( bool, m_players_distance_fade, false );
@@ -554,6 +555,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_glow_wave_size, 0.35f );
 		ADD_VARIABLE( float, m_glow_wave_strength, 0.8f );
 		ADD_VARIABLE( bool, m_glow_wave_player, true ); /* wave rides each player's body, not the screen */
+		ADD_VARIABLE( float, m_glow_wave_angle, 0.f );  /* deg, 0 = diagonal on screen / head to feet on player */
 		ADD_VARIABLE( bool, m_glow_pulse, false );
 		ADD_VARIABLE( float, m_glow_pulse_speed, 1.f );
 		ADD_VARIABLE( float, m_glow_pulse_min, 35.f );
@@ -567,6 +569,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_players_stencil_wave_size, 0.35f );
 		ADD_VARIABLE( float, m_players_stencil_wave_strength, 0.8f );
 		ADD_VARIABLE( bool, m_players_stencil_wave_player, true );
+		ADD_VARIABLE( float, m_players_stencil_wave_angle, 0.f );
 		ADD_VARIABLE( bool, m_inner_glow, false );
 		ADD_VARIABLE( c_color, m_inner_glow_vis_color, c_color( 255, 255, 255, 200 ) );
 		ADD_VARIABLE( c_color, m_inner_glow_invis_color, c_color( 114, 155, 221, 200 ) );
@@ -743,6 +746,12 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_fullbright, false );
 		ADD_VARIABLE( bool, m_flip_world, false );
 		ADD_VARIABLE( bool, m_flip_world_mirror_hand, false );
+		ADD_VARIABLE( bool, m_rear_mirror, false );
+		ADD_VARIABLE( int, m_rear_mirror_width, 360 );
+		ADD_VARIABLE( int, m_rear_mirror_height, 120 );
+		ADD_VARIABLE( float, m_rear_mirror_fov, 90.f );
+		ADD_VARIABLE( float, m_rear_mirror_rounding, 10.f );
+		ADD_VARIABLE( bool, m_rear_mirror_flip, true );
 		ADD_VARIABLE( bool, m_dlight, false );
 		ADD_VARIABLE( c_color, m_dlight_color, c_color( 255, 120, 60, 255 ) );
 		ADD_VARIABLE( bool, m_dlight_local, false );
@@ -757,6 +766,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_remove_hud_elements, false );
 		ADD_VARIABLE_VECTOR( bool, e_hud_elements::hud_element_max, m_removed_hud_elements, false );
 		ADD_VARIABLE( bool, m_keep_killfeed, false );
+		ADD_VARIABLE( bool, m_killfeed_air_icon, false );
 		ADD_VARIABLE( bool, m_old_shaders, false );
 		ADD_VARIABLE( bool, m_old_shaders_weapons, true );
 		ADD_VARIABLE( bool, m_old_shaders_arms, true );
@@ -1323,6 +1333,7 @@ namespace n_variables
 		ADD_VARIABLE( key_bind_t, m_edge_surf_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( float, m_edge_surf_range, 96.f );
 		ADD_VARIABLE( float, m_edge_surf_reach, 6.f );
+		ADD_VARIABLE( float, m_edge_surf_delta_strafe, 0.f );
 		ADD_VARIABLE( bool, m_fix_air_stucks, false );
 
 		ADD_VARIABLE( bool, m_ladder_bug, false );

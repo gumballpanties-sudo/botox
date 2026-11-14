@@ -15,6 +15,7 @@ namespace n_chud
 		std::string m_attacker{ }, m_victim{ }, m_weapon{ };
 		bool m_headshot{ }, m_local_involved{ };
 		bool m_local_killer{ };
+		bool m_in_air{ }; // killer off the ground at the kill
 	};
 
 	struct impl_t {
@@ -27,7 +28,7 @@ namespace n_chud
 		bool chat_reset( );
 
 		void on_player_death( const std::string& attacker, const std::string& victim, const std::string& weapon, bool headshot,
-		                      bool local_involved, bool local_killer );
+		                      bool local_involved, bool local_killer, bool in_air );
 		void on_chat( const std::string& text, bool stack = false, bool replace = false );
 
 		bool resolve_hud( );

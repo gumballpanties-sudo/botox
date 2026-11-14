@@ -95,6 +95,7 @@
     <ClCompile Include="hacks\movement\wall_climb.cpp" />
     <ClCompile Include="hacks\movement\edge_skip.cpp" />
     <ClCompile Include="hacks\movement\edge_catch.cpp" />
+    <ClCompile Include="hacks\movement\edge_surf.cpp" />
     <ClCompile Include="hacks\movement\edgebug.cpp" />
     <ClCompile Include="hacks\movement\pixel_calc.cpp" />
     <ClCompile Include="hacks\movement\route_calc.cpp" />
@@ -121,6 +122,7 @@
     <ClCompile Include="hacks\visuals\screen\ambient_occlusion.cpp" />
     <ClCompile Include="hacks\visuals\screen\bloom.cpp" />
     <ClCompile Include="hacks\visuals\screen\flip_world.cpp" />
+    <ClCompile Include="hacks\visuals\screen\rear_mirror.cpp" />
     <ClCompile Include="hacks\visuals\screen\reflections.cpp" />
     <ClCompile Include="hacks\visuals\screen\depth_view.cpp" />
     <ClCompile Include="hacks\visuals\screen\depth_warp.cpp" />
@@ -153,6 +155,7 @@
     <ClCompile Include="hooks\functions\draw_view_models.cpp" />
     <ClCompile Include="hooks\functions\push_2d_view.cpp" />
     <ClCompile Include="hooks\functions\world_to_screen_matrix.cpp" />
+    <ClCompile Include="hooks\functions\render_view.cpp" />
     <ClCompile Include="hooks\functions\emit_sound.cpp" />
     <ClCompile Include="hooks\functions\create_texture.cpp" />
     <ClCompile Include="hooks\functions\set_depth_stencil_surface.cpp" />
@@ -508,6 +511,7 @@
     <ClInclude Include="hacks\visuals\screen\ambient_occlusion.h" />
     <ClInclude Include="hacks\visuals\screen\bloom.h" />
     <ClInclude Include="hacks\visuals\screen\flip_world.h" />
+    <ClInclude Include="hacks\visuals\screen\rear_mirror.h" />
     <ClInclude Include="hacks\visuals\screen\reflections.h" />
     <ClInclude Include="hacks\visuals\screen\depth_view.h" />
     <ClInclude Include="hacks\visuals\screen\depth_warp.h" />

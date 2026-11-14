@@ -14,6 +14,7 @@
 #include "../../hacks/visuals/players/players.h"
 #include "../../hacks/visuals/screen/color_correction.h"
 #include "../../hacks/visuals/screen/fx_compat.h"
+#include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../../hacks/visuals/screen/reflections.h"
 #include "../../hacks/visuals/screen/resolution_spoof.h"
 #include "../../hacks/web/websurface.h"
@@ -38,6 +39,8 @@ void n_detoured_functions::draw_overlay_frame( IDirect3DDevice9* device )
 			g_movement_recorder.on_end_scene( );
 
 			Web_Present( device );
+
+			g_rear_mirror.draw( );
 
 			g_menu.on_end_scene( );
 			g_misc.on_end_scene( );

@@ -1915,11 +1915,23 @@ void n_menu::impl_t::tab_misc( )
 
 					ImGui::Combo( "animation##clantag", &anim, "static\0typewriter\0scroll\0frame by frame\0now playing\0" );
 
-					static char tag_buffer[ 25 ] = { };
+					static char tag_buffer[ 65 ] = { };
 					auto& tag_var                = GET_VARIABLE( g_variables.m_clantag_text, std::string );
+
+					/* server keeps 15 bytes ( glyphs 1-4 each ): say what actually shows */
+					const auto byte_hint = [ anim ]( const std::string& text ) {
+						const std::string clean = n_misc::clantag_clean( text );
+						if ( clean.size( ) <= n_misc::k_clantag_bytes )
+							return;
+						if ( anim == 2 )
+							ImGui::TextDisabled( "%zu / 15 bytes, scrolls", clean.size( ) );
+						else
+							ImGui::TextDisabled( "%zu / 15 bytes, shows: %s", clean.size( ), g_utilities.truncate_utf8( clean, n_misc::k_clantag_bytes ).c_str( ) );
+					};
 
 					if ( anim != 3 ) {
 						text_buffer_sync( "tag text##clantag", tag_var, tag_buffer, sizeof( tag_buffer ) );
+						byte_hint( tag_var );
 					}
 
 					if ( anim == 3 ) {
@@ -1962,6 +1974,7 @@ void n_menu::impl_t::tab_misc( )
 								frame.m_text = buffer;
 								changed      = true;
 							}
+							byte_hint( frame.m_text );
 
 							if ( ImGui::SliderFloat( "hold time##clantag frame", &frame.m_hold, 0.1f, 10.f, "%.1f s", ImGuiSliderFlags_AlwaysClamp ) )
 								changed = true;

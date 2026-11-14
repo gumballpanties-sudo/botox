@@ -9,6 +9,7 @@
 #include "../../hacks/lagcomp/lagcomp.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/visuals/players/sound_esp/sound_esp.h"
+#include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../../hacks/visuals/viewmodel_bones.h"
 #include "../../hacks/visuals/viewmodel_fps.h"
 #include "../../hacks/visuals/weapon_sheen.h"
@@ -100,6 +101,9 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 	if ( ( GET_VARIABLE( g_variables.m_remove_ragdolls, bool ) && should_skip_ragdoll( info ) && !kill_effects_shows_ragdoll( info.entity_index ) ) ||
 	     kill_effects_hides_ragdoll( info.entity_index ) )
 		return;
+
+	if ( g_rear_mirror.drawing( ) )
+		return original( ecx, edx, context, state, info, custom_bone_to_world );
 
 	/* viewmodel bone velocity for true motion blur. destructor: bones must be read after whichever
 	   return path drew the model. skipped on depth-only passes and inside glow */

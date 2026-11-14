@@ -75,21 +75,25 @@ static const char k_blur_shader[] =
 	"return float4(gauss(uv,float2(c0.x,0),m),saturate(m.r+m.g),1);}";
 
 /* wave coordinate: screen diagonal, or ( on ) height along the nearest player's box ( 0 head .. 1 feet ) plus that
-   player's phase offset, so the sweep rides the body and turning the view never slides it. c15.y boxes in c16.., c48.. */
+   player's phase offset, so the sweep rides the body and turning the view never slides it. c15.y boxes in c16.., c48..
+   r = cos sin of the angle slider ( c14 ), turns that direction; x in screen-height / body-height units so bands stay square */
 #define WAVE_POS_FN                                                                                                              \
+	"float4 c14:register(c14);"                                                                                                  \
 	"float4 c15:register(c15);"                                                                                                  \
 	"float4 pb[32]:register(c16);"                                                                                               \
 	"float4 po[32]:register(c48);"                                                                                               \
-	"float wpos(float2 uv,float on){"                                                                                            \
-	"float t=uv.x*c0.y/c0.x+uv.y;"                                                                                               \
+	"float wpos(float2 uv,float on,float2 r){"                                                                                   \
+	"float a=c0.y/c0.x;"                                                                                                         \
+	"float t=dot(float2(uv.x*a,uv.y),float2(r.x-r.y,r.y+r.x));"                                                                  \
 	"if(on<0.5||c15.y<0.5)return t;"                                                                                             \
 	"float best=1e9;"                                                                                                            \
 	"[loop] for(int i=0;i<32;i++){"                                                                                              \
 	"if(i>=c15.y)break;"                                                                                                         \
 	"float4 b=pb[i];"                                                                                                            \
 	"float2 e=max(b.zw-b.xy,1e-4);"                                                                                              \
-	"float m=max(abs(uv.x-(b.x+b.z)*0.5)/e.x,abs(uv.y-(b.y+b.w)*0.5)/e.y);"                                                      \
-	"if(m<best){best=m;t=(uv.y-b.y)/e.y+po[i].x;}}"                                                                              \
+	"float2 d=uv-(b.xy+b.zw)*0.5;"                                                                                               \
+	"float m=max(abs(d.x)/e.x,abs(d.y)/e.y);"                                                                                    \
+	"if(m<best){best=m;t=dot(float2(d.x*a,d.y)/e.y,float2(-r.y,r.x))+0.5+po[i].x;}}"                                             \
 	"return t;}"
 
 static const char k_glow_shader[] =
@@ -111,7 +115,7 @@ static const char k_glow_shader[] =
 	"float g=saturate((a-c7.x)*c7.y);"
 	"float4 v=lerp(float4(c5.rgb*c5.a,c5.a),float4(c3.rgb*c3.a,c3.a),g);"
 	"float4 h=lerp(float4(c6.rgb*c6.a,c6.a),float4(c4.rgb*c4.a,c4.a),g);"
-	"float w=0.5+0.5*cos(6.2831853*(wpos(uv,c15.x)*c8.z-c8.y));"
+	"float w=0.5+0.5*cos(6.2831853*(wpos(uv,c15.x,c14.xy)*c8.z-c8.y));"
 	"float k=w*w*w*c8.w*c8.x;"
 	"v.rgb=lerp(v.rgb,c9.rgb*v.a,k);"
 	"h.rgb=lerp(h.rgb,c9.rgb*h.a,k);"
@@ -163,7 +167,7 @@ static const char k_columns_shader[] =
 	"float4 main(float2 uv:TEXCOORD0):COLOR0{"
 	"float3 k=dist(uv);"
 	"float4 col=lerp(c2,c1,saturate(0.5+0.5*(k.y-k.x)));"
-	"float w=0.5+0.5*cos(6.2831853*(wpos(uv,c15.z)*c12.z-c12.y));"
+	"float w=0.5+0.5*cos(6.2831853*(wpos(uv,c15.z,c14.zw)*c12.z-c12.y));"
 	"col.rgb=lerp(col.rgb,c13.rgb,w*w*w*c12.w*c12.x);"
 	"return float4(col.rgb,col.a*saturate(c0.w+1.0-min(k.x,k.y))*(1.0-k.z));}";
 
@@ -517,6 +521,9 @@ void n_player_stencil::impl_t::run( const view_matrix_t* world_to_screen, const 
 		settings.m_wave[ 2 ]  = 1.f / std::clamp( GET_VARIABLE( g_variables.m_glow_wave_size, float ), 0.05f, 4.f );
 		settings.m_wave[ 3 ]  = std::clamp( GET_VARIABLE( g_variables.m_glow_wave_strength, float ), 0.f, 1.f );
 		rgba( settings.m_wave_color, GET_VARIABLE( g_variables.m_glow_wave_color, c_color ) );
+		const float angle          = deg2rad( GET_VARIABLE( g_variables.m_glow_wave_angle, float ) );
+		settings.m_wave_angle[ 0 ] = std::cos( angle );
+		settings.m_wave_angle[ 1 ] = std::sin( angle );
 	}
 
 	if ( GET_VARIABLE( g_variables.m_players_stencil_wave, bool ) ) {
@@ -526,6 +533,9 @@ void n_player_stencil::impl_t::run( const view_matrix_t* world_to_screen, const 
 		settings.m_outline_wave[ 2 ]  = 1.f / std::clamp( GET_VARIABLE( g_variables.m_players_stencil_wave_size, float ), 0.05f, 4.f );
 		settings.m_outline_wave[ 3 ]  = std::clamp( GET_VARIABLE( g_variables.m_players_stencil_wave_strength, float ), 0.f, 1.f );
 		rgba( settings.m_outline_wave_color, GET_VARIABLE( g_variables.m_players_stencil_wave_color, c_color ) );
+		const float angle          = deg2rad( GET_VARIABLE( g_variables.m_players_stencil_wave_angle, float ) );
+		settings.m_wave_angle[ 2 ] = std::cos( angle );
+		settings.m_wave_angle[ 3 ] = std::sin( angle );
 	}
 
 	if ( GET_VARIABLE( g_variables.m_glow_pulse, bool ) ) {
@@ -693,6 +703,7 @@ bool n_player_stencil::impl_t::draw( IDirect3DDevice9* device, IDirect3DSurface9
 	device->SetPixelShaderConstantF( 11, settings.m_inner_invisible, 1 );
 	device->SetPixelShaderConstantF( 12, settings.m_outline_wave, 1 );
 	device->SetPixelShaderConstantF( 13, settings.m_outline_wave_color, 1 );
+	device->SetPixelShaderConstantF( 14, settings.m_wave_angle, 1 );
 	device->SetPixelShaderConstantF( 15, settings.m_wave_anchor, 1 );
 
 	/* player boxes: ndc -> this target's uv through the view rect, like the capsules */

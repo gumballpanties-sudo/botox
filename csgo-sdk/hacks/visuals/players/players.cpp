@@ -257,9 +257,21 @@ static void push_hitbox_capsules( const std::vector< n_players::hitbox_capsule_t
 		} } ) );
 }
 
+bool n_players::esp_on( )
+{
+	if ( !GET_VARIABLE( g_variables.m_players, bool ) )
+		return false;
+
+	auto& key = GET_VARIABLE( g_variables.m_players_key, key_bind_t );
+	if ( key.m_key_style == 0 || key.m_key == 0 )
+		return true;
+
+	return g_input.check_input( &key );
+}
+
 void n_players::impl_t::on_paint_traverse( )
 {
-	if ( !GET_VARIABLE( g_variables.m_players, bool ) ) {
+	if ( !n_players::esp_on( ) ) {
 		this->m_damage_numbers.clear( );
 		this->m_hit_hitboxes.clear( );
 		return;
@@ -273,7 +285,7 @@ void n_players::impl_t::on_paint_traverse( )
 
 void n_players::impl_t::hitboxes_on_hurt( const int victim )
 {
-	if ( !GET_VARIABLE( g_variables.m_players, bool ) || !GET_VARIABLE( g_variables.m_players_hitboxes, bool ) ||
+	if ( !n_players::esp_on( ) || !GET_VARIABLE( g_variables.m_players_hitboxes, bool ) ||
 	     GET_VARIABLE( g_variables.m_players_hitboxes_mode, int ) != 1 )
 		return;
 
@@ -435,7 +447,7 @@ bool n_players::impl_t::wallbangable( c_base_entity* entity, const int index )
 
 void n_players::impl_t::on_player_hurt( const c_vector& origin, const int victim, const int damage )
 {
-	if ( !GET_VARIABLE( g_variables.m_players, bool ) || !GET_VARIABLE( g_variables.m_damage_numbers, bool ) || damage <= 0 )
+	if ( !n_players::esp_on( ) || !GET_VARIABLE( g_variables.m_damage_numbers, bool ) || damage <= 0 )
 		return;
 
 	const float current_time = g_interfaces.m_global_vars_base->m_real_time;

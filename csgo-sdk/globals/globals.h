@@ -32,6 +32,9 @@ namespace n_ctx
 
 		bool m_is_window_focused{ };
 
+		// local off ground per the server ( net_update_end, before prediction rewrites flags ): killfeed air kill icon
+		bool m_local_net_air{ };
+
 		/* settings "unload" button, the only way out (a stray key press must never eject) */
 		bool m_eject_requested{ };
 

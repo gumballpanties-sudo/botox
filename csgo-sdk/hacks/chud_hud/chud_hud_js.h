@@ -1237,6 +1237,17 @@ try {
             });
         }
 
+        /* killer was off the ground: cs2 wings just left of the weapon. -8px right
+           margin eats half the weapon cell's 16px gutter so the two read as a pair */
+        if (${inAir}) {
+            $.CreatePanel('Image', row, '', {
+                src: '${airIcon}',
+                scaling: 'stretch-to-fit-y-preserve-aspect',
+                style: 'height: 22px; width: 22px; margin: 0px -8px 0px 16px;' +
+                       'vertical-align: center; wash-color: ${fg};' + '${imgShadow}'
+            });
+        }
+
         /* column width is per weapon CLASS — a deagle should not take the same room
            as an awp. still a fixed width per class rather than raw aspect, so rows
            stay aligned instead of jittering with every individual svg */

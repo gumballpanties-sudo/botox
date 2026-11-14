@@ -79,6 +79,9 @@ namespace n_players
 		float m_head_radius = 0.f;
 	};
 
+	/* players checkbox + m_players_key. style 0 / no key = always on, menu open too ( esp preview unaffected ) */
+	bool esp_on( );
+
 	void draw_player( const esp_player_t& player, const projector_t& w2s, std::vector< draw_object_t >& out );
 
 	std::vector< hitbox_capsule_t > hitbox_capsules( studiohdr_t* studio, int hitbox_set, const matrix3x4_t* matrices, int bone_count );

@@ -80,6 +80,7 @@ namespace n_edge_catch
 		float m_reach      = 8.f;
 		int m_sims         = 0;
 		int m_chains       = 0;
+		int m_anchors      = 0; /* shorter anchors that landed after a full pull missed */
 		int m_saved[ 2 ]{ };
 	};
 }

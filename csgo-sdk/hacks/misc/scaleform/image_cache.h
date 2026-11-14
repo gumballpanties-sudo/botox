@@ -22,6 +22,10 @@ namespace n_image_cache
 	bool download_file( const std::string& url, const std::string& destination );
 
 	/* error: http status, or WinHTTP error code when no response came back */
-	bool http_get_text( const std::string& url, std::string& out, unsigned long* error = nullptr );}
+	bool http_get_text( const std::string& url, std::string& out, unsigned long* error = nullptr );
+
+	/* killfeed "killer was off the ground" icon: svg ships in the dll, written to the cache dir. file:// src, empty = no cache dir */
+	const std::string& air_kill_icon( );
+}
 
 inline n_image_cache::impl_t g_image_cache{ };

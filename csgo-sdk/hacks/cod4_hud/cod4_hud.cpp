@@ -7,6 +7,7 @@
 #include "../../utilities/console/console.h"
 #include "../menu/menu.h"
 #include "../misc/misc.h"
+#include "../misc/air_wings.h"
 #include "../misc/scaleform/image_cache.h"
 #include "../visuals/screen/flip_world.h"
 
@@ -499,6 +500,17 @@ namespace
 						std::memcpy( &material, s.data( ) + i + 4, 4 );
 						const float w = wpx * kx, h = hpx * ky;
 						const float top = y - ( f.m_pixel_height * ky + h ) * 0.5f;
+						if ( material == k_air_wings_material ) {
+							if ( pass == 1 ) {
+								const int a   = static_cast< int >( std::clamp( color[ 3 ], 0.f, 1.f ) * 255.f );
+								const float s = h * 0.85f;
+								n_air_wings::draw( s_list, pen + ( w - s ) * 0.5f, top + ( h - s ) * 0.5f, s, IM_COL32( 255, 255, 255, a ),
+								                   IM_COL32( 0, 0, 0, a ), std::max( 1.f, std::round( h / 22.f ) ) );
+							}
+							pen += w;
+							i += 8;
+							continue;
+						}
 						if ( material < 0 ) {
 							pen += weapon_glyph( static_cast< std::uint32_t >( -material ), pen, top, h, color[ 3 ], pass == 1 );
 							i += 8;
@@ -1813,7 +1825,8 @@ void n_cod4_hud::impl_t::on_event( game_event_t* event )
 			material = material_index( "killicondied" ), w = h = 1.4f, flip = false;
 
 		// ui_hud_obituaries gates the window's menu item (gamemessages.menu), not the line
-		s_ev.m_lines.push_back( { 0, obituary_line( attacker_name, color( attacker ), victim_name, color( victim ), material, w, h, flip, extra ), now } );
+		const bool air = !attacker_name.empty( ) && n_air_wings::killer_in_air( attacker, victim );
+		s_ev.m_lines.push_back( { 0, obituary_line( attacker_name, color( attacker ), victim_name, color( victim ), material, w, h, flip, extra, air ), now } );
 
 		// CG_Obituary center print: "You killed X" / "Killed by X"
 		if ( attacker == me && victim != me ) {

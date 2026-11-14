@@ -119,6 +119,7 @@ namespace n_urt_logic
 		int m_gender    = 0;        // clientinfo+472: 0 him, 1 her
 		int m_attacker_health = 255; // % left, 255 = n/a
 		int m_place = 1, m_ref_score = 0, m_ref_team = 0; // cg_drawKillLog >= 5
+		bool m_air = false; // killer off the ground: byte 1 ( cs2 wings, urt_core.h ) left of the weapon tag / killer name
 	};
 
 	struct obituary_out_t {
@@ -153,37 +154,38 @@ namespace n_urt_logic
 		if ( !f.m_tag )
 			return out; // no tag = no kill log line in any mode (flash kills, as in 4.3)
 		const char* suffix = f.m_suffix ? f.m_suffix : ".";
+		const char* w      = o.m_air ? "\x01" : ""; // wings: left of the weapon tag, else of the killer name
 		const auto health  = [ & ]( int slot ) {
 			if ( o.m_me_victim && o.m_attacker_health != 255 )
 				out.m_msg[ slot ] = va( "%s had %d%% health.", o.m_attacker.c_str( ), o.m_attacker_health );
 		};
 		switch ( mode ) {
 		case 1:
-			out.m_msg[ 0 ] = va( "%s %s %s^7%s", o.m_victim.c_str( ), f.m_verb, o.m_attacker.c_str( ), suffix );
+			out.m_msg[ 0 ] = va( "%s %s %s%s^7%s", o.m_victim.c_str( ), f.m_verb, w, o.m_attacker.c_str( ), suffix );
 			health( 1 );
 			break;
 		case 2:
-			out.m_msg[ 0 ] = va( "%s [%s] %s^7.", o.m_attacker.c_str( ), f.m_tag, o.m_victim.c_str( ) );
+			out.m_msg[ 0 ] = va( "%s %s[%s] %s^7.", o.m_attacker.c_str( ), w, f.m_tag, o.m_victim.c_str( ) );
 			health( 1 );
 			break;
-		case 3: out.m_msg[ 0 ] = va( "%s has been killed by %s^7.", o.m_victim.c_str( ), o.m_attacker.c_str( ) ); break;
+		case 3: out.m_msg[ 0 ] = va( "%s has been killed by %s%s^7.", o.m_victim.c_str( ), w, o.m_attacker.c_str( ) ); break;
 		case 4:
 			if ( o.m_me_attacker )
-				out.m_center = va( "You killed %s", o.m_victim.c_str( ) );
+				out.m_center = va( "%sYou killed %s", w, o.m_victim.c_str( ) );
 			else if ( o.m_me_victim )
-				out.m_center = va( "You have been killed by %s", o.m_attacker.c_str( ) );
+				out.m_center = va( "You have been killed by %s%s", w, o.m_attacker.c_str( ) );
 			else
-				out.m_msg[ 0 ] = va( "%s has been killed by %s^7.", o.m_victim.c_str( ), o.m_attacker.c_str( ) );
+				out.m_msg[ 0 ] = va( "%s has been killed by %s%s^7.", o.m_victim.c_str( ), w, o.m_attacker.c_str( ) );
 			break;
 		default: {
 			const char* color = o.m_ref_team == 1 ? "^1" : o.m_ref_team == 2 ? "^4" : "^3";
 			if ( o.m_me_attacker )
-				out.m_center = va( "You killed %s\n%s%d%s %splace with %d", o.m_victim.c_str( ), color, o.m_place, ordinal( o.m_place ), "^7", o.m_ref_score );
+				out.m_center = va( "%sYou killed %s\n%s%d%s %splace with %d", w, o.m_victim.c_str( ), color, o.m_place, ordinal( o.m_place ), "^7", o.m_ref_score );
 			else if ( o.m_me_victim )
-				out.m_center = va( "You have been killed by %s\n%s%d%s %splace with %d", o.m_attacker.c_str( ), color, o.m_place, ordinal( o.m_place ), "^7",
+				out.m_center = va( "You have been killed by %s%s\n%s%d%s %splace with %d", w, o.m_attacker.c_str( ), color, o.m_place, ordinal( o.m_place ), "^7",
 				                   o.m_ref_score );
 			else
-				out.m_msg[ 0 ] = va( "%s has been killed by %s^7.", o.m_victim.c_str( ), o.m_attacker.c_str( ) );
+				out.m_msg[ 0 ] = va( "%s has been killed by %s%s^7.", o.m_victim.c_str( ), w, o.m_attacker.c_str( ) );
 			break;
 		}
 		}

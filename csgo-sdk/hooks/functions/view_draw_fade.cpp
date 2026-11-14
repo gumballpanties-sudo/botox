@@ -2,6 +2,7 @@
 #include <cstring>
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
+#include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../hooks.h"
 #include "flash_probe.h"
 
@@ -11,7 +12,7 @@ void __fastcall n_detoured_functions::view_draw_fade( void* ecx, void* edx, unsi
 	static auto original = g_hooks.m_view_draw_fade.get_original< decltype( &n_detoured_functions::view_draw_fade ) >( );
 	HOOK_SCOPE_OR_BAIL( original( ecx, edx, color, material, map_full_texture_to_screen ) );
 
-	if ( color && material ) {
+	if ( color && material && !g_rear_mirror.drawing( ) ) {
 		const char* name = material->get_name( );
 
 		if ( name && std::strstr( name, "flashbang" ) ) {

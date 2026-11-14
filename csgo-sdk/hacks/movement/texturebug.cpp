@@ -21,6 +21,8 @@ extern void botox_dbg_log( const char* fmt, ... );
 extern bool botox_is_ladder_trace( const trace_t& tr );
 extern bool g_air_stuck_owned_prev_tick;
 extern bool g_air_stuck_axis;
+/* edge surf = own feature ( edge_surf.cpp ): true = it owns this cmd */
+bool edge_surf_online( c_user_cmd* cmd, bool& pinned );
 extern bool g_edge_surf_active;
 bool edge_surf_local( );
 
@@ -106,7 +108,7 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 	m_assist          = false;
 	reset_command( );
 	m_hb_hit          = false;
-	/* listen server: movement.cpp edge_surf owns the flag ( ran earlier this cmd ) */
+	/* early returns below skip edge surf: its indicator flag must not stay lit ( listen server: movement.cpp owns it ) */
 	if ( !edge_surf_local( ) )
 		g_edge_surf_active = false;
 	s_sims_this_cmd   = 0;
@@ -160,8 +162,16 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 	const float align_forward = cmd->m_forward_move;
 	const float align_side    = cmd->m_side_move;
 	const int align_buttons   = cmd->m_buttons;
-	this->texture_bug( cmd );
-	this->head_bounce( cmd );
+	/* edge surf first: when it owns the cmd tb + head bounce stay out, the resim below covers it */
+	bool es_pin = false;
+	if ( edge_surf_online( cmd, es_pin ) ) {
+		/* its pin is a head pin: wall climb / pixel surf / edgebug read it off these like tb's own */
+		m_hit = m_hs_hit = es_pin;
+		m_owns_cmd       = true;
+	} else {
+		this->texture_bug( cmd );
+		this->head_bounce( cmd );
+	}
 	/* wall climb ran first and owns this air wall tick: tb keeps only a real catch. its park / wallstrafe / unstick replaced wc's
 	   flush park ( 10-31 log: 888 STOMP@texture_bug, act W 703 + K 164 = side shove + lost catches ) */
 	if ( g_wall_climb.active( cmd ) && !m_hit && !m_hs_hit && !m_hb_hit ) {
@@ -265,85 +275,6 @@ static bool tb_head_wall_reachable( c_base_entity* local, const c_vector& origin
 	       std::fabs( wall.m_plane.m_normal.m_z ) < 0.1f && same_face >= 0.98f && !botox_is_ladder_trace( wall );
 }
 
-/* edge surf lead: no wall within reach -> hull sweeps along the free-fall arc ( 4 segments ) up to the lead range; first vertical
-   world face = the wall tb then parks against ( act K each tick ). floor / ramp hit ends the path */
-static bool edge_lead( i_trace_filter& filter, const c_vector& org, const c_vector& vel, const c_vector& mins, const c_vector& maxs,
-                       const float ipt, const float g, float& gap, c_vector& n, float& plane_d )
-{
-	const float range = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f );
-	const float vxy   = vel.length_2d( );
-	if ( vxy < 1.f )
-		return false;
-	const float horizon = std::min( range / vxy, ipt * static_cast< float >( n_tick::ticks( 32 ) ) );
-	constexpr int k_segments = 4;
-	const auto at = [ & ]( const float t ) { return c_vector( org.m_x + vel.m_x * t, org.m_y + vel.m_y * t, org.m_z + vel.m_z * t - 0.5f * g * t * t ); };
-	for ( int i = 0; i < k_segments; ++i ) {
-		const float t0 = horizon * static_cast< float >( i ) / k_segments, t1 = horizon * static_cast< float >( i + 1 ) / k_segments;
-		trace_t tr{ };
-		ray_t ray( at( t0 ), at( t1 ), mins, maxs );
-		tb_trace( ray, mask_playersolid, &filter, &tr );
-		if ( tr.m_start_solid || tr.m_fraction >= 1.f )
-			continue;
-		const c_vector& tn = tr.m_plane.m_normal;
-		if ( std::fabsf( tn.m_z ) > 0.05f || botox_is_ladder_trace( tr ) )
-			return false;
-		c_base_entity* ent = tr.m_hit_entity;
-		if ( ent && ent->get_index( ) != 0 && !( ent->get_collideable( ) && ent->get_collideable( )->get_solid( ) == 1 ) )
-			return false;
-		plane_d = n_tb::hull_plane_dist( tr, mins, maxs );
-		gap     = org.m_x * tn.m_x + org.m_y * tn.m_y + org.m_z * tn.m_z - plane_d + std::min( tn.m_x * mins.m_x, tn.m_x * maxs.m_x ) +
-		      std::min( tn.m_y * mins.m_y, tn.m_y * maxs.m_y ) + std::min( tn.m_z * mins.m_z, tn.m_z * maxs.m_z );
-		n = tn;
-		return gap > 0.f;
-	}
-	return false;
-}
-
-/* the brush behind the face at the hull's xy: bottom B / top T from line traces 0.5u inside the wall ( m_fraction_left_solid = exit of
-   the start brush ). T capped at z_hi + 256 when the brush keeps going up */
-struct edge_info_t {
-	bool ok = false;
-	float B = 0.f, T = 0.f;
-};
-static edge_info_t edge_find( i_trace_filter& filter, const c_vector& org, const c_vector& n, const float plane_d, const float z_hi, const float z_lo )
-{
-	edge_info_t e;
-	if ( z_hi <= z_lo + 1.f )
-		return e;
-	const float off  = org.m_x * n.m_x + org.m_y * n.m_y + org.m_z * n.m_z - plane_d + 0.5f;
-	const c_vector q = org - n * off;
-	const auto line  = [ & ]( const float a, const float b, trace_t& tr ) {
-		ray_t ray( c_vector( q.m_x, q.m_y, a ), c_vector( q.m_x, q.m_y, b ), c_vector( 0.f, 0.f, 0.f ), c_vector( 0.f, 0.f, 0.f ) );
-		tb_trace( ray, mask_playersolid, &filter, &tr );
-	};
-	trace_t t1{ };
-	line( z_hi, z_lo, t1 );
-	float top = z_hi;
-	if ( t1.m_start_solid ) {
-		if ( t1.m_all_solid || t1.m_fraction_left_solid <= 0.f || t1.m_fraction_left_solid >= 1.f )
-			return e;
-		e.B = z_hi - t1.m_fraction_left_solid * ( z_hi - z_lo );
-		trace_t up{ };
-		line( z_hi, z_hi + 256.f, up );
-		top = ( up.m_start_solid && !up.m_all_solid && up.m_fraction_left_solid > 0.f && up.m_fraction_left_solid < 1.f ) ? z_hi + up.m_fraction_left_solid * 256.f
-		                                                                                                                 : z_hi + 256.f;
-	} else {
-		if ( t1.m_fraction >= 1.f )
-			return e;
-		top = z_hi - t1.m_fraction * ( z_hi - z_lo );
-		trace_t t2{ };
-		line( top - 0.05f, z_lo, t2 );
-		if ( !t2.m_start_solid || t2.m_all_solid || t2.m_fraction_left_solid <= 0.f || t2.m_fraction_left_solid >= 1.f )
-			return e;
-		e.B = top - 0.05f - t2.m_fraction_left_solid * ( top - 0.05f - z_lo );
-	}
-	/* CM_ClipBoxToBrush leaves a brush DIST_EPSILON late: log 10-30 B=-160.031 T=-112.969 for a -160..-113 brush */
-	e.B  = e.B + 0.03125f;
-	e.T  = top - 0.03125f;
-	e.ok = e.B > z_lo + 0.1f && e.T > e.B;
-	return e;
-}
-
 /* texture bug = box-brush pin ( IntersectRayWithBoxBrush ): the head crosses a wall brush's bottom ( or feet a flush lower brush's top )
    as the move crosses the wall plane by dx: engine picks the +z face, vz clipped to -g*dt/2. needs gap ~1 ulp, a hard hit parks at 0.03125 */
 void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
@@ -380,13 +311,9 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	m_hit = m_hs_hit = m_owns_cmd = false;
 
 	c_base_entity* const local = g_ctx.m_local;
-	/* listen server: edge surf is the fake hold ( movement.cpp edge_surf ), online it leads tb onto a brush bottom edge whose ride
-	   phase can hold */
-	const bool edge_on         = GET_VARIABLE( g_variables.m_edge_surf, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) &&
-	                     !edge_surf_local( );
 	/* g_air_stuck_axis: air stuck key on an exact-axis wall this tick = our ride is its catch ( air_stuck.cpp 11-10 ) */
 	const bool armed           = ( ( GET_VARIABLE( g_variables.m_texture_bug, bool ) &&
-	                       g_input.check_input( &GET_VARIABLE( g_variables.m_texture_bug_key, key_bind_t ) ) ) || edge_on || g_air_stuck_axis ) &&
+	                       g_input.check_input( &GET_VARIABLE( g_variables.m_texture_bug_key, key_bind_t ) ) ) || g_air_stuck_axis ) &&
 	                   local && local->is_alive( );
 	/* START must be the server's END: the shift ( dn ) is START - our sim of the sent cmd, blind under opt 2 */
 	g_prediction.sync_arm( n_prediction::impl_t::k_sync_tb, armed );
@@ -510,9 +437,6 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	const float reach = std::clamp( GET_VARIABLE( g_variables.m_texture_bug_reach, float ), 0.f, 48.f );
 	c_vector n{ };
 	float yaw_in = 0.f;
-	bool lead     = false;
-	float plane_d = 0.f;
-	const float grav = -2.f * pin / ( ipt > 0.f ? ipt : 0.015625f );
 	{
 		c_trace_filter_tb_world_props filter( local );
 		float best = FLT_MAX;
@@ -531,11 +455,8 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 			if ( g < best ) {
 				best    = g;
 				n       = tn;
-				plane_d = n_tb::hull_plane_dist( tr, mins, maxs );
 			}
 		}
-		if ( best == FLT_MAX && edge_on && !rising )
-			lead = edge_lead( filter, org, vel, mins, maxs, ipt, grav, best, n, plane_d );
 		if ( best == FLT_MAX ) {
 			/* contact last cmd, no wall now = cleared the top ( rising ) or fell past the bottom */
 			if ( debug && s_touch_cmd == cmd->m_command_number - 1 )
@@ -577,75 +498,6 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		if ( coord > 0.f )
 			ulp = std::ldexp( 1.f, ex - 24 );
 	}
-	/* edge surf: the brush bottom B the head will cross, per stance ( other stance = air duck / unduck, head at z + 63 ). h* = head over B
-	   on the crossing tick; from the first pin every fall is a multiple of g*dt^2, so the ride phase phi = h* mod g*dt^2 is locked
-	   ( lab edge_probe C ): hold needs phi in [ulp*D/eps, g*dt^2). exactly one stance in band -> approach in it */
-	static int s_lead_pick = -1, s_lead_cmd = -1;
-	if ( edge_on && !rising && ( lead || gap <= k_contact ) ) {
-		if ( s_lead_cmd != cmd->m_command_number - 1 )
-			s_lead_pick = -1;
-		s_lead_cmd = cmd->m_command_number;
-		c_trace_filter_tb_world_props filter( local );
-		const float head_now = org.m_z + maxs.m_z;
-		float apex           = head_now;
-		if ( vel.m_z > 0.f )
-			apex += vel.m_z * vel.m_z / ( 2.f * grav );
-		const edge_info_t edge = edge_find( filter, org, n, plane_d, apex + 9.05f, org.m_z - 24.f );
-		const float period     = grav * ipt * ipt;
-		const auto crossing    = [ & ]( const float head_off, float& h_star, float& feet_at ) {
-			float z = org.m_z, vz = vel.m_z;
-			for ( int k = 0; k < 64; ++k ) {
-				const float vmid = vz - grav * 0.5f * ipt;
-				const float zn   = z + vmid * ipt;
-				if ( z + head_off > edge.B && zn + head_off <= edge.B ) {
-					h_star  = z + head_off - edge.B;
-					feet_at = z;
-					return k;
-				}
-				z  = zn;
-				vz = vmid - grav * 0.5f * ipt;
-				if ( z + head_off < edge.B )
-					break;
-			}
-			return -1;
-		};
-		float hc = 0.f, ho = 0.f, fc = org.m_z, fo = org.m_z;
-		const int kc = edge.ok && allowed( ducked0 ) ? crossing( maxs.m_z, hc, fc ) : -1;
-		const int ko = edge.ok && allowed( !ducked0 ) ? crossing( 63.f, ho, fo ) : -1;
-		/* air duck lifts the feet 9 ( unduck drops them ): D = T - feet, the band floor, moves with it */
-		fo += ducked0 ? -9.f : 9.f;
-		const auto band = [ & ]( const int k, const float h, const float feet, float& lo, float& phi ) {
-			phi = k >= 0 ? std::fmod( h, period ) : -1.f;
-			lo  = std::max( 1.3f * ulp * ( edge.T - feet ) / k_eps, 0.02f );
-			return k >= 0 && phi >= lo && phi < period - 1e-4f;
-		};
-		float lo_c = 0.f, lo_o = 0.f, phi_c = -1.f, phi_o = -1.f;
-		const bool in_c = band( kc, hc, fc, lo_c, phi_c ), in_o = band( ko, ho, fo, lo_o, phi_o );
-		if ( s_lead_pick < 0 && lead && in_c != in_o )
-			s_lead_pick = in_c ? ( ducked0 ? 1 : 0 ) : ( ducked0 ? 0 : 1 );
-		if ( lead && s_lead_pick >= 0 && allowed( s_lead_pick ) )
-			stance = s_lead_pick;
-		if ( debug ) {
-			static unsigned long long s_next = 0ull;
-			static float s_last_b            = -1e9f;
-			const unsigned long long now     = GetTickCount64( );
-			if ( now >= s_next || std::fabsf( edge.B - s_last_b ) > 0.01f ) {
-				s_next   = now + 250ull;
-				s_last_b = edge.B;
-				botox_dbg_log( "ESURF: %s gap=%.4f edge=%d B=%.3f T=%.3f head=%.3f k=%d/%d h=%.4f/%.4f phi=%.4f/%.4f lo=%.3f/%.3f period=%.4f band=%d/%d ulp=%.1e pick=%d stance=%d vz=%.1f xy=%.1f",
-				               lead ? "lead" : "touch", gap, edge.ok ? 1 : 0, edge.B, edge.T, head_now, kc, ko, hc, ho, phi_c, phi_o, lo_c, lo_o, period,
-				               in_c ? 1 : 0, in_o ? 1 : 0, ulp, s_lead_pick, stance, vel.m_z, vel.length_2d( ) );
-			}
-		}
-		g_edge_surf_active = in_c || in_o;
-		/* no stance in band = 1-tick pin at best ( 10-31 log: lo > period on every lead ), don't shove into it */
-		if ( lead && !g_edge_surf_active ) {
-			s_lead_pick = -1;
-			drop( );
-			return;
-		}
-	} else
-		s_lead_pick = -1;
 	if ( s_park_cmd >= 0 && cmd->m_command_number == s_park_cmd + 1 ) {
 		if ( s_park_from - gap < 0.5f * ( s_park_from - s_park_to ) || ( s_park_to < 0.5f * k_eps && gap > 0.9f * k_eps ) ) {
 			s_park_margin = s_park_margin ? s_park_margin * 2 : 2;
@@ -978,11 +830,11 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 	// because the remaining catch candidates could not be evaluated.
 	if ( sims_left( ) <= 0 )
 		have_strafe = false;
-	if ( have_strafe && gap > k_touch && !lead ) {
+	if ( have_strafe && gap > k_touch ) {
 		send_strafe( );
 		return;
 	}
-	if ( ( reach > 0.f || gap <= k_touch || lead ) && gap > 0.f && s_park_margin <= 16 ) {
+	if ( ( reach > 0.f || gap <= k_touch ) && gap > 0.f && s_park_margin <= 16 ) {
 		/* never under 1 ulp: a sub-ulp end is the plane or a hard hit on the server */
 		const float floor_gap = static_cast< float >( std::max( s_park_margin, 1 ) ) * ulp;
 		float last_end        = -1.f;
@@ -1038,7 +890,7 @@ void n_texturebug::impl_t::texture_bug( c_user_cmd* cmd )
 		return;
 	}
 	const bool fell = s_rode && s_miss > 1;
-	const c_user_cmd mine = with_duck( head_assist_blocked ? raw : in, lead && s_lead_pick >= 0 && allowed( s_lead_pick ) ? s_lead_pick : held );
+	const c_user_cmd mine = with_duck( head_assist_blocked ? raw : in, held );
 	commit( mine );
 	m_owns_cmd = cmd->m_buttons != in.m_buttons && s_miss <= 1;
 	if ( fell )

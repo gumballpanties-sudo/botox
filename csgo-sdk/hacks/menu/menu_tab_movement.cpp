@@ -1063,8 +1063,10 @@ void n_menu::impl_t::tab_movement( )
 					[ & ]( ) {
 						ImGui::Label( "edge surf keybind" );
 						ImGui::Keybind( "edge surf key", &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
-						ImGui::SliderFloat( "catch reach (local)##esurfreach", &GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.1f, 32.f, "%.1f u" );
+						ImGui::SliderFloat( "reach##esurfreach", &GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.1f, 32.f, "%.1f u" );
 						ImGui::SliderFloat( "lead range##esurfrange", &GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f, "%.0f u" );
+						/* 0 = straight press into the wall, else air strafe toward it turning this many degrees a tick */
+						ImGui::SliderFloat( "delta strafe##esurfdelta", &GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ), 0.f, 5.f, "%.2f" );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}

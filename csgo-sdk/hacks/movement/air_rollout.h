@@ -19,6 +19,7 @@ namespace n_air
 		float duck         = 1.f;
 		int wall_slides    = 0; /* fly: vertical walls clip xy and the fall goes on, this many times ( 0 = a wall ends it ) */
 		float snap         = 0.f; /* fly: CategorizePosition 2u ground trace per tick end ( vz = 0, no clip ). 0 = off */
+		float fine_z       = 3.4e38f; /* fly + snap: steps ending above this z skip the ground trace, coast = double chord */
 		c_vector mins{ }, maxs{ };
 	};
 
@@ -140,7 +141,16 @@ namespace n_air
 				}
 			}
 
-			const int n     = k == 0 || wrote || w.snap > 0.f ? 1 : std::min( chord_ticks, max_ticks - k );
+			int n = k == 0 || wrote ? 1 : std::min( chord_ticks, max_ticks - k );
+			/* snap = per tick + ground trace. coasting high over the target ( fine_z ): no ground trace, long chord. steered ticks stay
+			   per tick ( xy still moving can skim a walkable face up there ) */
+			bool snap = w.snap > 0.f;
+			if ( snap ) {
+				const int coast = n > 1 ? std::min( chord_ticks * 2, max_ticks - k ) : 1;
+				const float ct  = static_cast< float >( coast ) * w.dt;
+				snap            = coast == 1 || s.origin.m_z + v.m_z * ct - h * w.dt * static_cast< float >( coast * coast ) <= w.fine_z;
+				n               = snap ? 1 : coast;
+			}
 			const float T   = static_cast< float >( n ) * w.dt;
 			const float vz0 = v.m_z;
 			c_vector end( s.origin.m_x + v.m_x * T, s.origin.m_y + v.m_y * T, s.origin.m_z + vz0 * T - h * w.dt * static_cast< float >( n * n ) );
@@ -182,7 +192,7 @@ namespace n_air
 			}
 
 			const float vz1 = vz0 - 2.f * h * static_cast< float >( n );
-			if ( w.snap > 0.f && vz1 <= 140.f ) {
+			if ( snap && vz1 <= 140.f ) {
 				trace_t gt;
 				ray_t gr( end, c_vector( end.m_x, end.m_y, end.m_z - w.snap ), w.mins, w.maxs );
 				g_interfaces.m_engine_trace->trace_ray( gr, mask_playersolid, &filter, &gt );

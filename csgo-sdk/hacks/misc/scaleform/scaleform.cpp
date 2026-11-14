@@ -1745,7 +1745,143 @@ void n_scaleform::impl_t::on_level_init( )
 	m_old_weapon_def       = -1;
 	m_pending_mvp          = false;
 
+	m_air_kills.clear( );
+
 	g_moi_hud.on_level_init( );
+}
+
+/* stock rows ( huddeathnotice.xml snippet ): [Revenge][Domination][AttackerBlindIcon] Attacker [AssistParent] Weapon
+   [NoScope][ThroughSmoke][Penetrate][HeadShot][Suicide] Victim. ours ( cs2 wings ) goes right before Weapon. a row is new when its SpawnTime differs from the BxAirSeen stamp we left
+   ( the game restamps SpawnTime on every spawn, so a reused row reads as new too ). ${air} = one 0/1 per death event
+   since the last pass, null = stamp only. events wait in BxAirQ ( on the hud, 1s life ) until a row takes them:
+   a collat's 2nd row can spawn passes after its event */
+static const char* k_air_kill_icon = R"js(
+(function() {
+try {
+    var hud = $.GetContextPanel().FindChildTraverse( 'HudDeathNotice' );
+    if ( !hud ) return;
+
+    // a missing child throws
+    function kid( p, id ) { try { return p.FindChildTraverse( id ); } catch(e) { return null; } }
+
+    function icon( row, on ) {
+        var img = kid( row, 'BxAirKill' );
+        if ( !img ) {
+            var gun = on ? kid( row, 'Weapon' ) : null;
+            if ( !gun ) return;
+            var box = gun.GetParent( );
+            img = $.CreatePanel( 'Image', box, 'BxAirKill',
+                                 { src: '${src}', scaling: 'stretch-to-fit-preserve-aspect', hittest: false } );
+            img.AddClass( 'DeathNoticeIcon' );
+            img.AddClass( 'BxAirKill' );
+            box.MoveChildBefore( img, gun );
+        }
+        img.style.visibility = on ? 'visible' : 'collapse';
+        img.style.transform = 'translateY(-3px)'; // sat low next to the gun
+    }
+
+    var air = ${air};
+    var now = ${now};
+    var q = [];
+    try { q = JSON.parse( hud.GetAttributeString( 'BxAirQ', '[]' ) ) || []; } catch(e) { q = []; }
+    if ( air === null ) q = [];
+    else for ( var a = 0; a < air.length; ++a ) q.push( [ air[ a ], now ] );
+    q = q.filter( function( e ) { return now - e[ 1 ] >= 0 && now - e[ 1 ] < 1.0; } );
+    var rows = hud.FindChildrenWithClassTraverse( 'DeathNotice' ) || [];
+    var fresh = [];
+    for ( var i = 0; i < rows.length; ++i ) {
+        var row = rows[ i ];
+        if ( row.BHasClass( 'Available' ) ) continue;
+        var born = row.GetAttributeString( 'SpawnTime', '' ) || '-';
+        if ( row.GetAttributeString( 'BxAirSeen', '' ) === born ) continue;
+        row.SetAttributeString( 'BxAirSeen', born );
+        fresh.push( { row: row, t: parseFloat( born ) || 0 } );
+    }
+
+    // ponytail: two kills in one tick share a SpawnTime, order = child order; mixed air / ground there can swap
+    fresh.sort( function( a, b ) { return a.t - b.t; } );
+
+    // ponytail: an event that never gets a row hands its flag to the next row within 1s
+    for ( var k = 0; k < fresh.length; ++k ) {
+        var e = air === null ? null : q.shift( );
+        icon( fresh[ k ].row, !!e && !!e[ 0 ] );
+    }
+
+    hud.SetAttributeString( 'BxAirQ', JSON.stringify( q ) );
+} catch(e) {}
+})();
+)js";
+
+static const char* k_air_kill_clean = R"js(
+(function() {
+try {
+    var hud = $.GetContextPanel().FindChildTraverse( 'HudDeathNotice' );
+    if ( !hud ) return;
+    var ours = hud.FindChildrenWithClassTraverse( 'BxAirKill' ) || [];
+    for ( var i = 0; i < ours.length; ++i )
+        ours[ i ].DeleteAsync( 0.0 );
+} catch(e) {}
+})();
+)js";
+
+void n_scaleform::impl_t::air_kill_icon( )
+{
+	const bool on = GET_VARIABLE( g_variables.m_killfeed_air_icon, bool ) && !g_ctx.m_eject_restoring && !n_image_cache::air_kill_icon( ).empty( );
+
+	if ( !on && !m_air_primed ) {
+		m_air_kills.clear( );
+		return;
+	}
+
+	const float now = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_real_time : 0.f;
+
+	// passes keep running a bit after the last kill: late rows still take their queued flag
+	if ( !m_air_kills.empty( ) )
+		m_air_hold_until = now + 1.5f;
+
+	if ( on && m_air_primed && m_air_kills.empty( ) && now > m_air_hold_until )
+		return;
+
+	if ( !m_uiengine ) {
+		m_uiengine = g_interfaces.m_panorama->access_ui_engine( );
+		if ( !m_uiengine )
+			return;
+	}
+
+	if ( !m_killfeed_root || !m_uiengine->is_valid_panel_ptr( m_killfeed_root ) ) {
+		m_killfeed_root = get_panel( HASH_BT( "CSGOHud" ) );
+		if ( !m_killfeed_root )
+			return;
+	}
+
+	if ( !on ) {
+		run_on( m_killfeed_root, k_air_kill_clean );
+		m_air_primed = false;
+		m_air_kills.clear( );
+		return;
+	}
+
+	// first pass after enable only stamps: rows from before would read as new and throw the count off
+	std::string list = "null";
+	if ( m_air_primed ) {
+		list = "[";
+		for ( const bool air : m_air_kills )
+			list += air ? "1," : "0,";
+		list += "]";
+	}
+
+	m_air_primed = true;
+	m_air_kills.clear( );
+
+	char now_text[ 32 ]{ };
+	sprintf_s( now_text, "%.3f", now );
+
+	std::string js = k_air_kill_icon;
+	replace_str( js, "${air}", list );
+	replace_str( js, "${now}", now_text );
+	replace_str( js, "${src}", n_image_cache::air_kill_icon( ) );
+
+	run_on( m_killfeed_root, js.c_str( ) );
 }
 
 static const char* k_keep_killfeed = R"js(
@@ -1755,6 +1891,7 @@ try {
         if ( n[ i ].BHasClass( 'FadeOut' ) || n[ i ].BHasClass( 'Available' ) )
             continue;
         n[ i ].SetAttributeString( 'SpawnTime', '${t}' );
+        n[ i ].SetAttributeString( 'BxAirSeen', '${t}' ); // air kill icon: our restamp is no new row
     }
 } catch(e) {}
 )js";
@@ -1836,6 +1973,9 @@ void n_scaleform::impl_t::on_createmove( )
 	hud_color( );
 	ammo_pip_color( );
 	weapon_icon_color( );
+
+	// before keep_killfeed ( it restamps rows as seen ) and before the classic pass ( it styles every DeathNoticeIcon )
+	air_kill_icon( );
 
 	keep_killfeed( );
 
@@ -1925,6 +2065,7 @@ void n_scaleform::impl_t::on_eject( )
 	hud_color( );
 	ammo_pip_color( );
 	square_radar( );
+	air_kill_icon( );
 
 	if ( m_classic_applied )
 		classic_off( );
