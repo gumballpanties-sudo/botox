@@ -140,48 +140,47 @@ namespace
 		g_image_pick_alive = false;
 		return 0;
 	}
+}
 
-	/* text box + browse button. upload = local file goes to freeimage.host, box gets the url (discord) */
-	void image_path_input( const char* label, const char* hint, std::string& value, const bool upload )
+void image_path_input( const char* label, const char* hint, std::string& value, const bool upload )
+{
+	static std::unordered_map< ImGuiID, std::array< char, 260 > > buffers;
+
+	const ImGuiID id = ImGui::GetID( label );
+	auto& buffer     = buffers[ id ];
+
+	std::string status;
 	{
-		static std::unordered_map< ImGuiID, std::array< char, 260 > > buffers;
+		std::lock_guard< std::mutex > lock( s_pick_mutex );
+		if ( s_pick_id == id )
+			status = s_pick_status;
+	}
 
-		const ImGuiID id = ImGui::GetID( label );
-		auto& buffer     = buffers[ id ];
+	if ( ImGui::InputTextWithHint( label, hint, buffer.data( ), buffer.size( ) ) )
+		value = buffer.data( );
+	else if ( !ImGui::IsItemActive( ) && value != buffer.data( ) )
+		strncpy_s( buffer.data( ), buffer.size( ), value.c_str( ), _TRUNCATE );
 
-		std::string status;
+	const bool busy = g_image_pick_alive;
+
+	ImGui::BeginDisabled( busy );
+	if ( ImGui::Button( std::format( "{}##pick {}", upload ? "upload from pc" : "browse", label ).c_str( ), ImVec2( -1.f, 15.f ) ) && !busy ) {
 		{
 			std::lock_guard< std::mutex > lock( s_pick_mutex );
-			if ( s_pick_id == id )
-				status = s_pick_status;
+			s_pick_id     = id;
+			s_pick_target = &value;
+			s_pick_status = "picking...";
+			s_pick_result.clear( );
+			s_pick_done = false;
 		}
 
-		if ( ImGui::InputTextWithHint( label, hint, buffer.data( ), buffer.size( ) ) )
-			value = buffer.data( );
-		else if ( !ImGui::IsItemActive( ) && value != buffer.data( ) )
-			strncpy_s( buffer.data( ), buffer.size( ), value.c_str( ), _TRUNCATE );
-
-		const bool busy = g_image_pick_alive;
-
-		ImGui::BeginDisabled( busy );
-		if ( ImGui::Button( std::format( "{}##pick {}", upload ? "upload from pc" : "browse", label ).c_str( ), ImVec2( -1.f, 15.f ) ) && !busy ) {
-			{
-				std::lock_guard< std::mutex > lock( s_pick_mutex );
-				s_pick_id     = id;
-				s_pick_target = &value;
-				s_pick_status = "picking...";
-				s_pick_result.clear( );
-				s_pick_done = false;
-			}
-
-			g_image_pick_alive = true; // before the thread runs: an eject right now must still wait for it
-			g_utilities.create_thread( pick_thread, upload ? reinterpret_cast< void* >( 1 ) : nullptr );
-		}
-		ImGui::EndDisabled( );
-
-		if ( !status.empty( ) )
-			ImGui::Label( "%s", status.c_str( ) );
+		g_image_pick_alive = true; // before the thread runs: an eject right now must still wait for it
+		g_utilities.create_thread( pick_thread, upload ? reinterpret_cast< void* >( 1 ) : nullptr );
 	}
+	ImGui::EndDisabled( );
+
+	if ( !status.empty( ) )
+		ImGui::Label( "%s", status.c_str( ) );
 }
 
 void image_pick_apply( )

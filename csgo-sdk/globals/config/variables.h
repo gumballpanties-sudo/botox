@@ -1884,6 +1884,10 @@ namespace n_variables
 		ADD_VARIABLE( float, m_watermark_gif_alpha, 100.f );
 		ADD_VARIABLE( bool, m_watermark_gif_flip, false );
 
+		/* visuals > images: any count, one n_screen_image::to_line per image, '\n' joined ( misc.h screen_images ) */
+		ADD_VARIABLE( bool, m_screen_images, false );
+		ADD_VARIABLE( std::string, m_screen_images_list, "" );
+
 		ADD_VARIABLE( bool, m_points, false );
 		ADD_VARIABLE( bool, m_points_big_font, false );
 		ADD_VARIABLE( bool, m_points_readout, false );

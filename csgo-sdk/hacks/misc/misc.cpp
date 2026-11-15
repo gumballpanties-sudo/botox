@@ -2074,6 +2074,7 @@ void n_misc::impl_t::on_end_scene( )
 
 	this->draw_watermark( );
 	this->draw_watermark_gif( );
+	this->draw_screen_images( );
 
 	points_draw( );
 

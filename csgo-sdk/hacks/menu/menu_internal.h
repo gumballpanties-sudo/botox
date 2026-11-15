@@ -43,6 +43,9 @@ void save_popup( const char* str_id, bool& open, const ImVec2& window_size, cons
 void name_entry_list( const char* id, const std::uint32_t rows_var, const std::uint32_t count_var, const char* add_label );
 /* render thread, every frame: lands a finished image box pick even when its box is hidden */
 void image_pick_apply( );
+/* text box + browse button ( menu_tab_settings.cpp ). upload = local file goes to freeimage.host, box gets the url (discord).
+   value must outlive the pick ( a config var, never a temp ) */
+void image_path_input( const char* label, const char* hint, std::string& value, bool upload );
 
 inline void text_buffer_sync( const char* widget_id, std::string& var, char* buffer, const std::size_t buffer_size, const char* hint = nullptr )
 {

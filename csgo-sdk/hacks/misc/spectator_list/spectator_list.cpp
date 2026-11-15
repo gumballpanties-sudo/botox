@@ -2003,6 +2003,10 @@ namespace
 	file_image_t lumi_mascot{ };
 	file_image_t kamibebra_custom_gif{ };
 	file_image_t watermark_custom_gif{ };
+	/* visuals > images: decoded files by path ( map nodes never move: file_image_t holds raw gdi+ / d3d pointers ) */
+	std::map< std::string, file_image_t > screen_image_cache{ };
+	std::vector< n_screen_image::image_t > screen_image_list{ };
+	std::string screen_image_synced = "\x01"; // never a saved value: the first call parses
 
 	std::mutex url_image_mutex;
 	std::unordered_set< std::string > url_image_started;
@@ -3013,6 +3017,12 @@ void n_misc::impl_t::release_spectator_textures( const bool textures_only )
 	release_file_image( lumi_mascot, textures_only );
 	release_file_image( kamibebra_custom_gif, textures_only );
 	release_file_image( watermark_custom_gif, textures_only );
+
+	for ( auto& [ path, image ] : screen_image_cache )
+		release_file_image( image, textures_only );
+
+	if ( !textures_only )
+		screen_image_cache.clear( );
 
 	if ( !textures_only && gdiplus_token ) {
 		Gdiplus::GdiplusShutdown( gdiplus_token );
@@ -6771,6 +6781,158 @@ void n_misc::impl_t::draw_watermark_gif( )
 	                         ImVec2( u0, 0.f ), ImVec2( u1, 0.f ), ImVec2( u1, 1.f ), ImVec2( u0, 1.f ), IM_COL32( 255, 255, 255, alpha ) );
 
 	g_render.end_stretch_block( block );
+}
+
+std::vector< n_screen_image::image_t >& n_misc::screen_images( const std::string& text )
+{
+	if ( text != screen_image_synced ) {
+		screen_image_list   = n_screen_image::from_list( text );
+		screen_image_synced = text;
+	}
+
+	return screen_image_list;
+}
+
+void n_misc::screen_images_commit( std::string& text )
+{
+	/* a config load landed since the last sync: it wins over this frame's edits */
+	if ( text != screen_image_synced ) {
+		screen_images( text );
+		return;
+	}
+
+	std::string now = n_screen_image::to_list( screen_image_list );
+	if ( now == text )
+		return;
+
+	text                = now;
+	screen_image_synced = std::move( now );
+}
+
+bool n_misc::screen_image_info( const std::string& path, int& width, int& height, int& frames )
+{
+	file_image_t& image = screen_image_cache[ path ];
+	if ( !file_image_frame( image, path ) || !image.m_gif.m_bitmap )
+		return false;
+
+	width  = static_cast< int >( image.m_gif.m_bitmap->GetWidth( ) );
+	height = static_cast< int >( image.m_gif.m_bitmap->GetHeight( ) );
+	frames = static_cast< int >( image.m_gif.m_delays.size( ) );
+	return true;
+}
+
+void n_misc::screen_image_reload( const std::string& path )
+{
+	if ( const auto it = screen_image_cache.find( path ); it != screen_image_cache.end( ) )
+		release_file_image( it->second, false );
+}
+
+/* fpsoverlay image overlay: free spot or parked next to the watermark, both dragged with the menu open */
+void n_misc::impl_t::draw_screen_images( )
+{
+	static int grabbed = -1;
+	static ImVec2 grab_offset{ };
+
+	if ( !g_menu.m_opened || !ImGui::IsMouseDown( ImGuiMouseButton_::ImGuiMouseButton_Left ) )
+		grabbed = -1;
+
+	const bool on = GET_VARIABLE( g_variables.m_screen_images, bool );
+	auto& text    = GET_VARIABLE( g_variables.m_screen_images_list, std::string );
+	auto& images  = screen_images( text );
+
+	/* textures of removed / re-pathed images go now, all of them while images is off */
+	for ( auto it = screen_image_cache.begin( ); it != screen_image_cache.end( ); ) {
+		if ( on && std::any_of( images.begin( ), images.end( ), [ & ]( const auto& image ) { return image.path == it->first; } ) ) {
+			++it;
+			continue;
+		}
+
+		release_file_image( it->second, false );
+		it = screen_image_cache.erase( it );
+	}
+
+	if ( !on )
+		return;
+
+	/* menu window over the image takes the click */
+	const bool click   = g_menu.m_opened && ImGui::IsMouseClicked( ImGuiMouseButton_::ImGuiMouseButton_Left ) && !GImGui->HoveredWindow;
+	const ImVec2 mouse = g_render.screen_mouse( );
+	const float dpi    = g_render.m_dpi_panel_scale;
+	const ImVec4 box   = g_watermark_box;
+
+	const auto point_filter = []( const ImDrawList*, const ImDrawCmd* ) {
+		g_interfaces.m_direct_device->SetSamplerState( 0, D3DSAMP_MINFILTER, D3DTEXF_POINT );
+		g_interfaces.m_direct_device->SetSamplerState( 0, D3DSAMP_MAGFILTER, D3DTEXF_POINT );
+	};
+
+	const auto draw_list = ImGui::GetBackgroundDrawList( );
+
+	for ( int i = 0; i < static_cast< int >( images.size( ) ); i++ ) {
+		auto& item = images[ i ];
+		if ( !item.show )
+			continue;
+
+		file_image_t& image = screen_image_cache[ item.path ];
+		const auto frame    = file_image_frame( image, item.path );
+
+		if ( !frame || !image.m_gif.m_bitmap )
+			continue;
+
+		const float scale = ImMax( item.scale, 0.01f );
+		const float w     = static_cast< float >( image.m_gif.m_bitmap->GetWidth( ) ) * scale;
+		const float h     = static_cast< float >( image.m_gif.m_bitmap->GetHeight( ) ) * scale;
+
+		const ImVec2 size( w, h );
+		const bool anchored = item.anchor == 1 && box.z > box.x && box.w > box.y;
+		const bool left     = ( box.x + box.z ) * 0.5f > g_ctx.m_width * 0.5f;
+		const float mid_y   = ( box.y + box.w - h ) * 0.5f;
+
+		ImVec2 at = anchored ? ImVec2( left ? box.x - item.offset_x - w : box.z + item.offset_x, mid_y + item.offset_y ) : ImVec2( item.x, item.y );
+		const ImVec2 shown = g_render.dpi_panel_pos( at, size );
+
+		/* later image = drawn on top = wins the grab */
+		if ( click && mouse.x >= shown.x && mouse.x <= shown.x + w * dpi && mouse.y >= shown.y && mouse.y <= shown.y + h * dpi ) {
+			grabbed     = i;
+			grab_offset = ImVec2( mouse.x - shown.x, mouse.y - shown.y );
+		}
+
+		/* drag: free = x / y, next to watermark = the offsets that put it there */
+		if ( grabbed == i ) {
+			at = g_render.dpi_panel_layout_pos( ImVec2( mouse.x - grab_offset.x, mouse.y - grab_offset.y ), size );
+
+			if ( anchored ) {
+				item.offset_x = left ? box.x - w - at.x : at.x - box.z;
+				item.offset_y = at.y - mid_y;
+			} else {
+				item.x = at.x;
+				item.y = at.y;
+			}
+		}
+
+		const float radians = item.rotation * IM_PI / 180.f;
+		const float c = std::cos( radians ), s = std::sin( radians );
+		const ImVec2 centre( at.x + w * 0.5f, at.y + h * 0.5f );
+		const auto corner = [ & ]( const float dx, const float dy ) { return ImVec2( centre.x + dx * c - dy * s, centre.y + dx * s + dy * c ); };
+
+		const int alpha = static_cast< int >( std::clamp( item.alpha, 0.f, 100.f ) * 2.55f );
+
+		/* own block per image: dpi scales each about its own centre, matches the dpi_panel_pos hit test */
+		const auto block = g_render.begin_stretch_block( draw_list );
+
+		if ( item.pixel_art )
+			draw_list->AddCallback( point_filter, nullptr );
+
+		draw_list->AddImageQuad( frame, corner( -w * 0.5f, -h * 0.5f ), corner( w * 0.5f, -h * 0.5f ), corner( w * 0.5f, h * 0.5f ), corner( -w * 0.5f, h * 0.5f ),
+		                         ImVec2( 0.f, 0.f ), ImVec2( 1.f, 0.f ), ImVec2( 1.f, 1.f ), ImVec2( 0.f, 1.f ), IM_COL32( 255, 255, 255, alpha ) );
+
+		if ( item.pixel_art )
+			draw_list->AddCallback( ImDrawCallback_ResetRenderState, nullptr );
+
+		g_render.end_stretch_block( block );
+	}
+
+	if ( grabbed >= 0 )
+		screen_images_commit( text );
 }
 
 void n_misc::media_player_donor_frame( ImDrawList* list, const ImVec2 min, const ImVec2 max, const int style )

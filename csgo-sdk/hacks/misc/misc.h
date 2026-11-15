@@ -1,5 +1,6 @@
 #pragma once
 #include "../../globals/includes/includes.h"
+#include "screen_image_pure.h"
 #include <atomic>
 #include <iterator>
 #include <string>
@@ -53,6 +54,14 @@ namespace n_misc
 
 	inline ImVec4 g_watermark_box{ };
 	inline ImVec4 g_watermark_gif_box{ };
+
+	/* visuals > images ( spectator_list.cpp ), render thread only. text = m_screen_images_list: re-parsed
+	   when a config load changed it; commit writes menu edits / drags back ( a load that landed meanwhile wins ) */
+	std::vector< n_screen_image::image_t >& screen_images( const std::string& text );
+	void screen_images_commit( std::string& text );
+	/* false = nothing decoded yet ( empty path, url downloading, bad file ) */
+	bool screen_image_info( const std::string& path, int& width, int& height, int& frames );
+	void screen_image_reload( const std::string& path );
 
 	struct media_look_t {
 		bool m_box     = true;
@@ -166,6 +175,7 @@ namespace n_misc
 		void draw_watermark_millionware_v1( );
 		void draw_watermark_lobotomy_v2( );
 		void draw_watermark_gif( );
+		void draw_screen_images( );
 		void draw_media_player( );
 		void update_clantag( );
 		void practice_window_think( );

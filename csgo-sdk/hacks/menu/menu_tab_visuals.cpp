@@ -2613,5 +2613,103 @@ void n_menu::impl_t::tab_visuals( )
 		menu_columns_end( );
 		break;
 	}
+	case 3: {
+		/* visuals > images: fpsoverlay image overlay, any count. list left, the picked image's knobs right */
+		menu_columns_begin( );
+
+		static int selected = 0;
+		auto& text   = GET_VARIABLE( g_variables.m_screen_images_list, std::string );
+		auto& images = n_misc::screen_images( text );
+		const bool on = GET_VARIABLE( g_variables.m_screen_images, bool );
+
+		if ( menu_group_begin( "images" ) ) {
+			ImGui::Checkbox( "images", &GET_VARIABLE( g_variables.m_screen_images, bool ) );
+
+			if ( on ) {
+				/* a browse pick in flight lands in the path box: the list holds still until it does */
+				ImGui::BeginDisabled( g_image_pick_alive );
+
+				for ( int i = 0; i < static_cast< int >( images.size( ) ); i++ ) {
+					const std::string& path = images[ i ].path;
+					const std::size_t slash = path.find_last_of( "\\/" );
+					const std::string name  = path.empty( ) ? "empty" : path.substr( slash == std::string::npos ? 0 : slash + 1 );
+
+					if ( ImGui::Selectable( ( std::to_string( i + 1 ) + ". " + name + "##screen image " + std::to_string( i ) ).c_str( ), selected == i ) )
+						selected = i;
+				}
+
+				if ( ImGui::Button( "add image##screen images", ImVec2( -1.f, 15.f ) ) ) {
+					images.emplace_back( );
+					selected = static_cast< int >( images.size( ) ) - 1;
+				}
+
+				if ( !images.empty( ) && ImGui::Button( "remove image##screen images", ImVec2( -1.f, 15.f ) ) )
+					images.erase( images.begin( ) + ImClamp( selected, 0, static_cast< int >( images.size( ) ) - 1 ) );
+
+				ImGui::EndDisabled( );
+			}
+		}
+		menu_group_end( );
+
+		menu_columns_next( );
+
+		selected = ImClamp( selected, 0, ImMax( static_cast< int >( images.size( ) ) - 1, 0 ) );
+
+		if ( on && !images.empty( ) ) {
+			if ( menu_group_begin( "image settings" ) ) {
+				auto& image = images[ selected ];
+
+				/* stable target for a browse pick ( never a list element: add / remove moves them ). re-read when the
+				   pick changed, a config load or "clear" changed the path under it */
+				static std::string path_box, path_box_seen;
+				static int path_box_for = -1;
+				if ( path_box_for != selected || image.path != path_box_seen )
+					path_box = image.path;
+
+				ImGui::Checkbox( "show image##screen image", &image.show );
+				image_path_input( "file path##screen image", "C:\\image.png or imgur link", path_box, false );
+
+				image.path    = path_box;
+				path_box_seen = path_box;
+				path_box_for  = selected;
+
+				int width = 0, height = 0, frames = 0;
+				if ( n_misc::screen_image_info( image.path, width, height, frames ) )
+					ImGui::Label( "%dx%d, %d frame%s", width, height, frames, frames == 1 ? "" : "s" );
+				else if ( !image.path.empty( ) )
+					ImGui::Label( "not loaded" );
+
+				if ( !image.path.empty( ) ) {
+					if ( ImGui::Button( "reload##screen image", ImVec2( -1.f, 15.f ) ) )
+						n_misc::screen_image_reload( image.path );
+
+					if ( ImGui::Button( "clear##screen image", ImVec2( -1.f, 15.f ) ) )
+						image.path.clear( );
+				}
+
+				ImGui::SliderFloat( "scale##screen image", &image.scale, 0.05f, 5.f, "%.2fx" );
+				ImGui::SliderFloat( "rotation##screen image", &image.rotation, -180.f, 180.f, "%.0f deg" );
+				ImGui::SliderFloat( "opacity##screen image", &image.alpha, 0.f, 100.f, "%.0f%%" );
+				ImGui::Checkbox( "pixel art##screen image", &image.pixel_art );
+
+				/* both modes: drag the image on screen while the menu is open, sliders follow */
+				ImGui::Combo( "position##screen image", &image.anchor, "free\0next to watermark\0" );
+
+				if ( image.anchor == 1 ) {
+					ImGui::SliderFloat( "offset x##screen image", &image.offset_x, -500.f, 500.f, "%.0f px" );
+					ImGui::SliderFloat( "offset y##screen image", &image.offset_y, -500.f, 500.f, "%.0f px" );
+				} else {
+					ImGui::SliderFloat( "x##screen image", &image.x, -4000.f, 4000.f, "%.0f px" );
+					ImGui::SliderFloat( "y##screen image", &image.y, -4000.f, 4000.f, "%.0f px" );
+				}
+			}
+			menu_group_end( );
+		}
+
+		n_misc::screen_images_commit( text );
+
+		menu_columns_end( );
+		break;
+	}
 	}
 }

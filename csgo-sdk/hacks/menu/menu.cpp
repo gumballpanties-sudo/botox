@@ -819,7 +819,7 @@ void n_menu::impl_t::on_end_scene( )
 		};
 
 		static const menu_tab_t tabs[ ] = {
-			{ "aimbot", { "main", "triggerbot" } }, { "visuals", { "esp", "world", "screen" } }, { "movement", { "main", "indicators", "calculator", "recorder", "points" } },
+			{ "aimbot", { "main", "triggerbot" } }, { "visuals", { "esp", "world", "screen", "images" } }, { "movement", { "main", "indicators", "calculator", "recorder", "points" } },
 			{ "misc", { "main", "player list", "cvars" } },   { "inventory", { "weapons", "player" } }, { "fonts", { "indicators", "esp", "chud hud", "default hud", "net graph" } },
 			{ "settings", { "main", "lua" } },
 		};
