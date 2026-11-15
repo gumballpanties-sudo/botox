@@ -1237,17 +1237,6 @@ try {
             });
         }
 
-        /* killer was off the ground: cs2 wings just left of the weapon. -8px right
-           margin eats half the weapon cell's 16px gutter so the two read as a pair */
-        if (${inAir}) {
-            $.CreatePanel('Image', row, '', {
-                src: '${airIcon}',
-                scaling: 'stretch-to-fit-y-preserve-aspect',
-                style: 'height: 22px; width: 22px; margin: 0px -8px 0px 16px;' +
-                       'vertical-align: center; wash-color: ${fg};' + '${imgShadow}'
-            });
-        }
-
         /* column width is per weapon CLASS — a deagle should not take the same room
            as an awp. still a fixed width per class rather than raw aspect, so rows
            stay aligned instead of jittering with every individual svg */
@@ -1256,10 +1245,27 @@ try {
            image spill past the cell while the cell still controls the spacing */
         var iconCell = $.CreatePanel('Panel', row, '', {
             hittest: false,
-            style: 'width: ${iconWidth}px; height: 28px; margin: 0px 16px 0px 16px;' +
-                   'vertical-align: center; overflow: noclip;'
+            style: 'width: ' + (${iconWidth} + (${inAir} ? 26 : 0)) + 'px; height: 28px;' +
+                   'margin: 0px 16px 0px 16px; vertical-align: center; overflow: noclip;'
         });
-        $.CreatePanel('Image', iconCell, '', {
+
+        /* killer was off the ground: cs2 wings hug the weapon. both sit in one pair
+           centred in the cell; wings outside the cell floated mid-gap, since a narrow
+           gun leaves slack on both sides of its centred svg */
+        var gunBox = iconCell;
+        if (${inAir}) {
+            gunBox = $.CreatePanel('Panel', iconCell, '', {
+                hittest: false,
+                style: 'flow-children: right; horizontal-align: center; vertical-align: center; overflow: noclip;'
+            });
+            $.CreatePanel('Image', gunBox, '', {
+                src: '${airIcon}',
+                scaling: 'stretch-to-fit-y-preserve-aspect',
+                style: 'height: 22px; width: 22px; margin-right: 4px;' +
+                       'vertical-align: center; wash-color: ${fg};' + '${imgShadow}'
+            });
+        }
+        $.CreatePanel('Image', gunBox, '', {
             src: 'file://{images}/icons/equipment/${weapon}.svg',
             scaling: 'stretch-to-fit-y-preserve-aspect',
             style: 'height: 26px; horizontal-align: center; vertical-align: center;' +

@@ -1481,6 +1481,14 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( bool, e_detection_types::detect_max, m_detection_types, false );
 		ADD_VARIABLE( std::string, m_detection_label, "botox" );
 		ADD_VARIABLE( bool, m_detection_stack_eb, false );
+		ADD_VARIABLE( std::string, m_detection_separator, " | " );
+		ADD_VARIABLE( c_color, m_detection_separator_color, c_color( 190, 190, 190, 255 ) );
+		ADD_VARIABLE( c_color, m_detection_label_color, c_color( 190, 190, 190, 255 ) );
+		ADD_VARIABLE( int, m_detection_prefix_mode, 0 );
+		ADD_VARIABLE( c_color, m_detection_prefix_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( std::string, m_detection_prefix, "" );
+		ADD_VARIABLE_VECTOR( std::string, 16, m_detection_prefixes, "" );
+		ADD_VARIABLE( int, m_detection_prefixes_count, 0 );
 		ADD_VARIABLE( bool, m_hit_marker, false );
 		ADD_VARIABLE( float, m_hit_marker_size, 10.f );
 		ADD_VARIABLE( float, m_hit_marker_speed, 1.f );
@@ -1878,6 +1886,7 @@ namespace n_variables
 
 		ADD_VARIABLE( bool, m_points, false );
 		ADD_VARIABLE( bool, m_points_big_font, false );
+		ADD_VARIABLE( bool, m_points_readout, false );
 		ADD_VARIABLE( float, m_points_appear_speed, 1.f );
 		ADD_VARIABLE( float, m_points_speed, 1.f );
 		ADD_VARIABLE( float, m_points_x_offset, 0.f );
@@ -2056,6 +2065,7 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_fake_pov_arrow_color, c_color( 255, 255, 255, 255 ) );
 
 		ADD_VARIABLE( bool, m_hide_y6o_ps, false );
+		ADD_VARIABLE( bool, m_hide_sourcemod, false );
 
 		ADD_VARIABLE( bool, m_jump_stats, false );
 		ADD_VARIABLE( bool, m_jump_stats_show_fails, false );

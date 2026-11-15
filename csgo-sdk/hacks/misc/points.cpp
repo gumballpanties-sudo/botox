@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <iterator>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -13,6 +15,27 @@ namespace
 	/* written in create_move, read + zeroed in end_scene ( render thread ) */
 	std::atomic< int > points_total{ 0 };
 	std::atomic< unsigned > points_events{ 0 };
+
+	constexpr int k_rows             = static_cast< int >( e_points_trick::pixel_surf_ride );
+	constexpr const char* k_row_names[] = { "edgebug", "fireman", "jumpbug", "headbounce", "pixelsurf", "texturebug", "airstuck", "wallclimb" };
+	static_assert( std::size( k_row_names ) == k_rows, "readout name per trick" );
+
+	/* readout: one row per trick this combo. rows + points_total change together under the lock */
+	struct readout_row_t {
+		int count       = 0;
+		int amount      = 0;
+		unsigned order  = 0;
+	};
+	std::mutex readout_lock;
+	readout_row_t readout_rows[ k_rows ];
+	unsigned readout_order = 0;
+
+	void readout_clear( )
+	{
+		for ( auto& row : readout_rows )
+			row = { };
+		readout_order = 0;
+	}
 
 	std::pair< ImFont*, float > points_font( )
 	{
@@ -101,6 +124,16 @@ void points_on_trick( const e_points_trick trick )
 		}
 	}
 
+	const int row = index >= k_ride_first ? index - k_ride_first + k_held_first : index;
+
+	std::lock_guard< std::mutex > lock( readout_lock );
+	auto& entry = readout_rows[ row ];
+	if ( !entry.order )
+		entry.order = ++readout_order;
+	if ( index < k_ride_first )
+		++entry.count;
+	entry.amount += amount;
+
 	points_total.fetch_add( amount, std::memory_order_relaxed );
 	points_events.fetch_add( 1u, std::memory_order_release );
 }
@@ -117,16 +150,20 @@ void points_draw( )
 	static float display_timer = 0.f, fade_timer = 0.f, anim_timer = 0.f, reveal_timer = 0.f, reset_timer = 0.f;
 	static bool fading = false, anim_active = false, revealing = false;
 	static float offset = 0.f, offset_vel = 0.f, bob_phase = 0.f, drop = 0.f, trail = 0.f;
+	static float row_anim[ k_rows ] = { };
 
 	const auto reset = [ & ] {
 		shown = 0;
 		display_timer = fade_timer = anim_timer = reveal_timer = reset_timer = 0.f;
 		fading = anim_active = revealing = false;
 		offset = offset_vel = bob_phase = drop = trail = 0.f;
+		std::fill( std::begin( row_anim ), std::end( row_anim ), 0.f );
 	};
 
 	if ( !GET_VARIABLE( g_variables.m_points, bool ) ) {
+		std::lock_guard< std::mutex > lock( readout_lock );
 		points_total.store( 0, std::memory_order_relaxed );
+		readout_clear( );
 		reset( );
 		return;
 	}
@@ -211,8 +248,10 @@ void points_draw( )
 
 	if ( fading && fade_timer >= k_fade && alpha <= 0.001f ) {
 		if ( ( reset_timer += dt ) >= 0.2f ) {
+			std::lock_guard< std::mutex > lock( readout_lock );
 			int expected = total;
-			points_total.compare_exchange_strong( expected, 0, std::memory_order_relaxed );
+			if ( points_total.compare_exchange_strong( expected, 0, std::memory_order_relaxed ) )
+				readout_clear( );
 			reset( );
 		}
 		return;
@@ -240,7 +279,9 @@ void points_draw( )
 	float x = screen ? g_ctx.m_width - 8.f - size.x : right_of ? box.z + k_gap : box.x - k_gap - size.x;
 	float y = ( has_box && !screen ? ( box.y + box.w ) * 0.5f : 20.f ) - size.y * 0.5f;
 
-	x += ( right_of ? -offset : offset ) + GET_VARIABLE( g_variables.m_points_x_offset, float );
+	const float shift_x = ( right_of ? -offset : offset ) + GET_VARIABLE( g_variables.m_points_x_offset, float );
+	const float text_bottom = y + size.y + GET_VARIABLE( g_variables.m_points_y_offset, float );
+	x += shift_x;
 	y += drop + bob + GET_VARIABLE( g_variables.m_points_y_offset, float );
 	x = std::floor( x );
 	y = std::floor( y );
@@ -262,6 +303,76 @@ void points_draw( )
 	draw_list->AddText( font, font_size, ImVec2( x + 0.5f, y + 0.5f + trail * 0.55f ), accent_a( 180.f ), text.c_str( ) );
 	draw_list->AddText( font, font_size, ImVec2( x, y ), IM_COL32( 255, 255, 255, static_cast< int >( std::clamp( alpha * 255.f, 0.f, 255.f ) ) ),
 	                    text.c_str( ) );
+
+	if ( GET_VARIABLE( g_variables.m_points_readout, bool ) ) {
+		readout_row_t rows[ k_rows ];
+		{
+			std::lock_guard< std::mutex > lock( readout_lock );
+			std::copy( std::begin( readout_rows ), std::end( readout_rows ), rows );
+		}
+
+		int order[ k_rows ], count = 0;
+		for ( int i = 0; i < k_rows; ++i ) {
+			if ( rows[ i ].order )
+				order[ count++ ] = i;
+			else
+				row_anim[ i ] = 0.f;
+		}
+		std::sort( order, order + count, [ & ]( const int a, const int b ) { return rows[ a ].order < rows[ b ].order; } );
+
+		/* under the watermark like the reference, right edge = watermark right ( pts left of it ) else the pts text */
+		const bool under_box  = has_box && !screen;
+		const float right     = under_box && !right_of ? box.z + shift_x : x + size.x;
+		float row_y           = text_bottom;
+		if ( under_box ) {
+			float box_bottom = box.w;
+			if ( const ImVec4 gif = n_misc::g_watermark_gif_box; gif.z > gif.x )
+				box_bottom = ( std::max )( box_bottom, gif.w );
+			row_y = ( std::max )( row_y, box_bottom + GET_VARIABLE( g_variables.m_points_y_offset, float ) );
+		}
+		row_y += 3.f;
+
+		const float group_alpha = fading || revealing ? alpha : 1.f;
+		const float row_size    = GET_VARIABLE( g_variables.m_points_big_font, bool ) ? font_size * 0.72f : font_size;
+		const float mult_size   = row_size * 0.8f;
+		const float space       = std::floor( row_size * 0.3f );
+
+		const auto put = [ & ]( const char* str, const float px, const float py, const float sz, const ImU32 col, const ImU32 shadow ) {
+			draw_list->AddText( font, sz, ImVec2( px + 1.f, py + 1.f ), shadow, str );
+			draw_list->AddText( font, sz, ImVec2( px, py ), col, str );
+		};
+
+		for ( int n = 0; n < count; ++n ) {
+			const int i            = order[ n ];
+			row_anim[ i ]          = std::min( row_anim[ i ] + dt * speed / k_reveal, 1.f );
+			const float t          = ease_out( row_anim[ i ] );
+			const float a          = group_alpha * t;
+			const auto tint        = [ & ]( const int r, const int g, const int b, const float v ) {
+				return IM_COL32( r, g, b, static_cast< int >( std::clamp( a * v, 0.f, 255.f ) ) );
+			};
+			const auto white       = [ & ]( const float v ) { return tint( 255, 255, 255, v ); };
+			const auto accent_row  = [ & ]( const float v ) { return tint( accent[ 0 ], accent[ 1 ], accent[ 2 ], v ); };
+
+			const std::string mult = rows[ i ].count > 0 ? "x" + std::to_string( rows[ i ].count ) : std::string( );
+			const std::string gain = "+" + std::to_string( rows[ i ].amount );
+			const ImVec2 name_size = font->CalcTextSizeA( row_size, FLT_MAX, 0.f, k_row_names[ i ] );
+			const float mult_w     = mult.empty( ) ? 0.f : font->CalcTextSizeA( mult_size, FLT_MAX, 0.f, mult.c_str( ) ).x + space;
+			const float gain_w     = font->CalcTextSizeA( row_size, FLT_MAX, 0.f, gain.c_str( ) ).x;
+
+			float rx       = std::floor( right - ( name_size.x + space + mult_w + gain_w ) + ( 1.f - t ) * 12.f );
+			const float ry = std::floor( row_y );
+
+			put( k_row_names[ i ], rx, ry, row_size, white( 255.f ), accent_row( 150.f ) );
+			rx += name_size.x + space;
+			if ( !mult.empty( ) ) {
+				put( mult.c_str( ), rx, std::floor( ry + ( row_size - mult_size ) * 0.75f ), mult_size, white( 200.f ), accent_row( 110.f ) );
+				rx += mult_w;
+			}
+			put( gain.c_str( ), rx, ry, row_size, accent_row( 255.f ), tint( 0, 0, 0, 150.f ) );
+
+			row_y += name_size.y + 1.f;
+		}
+	}
 
 	g_render.end_stretch_block( block );
 }

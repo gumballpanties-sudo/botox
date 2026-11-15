@@ -353,7 +353,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 	g_ctx.m_first_view_angles = cmd->m_view_point;
 	g_ctx.m_input_buttons     = cmd->m_buttons;
 	g_ctx.m_input_mouse_dx    = cmd->m_mouse_delta_x;
-	g_edgebug.donor_mouse_fix( cmd );
+	g_edgebug.del_mouse_fix( cmd );
 	g_ctx.m_previous_tick    = g_interfaces.m_global_vars_base->m_tick_count;
 	g_ctx.m_target_velocity_z =
 		( ( g_convars.float_or( HASH_BT( "sv_gravity" ), 800.f ) * 0.5f ) * g_interfaces.m_global_vars_base->m_interval_per_tick ) * -1.f;

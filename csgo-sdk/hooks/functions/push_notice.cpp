@@ -1,6 +1,9 @@
+#include <algorithm>
 #include <chrono>
 #include <format>
+#include <random>
 #include <string>
+#include <vector>
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
 #include "../../hacks/chat_hud.h"
@@ -190,15 +193,76 @@ void __fastcall n_detoured_functions::push_notice( void* ecx, void* edx, const c
 		return label.empty( ) ? std::string( "botox" ) : label;
 	};
 
-	const auto detection_html = [ & ]( const std::string& event ) {
-		return std::format( R"(<font color="{}">{}</font><font color="#bebebe"> | {}</font>)", to_hex( GET_VARIABLE( g_variables.m_accent, c_color ) ),
-		                    detection_label( ), event );
+	const auto detection_separator = [ ]( ) {
+		const std::string separator = GET_VARIABLE( g_variables.m_detection_separator, std::string );
+		return separator.empty( ) ? std::string( " | " ) : separator;
 	};
 
-	const auto print_detection = [ & ]( const std::string& event ) {
-		const std::string message = detection_html( event );
+	const auto escape = []( const std::string& in ) {
+		std::string out;
+		for ( const char c : in ) {
+			switch ( c ) {
+			case '<': out += "&lt;"; break;
+			case '>': out += "&gt;"; break;
+			case '&': out += "&amp;"; break;
+			default: out += c;
+			}
+		}
+		return out;
+	};
 
-		g_chud.on_chat( std::format( "{} | {}", detection_label( ), event ) );
+	/* static text, or random list: new pick per trick, never same twice in a row */
+	const auto pick_prefix = []( ) -> std::string {
+		static std::string last;
+		const int mode = GET_VARIABLE( g_variables.m_detection_prefix_mode, int );
+		if ( mode == 1 )
+			return GET_VARIABLE( g_variables.m_detection_prefix, std::string );
+		if ( mode != 2 )
+			return { };
+
+		const auto& rows = GET_VARIABLE( g_variables.m_detection_prefixes, std::vector< std::string > );
+		const int count  = std::clamp( GET_VARIABLE( g_variables.m_detection_prefixes_count, int ), 0, static_cast< int >( rows.size( ) ) );
+		std::vector< const std::string* > pool;
+		bool any = false;
+		for ( int i = 0; i < count; ++i ) {
+			any |= !rows[ i ].empty( );
+			if ( !rows[ i ].empty( ) && rows[ i ] != last )
+				pool.push_back( &rows[ i ] );
+		}
+		static std::minstd_rand rng( GetTickCount( ) );
+		if ( !pool.empty( ) )
+			last = *pool[ rng( ) % pool.size( ) ];
+		else if ( !any )
+			last.clear( );
+		return last;
+	};
+
+	/* own slot: a pixelsurf mid chain must not swap the eb line's prefix on x2+ */
+	const auto eb_prefix = [ & ]( const bool chained ) {
+		static std::string eb_last;
+		if ( !chained || GET_VARIABLE( g_variables.m_detection_prefix_mode, int ) != 2 )
+			eb_last = pick_prefix( );
+		return eb_last;
+	};
+
+	const auto detection_html = [ & ]( const std::string& event, const std::string& prefix ) {
+		const std::string pre = prefix.empty( ) ? std::string( )
+		                                        : std::format( R"(<font color="{}">{} </font>)",
+		                                                       to_hex( GET_VARIABLE( g_variables.m_detection_prefix_color, c_color ) ), escape( prefix ) );
+		return std::format( R"(<font color="{}">{}</font><font color="{}">{}</font>{}<font color="{}">{}</font>)",
+		                    to_hex( GET_VARIABLE( g_variables.m_accent, c_color ) ), escape( detection_label( ) ),
+		                    to_hex( GET_VARIABLE( g_variables.m_detection_separator_color, c_color ) ), escape( detection_separator( ) ), pre,
+		                    to_hex( GET_VARIABLE( g_variables.m_detection_label_color, c_color ) ), event );
+	};
+
+	const auto detection_plain = [ & ]( const std::string& event, const std::string& prefix ) {
+		return detection_label( ) + detection_separator( ) + ( prefix.empty( ) ? std::string( ) : prefix + " " ) + event;
+	};
+
+	const auto print_detection = [ & ]( const std::string& event, const std::string& prefix ) {
+		const std::string message = detection_html( event, prefix );
+
+		g_chud.on_chat( detection_plain( event, prefix ) );
 		g_mc_hud.on_chat( message );
 
 		return forward( message.c_str( ), static_cast< int >( message.length( ) ), message.c_str( ) );
@@ -225,12 +289,13 @@ void __fastcall n_detoured_functions::push_notice( void* ecx, void* edx, const c
 	}
 	case HASH_BT( CHAT_TOKEN_EDGEBUG ): {
 		const std::string event = g_edge_bug_chain > 1 ? std::format( "edgebugged x{}", g_edge_bug_chain ) : std::string( "edgebugged" );
+		const bool chained       = g_edge_bug_chain > 1;
+		const std::string prefix = eb_prefix( chained );
 		if ( !GET_VARIABLE( g_variables.m_detection_stack_eb, bool ) )
-			return print_detection( event );
+			return print_detection( event, prefix );
 
-		const bool chained = g_edge_bug_chain > 1;
-		g_chud.on_chat( std::format( "{} | {}", detection_label( ), event ), true, chained );
-		g_mc_hud.on_chat( detection_html( event ), chained );
+		g_chud.on_chat( detection_plain( event, prefix ), true, chained );
+		g_mc_hud.on_chat( detection_html( event, prefix ), chained );
 
 		static float line_time = -1.f;
 		const float now        = g_interfaces.m_global_vars_base->m_current_time;
@@ -245,7 +310,7 @@ void __fastcall n_detoured_functions::push_notice( void* ecx, void* edx, const c
 			return std::chrono::duration< double, std::milli >( std::chrono::steady_clock::now( ) - at ).count( );
 		};
 
-		const std::string message = detection_html( event );
+		const std::string message = detection_html( event, prefix );
 		if ( chained && alive && hud && !n_cod4_hud::enabled( ) ) {
 			const auto t_js = std::chrono::steady_clock::now( );
 			std::string js  = k_restack_eb;
@@ -286,13 +351,13 @@ void __fastcall n_detoured_functions::push_notice( void* ecx, void* edx, const c
 		return;
 	}
 	case HASH_BT( CHAT_TOKEN_TEXTUREBUG ):
-		return print_detection( "texturebugged" );
+		return print_detection( "texturebugged", pick_prefix( ) );
 	case HASH_BT( CHAT_TOKEN_AIRSTUCK ):
-		return print_detection( "airstucked" );
+		return print_detection( "airstucked", pick_prefix( ) );
 	case HASH_BT( CHAT_TOKEN_PIXELSURF ):
-		return print_detection( "pixelsurfed" );
+		return print_detection( "pixelsurfed", pick_prefix( ) );
 	case HASH_BT( CHAT_TOKEN_WALLCLIMB ):
-		return print_detection( "wallclimbed" );
+		return print_detection( "wallclimbed", pick_prefix( ) );
 	case HASH_BT( CHAT_TOKEN_RAW ): {
 		std::string html;
 		if ( !n_chat_extras::pop_line( html ) )

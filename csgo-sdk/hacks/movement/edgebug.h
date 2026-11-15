@@ -57,19 +57,25 @@ namespace n_edgebug
 			m_hw      = { };
 			m_lob     = { };
 		}
-		/* style 4 lobotomy v2: lobotomyv2-main/hacks/movement/edgebug.cpp 1:1 */
+		/* style 0 botox = edgebug.cpp ( + dispatch ), 1..4 = one file each */
+		void frame_start( );
+		/* style 4 lobotomy v2: edgebug_lobotomy.cpp */
 		void lob_pre( c_user_cmd* cmd );
 		void lob_post( c_user_cmd* cmd );
 		void lob_frame_start( );
 		void lob_mouse( float* x );
-		/* style 3 hotwheels: hacks/movement/movement.cpp edge_bug / detect_edgebug / fsn / override_mouse_input 1:1 */
+		/* style 3 hotwheels: edgebug_hotwheels.cpp */
 		void hw_post( c_user_cmd* cmd );
 		void hw_frame_start( );
 		void hw_mouse( float* x, float* y );
-		void donor_pre( c_user_cmd* cmd );
-		void donor_post( c_user_cmd* cmd, int style );
-		void donor_frame_start( );
-		void donor_mouse_fix( c_user_cmd* cmd );
+		/* style 2 dna: edgebug_dna.cpp */
+		void dna_pre( c_user_cmd* cmd );
+		void dna_post( c_user_cmd* cmd );
+		void dna_frame_start( );
+		/* style 1 delusional: edgebug_delusional.cpp */
+		void del_post( c_user_cmd* cmd );
+		void del_frame_start( );
+		void del_mouse_fix( c_user_cmd* cmd );
 		bool donor_live( ) const { return m_donor.ticks_left != 0; }
 		bool m_found = false;
 		int m_found_tick = 0;
@@ -79,6 +85,7 @@ namespace n_edgebug
 		int m_viz_count = 0;
 		c_vector m_viz_pos{ };
 	private:
+		/* styles 1 + 2 latch */
 		struct donor_t {
 			int ticks_left = 0, eblength = 0, detecttick = 0, edgebugtick = 0;
 			bool crouched = false, strafing = false;
@@ -105,8 +112,14 @@ namespace n_edgebug
 		bool lob_check( c_user_cmd* cmd );
 		void hw_reset( );
 		void hw_detect( c_user_cmd* cmd );
-		void donor_reset( );
-		bool donor_check( c_user_cmd* cmd, bool& brk );
+		void donor_reset( )
+		{
+			m_donor       = { };
+			m_found       = false;
+			m_replay_hits = 0;
+		}
+		bool del_check( c_user_cmd* cmd, bool& brk );
+		bool dna_check( c_user_cmd* cmd, bool& brk );
 		bool EdgeBugCheck( const edge_context_t& ctx );
 		bool IsNearEdge( );
 		bool FindEdgeTarget( int reach_tick, int window_ticks );

@@ -76,7 +76,7 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 	}
 
 	if ( stage == e_client_frame_stage::start )
-		g_edgebug.donor_frame_start( );
+		g_edgebug.frame_start( );
 
 	g_aimbot.camlock_frame( stage );
 

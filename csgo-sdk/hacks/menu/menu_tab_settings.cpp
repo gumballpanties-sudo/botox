@@ -1056,7 +1056,7 @@ static bool icon_button( const char* id, const int icon, const float height )
 
 /* fpsoverlay MenuEntryList 1:1 (custom names cycle lists): a box + x per row, "+ add" under them while room is
    left. custom InputText only narrows inside a table cell (cvars_page numbers) */
-static void name_entry_list( const char* id, const std::uint32_t rows_var, const std::uint32_t count_var, const char* add_label )
+void name_entry_list( const char* id, const std::uint32_t rows_var, const std::uint32_t count_var, const char* add_label )
 {
 	constexpr float k_frame = 17.f, k_input_lift = 10.f, k_remove = 16.f;
 	auto& rows  = GET_VARIABLE( rows_var, std::vector< std::string > );
@@ -1761,6 +1761,7 @@ void n_menu::impl_t::tab_misc( )
 				"points settings",
 				[]( ) {
 					ImGui::Checkbox( "big font##points", &GET_VARIABLE( g_variables.m_points_big_font, bool ) );
+					ImGui::Checkbox( "readout##points", &GET_VARIABLE( g_variables.m_points_readout, bool ) );
 					ImGui::SliderFloat( "appear speed##points", &GET_VARIABLE( g_variables.m_points_appear_speed, float ), 0.5f, 20.f, "%.2fx" );
 					ImGui::SliderFloat( "bob speed##points", &GET_VARIABLE( g_variables.m_points_speed, float ), 0.1f, 10.f, "%.2fx" );
 					ImGui::SliderFloat( "x offset##points", &GET_VARIABLE( g_variables.m_points_x_offset, float ), -300.f, 300.f, "%.0f px" );

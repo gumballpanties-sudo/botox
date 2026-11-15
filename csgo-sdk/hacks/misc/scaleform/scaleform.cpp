@@ -1777,7 +1777,13 @@ try {
             box.MoveChildBefore( img, gun );
         }
         img.style.visibility = on ? 'visible' : 'collapse';
-        img.style.transform = 'translateY(-3px)'; // sat low next to the gun
+        if ( ${moi} ) {
+            // moi css sizes no DeathNoticeIcon: svg drew at native 32px, bigger than gun. 22 = old centre at +2
+            img.style.height = '22px';
+            img.style.width = '22px';
+            img.style.transform = 'translateY(2px)';
+        } else
+            img.style.transform = 'translateY(-3px)'; // sat low next to the gun
     }
 
     var air = ${air};
@@ -1880,6 +1886,7 @@ void n_scaleform::impl_t::air_kill_icon( )
 	replace_str( js, "${air}", list );
 	replace_str( js, "${now}", now_text );
 	replace_str( js, "${src}", n_image_cache::air_kill_icon( ) );
+	replace_str( js, "${moi}", g_moi_hud.serving( ) ? "true" : "false" );
 
 	run_on( m_killfeed_root, js.c_str( ) );
 }

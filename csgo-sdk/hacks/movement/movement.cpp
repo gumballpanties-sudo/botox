@@ -4365,6 +4365,26 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 		return nullptr;
 	};
 
+	/* pinned ticks k = 1..ride_max with the cmd as it goes out, tick 0 must pin too ( catch candidates count the same ticks ) */
+	const int ride_max = 2 + n_tick::ticks( 6 );
+	const auto ride_of = [ & ]( ) {
+		int r = 0;
+		for ( int k = 0; k <= ride_max && !budget.expired( ); k++ ) {
+			g_ctx.m_local->get_tick_base( ) = base + k;
+			g_prediction.begin( g_ctx.m_local, cmd );
+			g_prediction.end( g_ctx.m_local );
+			if ( !pinned( ) || g_ctx.m_local->get_duck_amount( ) != a0 )
+				break;
+			r += k > 0;
+		}
+		g_prediction.restore_entity_to_predicted_frame( frame );
+		return r;
+	};
+	/* settle = already on a surf the horizon sees end: search pull / lower plane re-catches for a longer ride */
+	bool settle = false, settle_press = false;
+	int base_ride      = 0;
+	const float ride_p = std::floor( o0.m_z );
+
 	if ( starts_on_surf_pin( ) ) {
 		if ( tung_slant_touch( o0 ) || tung_start_stuck( ) ) {
 			static int s_slant_cn = -1;
@@ -4387,39 +4407,31 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 				botox_dbg_log( "TUNG: learn plane=%.0f n=%.2f,%.2f duck=%.0f count=%d", p, nu.m_x, nu.m_y, a0, s_learn_n );
 			}
 		}
+		/* press only when live keys lose the pin in 2 ticks ( ride < 1 ) and the press keeps it */
 		static bool held = false;
-		if ( !press ) {
-			held = false;
-			return;
-		}
-		const auto keeps = [ & ]( ) {
-			bool ok = true;
-			for ( int k = 0; k < 2 && ok; k++ ) {
-				g_ctx.m_local->get_tick_base( ) = base + k;
-				g_prediction.begin( g_ctx.m_local, cmd );
-				g_prediction.end( g_ctx.m_local );
-				ok = pinned( );
-			}
-			g_prediction.restore_entity_to_predicted_frame( frame );
-			return ok;
-		};
-		bool now = false;
-		if ( !keeps( ) ) {
+		base_ride = ride_of( );
+		bool now  = false;
+		if ( press && base_ride < 1 ) {
 			use_press( true );
-			now = keeps( );
+			const int r = ride_of( );
 			use_press( false );
-			if ( now )
-				commit_press( );
+			if ( ( now = r >= 1 ) )
+				base_ride = r;
 		}
-		if ( now != held )
+		if ( now )
+			commit_press( );
+		if ( press && now != held )
 			botox_dbg_log( "TUNG: hold %s fwd=%.0f side=%.0f away=%.2f", now ? "press" : "keys", cmd->m_forward_move, cmd->m_side_move, away );
 		held = now;
-		return;
+		if ( base_ride >= ride_max || budget.expired( ) )
+			return;
+		settle       = true;
+		settle_press = now;
 	}
 
 	/* live keys pin 2 ticks running before landing = the real surf is coming: never snap over it
 	   ( same test as auto ps hunt ). one log per yield run */
-	{
+	if ( !settle ) {
 		int run = 0, found = -1;
 		for ( int z = 0; z <= n_tick::ticks( 8 ) && found < 0; z++ ) {
 			g_ctx.m_local->get_tick_base( ) = base + z;
@@ -4441,7 +4453,7 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 		}
 	}
 
-	if ( const auto& prev = s_tung[ ( cn - 1 ) & 127 ]; prev.cmd == cn - 1 ) {
+	if ( const auto& prev = s_tung[ ( cn - 1 ) & 127 ]; !settle && prev.cmd == cn - 1 ) {
 		bool ok = false;
 		const bool can = GET_VARIABLE( g_variables.m_tung_surf_press, bool ) && prev.len > 0.01f && away <= 0.5f;
 		if ( can ) {
@@ -4466,7 +4478,7 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 		}
 	}
 
-	const bool pressing = press && away >= -0.3f;
+	const bool pressing = settle ? settle_press : press && away >= -0.3f;
 	use_press( pressing );
 
 	const float fall     = std::max( 0.f, -( v0.m_z + pin ) * n_tick::engine_interval( ) );
@@ -4487,7 +4499,7 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 	int banned = 0, learned = 0;
 	int regaps = 0, f_pull_blk = 0;
 	float z_nat0 = o0.m_z;
-	for ( int st = 0; st < 2 && !( st && budget.expired( ) ); st++ ) {
+	for ( int st = 0; st < ( settle ? 1 : 2 ) && !( st && budget.expired( ) ); st++ ) {
 		cmd->m_buttons = st ? live_btn ^ in_duck : live_btn;
 		const int stance = cmd->m_buttons & in_duck;
 		const auto take  = [ & ]( ) {
@@ -4503,7 +4515,8 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 		g_prediction.end( g_ctx.m_local );
 		const c_vector e    = g_ctx.m_local->get_abs_origin( );
 		const c_vector ve   = g_ctx.m_local->get_velocity( );
-		const float z_nat   = e.m_z;
+		/* settle: the ride holds z, plane math needs the free fall end so a re-catch start falls into p + eps/2 */
+		const float z_nat   = settle ? o0.m_z - fall : e.m_z;
 		const bool nat_pin  = pinned( );
 		const bool nat_land = ( g_ctx.m_local->get_flags( ) & fl_onground ) != 0;
 		const bool e_duck   = ( g_ctx.m_local->get_flags( ) & e_flags::fl_ducking ) != 0;
@@ -4522,7 +4535,7 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 			}
 			continue;
 		}
-		if ( nat_pin && ( !st || settled ) ) {
+		if ( nat_pin && !settle && ( !st || settled ) ) {
 			if ( nat_slant && ( pressing || st ) ) {
 				if ( st )
 					continue;
@@ -4542,7 +4555,7 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 		float planes[ 128 ];
 		int& n_pl = count[ st ];
 		for ( float p = std::ceil( z_nat - snap - 0.5f * k_eps ); p + 0.5f * k_eps - z_nat <= fall + snap && n_pl < 128; p += 1.f ) {
-			if ( p >= s_ban ) {
+			if ( p >= s_ban && !( settle && p == ride_p ) ) {
 				banned++;
 				continue;
 			}
@@ -4608,22 +4621,24 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 			const int tier = learned_at( p ) ? 0 : lip ? 1 : outside( p ) == 0.f ? 2 : 3;
 			return tier * 1e6 + ( tier == 1 ? 0 : tung_grid_rank( p ) ) * 1e4 + static_cast< double >( outside( p ) );
 		};
+		/* catch = get on a surf first: every z-only snap ( learned / lip / crossed ) before any wall pull, rest last.
+		   settle = smallest fix first: the ride plane pulled flush ( z-only there = the ride we have ), then lower planes */
 		cand_t cands[ 256 ];
 		int n_c = 0;
 		for ( int i = 0; i < n_pl && !s_chain; i++ ) {
-			const bool lip = lip_of( planes[ i ] );
-			const double r = rank_of( planes[ i ], lip );
+			const bool lip  = lip_of( planes[ i ] );
+			const bool here = settle && planes[ i ] == ride_p;
+			const double r  = here ? -1.0 : rank_of( planes[ i ], lip );
 			learned += r < 1e6;
 			lips[ st ] += lip;
-			for ( int pull = 0; pull < ( r < 2e6 && nlen > 0.01f && col ? 2 : 1 ); pull++ )
-				cands[ n_c++ ] = { planes[ i ], pull, lip, r };
+			for ( int pull = here ? 1 : 0; pull < ( r < 2e6 && nlen > 0.01f && col ? 2 : 1 ); pull++ )
+				cands[ n_c++ ] = { planes[ i ], pull, lip, pull && !settle ? 2.5e6 + r * 1e-3 : r };
 		}
 		n_cand[ st ] = n_c;
 		std::stable_sort( cands, cands + n_c, []( const cand_t& a, const cand_t& b ) { return a.rank < b.rank; } );
 
-		/* predicted ride length ranks proven snaps: a short one waits up to 8 more tries for a longer ride */
-		const int ride_max = 2 + n_tick::ticks( 6 );
-		int cap            = 32;
+		/* catch takes the first proven ride. settle must beat base_ride, a better one waits up to 8 more tries for longer */
+		int cap = 32;
 		struct {
 			tung_snap_t slot;
 			float p, shift, pull_gap;
@@ -4697,13 +4712,13 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 			}
 			g_prediction.restore_entity_to_predicted_frame( frame );
 			if ( bad < 0 ) {
-				if ( ride > best.ride ) {
+				if ( ride > std::max( best.ride, base_ride ) ) {
 					if ( !best.ride )
 						cap = std::min( cap, tried[ st ] + 8 );
 					best = { slot, p, shift, pull ? pull_gap : 0.f, pull && pull_gap != gap, cands[ i ].lip, learned_at( p ), ride, tried[ st ] };
 				}
 				slot.cmd = -1;
-				if ( ride >= ride_max )
+				if ( !settle || ride >= ride_max )
 					break;
 				continue;
 			}
@@ -4716,11 +4731,11 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 			slot = best.slot;
 			take( );
 			const auto l = best.l;
-			botox_dbg_log( "TUNG: snap plane=%.0f shift=%.3f pull=%.6f regap=%d lip=%d learned=%d grid=%d z=%.3f nat=%.3f fall=%.2f vz=%.2f spd=%.1f duck=%d/%d flip=%d "
-			               "try=%d/%d press=%d away=%.2f ride=%d/%d",
-			               best.p, best.shift, best.pull_gap, best.regap ? 1 : 0, best.lip ? 1 : 0, !l ? 0 : l->a0 == a0 ? 1 : 2, tung_grid_rank( best.p ), o0.m_z, z_nat,
+			botox_dbg_log( "TUNG: %s plane=%.0f shift=%.3f pull=%.6f regap=%d lip=%d learned=%d grid=%d z=%.3f nat=%.3f fall=%.2f vz=%.2f spd=%.1f duck=%d/%d flip=%d "
+			               "try=%d/%d press=%d away=%.2f ride=%d->%d/%d",
+			               settle ? "settle" : "snap", best.p, best.shift, best.pull_gap, best.regap ? 1 : 0, best.lip ? 1 : 0, !l ? 0 : l->a0 == a0 ? 1 : 2, tung_grid_rank( best.p ), o0.m_z, z_nat,
 			               fall, v0.m_z, v0.length_2d( ), stance ? 1 : 0, ( g_prediction.backup_data.m_flags & e_flags::fl_ducking ) ? 1 : 0, st, best.at_try,
-			               tried[ st ], pressing ? 1 : 0, away, best.ride, ride_max );
+			               tried[ st ], pressing ? 1 : 0, away, base_ride, best.ride, ride_max );
 			return;
 		}
 		/* held stance settled: the flip always changes stance in its tick = mid crouch, never snaps ( log: every flip
@@ -4730,12 +4745,14 @@ void n_movement::impl_t::tung_surf( c_user_cmd* cmd )
 	}
 	cmd->m_buttons = live_btn;
 	use_press( false );
+	if ( settle && pressing )
+		commit_press( );
 
 	static unsigned long long next = 0ull;
 	if ( const unsigned long long now = GetTickCount64( ); now >= next ) {
-		botox_dbg_log( "TUNG: miss us=%lld/%lld ban=%d learned=%d tried=%d+%d/%d+%d planes=%d+%d rest=%d lips=%d+%d lip_fail=%d/%d/%d chain=%d pulls=%d gap=%.6f regap=%d "
+		botox_dbg_log( "TUNG: %s base=%d/%d us=%lld/%lld ban=%d learned=%d tried=%d+%d/%d+%d planes=%d+%d rest=%d lips=%d+%d lip_fail=%d/%d/%d chain=%d pulls=%d gap=%.6f regap=%d "
 		               "pull_blk=%d flip_took=%d mid_crouch=%d path=%d t0=%d t1=%d t2=%d slant=%d stuck=%d z=%.3f nat=%.3f fall=%.2f vz=%.2f spd=%.1f duck=%d/%d press=%d away=%.2f",
-		               budget.used_us( ), budget.used_us( ) + budget.left_us( ), banned, learned,
+		               settle ? "settle miss" : "miss", base_ride, ride_max, budget.used_us( ), budget.used_us( ) + budget.left_us( ), banned, learned,
 		               tried[ 0 ], tried[ 1 ], n_cand[ 0 ], n_cand[ 1 ], count[ 0 ], count[ 1 ], rest_tried, lips[ 0 ],
 		               lips[ 1 ], lip_fail[ 0 ], lip_fail[ 1 ], lip_fail[ 2 ], s_chain ? 1 : 0, pulls, gap_v, regaps, f_pull_blk, flip_took, f_stance, f_path, f_t0, f_t1,
 		               f_t2, f_slant, f_stuck,

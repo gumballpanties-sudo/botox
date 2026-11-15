@@ -39,6 +39,8 @@ void draw_color_correction_curves( );
 void reset_color_correction( );
 void chams_dropdown( const char* label, const std::uint32_t layers_variable, const std::uint32_t colors_variable, const std::uint32_t dark_colors_variable );
 void save_popup( const char* str_id, bool& open, const ImVec2& window_size, const std::function< void( ) >& fn );
+/* box + x per row, "+ add" under ( menu_tab_settings.cpp ), rows_var = 16 string vector */
+void name_entry_list( const char* id, const std::uint32_t rows_var, const std::uint32_t count_var, const char* add_label );
 /* render thread, every frame: lands a finished image box pick even when its box is hidden */
 void image_pick_apply( );
 

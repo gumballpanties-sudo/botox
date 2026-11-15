@@ -1056,6 +1056,7 @@ void n_menu::impl_t::tab_movement( )
 			}
 
 			ImGui::Checkbox( "hide y6o ps", &GET_VARIABLE( g_variables.m_hide_y6o_ps, bool ) );
+			ImGui::Checkbox( "hide sourcemod", &GET_VARIABLE( g_variables.m_hide_sourcemod, bool ) );
 
 			ImGui::Checkbox( "edge surf", &GET_VARIABLE( g_variables.m_edge_surf, bool ) );
 			if ( GET_VARIABLE( g_variables.m_edge_surf, bool ) ) {
@@ -1488,6 +1489,26 @@ void n_menu::impl_t::tab_movement( )
 						auto&       label_var = GET_VARIABLE( g_variables.m_detection_label, std::string );
 						static char label_buffer[ 64 ] = { };
 						text_buffer_sync( "chat label##detlabel", label_var, label_buffer, sizeof( label_buffer ) );
+
+						static char separator_buffer[ 32 ] = { };
+						text_buffer_sync( "separator##detsep", GET_VARIABLE( g_variables.m_detection_separator, std::string ), separator_buffer,
+						                  sizeof( separator_buffer ), " | " );
+						ImGui::ColorEdit4( "separator color##detsepcol", &GET_VARIABLE( g_variables.m_detection_separator_color, c_color ),
+						                   color_picker_no_alpha_flags );
+						ImGui::ColorEdit4( "trick label color##detlabelcol", &GET_VARIABLE( g_variables.m_detection_label_color, c_color ),
+						                   color_picker_no_alpha_flags );
+
+						ImGui::Combo( "prefix##detprefixmode", &GET_VARIABLE( g_variables.m_detection_prefix_mode, int ), "off\0static\0random\0" );
+						const int prefix_mode = GET_VARIABLE( g_variables.m_detection_prefix_mode, int );
+						if ( prefix_mode != 0 )
+							ImGui::ColorEdit4( "prefix color##detprefixcol", &GET_VARIABLE( g_variables.m_detection_prefix_color, c_color ),
+							                   color_picker_no_alpha_flags );
+						if ( prefix_mode == 1 ) {
+							static char prefix_buffer[ 64 ] = { };
+							text_buffer_sync( "prefix text##detprefix", GET_VARIABLE( g_variables.m_detection_prefix, std::string ), prefix_buffer,
+							                  sizeof( prefix_buffer ), "nice" );
+						} else if ( prefix_mode == 2 )
+							name_entry_list( "##detprefixes", g_variables.m_detection_prefixes, g_variables.m_detection_prefixes_count, "+ add prefix" );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}

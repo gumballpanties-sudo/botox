@@ -122,18 +122,24 @@ static const char k_coc_body[] =
 	"static const float k_wgt[18]={0.033245,0.0659162217,0.0636705814,0.0598194658,0.0546642566,0.0485871646,0.0420045997,"
 	"0.0353207015,0.0288880982,0.0229808311,0.0177815511,0.013382297,0.0097960001,0.0069746748,0.0048301008,0.0032534598,"
 	"0.0021315311,0.0013582974};"
-	"float read(float2 t){"
+	// r = near coc, g = near mask ( 0.5 on any silhouette, r/g = local near coc ); 2 fetches a tap or the field steps
+	"float2 read(float2 t,float2 ka,float2 kb,float2 k0){"
 	"float4 s=tex2Dlod(s0,float4(t,0,0));"
-	"return (c4.z>0.5)?max(-(s.a*2.0-1.0),0.0):s.r;"
+	"return saturate(s.a*ka+(s.rg*k0+kb));"
 	"}"
 	"float4 main(float2 uv:TEXCOORD0):COLOR0{"
+	"float2 k1=c4.z*float2(1.0,c1.y);"
+	"float2 ka=-2.0*k1;"
+	"float2 k0=1.0-c4.z;"
 	"float2 axis=c4.xy*c1.zw*max(c1.y,1.0)*0.1645;"
-	"float coc=read(uv)*k_wgt[0];"
+	"float2 hs=axis*0.5;"
+	"float2 f=read(uv,ka,k1,k0)*k_wgt[0];"
 	"[unroll] for(int i=1;i<18;i++){"
-	"float2 o=axis*k_off[i];"
-	"coc+=(read(uv+o)+read(uv-o))*k_wgt[i];"
+	"float2 p=uv+axis*k_off[i];"
+	"float2 q=uv-axis*k_off[i];"
+	"f+=(read(p-hs,ka,k1,k0)+read(p+hs,ka,k1,k0)+read(q-hs,ka,k1,k0)+read(q+hs,ka,k1,k0))*(0.5*k_wgt[i]);"
 	"}"
-	"return float4(saturate(coc),0.0,0.0,1.0);"
+	"return float4(saturate(f),0.0,1.0);"
 	"}";
 
 static const char k_near_body[] =
@@ -150,12 +156,17 @@ static const char k_near_body[] =
 	"float4 mid=tex2Dlod(s0,float4(uv,0,0));"
 	"float cs=mid.a*2.0-1.0;"
 	"float own=max(-cs,0.0);"
-	"float nb=tex2Dlod(s2,float4(uv,0,0)).r;"
-	"float alpha=saturate(1.4*((nb>0.1)?((own>0.0)?2.0:1.0)*nb:max(nb,own)));"
-	"if(c5.y>0.5)return float4(nb,alpha,saturate(c1.y*0.0166667),1.0);"
+	"float2 fld=tex2Dlod(s2,float4(uv,0,0)).rg;"
+	"float nb=fld.r;"
+	"float cl=saturate(nb/max(fld.g,1e-3));"
+	"if(c5.y>0.5)return float4(nb,cl,saturate(c1.y*0.0166667),1.0);"
 	"if(tex2Dlod(s1,float4(uv,0,0)).r<c2.x)return mid;"
-	"if(nb<=0.0&&own<=0.0)return mid;"
-	"float radius=max(nb*c1.y,1.0);"
+	// alpha must be 1 ON the silhouette from both sides, or the lerp puts the unblurred outline back. sub pixel coc fades by r^2
+	"float gate=saturate(own*c1.y);gate*=gate;"
+	"float alpha=max(gate,saturate(1.4*nb));"
+	"if(alpha<0.004&&fld.g<0.002)return mid;"
+	"float reach=max(own,cl);"
+	"float radius=max(reach*c1.y,1.0);"
 	"float n=clamp(ceil(radius*2.5),8.0,(float)TAPS);\n"
 	"float2 px=uv/c1.zw;\n"
 	"float jit=frac(52.9829189*frac(dot(px,float2(0.06711056,0.00583715))))*6.2831853;\n"
@@ -165,20 +176,20 @@ static const char k_near_body[] =
 	"#if STYLE==2\n"
 	"base=unpack_hdr(base);\n"
 	"#endif\n"
-	"float4 sum=float4(base*nb*0.5,0.5);"
+	"float4 sum=float4(base*0.5,0.5);"
+	"float over=0.0;"
 	"[loop] for(int i=0;i<TAPS;i++){"
 	"if((float)i>=n)break;"
 	"float fi=(float)i+0.5;"
-	"float rr=fi/n;\n"
-	"#if STYLE==2\n"
-	"rr=pow(rr,0.35);\n"
-	"#else\n"
-	"rr=sqrt(rr);\n"
-	"#endif\n"
+	"float rr=sqrt(fi/n);"
 	"float2 off=dir*rr*disc;"
 	"dir=float2(dir.x*-0.73736888-dir.y*0.67549029,dir.x*0.67549029+dir.y*-0.73736888);"
 	"float4 s=tex2Dlod(s0,float4(uv+off,0,0));"
 	"float3 t=s.rgb;"
+	// 1 inside the inner half of this tap's own disc, 0 at its rim: thin foregrounds count like wide ones
+	"float tr=max(-(s.a*2.0-1.0),0.0)*c1.y;"
+	"float tf=saturate(tr);"
+	"over=max(over,saturate(2.0-2.0*rr*radius/max(tr,1e-3))*tf*tf);"
 	"float w=lerp(rr,1.0,0.5);\n"
 	"#if STYLE==1\n"
 	"w*=exp(-2.0*rr*rr);\n"
@@ -189,11 +200,13 @@ static const char k_near_body[] =
 	"#endif\n"
 	"sum+=float4(t*w,w);"
 	"}"
+	"alpha=max(alpha,over);"
 	"float3 outc=sum.rgb/max(sum.a,0.0001);\n"
 	"#if STYLE==2\n"
 	"outc=pack_hdr(outc);\n"
 	"#endif\n"
-	"float sc=lerp(cs,-max(nb,own),alpha);"
+	// never the tail: it would mark the whole wide fade near and the smooth pass wipes the sharp background
+	"float sc=lerp(cs,-reach,max(gate,over));"
 	"return float4(lerp(mid.rgb,outc,alpha),sc*0.5+0.5);"
 	"}";
 
@@ -691,8 +704,9 @@ bool n_depth_of_field::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE
 		if ( SUCCEEDED( device->CreateTexture( coc_width, coc_height, 1, D3DUSAGE_RENDERTARGET, format, D3DPOOL_DEFAULT, &this->m_coc_texture,
 		                                       nullptr ) ) &&
 		     SUCCEEDED( this->m_coc_texture->GetSurfaceLevel( 0, &this->m_coc_surface ) ) &&
-		     SUCCEEDED( device->CreateTexture( coc_width, coc_height, 1, D3DUSAGE_RENDERTARGET, format, D3DPOOL_DEFAULT, &this->m_coc_tmp_texture,
-		                                       nullptr ) ) &&
+		     // tmp full height: the point sampled H pass at half height would skip every other row
+		     SUCCEEDED( device->CreateTexture( coc_width, description.Height, 1, D3DUSAGE_RENDERTARGET, format, D3DPOOL_DEFAULT,
+		                                       &this->m_coc_tmp_texture, nullptr ) ) &&
 		     SUCCEEDED( this->m_coc_tmp_texture->GetSurfaceLevel( 0, &this->m_coc_tmp_surface ) ) )
 			break;
 
@@ -931,6 +945,13 @@ void n_depth_of_field::impl_t::execute( const frame_t frame )
 		{ coc_width - 0.5f, -0.5f, 0.f, 1.f, 1.f, 0.f },
 		{ -0.5f, coc_height - 0.5f, 0.f, 1.f, 0.f, 1.f },
 		{ coc_width - 0.5f, coc_height - 0.5f, 0.f, 1.f, 1.f, 1.f },
+	};
+
+	const vertex_t coc_tmp_quad[ 4 ] = {
+		{ -0.5f, -0.5f, 0.f, 1.f, 0.f, 0.f },
+		{ coc_width - 0.5f, -0.5f, 0.f, 1.f, 1.f, 0.f },
+		{ -0.5f, height - 0.5f, 0.f, 1.f, 0.f, 1.f },
+		{ coc_width - 0.5f, height - 0.5f, 0.f, 1.f, 1.f, 1.f },
 	};
 
 	IDirect3DSurface9* old_depth_stencil                = nullptr;
@@ -1175,18 +1196,24 @@ void n_depth_of_field::impl_t::execute( const frame_t frame )
 	// near coc field, two half res draws. must run while the colour target still holds the prepared frame
 	if ( near_shader ) {
 		D3DVIEWPORT9 coc_viewport{ 0, 0, static_cast< DWORD >( this->m_coc_width ), static_cast< DWORD >( this->m_coc_height ), 0.f, 1.f };
+		D3DVIEWPORT9 coc_tmp_viewport{ 0, 0, static_cast< DWORD >( this->m_coc_width ), static_cast< DWORD >( this->m_height ), 0.f, 1.f };
 
 		const float coc_horizontal[ 4 ] = { 1.f, 0.f, 1.f, 0.f };
 		const float coc_vertical[ 4 ]   = { 0.f, 1.f, 0.f, 0.f };
 
+		// point, or the near mask lies on every bilinear-blended silhouette texel
+		device->SetSamplerState( 0, D3DSAMP_MINFILTER, D3DTEXF_POINT );
+		device->SetSamplerState( 0, D3DSAMP_MAGFILTER, D3DTEXF_POINT );
 		device->SetPixelShader( coc_shader );
 		device->SetRenderState( D3DRS_COLORWRITEENABLE, 0x0f );
-		device->SetViewport( &coc_viewport );
 		device->SetRenderTarget( 0, this->m_coc_tmp_surface );
+		device->SetViewport( &coc_tmp_viewport );
 		device->SetTexture( 0, this->m_colour_texture );
 		device->SetPixelShaderConstantF( 4, coc_horizontal, 1 );
-		n_fx_compat::draw_up( device, D3DPT_TRIANGLESTRIP, 2, coc_quad, sizeof( vertex_t ) );
+		n_fx_compat::draw_up( device, D3DPT_TRIANGLESTRIP, 2, coc_tmp_quad, sizeof( vertex_t ) );
 
+		device->SetSamplerState( 0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR );
+		device->SetSamplerState( 0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR );
 		device->SetRenderTarget( 0, this->m_coc_surface );
 		device->SetViewport( &coc_viewport );
 		device->SetTexture( 0, this->m_coc_tmp_texture );

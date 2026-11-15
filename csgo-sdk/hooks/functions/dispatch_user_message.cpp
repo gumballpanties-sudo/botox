@@ -26,9 +26,12 @@ bool __fastcall n_detoured_functions::dispatch_user_message( void* ecx, void* ed
 	static auto original = g_hooks.m_dispatch_user_message.get_original< decltype( &n_detoured_functions::dispatch_user_message ) >( );
 	HOOK_SCOPE_OR_BAIL( original( ecx, edx, msg_type, flags, size, msg ) );
 
-	if ( GET_VARIABLE( g_variables.m_hide_y6o_ps, bool ) && msg && size > 0 && msg_type >= 5 && msg_type <= 8 ) {
+	if ( msg && size > 0 && msg_type >= 5 && msg_type <= 8 ) {
 		const auto data = static_cast< const unsigned char* >( msg );
-		if ( raw_contains( data, size, "y6" ) && raw_contains( data, size, "ps assisted" ) )
+		if ( GET_VARIABLE( g_variables.m_hide_y6o_ps, bool ) && raw_contains( data, size, "y6" ) && raw_contains( data, size, "ps assisted" ) )
+			return true;
+		/* sourcemod plugin spam ( "[SM] toggled noclip on x" ) */
+		if ( GET_VARIABLE( g_variables.m_hide_sourcemod, bool ) && raw_contains( data, size, "[SM]" ) )
 			return true;
 	}
 
