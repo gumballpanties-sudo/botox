@@ -33,6 +33,7 @@ static struct {
 	/* vz on the pin, xy still moving: the only hold some walls give ( 11-10 nuke crane: full stops never continue, vz-pins do ).
 	   held while vz stays pinned, xy braked toward 0 each tick, sim-verified = converges to a standstill */
 	bool vzpin  = false;
+	bool freeze = false; /* exact-axis freeze ( the END stuck test ): a broken replay re-solves at once, never the online hold window */
 	float pitch = 0.0f, yaw = 0.0f, fwd = 0.0f, side = 0.0f;
 	int ticks   = 0;
 } s_hold;
@@ -321,6 +322,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		if ( hold_armed )
 			botox_dbg_log( "AS: end t=%d why=%s blk=%d", s_hold.ticks, !feature ? "off" : !key ? "key" : !alive ? "dead" : "ground", ( int )g_input.keys_blocked( ) );
 		s_hold.ticks   = 0;
+		s_hold.freeze  = false;
 		was_stuck      = false;
 		s_expect.valid = false;
 		return;
@@ -384,6 +386,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	const auto publish = [ & ]( const float yaw, const float move, const bool stuck, const float pitch, const bool exact, const float side = 0.0f ) {
 		s_last                    = { true, cmd->m_command_number, pitch, yaw, move, side };
 		s_proof                   = { stuck, exact, origin, live_velocity };
+		s_hold.freeze             = false; /* only the hold replay sites ( hold / shot held ) carry it over */
 		s_hold.valid              = stuck;
 		s_hold.vzpin              = false;
 		s_hold.pitch              = pitch;
@@ -657,7 +660,9 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			if ( forced_held ) {
 				++s_hold.ticks;
 				botox_dbg_log( "AS: shot held t=%d yaw=%.1f fwd=%.4f sims=%d", s_hold.ticks, s_hold.yaw, s_hold.fwd, sims );
+				const bool keep_freeze = s_hold.freeze;
 				publish( s_hold.yaw, s_hold.fwd, true, s_hold.pitch, true, s_hold.side );
+				s_hold.freeze = keep_freeze;
 				cmd->m_buttons &= ~( in_attack | in_second_attack );
 				g_air_stuck_stamp_buttons = cmd->m_buttons;
 				s_expect = { true, origin };
@@ -669,8 +674,10 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		if ( held ) {
 			s_hold_win = 0;
 			if ( s_hold.ticks++ == 0 )
-				botox_dbg_log( "AS: hold yaw=%.1f fwd=%.4f pitch=%.2f fixed=1", s_hold.yaw, s_hold.fwd, s_hold.pitch );
+				botox_dbg_log( "AS: hold yaw=%.1f fwd=%.4f pitch=%.2f fixed=1 freeze=%d", s_hold.yaw, s_hold.fwd, s_hold.pitch, ( int )s_hold.freeze );
+			const bool keep_freeze = s_hold.freeze;
 			publish( s_hold.yaw, s_hold.fwd, true, s_hold.pitch, true, s_hold.side );
+			s_hold.freeze = keep_freeze;
 			s_expect = { true, origin };
 			return;
 		}
@@ -679,7 +686,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		   10/13 ). resend the hold unproven. OFFLINE the START is the truth: a failed replay means the same cmd falls, search again from
 		   this pinned START instead ( 11-10 11:49 nuke crane: 3 one-tick pins, each blindly resent, each `lost` ) */
 		/* online: Q may be holding the SERVER ( its START differs from ours ); keep it on the wire for the in-flight window, then solve */
-		if ( const int cpn = g_interfaces.m_prediction->m_commands_predicted; cpn > 0 && s_hold_win < cpn ) {
+		if ( const int cpn = g_interfaces.m_prediction->m_commands_predicted; cpn > 0 && s_hold_win < cpn && !s_hold.freeze ) {
 			++s_hold_win;
 			++s_hold.ticks;
 			botox_dbg_log( "AS: hold window t=%d/%d yaw=%.1f fwd=%.4f pinned=%d", s_hold_win, cpn, s_hold.yaw, s_hold.fwd, ( int )vel_pinned( live_velocity ) );
@@ -905,6 +912,73 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		return;
 	}
 
+	/* exact-axis freeze: TryPlayerMove re-tests a full-distance bump UNSWEPT at endpos ( gamemovement.cpp:3352 ); startsolid there =
+	   velocity 0 + break before SetAbsOrigin = no move, vel ( 0, 0, pin ). box brushes count touching as inside in absolute coords
+	   ( cmodel.cpp:1679 ) while the swept slab test is relative to the START = a band at the face ( faces within 16u inside a power of
+	   two ). END aimed straight in at true d = k q/16, engine-verified; a fixed point ( the same cmd re-freezes from the frozen START,
+	   2nd sim ) wins, else the first 1-tick freeze ( START moving along n: the replay from vel ( 0, 0, pin ) lands elsewhere, next tick
+	   re-solves from the frozen START = fixed ). axis END d sits on whole q steps, so ks that predict the same END float are skipped.
+	   lab freeze_probe nuke: 4/41 axis walls, re-freeze 64/64, +-1 ulp START velocity ( the server ) 256/256; lab H axis nuke 0 -> 54/381
+	   ( = the old clarity ladder ), mirage 0 ( no such face ) */
+	if ( axis_wall && touching ) {
+		constexpr int k_freeze_order[ 8 ] = { 16, 12, 20, 8, 24, 10, 14, 18 };
+		const float q1 = grid_q( origin, P, H );
+		c_vector v0    = live_velocity;
+		v0.m_z -= A.grav_half;
+		int sims = 0, tried = 0, n_ends = 0, fb_k = 0;
+		float ends[ 8 ]{ }, fb_yaw = 0.0f, fb_fwd = -1.0f;
+		bool got = false;
+		for ( const int k : k_freeze_order ) {
+			if ( tried > 0 && clock.expired( ) )
+				break;
+			const float dvn = static_cast< float >( ( k * ( double )q1 / 16.0 - dt1 ) / dt ) - dotv( v0, P.n );
+			if ( std::fabsf( dvn ) < 1e-7f )
+				continue;
+			const float sg  = dvn > 0.0f ? 1.0f : -1.0f;
+			const c_vector w( P.n.m_x * sg, P.n.m_y * sg, 0.0f );
+			const float a   = std::fabsf( dvn );
+			const float ws  = a / coef;
+			const float add = std::min( ws, A.max_wish ) - dotv( v0, w );
+			if ( ws > A.max_speed || a > add )
+				continue;
+			const float d_end = d_after( origin, P, H, accel_w( live_velocity, w, ws, A ), dt );
+			if ( std::find( ends, ends + n_ends, d_end ) != ends + n_ends )
+				continue;
+			ends[ n_ends++ ] = d_end;
+			const float yaw  = rad2deg( std::atan2( w.m_y, w.m_x ) );
+			if ( refused_cmd( yaw, ws, live_view.m_x, 0.0f ) )
+				continue;
+			++tried;
+			if ( !sim_pins( yaw, ws, live_view.m_x, sims ) )
+				continue;
+			const bool fixd = sim_again( sims );
+			if ( !fixd ) {
+				if ( fb_fwd < 0.0f ) {
+					fb_k   = k;
+					fb_yaw = yaw;
+					fb_fwd = ws;
+				}
+				continue;
+			}
+			got    = true;
+			fb_k   = k;
+			fb_yaw = yaw;
+			fb_fwd = ws;
+			break;
+		}
+		restore( );
+		if ( fb_fwd >= 0.0f ) {
+			botox_dbg_log( "AS: freeze k=%d yaw=%.2f fwd=%.4f fixed=%d d=%.3g q=%.3g vn=%.3f vxy=%.1f try=%d sims=%d cp=%d us=%lld", fb_k, fb_yaw, fb_fwd,
+			               ( int )got, dt1, q1, vn, live_velocity.length_2d( ), tried, sims, cp, clock.used_us( ) );
+			publish( fb_yaw, fb_fwd, true, live_view.m_x, true );
+			s_hold.freeze = true;
+			s_expect      = { true, origin };
+			return;
+		}
+		if ( tried )
+			botox_dbg_log( "AS: freeze miss d=%.3g q=%.3g tries=%d sims=%d", dt1, q1, tried, sims );
+	}
+
 	/* no park window ( 11-11 10:15 log ): online the server zeroes on the park cmd at the park START ( even 1.93u off the face ) and that
 	   stop is a 1-tick pin whatever follows ( same park resent fell 8/8, an impact pin from the skin 0/45 ). every long hold ( 24-143t )
 	   was the client's own proven pin with the server in sync, so each tick solves from this START */
@@ -1018,9 +1092,14 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	const float tx   = origin.m_x + v0.m_x * dt - P.n.m_x * back;
 	const float ty   = origin.m_y + v0.m_y * dt - P.n.m_y * back;
 	const float ux = ulp( tx ), uy = ulp( ty );
-	int best_sc    = -1;
-	double best_t  = 1e9;
-	float best_fwd = -1.0f, best_yaw = wall_yaw;
+	/* score ties go to the START nearest k_park_mid * q, not the smallest d. 11-15 nuke online log, 81 parks: the server froze ( vel 0,
+	   no move, server-side cause ) on 22/42 parks whose END sat < q/2 off the face, 2/17 at q/2..q, 0/22 at >= q, and every freeze
+	   desynced ( in-flight cmds knocked it off, lock fell t<=5 26/26 ) = the slide. lab H: catches mirage 278 = 278, nuke 870 -> 873,
+	   faster ( t sum 14.8 -> 13.4 ), parks < q/2 490 -> 49 */
+	constexpr double k_park_mid = 1.25;
+	int best_sc     = -1;
+	double best_t   = 1e9, best_key = 1e9;
+	float best_fwd  = -1.0f, best_yaw = wall_yaw;
 	int lattice    = 0;
 	const c_vector tdir( -P.n.m_y, P.n.m_x, 0.0f );
 	/* pass 0: the 13x13 ulp lattice. pass 1 ( nothing there can pin, 11-10 log: 42 ticks of sc=0 creeping 1 ulp ): the same depth shifted
@@ -1052,9 +1131,11 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 				continue;
 			++lattice;
 			/* coarse sweep: a density estimate ranks STARTs as well as the fine one ( lab 29-33/33 either way ) at 1/10 the evals */
-			const int sc = build( nx, v, P, H, A, pin_vz, fwd_cap, 0.1f, nullptr, 16 );
-			if ( sc > best_sc || ( sc == best_sc && t2 < best_t ) ) {
+			const int sc       = build( nx, v, P, H, A, pin_vz, fwd_cap, 0.1f, nullptr, 16 );
+			const double key_t = std::fabs( t2 - k_park_mid * q0 );
+			if ( sc > best_sc || ( sc == best_sc && key_t < best_key ) ) {
 				best_sc  = sc;
+				best_key = key_t;
 				best_t   = t2;
 				best_fwd = ws;
 				best_yaw = y;

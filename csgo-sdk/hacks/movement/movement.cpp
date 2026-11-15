@@ -2353,91 +2353,58 @@ void n_movement::impl_t::auto_one_hop( c_user_cmd* cmd )
 	}
 }
 
+/* lobotomy v2 auto_duck ( lobotomyv2-main movement.cpp:849 ): duck sim lands, stand sim misses or lands lower -> duck.
+   air duck = feet +9 ( cs_gamemovement FinishDuck ), so a ducked tick can't be judged vs current z: old gate flickered duck/unduck.
+   lands latch till ground like the donor, so the press holds through the catch */
 void n_movement::impl_t::auto_crouch( c_user_cmd* cmd )
 {
-	if ( !g_ctx.m_local || !g_ctx.m_local->is_alive( ) ) {
-		m_auto_crouch_data.m_ducking_velo  = 0.f;
-		m_auto_crouch_data.m_standing_velo = 0.f;
-		m_auto_crouch_data.m_founded       = false;
-		return;
-	}
-	if ( const auto mt = g_ctx.m_local->get_move_type( );
-	     mt == move_type_ladder || mt == move_type_noclip || mt == move_type_fly || mt == move_type_observer ) {
-		m_auto_crouch_data.m_ducking_velo  = 0.f;
-		m_auto_crouch_data.m_standing_velo = 0.f;
-		m_auto_crouch_data.m_founded       = false;
-		return;
-	}
-	const bool enabled     = GET_VARIABLE( g_variables.m_auto_crouch, bool );
-	const bool key_pressed = g_input.check_input( &GET_VARIABLE( g_variables.m_auto_crouch_key, key_bind_t ) );
-	const bool jump_bug_active =
-		GET_VARIABLE( g_variables.m_jump_bug, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_jump_bug_key, key_bind_t ) );
-
-	if ( !enabled || !key_pressed || jump_bug_active ) {
-		m_auto_crouch_data.m_founded = false;
+	auto& d = m_auto_crouch_data;
+	const auto mt          = g_ctx.m_local ? g_ctx.m_local->get_move_type( ) : move_type_none;
+	const bool jb_active   = GET_VARIABLE( g_variables.m_jump_bug, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_jump_bug_key, key_bind_t ) );
+	const bool eb_live     = GET_VARIABLE( g_variables.m_edgebug_style, int ) == 1 ? g_edgebug.donor_live( ) : g_edgebug.m_found;
+	if ( !cmd || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) || !GET_VARIABLE( g_variables.m_auto_crouch, bool ) ||
+	     !g_input.check_input( &GET_VARIABLE( g_variables.m_auto_crouch_key, key_bind_t ) ) || jb_active || g_air_stuck_owns_cmd || eb_live ||
+	     m_pixelsurf_data.m_in_pixel_surf || ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) || mt == move_type_ladder ||
+	     mt == move_type_noclip || mt == move_type_fly || mt == move_type_observer ) {
+		d = { };
 		return;
 	}
 
-	if ( g_air_stuck_owns_cmd ) {
-		m_auto_crouch_data.m_founded = false;
-		return;
-	}
-
-	if ( !g_ctx.m_local || !g_ctx.m_local->is_alive( ) || !cmd )
-		return;
-
-	if ( ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) || g_ctx.m_local->get_move_type( ) == e_move_types::move_type_ladder ) {
-		m_auto_crouch_data.m_founded = false;
-		return;
-	}
-
-	const int ticks = GET_VARIABLE( g_variables.m_auto_crouch_ticks, int );
-
-	bool can_land_standing = false;
-	bool can_land_ducking  = false;
-	c_vector standing_land_origin( 0, 0, 0 );
-	c_vector ducking_land_origin( 0, 0, 0 );
-	c_vector current_origin = g_ctx.m_local->get_abs_origin( );
-
-	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-	for ( int i = 0; i < ticks; i++ ) {
-		g_prediction.begin( g_ctx.m_local, cmd );
-		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) {
-			can_land_standing    = true;
-			standing_land_origin = g_ctx.m_local->get_abs_origin( );
+	const int ticks = std::clamp( GET_VARIABLE( g_variables.m_auto_crouch_ticks, int ), 1, 32 );
+	const int frame = g_interfaces.m_prediction->m_commands_predicted - 1;
+	const auto sim  = [ & ]( const bool duck, bool& landed, float& z ) {
+		c_user_cmd probe = *cmd;
+		if ( duck )
+			probe.m_buttons |= e_command_buttons::in_duck | e_command_buttons::in_bullrush;
+		else
+			probe.m_buttons &= ~e_command_buttons::in_duck;
+		g_prediction.restore_entity_to_predicted_frame( frame );
+		for ( int i = 0; i < ticks; i++ ) {
+			g_prediction.begin( g_ctx.m_local, &probe );
+			const bool on = g_ctx.m_local->get_flags( ) & e_flags::fl_onground;
+			if ( on ) {
+				landed = true;
+				z      = g_ctx.m_local->get_origin( ).m_z;
+			}
 			g_prediction.end( g_ctx.m_local );
-			break;
+			if ( on )
+				break;
 		}
-		g_prediction.end( g_ctx.m_local );
-	}
+	};
+	sim( true, d.m_did_land_ducking, d.m_ducking_vert );
+	if ( d.m_did_land_ducking )
+		sim( false, d.m_did_land_standing, d.m_standing_vert );
+	g_prediction.restore_entity_to_predicted_frame( frame );
 
-	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-	c_user_cmd duck_cmd = *cmd;
-	duck_cmd.m_buttons |= e_command_buttons::in_duck | e_command_buttons::in_bullrush;
-
-	for ( int i = 0; i < ticks; i++ ) {
-		g_prediction.begin( g_ctx.m_local, &duck_cmd );
-		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) {
-			can_land_ducking    = true;
-			ducking_land_origin = g_ctx.m_local->get_abs_origin( );
-			g_prediction.end( g_ctx.m_local );
-			break;
-		}
-		g_prediction.end( g_ctx.m_local );
-	}
-
-	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
-
-	if ( !can_land_standing && can_land_ducking ) {
-		if ( ducking_land_origin.m_z > current_origin.m_z - 1.0f ) {
-			cmd->m_buttons |= e_command_buttons::in_duck | e_command_buttons::in_bullrush;
-			m_auto_crouch_data.m_founded = true;
-		} else {
-			m_auto_crouch_data.m_founded = false;
-		}
-	} else {
-		m_auto_crouch_data.m_founded = false;
-	}
+	/* donor = strict >: same floor lands differ by trace epsilon, 1 u keeps flat landings standing */
+	const bool duck = d.m_did_land_ducking && ( !d.m_did_land_standing || d.m_ducking_vert > d.m_standing_vert + 1.f );
+	if ( duck )
+		cmd->m_buttons |= e_command_buttons::in_duck | e_command_buttons::in_bullrush;
+	if ( duck != d.m_founded && GET_VARIABLE( g_variables.m_debug_log, bool ) )
+		botox_dbg_log( "AC: duck=%d dl=%d sl=%d dz=%.2f sz=%.2f z=%.2f vz=%.2f t=%d", ( int )duck, ( int )d.m_did_land_ducking,
+		               ( int )d.m_did_land_standing, d.m_ducking_vert, d.m_standing_vert, g_ctx.m_local->get_origin( ).m_z,
+		               g_ctx.m_local->get_velocity( ).m_z, ticks );
+	d.m_founded = duck;
 }
 
 void n_movement::impl_t::blockbot( c_user_cmd* cmd )

@@ -66,6 +66,25 @@ namespace n_lua
 		request_refresh
 	};
 
+	/* one DrawModelExecute call. hook fills the first block, scripts the second */
+	struct draw_model_t {
+		const char* m_name    = nullptr;
+		int m_index           = 0;
+		int m_flags           = 0;
+		const float* m_origin = nullptr;
+		const void* m_info    = nullptr; // model_render_info_t
+		const void* m_state   = nullptr; // DrawModelState_t, studiohdr_t* first
+
+		bool m_hide          = false;
+		bool m_tint          = false;
+		unsigned int m_color = 0xFFFFFFFFu; // IM_COL32
+		/* set only once every swap guard passed ( lua_api.cpp set_swap ) */
+		const char* m_swap_name  = nullptr;
+		const void* m_swap_model = nullptr;
+		const void* m_swap_hdr   = nullptr;
+		const void* m_swap_hw    = nullptr;
+	};
+
 	struct impl_t {
 		/* game thread. on_paint = request queue + paint callbacks, MatSystemTopPanel before swap_draw_data */
 		void on_paint( );
@@ -74,6 +93,9 @@ namespace n_lua
 		void on_event( game_event_t* event );
 		void on_level_init( );
 		void on_level_shutdown( );
+		/* DrawModelExecute, every pass. wants = cheap gate before the hook fills draw_model_t */
+		bool draw_model_wanted( ) const;
+		void on_draw_model( draw_model_t& draw );
 		/* eject: runs every unload callback and closes every state, game thread */
 		void shutdown( );
 
@@ -90,6 +112,10 @@ namespace n_lua
 
 		bool m_initialised = false;
 		std::atomic< bool > m_shutdown{ false };
+		/* the thread on_paint runs on: lua is single threaded, draw_model only fires there */
+		std::atomic< unsigned long > m_thread{ 0 };
+		/* some loaded script registered draw_model. refreshed once a frame ( on_paint ), so the hook costs nothing otherwise */
+		std::atomic< bool > m_draw_model_live{ false };
 
 		/* lua_api.cpp side */
 		void load( script_t& script );

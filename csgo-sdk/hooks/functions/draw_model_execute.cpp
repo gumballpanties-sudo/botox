@@ -7,6 +7,7 @@
 #include "../../globals/interfaces/interfaces.h"
 #include "../../hacks/chams/chams.h"
 #include "../../hacks/lagcomp/lagcomp.h"
+#include "../../hacks/lua/lua.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/visuals/players/sound_esp/sound_esp.h"
 #include "../../hacks/visuals/screen/rear_mirror.h"
@@ -87,6 +88,72 @@ static int viewmodel_part( const char* name )
 	return viewmodel_part_none;
 }
 
+/* DrawModelState_t, Kisak public/engine/ivmodelrender.h:40 */
+struct draw_model_state_t {
+	const void* m_studio_hdr;
+	const void* m_studio_hw_data;
+	void* m_renderable;
+	const matrix3x4_t* m_model_to_world;
+	void* m_decals;
+	int m_draw_flags;
+	int m_lod;
+};
+
+/* scripts see each draw once: a hide returns, a tint / swap redraws through this hook ( chams, blur, ragdolls still apply )
+   with s_lua_redraw up so the scripts skip it. glow silhouettes + the mirror pass keep the real model */
+static bool s_lua_redraw = false;
+
+static bool lua_draw_model( void* ecx, void* edx, void* context, void* state, model_render_info_t& info, matrix3x4_t* bones )
+{
+	if ( s_lua_redraw || !state || !info.model || g_ctx.m_is_glow_being_drawn || g_rear_mirror.drawing( ) || !g_lua.draw_model_wanted( ) )
+		return false;
+
+	n_lua::draw_model_t draw{ };
+	draw.m_name   = info.model->m_name;
+	draw.m_index  = info.entity_index;
+	draw.m_flags  = info.flags;
+	draw.m_origin = &info.origin.m_x;
+	draw.m_info   = &info;
+	draw.m_state  = state;
+	g_lua.on_draw_model( draw );
+
+	if ( draw.m_hide )
+		return true;
+
+	const bool swap = draw.m_swap_model && bones;
+	if ( !draw.m_tint && !swap )
+		return false;
+
+	float color[ 3 ]{ };
+	g_interfaces.m_render_view->get_color_modulation( color );
+	const float blend = g_interfaces.m_render_view->get_blend( );
+
+	if ( draw.m_tint ) {
+		g_interfaces.m_render_view->set_color_modulation( ( draw.m_color & 0xFF ) / 255.f, ( ( draw.m_color >> 8 ) & 0xFF ) / 255.f,
+		                                                  ( ( draw.m_color >> 16 ) & 0xFF ) / 255.f );
+		g_interfaces.m_render_view->set_blend( blend * ( ( draw.m_color >> 24 ) & 0xFF ) / 255.f );
+	}
+
+	s_lua_redraw = true;
+	if ( swap ) {
+		/* decals are vertex indices into the drawn mesh, lod is re-clamped by studiorender from the new hw data */
+		draw_model_state_t swap_state = *static_cast< const draw_model_state_t* >( state );
+		swap_state.m_studio_hdr       = draw.m_swap_hdr;
+		swap_state.m_studio_hw_data   = draw.m_swap_hw;
+		swap_state.m_decals           = nullptr;
+
+		model_render_info_t swap_info = info;
+		swap_info.model               = const_cast< model_t* >( static_cast< const model_t* >( draw.m_swap_model ) );
+		n_detoured_functions::draw_model_execute( ecx, edx, context, &swap_state, swap_info, bones );
+	} else
+		n_detoured_functions::draw_model_execute( ecx, edx, context, state, info, bones );
+	s_lua_redraw = false;
+
+	g_interfaces.m_render_view->set_color_modulation( color );
+	g_interfaces.m_render_view->set_blend( blend );
+	return true;
+}
+
 void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, void* context, void* state, model_render_info_t& info,
                                                           matrix3x4_t* custom_bone_to_world )
 {
@@ -94,6 +161,9 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 
 	// eject frees chams materials; drawing mid release crashes
 	HOOK_SCOPE_OR_BAIL( original( ecx, edx, context, state, info, custom_bone_to_world ) );
+
+	if ( lua_draw_model( ecx, edx, context, state, info, custom_bone_to_world ) )
+		return;
 
 	// first: chams, sheen + motion blur bones all see the held pose
 	custom_bone_to_world = g_viewmodel_fps.apply( state, custom_bone_to_world, info.model );

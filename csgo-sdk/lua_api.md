@@ -5,7 +5,7 @@ Lua 5.4.7 scripting for botox. Scripts can draw, read and change user commands, 
 - [Quick start](#quick-start)
 - [How scripts run](#how-scripts-run)
 - [callbacks](#callbacks) - [ui](#ui) - [render](#render) - [entities](#entities) - [entity](#entity)
-- [cmd](#cmd) - [event](#event) - [engine](#engine) - [globals](#globals) - [cvar](#cvar) - [config](#config)
+- [cmd](#cmd) - [event](#event) - [model](#model) - [engine](#engine) - [globals](#globals) - [cvar](#cvar) - [config](#config)
 - [trace](#trace) - [fx](#fx) - [input](#input) - [mem](#mem) - [client](#client) - [constants](#constants)
 - [Examples](#examples) - [Limits](#limits)
 
@@ -75,6 +75,7 @@ Removes `fn` from `name`. Pass the same function value you registered.
 | any game event name, e.g. `player_death` | `event` | only that event. |
 | `level_init` | none | after a map loaded (LevelInitPostEntity). |
 | `level_shutdown` | none | map unloading. |
+| `draw_model` | `model` | every DrawModelExecute call, every pass: players, your viewmodel, weapons in hands, ragdolls. Props and dropped weapons the game batch-draws (DrawModelArray) never come here. Hide, tint or swap it, see [`model`](#model). |
 | `unload` | none | the script is being unloaded (button, error, `client.unload`, eject). |
 
 ```lua
@@ -394,6 +395,46 @@ callbacks.register("player_death", function(e)
     local victim, attacker = e:get_player("userid"), e:get_player("attacker")
     if attacker and attacker == entities.local_player() then
         print("you killed", victim and victim:name() or "?", "with", e:get_string("weapon"))
+    end
+end)
+```
+
+---
+
+## model
+
+Passed to `draw_model`, once per model draw (hundreds a frame: keep the callback short). Only valid inside its callback.
+
+| field | type | |
+| --- | --- | --- |
+| `model.name` | string | read only, model path, e.g. `"models/weapons/v_knife_default_ct.mdl"` |
+| `model.index` | int | read only, entity index. Your viewmodel draws under its own index |
+| `model.entity` | entity | read only, `nil` for draws with no entity |
+| `model.flags` | int | read only, `STUDIO_*` render flags. Shadow / depth passes have `0x40000000` / `0x08000000` set |
+| `model.x` | number | read only, render origin |
+| `model.y` | number | |
+| `model.z` | number | |
+| `model.hide` | bool | `true` = this draw is skipped (shadow passes too, they come here as well) |
+| `model.color` | int | tint for this draw, made by [`color(r, g, b, a)`](#colorr-g-b-a). Alpha multiplies the game's own. `nil` = no tint |
+| `model.model` | string | draw another `.mdl` in its place, e.g. a custom gun. Other paths are ignored. Reads back `nil` until the swap is live |
+| `model.ptr` | int | read only, address of the ModelRenderInfo_t |
+
+**Swaps:** the path loads at the start of the next frame (never inside a draw), so the first frame draws the original. It loads again by itself after every map change. Every new path stays loaded for the session and botox keeps at most 64 of them, so set final paths (e.g. from a button), not text that is still being typed.
+
+The new model is drawn with the original's skeleton: rig it to the same bones, and weight it only to bones the stock mesh uses too (the game skips the others when it builds the pose, they hold old data). A swap is refused, with one console line saying why, when the new model has more bones than the drawn one, has flexes (faces) or is a static prop model. A file that can't be loaded prints once too.
+
+Botox features that pick models by file name (enemy chams look for `player`, viewmodel motion blur / sheen look for `weapons/v_`) see the new file's name. Keep the stock folder names (`models/weapons/v_...`) to keep them working.
+
+**Custom files on servers:** loose `.mdl` / `.vtx` / `.vvd` / `.vmt` / `.vtf` files under `csgo\` are rejected by sv_pure servers (the engine then hands back the error model). Turn on settings > sv_pure bypass, or pack them in a vpk. No precache is needed: the swap never goes through the server's precache table.
+
+**Order:** scripts see the draw first. A tint or swap is then drawn through botox chams / ragdoll removal / motion blur as usual, so enemy chams still win over a tint. Glow outlines and the rear view mirror show the real model.
+
+```lua
+callbacks.register("draw_model", function(m)
+    if m.name:find("v_knife") then
+        m.model = "models/weapons/v_knife_custom.mdl"
+    elseif m.entity and m.entity:is_player() and m.entity:is_enemy() then
+        m.color = color(255, 80, 80, 255)
     end
 end)
 ```
@@ -794,6 +835,7 @@ Full scripts in [lua_examples/](lua_examples/), copy them into `C:\botox\lua\`:
 | [kill_feed.lua](lua_examples/kill_feed.lua) | named game event, event:get_player, client.chat, button, ui.text |
 | [raw_access.lua](lua_examples/raw_access.lua) | config, netvars, mem.read, mem.vfunc + mem.call |
 | [edgebug_fx.lua](lua_examples/edgebug_fx.lua) | edgebug detect in pre_prediction, own world particles (spark sim, shockwave rings, pillar) via world_to_screen + poly, engine.exec sound |
+| [custom_models.lua](lua_examples/custom_models.lua) | draw_model: custom knife / gun model swap applied by a button, enemy tint, hide arms, ui read once a frame in paint |
 | [custom_edgebug.lua](lua_examples/custom_edgebug.lua) | full edgebug from scratch, hotwheels style: own csgo air movement sim on trace.hull, cmd replay in pre_prediction + create_move, mouse lock / strafe camera via frame_stage + set_view_angles. Gate: `lua tools/custom_edgebug_check.lua` |
 
 ---
@@ -805,3 +847,4 @@ Full scripts in [lua_examples/](lua_examples/), copy them into `C:\botox\lua\`:
 - `mem.call` passes integer arguments and returns `eax` only.
 - `set_prop` / `config.set` / `cvar.set` change your client. Whatever the server owns (health, position) snaps back.
 - A script can freeze the game with an endless loop. Botox does not time scripts out.
+- `draw_model` runs per draw: a slow callback costs fps directly. A swap needs a model rigged to the drawn model's bones.

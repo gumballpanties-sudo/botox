@@ -74,6 +74,23 @@ static int no_args( lua_State* )
 	return 0;
 }
 
+static bool any_callback( const char* name )
+{
+	for ( auto& script : g_lua.m_scripts ) {
+		lua_State* L = script->m_state;
+		if ( !L || script->m_unload_requested )
+			continue;
+
+		const int top = lua_gettop( L );
+		lua_getfield( L, LUA_REGISTRYINDEX, "botox.callbacks" );
+		const bool found = lua_istable( L, -1 ) && lua_getfield( L, -1, name ) == LUA_TTABLE && lua_rawlen( L, -1 ) > 0;
+		lua_settop( L, top );
+		if ( found )
+			return true;
+	}
+	return false;
+}
+
 std::filesystem::path n_lua::impl_t::folder( ) const
 {
 	return g_config.m_path / "lua";
@@ -342,6 +359,8 @@ void n_lua::impl_t::on_paint( )
 	if ( this->m_shutdown )
 		return;
 
+	this->m_thread = GetCurrentThreadId( );
+
 	if ( !this->m_initialised ) {
 		this->m_initialised = true;
 
@@ -436,6 +455,8 @@ void n_lua::impl_t::on_paint( )
 			this->save_settings( *script );
 	}
 
+	this->m_draw_model_live = any_callback( "draw_model" );
+
 	n_lua_api::s_in_paint = true;
 	dispatch( "paint", no_args );
 	n_lua_api::s_in_paint = false;
@@ -462,6 +483,10 @@ void n_lua::impl_t::on_frame_stage( const int stage )
 {
 	if ( this->m_shutdown )
 		return;
+
+	/* draw_model swap paths load here: before the frame draws anything */
+	if ( stage == e_client_frame_stage::start && GetCurrentThreadId( ) == this->m_thread )
+		n_lua_api::load_models( );
 
 	dispatch( "frame_stage", [ stage ]( lua_State* L ) {
 		lua_pushinteger( L, stage );
@@ -493,14 +518,37 @@ void n_lua::impl_t::on_event( game_event_t* event )
 
 void n_lua::impl_t::on_level_init( )
 {
+	/* CL_FullyConnected purges client models right before LevelInitPostEntity: swaps reload */
+	n_lua_api::reset_models( );
 	if ( !this->m_shutdown )
 		dispatch( "level_init", no_args );
 }
 
 void n_lua::impl_t::on_level_shutdown( )
 {
+	n_lua_api::reset_models( );
 	if ( !this->m_shutdown )
 		dispatch( "level_shutdown", no_args );
+}
+
+bool n_lua::impl_t::draw_model_wanted( ) const
+{
+	/* nested = a script drew a model from draw_model, or the hook's own redraw */
+	return this->m_draw_model_live && !this->m_shutdown && !n_lua_api::s_draw && GetCurrentThreadId( ) == this->m_thread;
+}
+
+void n_lua::impl_t::on_draw_model( draw_model_t& draw )
+{
+	if ( !this->draw_model_wanted( ) )
+		return;
+
+	n_lua_api::s_draw_serial++;
+	n_lua_api::s_draw = &draw;
+	dispatch( "draw_model", []( lua_State* L ) {
+		n_lua_api::push_draw( L );
+		return 1;
+	} );
+	n_lua_api::s_draw = nullptr;
 }
 
 void n_lua::impl_t::shutdown( )

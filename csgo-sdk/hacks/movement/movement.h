@@ -703,11 +703,12 @@ namespace n_movement
 			}
 		} m_auto_one_hop_onladder_data;
 
+		/* lobotomy v2 autoduck_data_t: land latches live till ground / gate */
 		struct auto_crouch_data_t {
-			float m_ducking_velo = 0.f;
-			float m_standing_velo = 0.f;
-			float m_ducking_origin = 0.f;
-			float m_standing_origin = 0.f;
+			bool m_did_land_ducking = false;
+			bool m_did_land_standing = false;
+			float m_ducking_vert = 0.f;
+			float m_standing_vert = 0.f;
 			bool m_founded = false;
 		} m_auto_crouch_data;
 
