@@ -2433,6 +2433,7 @@ namespace
 		int m_sequence;     /* in / out, -1 = none */
 		int m_frames;       /* out, Studio_MaxFrame */
 		float m_fps;        /* out, Studio_FPS */
+		bool m_loops;       /* out, STUDIO_LOOPING */
 	};
 
 	/* own ( local ) sequences only: Kisak public/studio.h mstudioseqdesc_t animindexindex +60, mstudioanimdesc_t 100 bytes, fps +8,
@@ -2464,6 +2465,7 @@ namespace
 		/* bone_utils.cpp:3008 Studio_MaxFrame: numframes - 1, at least 1 */
 		job->m_frames   = frames > 1 ? frames - 1 : 1;
 		job->m_fps      = *reinterpret_cast< const float* >( desc + 8 );
+		job->m_loops    = ( *reinterpret_cast< const int* >( seq + 0xC ) & 0x1 ) != 0; /* seqdesc flags */
 		job->m_sequence = sequence;
 	}
 
@@ -2489,7 +2491,7 @@ namespace
 		int m_root_sum = 0, m_target_sum = 0;
 		int m_map[ 256 ];
 	};
-	bone_map_t s_maps[ 4 ];
+	bone_map_t s_maps[ 8 ];
 	int s_map_next = 0;
 
 	/* entity:animate: applied to the entity's real bones right after C_CSPlayer::BuildTransformations ( build_transformations.cpp ),
@@ -2552,7 +2554,7 @@ namespace
 				return map.m_map;
 
 		bone_map_t& map = s_maps[ s_map_next ];
-		s_map_next      = ( s_map_next + 1 ) % 4;
+		s_map_next      = ( s_map_next + 1 ) % 8;
 		map.m_root      = nullptr;
 		for ( int i = 0; i < target->n_bones; i++ ) {
 			map.m_map[ i ]         = -1;
@@ -2701,12 +2703,14 @@ namespace
 
 		anim_model_t& entry   = found->second;
 		studiohdr_t* const hdr = entry.m_state == swap_ready ? anim_hdr( entry.m_model ) : nullptr;
-		anim_sequence_t job{ hdr, name, index, 0, 0.f };
+		anim_sequence_t job{ hdr, name, index, 0, 0.f, false };
 		if ( !hdr || !seh_run( &anim_sequence_job, &job ) || job.m_sequence < 0 )
 			return false;
 
-		/* engine wraps with the fraction too ( SubtractIntegerPart ). a NaN cycle would index frames with garbage */
-		const double cycle = std::isfinite( raw_cycle ) ? raw_cycle - std::floor( raw_cycle ) : 0.0;
+		/* entities' ClampCycle: a looping sequence wraps, a one shot holds its last frame ( CMDL itself always wraps, so clamp
+		   here ). a NaN cycle would index frames with garbage */
+		const double finite = std::isfinite( raw_cycle ) ? raw_cycle : 0.0;
+		const double cycle  = job.m_loops ? finite - std::floor( finite ) : std::clamp( finite, 0.0, 0.999 );
 		const bool moving  = job.m_fps > 0.f && std::isfinite( job.m_fps );
 
 		out.m_model    = entry.m_model;
@@ -2742,6 +2746,9 @@ namespace
 	{
 		const int index = entity_index( L, 1 );
 		check_entity( L );
+		/* on anyone else botox's own bone reads ( aimbot, backtrack records, hitboxes ) would see the pose */
+		if ( index != g_interfaces.m_engine_client->get_local_player( ) )
+			return luaL_error( L, "entity:animate works on your own player only ( others: model:animate in draw_model )" );
 
 		entity_anim_t* slot = nullptr;
 		for ( entity_anim_t& anim : s_entity_anims )
@@ -2909,6 +2916,11 @@ void n_lua_api::load_models( )
 	for ( auto& [ path, entry ] : s_anim_models ) {
 		if ( entry.m_state == swap_ready ) {
 			if ( !anim_hdr( entry.m_model ) ) {
+				/* entity:animate slots outlive a frame: nothing may still point at the root being freed */
+				for ( entity_anim_t& anim : s_entity_anims )
+					if ( anim.m_model == entry.m_model )
+						anim = { };
+				s_root_key = { };
 				anim_free( entry );
 				entry.m_state = swap_pending;
 			}
@@ -2999,8 +3011,12 @@ void n_lua_api::pose_entity_bones( void* entity, const studiohdr_t* hdr, const m
 	if ( !hdr || !set_up_bones || g_lua.m_shutdown || GetCurrentThreadId( ) != g_lua.m_thread )
 		return;
 
+	/* first person: CCSGOPlayerAnimState::ModifyEyePosition reads head_0 off this cache for the camera and the client shoot
+	   position ( csgo_playeranimstate.cpp:405 ), and the body isn't drawn anyway */
 	const int index = static_cast< int >( player->get_index( ) );
-	anim            = nullptr;
+	if ( index != g_interfaces.m_engine_client->get_local_player( ) || !g_interfaces.m_input || !g_interfaces.m_input->m_camera_in_third_person )
+		return;
+	anim = nullptr;
 	for ( entity_anim_t& slot : s_entity_anims )
 		if ( slot.m_model && slot.m_entity == index && slot.m_frame >= now - 1 && slot.m_frame <= now )
 			anim = &slot;
