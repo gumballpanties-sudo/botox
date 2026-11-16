@@ -83,6 +83,10 @@ namespace n_lua
 		const void* m_swap_model = nullptr;
 		const void* m_swap_hdr   = nullptr;
 		const void* m_swap_hw    = nullptr;
+		/* model:animate, set only once the root is loaded and the sequence exists. root = CMergedMDL, time = CMDL m_flTime */
+		void* m_anim_root    = nullptr;
+		int m_anim_sequence  = 0;
+		float m_anim_time    = 0.f;
 	};
 
 	struct impl_t {

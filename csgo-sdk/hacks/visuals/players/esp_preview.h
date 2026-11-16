@@ -8,6 +8,7 @@
 
 class c_texture;
 struct studiohdr_t;
+struct matrix3x4_t;
 struct IDirect3DTexture9;
 
 /* visuals > esp "esp preview" box right of the menu: a CMergedMDL agent ( the game's own inventory / main menu model renderer, no
@@ -15,6 +16,24 @@ struct IDirect3DTexture9;
    on top. backtrack = 64 fake records shifted right ( a strafing target ), thinned by the live ghost cap */
 namespace n_esp_preview
 {
+	/* csgo legacy client.dll CMergedMDL ( tier3/mdlutils.h ), checked by disasm of the ctor + vtable: root CMDL +4, m_MDLToWorld +0x6A0,
+	   merge CUtlVector< MDLData_t > +0x6D4 ( element 0x6D0, size +0xC ), pose params +0x6E8, layers +0x748, size 0x75C. vtable 0 = Draw( matrix ),
+	   3 = scalar deleting dtor, 4 = SetMDL( name ) ( 5 = handle, reversed ). CMDL: handle +0x3C, Color +0x46, sequence +0x54, time +0x60,
+	   use seq fps +0x675, time basis +0x67C. shared with lua model:animate */
+	namespace mdl
+	{
+		constexpr int k_model_size = 0x75C;
+		constexpr int k_root = 0x4, k_root_to_world = 0x6A0, k_merge = 0x6D4, k_mdl_data = 0x6D0, k_pose = 0x6E8, k_layers = 0x748;
+		constexpr int k_handle = 0x3C, k_color = 0x46, k_sequence = 0x54, k_time = 0x60, k_use_fps = 0x675, k_time_basis = 0x67C;
+
+		using ctor_t         = void( __thiscall* )( void* );
+		using set_up_bones_t = void( __thiscall* )( void*, const matrix3x4_t*, int, matrix3x4_t*, const float*, void*, int );
+
+		/* client.dll sig scans, done on the first call ( game thread ). null = signature missing */
+		ctor_t find_ctor( );
+		set_up_bones_t find_set_up_bones( );
+	}
+
 	constexpr float k_width  = 260.f;
 	constexpr float k_height = 400.f;
 

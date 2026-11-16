@@ -1,5 +1,8 @@
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <iterator>
@@ -14,6 +17,7 @@
 #include "../../globals/logger/logger.h"
 #include "../chat_hud.h"
 #include "../misc/misc.h"
+#include "../visuals/players/esp_preview.h"
 
 #include "lua_api.h"
 
@@ -43,6 +47,17 @@ namespace
 	{
 		__try {
 			std::memcpy( destination, source, size );
+			return true;
+		} __except ( EXCEPTION_EXECUTE_HANDLER ) {
+			return false;
+		}
+	}
+
+	/* engine work in a job: fn and everything it touches must be plain ( no unwinding objects ) */
+	bool seh_run( void ( *fn )( void* ), void* context )
+	{
+		__try {
+			fn( context );
 			return true;
 		} __except ( EXCEPTION_EXECUTE_HANDLER ) {
 			return false;
@@ -2332,6 +2347,433 @@ namespace
 		return n_lua_api::s_draw;
 	}
 
+	/* ---- model:animate ---- */
+
+	namespace mdl = n_esp_preview::mdl;
+
+	/* path -> CMergedMDL whose root CMDL plays the asked sequence through the engine's own CMDL::SetUpBones ( never drawn ). built
+	   at frame_stage start like swaps. its mdlcache ref outlives map changes ( level purges free model_t's, not cache handles ),
+	   freed on eject. ponytail: capped, no eviction, same as swaps */
+	struct anim_model_t {
+		std::uint8_t* m_model = nullptr;
+		e_swap m_state        = swap_pending;
+		bool m_constructed    = false;
+		bool m_reported       = false;
+	};
+
+	std::unordered_map< std::string, anim_model_t, path_hash, std::equal_to< > > s_anim_models;
+	constexpr std::size_t k_max_anim_models = 16;
+
+	struct anim_build_t {
+		std::uint8_t* m_model;
+		const char* m_path;
+		mdl::ctor_t m_ctor;
+		bool m_constructed; /* out */
+	};
+
+	void anim_build_job( void* context )
+	{
+		auto* const job = static_cast< anim_build_t* >( context );
+		job->m_ctor( job->m_model );
+		job->m_constructed = true;
+		g_virtual.call< void >( job->m_model, 4, job->m_path, static_cast< void* >( nullptr ), static_cast< void* >( nullptr ) );
+		/* cycle = ( time - basis ) * sequence fps / frames, mdlutils.cpp:389 */
+		*reinterpret_cast< bool* >( job->m_model + mdl::k_root + mdl::k_use_fps ) = true;
+	}
+
+	void anim_destroy_job( void* context )
+	{
+		g_virtual.call< void >( context, 3, 0u );
+	}
+
+	void anim_free( anim_model_t& entry )
+	{
+		if ( entry.m_model ) {
+			if ( entry.m_constructed )
+				seh_run( &anim_destroy_job, entry.m_model );
+			std::free( entry.m_model );
+		}
+		entry.m_model       = nullptr;
+		entry.m_constructed = false;
+	}
+
+	/* one console line per path per session */
+	void anim_fail( anim_model_t& entry, const std::string& path, const char* why )
+	{
+		anim_free( entry );
+		entry.m_state = swap_failed;
+		if ( !std::exchange( entry.m_reported, true ) ) {
+			n_lua_api::console_msg( "[lua] model:animate: can't load " + path + why );
+			botox_dbg_log( "LUA: animate load failed %s%s", path.c_str( ), why );
+		}
+	}
+
+	struct anim_hdr_t {
+		std::uint8_t* m_model;
+		studiohdr_t* m_hdr; /* out */
+	};
+
+	/* GetStudioHdr loads when the cache let the data go: load_models touches it at frame start so draws only ever hit loaded data */
+	void anim_hdr_job( void* context )
+	{
+		auto* const job              = static_cast< anim_hdr_t* >( context );
+		const unsigned short handle = *reinterpret_cast< unsigned short* >( job->m_model + mdl::k_root + mdl::k_handle );
+		job->m_hdr                  = handle != 0xFFFF ? g_interfaces.m_model_cache->get_studio_hdr( handle ) : nullptr;
+	}
+
+	studiohdr_t* anim_hdr( std::uint8_t* model )
+	{
+		anim_hdr_t job{ model, nullptr };
+		return model && seh_run( &anim_hdr_job, &job ) ? job.m_hdr : nullptr;
+	}
+
+	struct anim_sequence_t {
+		const studiohdr_t* m_hdr;
+		const char* m_name; /* null = m_sequence is the index */
+		int m_sequence;     /* in / out, -1 = none */
+		int m_frames;       /* out, Studio_MaxFrame */
+		float m_fps;        /* out, Studio_FPS */
+	};
+
+	/* own ( local ) sequences only: Kisak public/studio.h mstudioseqdesc_t animindexindex +60, mstudioanimdesc_t 100 bytes, fps +8,
+	   numframes +16. ponytail: blend sequences use anim ( 0, 0 ), $includemodel sequences are not reachable, add when a model needs it */
+	void anim_sequence_job( void* context )
+	{
+		auto* const job          = static_cast< anim_sequence_t* >( context );
+		const studiohdr_t* const hdr = job->m_hdr;
+
+		int sequence  = job->m_name ? -1 : job->m_sequence;
+		job->m_sequence = -1;
+		for ( int i = 0; job->m_name && i < hdr->n_local_sequences; i++ )
+			if ( !_stricmp( hdr->get_sequence( i )->get_label( ), job->m_name ) ) {
+				sequence = i;
+				break;
+			}
+
+		const auto* const seq = reinterpret_cast< const std::uint8_t* >( hdr->get_sequence( sequence ) );
+		if ( !seq )
+			return;
+
+		const short anim = *reinterpret_cast< const short* >( seq + *reinterpret_cast< const int* >( seq + 60 ) );
+		if ( anim < 0 || anim >= hdr->n_local_animations )
+			return;
+
+		const auto* const desc = reinterpret_cast< const std::uint8_t* >( hdr ) + hdr->n_local_animation_index + anim * 100;
+		const int frames       = *reinterpret_cast< const int* >( desc + 16 );
+
+		/* bone_utils.cpp:3008 Studio_MaxFrame: numframes - 1, at least 1 */
+		job->m_frames   = frames > 1 ? frames - 1 : 1;
+		job->m_fps      = *reinterpret_cast< const float* >( desc + 8 );
+		job->m_sequence = sequence;
+	}
+
+	alignas( 16 ) matrix3x4_t s_anim_root_bones[ 256 ];
+	alignas( 16 ) matrix3x4_t s_anim_bones[ 256 ];
+	alignas( 16 ) matrix3x4_t s_old_bones[ 256 ];
+	float s_anim_pose[ 24 ]; /* MAXSTUDIOPOSEPARAM */
+
+	/* the root pose of the last SetUpBones: every pass of a frame asks for the same one */
+	struct root_key_t {
+		const std::uint8_t* m_model = nullptr;
+		const studiohdr_t* m_root   = nullptr;
+		int m_sequence              = -1;
+		float m_time                = 0.f;
+		matrix3x4_t m_to_world{ };
+	};
+	root_key_t s_root_key;
+
+	/* target bone -> root bone of the same name, -1 = none. a few pairs: body and weapon alternate every pass */
+	struct bone_map_t {
+		const studiohdr_t* m_root   = nullptr;
+		const studiohdr_t* m_target = nullptr;
+		int m_root_sum = 0, m_target_sum = 0;
+		int m_map[ 256 ];
+	};
+	bone_map_t s_maps[ 4 ];
+	int s_map_next = 0;
+
+	/* entity:animate: applied to the entity's real bones right after C_CSPlayer::BuildTransformations ( build_transformations.cpp ),
+	   before SetupBones builds attachments off them. so the bone cache, attachments and everything parented or bone merged to the
+	   entity follow: weapon in hand, holstered addons ( csgo draws those on the fast path, DrawModelExecute never sees them ).
+	   a script sets it every frame: older than last frame = the script stopped */
+	struct entity_anim_t {
+		int m_entity          = 0;
+		std::uint8_t* m_model = nullptr;
+		int m_sequence        = 0;
+		float m_time          = 0.f;
+		int m_frame           = -10;
+	};
+	entity_anim_t s_entity_anims[ 8 ];
+
+	/* out = a * b, ConcatTransforms */
+	void concat( const matrix3x4_t& a, const matrix3x4_t& b, matrix3x4_t& out )
+	{
+		for ( int r = 0; r < 3; r++ )
+			for ( int c = 0; c < 4; c++ )
+				out[ r ][ c ] = a[ r ][ 0 ] * b[ 0 ][ c ] + a[ r ][ 1 ] * b[ 1 ][ c ] + a[ r ][ 2 ] * b[ 2 ][ c ] + ( c == 3 ? a[ r ][ 3 ] : 0.f );
+	}
+
+	/* bones are rotation + translation: inverse = transposed rotation, rotated negative origin */
+	matrix3x4_t invert_rigid( const matrix3x4_t& m )
+	{
+		matrix3x4_t out{ };
+		for ( int r = 0; r < 3; r++ )
+			for ( int c = 0; c < 3; c++ )
+				out[ r ][ c ] = m[ c ][ r ];
+		for ( int r = 0; r < 3; r++ )
+			out[ r ][ 3 ] = -( out[ r ][ 0 ] * m[ 0 ][ 3 ] + out[ r ][ 1 ] * m[ 1 ][ 3 ] + out[ r ][ 2 ] * m[ 2 ][ 3 ] );
+		return out;
+	}
+
+	/* the bone's rest pose relative to its parent, QuaternionMatrix + position */
+	matrix3x4_t rest_local( const mstudiobone_t& bone )
+	{
+		const float x = bone.m_world[ 0 ], y = bone.m_world[ 1 ], z = bone.m_world[ 2 ], w = bone.m_world[ 3 ];
+		return { 1.f - 2.f * y * y - 2.f * z * z, 2.f * x * y - 2.f * w * z, 2.f * x * z + 2.f * w * y, bone.m_position.m_x,
+		         2.f * x * y + 2.f * w * z, 1.f - 2.f * x * x - 2.f * z * z, 2.f * y * z - 2.f * w * x, bone.m_position.m_y,
+		         2.f * x * z - 2.f * w * y, 2.f * y * z + 2.f * w * x, 1.f - 2.f * x * x - 2.f * y * y, bone.m_position.m_z };
+	}
+
+	struct anim_pose_t {
+		std::uint8_t* m_model;
+		int m_sequence;
+		float m_time;
+		const studiohdr_t* m_target;
+		const matrix3x4_t* m_to_world;
+		mdl::set_up_bones_t m_set_up_bones;
+		const int* m_map; /* out: target bone -> root bone */
+		bool m_ok;        /* out */
+	};
+
+	const int* bone_map( const studiohdr_t* root, const studiohdr_t* target )
+	{
+		for ( bone_map_t& map : s_maps )
+			if ( map.m_root == root && map.m_target == target && map.m_root_sum == root->i_checksum && map.m_target_sum == target->i_checksum )
+				return map.m_map;
+
+		bone_map_t& map = s_maps[ s_map_next ];
+		s_map_next      = ( s_map_next + 1 ) % 4;
+		map.m_root      = nullptr;
+		for ( int i = 0; i < target->n_bones; i++ ) {
+			map.m_map[ i ]         = -1;
+			const char* const name = target->get_bone( i )->get_name( );
+			for ( int j = 0; name && j < root->n_bones; j++ ) {
+				const char* const other = root->get_bone( j )->get_name( );
+				if ( other && !_stricmp( name, other ) ) {
+					map.m_map[ i ] = j;
+					break;
+				}
+			}
+		}
+		map.m_root       = root;
+		map.m_target     = target;
+		map.m_root_sum   = root->i_checksum;
+		map.m_target_sum = target->i_checksum;
+		return map.m_map;
+	}
+
+	void anim_pose_job( void* context )
+	{
+		auto* const job                = static_cast< anim_pose_t* >( context );
+		std::uint8_t* const cmdl       = job->m_model + mdl::k_root;
+		const unsigned short handle   = *reinterpret_cast< unsigned short* >( cmdl + mdl::k_handle );
+		const studiohdr_t* const root   = handle != 0xFFFF ? g_interfaces.m_model_cache->get_studio_hdr( handle ) : nullptr;
+		const studiohdr_t* const target = job->m_target;
+		if ( !root || root->n_bones <= 0 || root->n_bones > 256 || target->n_bones <= 0 || target->n_bones > 256 ||
+		     job->m_sequence < 0 || job->m_sequence >= root->n_local_sequences )
+			return;
+
+		root_key_t key{ job->m_model, root, job->m_sequence, job->m_time, *job->m_to_world };
+		if ( std::memcmp( &key, &s_root_key, sizeof( key ) ) != 0 ) {
+			*reinterpret_cast< int* >( cmdl + mdl::k_sequence )     = job->m_sequence;
+			*reinterpret_cast< float* >( cmdl + mdl::k_time )       = job->m_time;
+			*reinterpret_cast< float* >( cmdl + mdl::k_time_basis ) = 0.f;
+
+			/* bone_utils.cpp:2253 Studio_CalcDefaultPoseParameters: the zero state when the range holds one, else the middle.
+			   mstudioposeparamdesc_t: start +8, end +12, 20 bytes */
+			const auto* const poses = reinterpret_cast< const std::uint8_t* >( root ) + root->m_pose_parameter_index;
+			for ( int i = 0; i < 24; i++ ) {
+				s_anim_pose[ i ] = 0.5f;
+				if ( i >= root->m_pose_parameters )
+					continue;
+				const float start = *reinterpret_cast< const float* >( poses + i * 20 + 8 );
+				const float end   = *reinterpret_cast< const float* >( poses + i * 20 + 12 );
+				if ( start < 0.f && end > 0.f )
+					s_anim_pose[ i ] = -start / ( end - start );
+			}
+
+			s_root_key.m_model = nullptr; /* a fault mid SetUpBones leaves no key behind */
+			job->m_set_up_bones( cmdl, job->m_to_world, root->n_bones, s_anim_root_bones, s_anim_pose, nullptr, 0 );
+			s_root_key = key;
+		}
+
+		const int* const map = bone_map( root, target );
+
+		/* studiomdl orders parents before children, so a parent is always built first */
+		for ( int i = 0; i < target->n_bones; i++ ) {
+			if ( map[ i ] >= 0 ) {
+				s_anim_bones[ i ] = s_anim_root_bones[ map[ i ] ];
+				continue;
+			}
+
+			const mstudiobone_t& bone = *target->get_bone( i );
+			const int parent          = bone.m_parent;
+			concat( parent >= 0 && parent < i ? s_anim_bones[ parent ] : *job->m_to_world, rest_local( bone ), s_anim_bones[ i ] );
+		}
+
+		job->m_map = map;
+		job->m_ok  = true;
+	}
+
+	struct entity_pose_t {
+		anim_pose_t m_pose;
+		c_base_entity* m_entity;
+		int m_mask;
+		bool m_ok; /* out */
+	};
+
+	/* rewrites the bones BuildTransformations just wrote ( m_BoneAccessor = m_CachedBoneData, c_baseanimating.cpp:1131 ), only the
+	   ones this setup asked for. bones the animation lacks keep their own motion ( jiggle, procedural ) relative to their parent */
+	void entity_pose_job( void* context )
+	{
+		auto* const job = static_cast< entity_pose_t* >( context );
+		anim_pose_job( &job->m_pose );
+		if ( !job->m_pose.m_ok )
+			return;
+
+		auto& cache                     = job->m_entity->get_cached_bone_data( );
+		matrix3x4_t* const bones        = cache.begin( );
+		const studiohdr_t* const target = job->m_pose.m_target;
+		const int count                 = std::min( static_cast< int >( cache.end( ) - cache.begin( ) ), target->n_bones );
+		if ( !bones || count <= 0 )
+			return;
+
+		std::memcpy( s_old_bones, bones, sizeof( matrix3x4_t ) * count );
+		for ( int i = 0; i < count; i++ ) {
+			const mstudiobone_t& bone = *target->get_bone( i );
+			if ( !( bone.m_flags & job->m_mask ) )
+				continue;
+
+			if ( job->m_pose.m_map[ i ] >= 0 ) {
+				bones[ i ] = s_anim_bones[ i ];
+				continue;
+			}
+
+			const int parent = bone.m_parent;
+			if ( parent < 0 || parent >= i )
+				continue;
+
+			matrix3x4_t local;
+			concat( invert_rigid( s_old_bones[ parent ] ), s_old_bones[ i ], local );
+			concat( bones[ parent ], local, bones[ i ] );
+		}
+
+		job->m_ok = true;
+	}
+
+	struct animation_t {
+		std::uint8_t* m_model = nullptr;
+		int m_sequence        = 0;
+		float m_time          = 0.f;
+		double m_length       = 0.0;
+	};
+
+	/* ( path, sequence, cycle ) at stack index first. false = not a .mdl, still loading, failed, or no such sequence */
+	bool resolve_animation( lua_State* L, const int first, animation_t& out )
+	{
+		const char* const path      = luaL_checkstring( L, first );
+		const char* const name      = lua_type( L, first + 1 ) == LUA_TSTRING ? lua_tostring( L, first + 1 ) : nullptr;
+		const lua_Integer raw_index = name ? -1 : luaL_checkinteger( L, first + 1 );
+		const int index             = raw_index >= 0 && raw_index <= 0xFFFF ? static_cast< int >( raw_index ) : -1;
+		const lua_Number raw_cycle  = luaL_optnumber( L, first + 2, 0.0 );
+		const std::string_view view = path;
+
+		/* studio models only, same as swaps */
+		if ( view.size( ) < 5 || _stricmp( path + view.size( ) - 4, ".mdl" ) != 0 )
+			return false;
+
+		auto found = s_anim_models.find( view );
+		if ( found == s_anim_models.end( ) ) {
+			if ( s_anim_models.size( ) >= k_max_anim_models )
+				return false;
+			found = s_anim_models.try_emplace( std::string( view ) ).first;
+		}
+
+		anim_model_t& entry   = found->second;
+		studiohdr_t* const hdr = entry.m_state == swap_ready ? anim_hdr( entry.m_model ) : nullptr;
+		anim_sequence_t job{ hdr, name, index, 0, 0.f };
+		if ( !hdr || !seh_run( &anim_sequence_job, &job ) || job.m_sequence < 0 )
+			return false;
+
+		/* engine wraps with the fraction too ( SubtractIntegerPart ). a NaN cycle would index frames with garbage */
+		const double cycle = std::isfinite( raw_cycle ) ? raw_cycle - std::floor( raw_cycle ) : 0.0;
+		const bool moving  = job.m_fps > 0.f && std::isfinite( job.m_fps );
+
+		out.m_model    = entry.m_model;
+		out.m_sequence = job.m_sequence;
+		out.m_time     = moving ? static_cast< float >( cycle * job.m_frames / job.m_fps ) : 0.f;
+		out.m_length   = moving ? job.m_frames / job.m_fps : 0.0;
+		return true;
+	}
+
+	/* model:animate( path, sequence, cycle ) -> sequence length in seconds. nil = model still loading / failed, or no such sequence */
+	int l_draw_animate( lua_State* L )
+	{
+		n_lua::draw_model_t* draw = check_draw( L );
+		draw->m_anim_root         = nullptr;
+		if ( lua_isnoneornil( L, 2 ) )
+			return 0;
+
+		animation_t animation;
+		if ( !resolve_animation( L, 2, animation ) ) {
+			lua_pushnil( L );
+			return 1;
+		}
+
+		draw->m_anim_root     = animation.m_model;
+		draw->m_anim_sequence = animation.m_sequence;
+		draw->m_anim_time     = animation.m_time;
+		lua_pushnumber( L, animation.m_length );
+		return 1;
+	}
+
+	/* entity:animate( path, sequence, cycle ) -> sequence length in seconds, nil like model:animate. entity:animate( nil ) stops */
+	int l_entity_animate( lua_State* L )
+	{
+		const int index = entity_index( L, 1 );
+		check_entity( L );
+
+		entity_anim_t* slot = nullptr;
+		for ( entity_anim_t& anim : s_entity_anims )
+			if ( anim.m_entity == index )
+				slot = &anim;
+
+		if ( lua_isnoneornil( L, 2 ) ) {
+			if ( slot )
+				*slot = { };
+			return 0;
+		}
+
+		animation_t animation;
+		if ( !resolve_animation( L, 2, animation ) ) {
+			lua_pushnil( L );
+			return 1;
+		}
+
+		const int now = g_interfaces.m_global_vars_base->m_frame_count;
+		for ( entity_anim_t& anim : s_entity_anims )
+			if ( !slot && ( !anim.m_model || anim.m_frame < now - 1 ) )
+				slot = &anim;
+		if ( !slot ) {
+			lua_pushnil( L );
+			return 1;
+		}
+
+		*slot = { index, animation.m_model, animation.m_sequence, animation.m_time, now };
+		lua_pushnumber( L, animation.m_length );
+		return 1;
+	}
+
 	int l_draw_index( lua_State* L )
 	{
 		n_lua::draw_model_t* draw = check_draw( L );
@@ -2347,6 +2789,7 @@ namespace
 		else if ( key == "hide" ) lua_pushboolean( L, draw->m_hide );
 		else if ( key == "color" ) lua_pushinteger( L, static_cast< lua_Integer >( draw->m_color ) );
 		else if ( key == "model" && draw->m_swap_name ) lua_pushstring( L, draw->m_swap_name );
+		else if ( key == "animate" ) lua_pushcfunction( L, l_draw_animate );
 		else if ( key == "ptr" ) push_address( L, draw->m_info );
 		else lua_pushnil( L );
 		return 1;
@@ -2460,6 +2903,47 @@ void n_lua_api::load_models( )
 		entry.m_state = swap_ready;
 		botox_dbg_log( "LUA: swap loaded %s bones=%d", path.c_str( ), hdr->n_bones );
 	}
+
+	/* each build is a synchronous mdl read: one a frame */
+	bool built = false;
+	for ( auto& [ path, entry ] : s_anim_models ) {
+		if ( entry.m_state == swap_ready ) {
+			if ( !anim_hdr( entry.m_model ) ) {
+				anim_free( entry );
+				entry.m_state = swap_pending;
+			}
+			continue;
+		}
+		if ( entry.m_state != swap_pending || built )
+			continue;
+		built = true;
+
+		const mdl::ctor_t ctor = mdl::find_ctor( );
+		if ( !ctor || !mdl::find_set_up_bones( ) ) {
+			anim_fail( entry, path, " ( CMergedMDL signatures missing )" );
+			continue;
+		}
+
+		entry.m_model = static_cast< std::uint8_t* >( std::calloc( 1, mdl::k_model_size ) );
+		if ( !entry.m_model ) {
+			anim_fail( entry, path, " ( out of memory )" );
+			continue;
+		}
+
+		anim_build_t job{ entry.m_model, path.c_str( ), ctor, false };
+		const bool built    = seh_run( &anim_build_job, &job );
+		entry.m_constructed = job.m_constructed;
+
+		/* missing file / sv_pure rejected loose file = mdlcache hands back error.mdl */
+		const studiohdr_t* const hdr = built ? anim_hdr( entry.m_model ) : nullptr;
+		if ( !hdr || std::strstr( hdr->sz_name, "error.mdl" ) || hdr->n_bones <= 0 || hdr->n_bones > 256 ) {
+			anim_fail( entry, path, " ( missing .mdl, or sv_pure: settings > sv_pure bypass )" );
+			continue;
+		}
+
+		entry.m_state = swap_ready;
+		botox_dbg_log( "LUA: animate loaded %s bones=%d sequences=%d", path.c_str( ), hdr->n_bones, hdr->n_local_sequences );
+	}
 }
 
 void n_lua_api::reset_models( )
@@ -2468,6 +2952,63 @@ void n_lua_api::reset_models( )
 		entry.m_model = nullptr;
 		entry.m_state = swap_pending;
 	}
+
+	/* a map change is when sv_pure ( bypass ) changes: failed roots try again. loaded ones keep their mdlcache ref */
+	for ( auto& [ path, entry ] : s_anim_models )
+		if ( entry.m_state == swap_failed )
+			entry.m_state = swap_pending;
+
+	/* entity indexes mean other players on the next map */
+	for ( entity_anim_t& anim : s_entity_anims )
+		anim = { };
+}
+
+void n_lua_api::free_models( )
+{
+	for ( entity_anim_t& anim : s_entity_anims )
+		anim = { };
+	for ( auto& [ path, entry ] : s_anim_models )
+		anim_free( entry );
+	s_anim_models.clear( );
+}
+
+const matrix3x4_t* n_lua_api::animate_bones( const n_lua::draw_model_t& draw, const studiohdr_t* target, const matrix3x4_t& to_world )
+{
+	const mdl::set_up_bones_t set_up_bones = mdl::find_set_up_bones( );
+	if ( !draw.m_anim_root || !target || !set_up_bones )
+		return nullptr;
+
+	anim_pose_t job{ static_cast< std::uint8_t* >( draw.m_anim_root ), draw.m_anim_sequence, draw.m_anim_time, target, &to_world, set_up_bones,
+		             nullptr, false };
+	return seh_run( &anim_pose_job, &job ) && job.m_ok ? s_anim_bones : nullptr;
+}
+
+void n_lua_api::pose_entity_bones( void* entity, const studiohdr_t* hdr, const matrix3x4_t& to_world, const int bone_mask )
+{
+	const int now          = g_interfaces.m_global_vars_base->m_frame_count;
+	entity_anim_t* anim    = nullptr;
+	for ( entity_anim_t& slot : s_entity_anims )
+		if ( slot.m_model && slot.m_frame >= now - 1 && slot.m_frame <= now )
+			anim = &slot;
+	if ( !anim )
+		return;
+
+	/* the roots are lua thread state ( built, freed and posed there ). ponytail: a threaded bone setup keeps the real pose */
+	const mdl::set_up_bones_t set_up_bones = mdl::find_set_up_bones( );
+	auto* const player                     = static_cast< c_base_entity* >( entity );
+	if ( !hdr || !set_up_bones || g_lua.m_shutdown || GetCurrentThreadId( ) != g_lua.m_thread )
+		return;
+
+	const int index = static_cast< int >( player->get_index( ) );
+	anim            = nullptr;
+	for ( entity_anim_t& slot : s_entity_anims )
+		if ( slot.m_model && slot.m_entity == index && slot.m_frame >= now - 1 && slot.m_frame <= now )
+			anim = &slot;
+	if ( !anim )
+		return;
+
+	entity_pose_t job{ { anim->m_model, anim->m_sequence, anim->m_time, hdr, &to_world, set_up_bones, nullptr, false }, player, bone_mask, false };
+	seh_run( &entity_pose_job, &job );
 }
 
 void n_lua_api::open( lua_State* L )
@@ -2556,6 +3097,7 @@ void n_lua_api::open( lua_State* L )
 		                                        { "set_prop", l_entity_set_prop },
 		                                        { "get_datafield", l_entity_get_datafield },
 		                                        { "set_datafield", l_entity_set_datafield },
+		                                        { "animate", l_entity_animate },
 		                                        { nullptr, nullptr } };
 	static const luaL_Reg entity_meta[ ]    = { { "__eq", l_entity_eq }, { "__tostring", l_entity_tostring }, { nullptr, nullptr } };
 	new_meta( L, k_entity_meta, entity_methods, entity_meta );

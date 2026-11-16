@@ -154,6 +154,7 @@
     <ClCompile Include="hooks\functions\alloc_key_values_memory.cpp" />
     <ClCompile Include="hooks\functions\create_move_proxy.cpp" />
     <ClCompile Include="hooks\functions\draw_model_execute.cpp" />
+    <ClCompile Include="hooks\functions\build_transformations.cpp" />
     <ClCompile Include="hooks\functions\draw_filled_rect.cpp" />
     <ClCompile Include="hooks\functions\draw_set_color.cpp" />
     <ClCompile Include="hooks\functions\draw_static_props.cpp" />

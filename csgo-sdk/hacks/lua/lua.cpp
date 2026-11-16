@@ -558,4 +558,6 @@ void n_lua::impl_t::shutdown( )
 
 	for ( auto& script : this->m_scripts )
 		this->unload( *script, true );
+
+	n_lua_api::free_models( );
 }

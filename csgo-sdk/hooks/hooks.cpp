@@ -223,6 +223,11 @@ bool n_hooks::impl_t::on_attach( )
 	initialise_hook( m_draw_model_execute, safe_vfunc( g_interfaces.m_model_render, 21 ), &n_detoured_functions::draw_model_execute,
 	                 "CModelRender::DrawModelExecute()" );
 
+	/* C_CSPlayer vtable slot 190 in the live client.dll ( RTTI walk ), unique pattern: base BuildTransformations with the same
+	   6 args, then the animstate bone snapshots ( csgosrc2019 c_cs_player.cpp:7788 ) */
+	initialise_hook( m_build_transformations, g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 53 56 57 FF 75 ? 8B 7D" ),
+	                 &n_detoured_functions::build_transformations, "C_CSPlayer::BuildTransformations()" );
+
 	initialise_hook( m_set_image_data_r8g8b8a8,
 	                 g_modules[ PANORAMA_DLL ].find_pattern( "55 8B EC 83 E4 F8 81 ? ? ? ? ? 53 56 57 8B F9 8B ? ? ? ? ? 8B" ),
 	                 &n_detoured_functions::set_image_data_r8g8b8a8, "CImageData::SetImageDataR8G8B8A8()" );

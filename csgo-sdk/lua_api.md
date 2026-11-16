@@ -75,7 +75,7 @@ Removes `fn` from `name`. Pass the same function value you registered.
 | any game event name, e.g. `player_death` | `event` | only that event. |
 | `level_init` | none | after a map loaded (LevelInitPostEntity). |
 | `level_shutdown` | none | map unloading. |
-| `draw_model` | `model` | every DrawModelExecute call, every pass: players, your viewmodel, weapons in hands, ragdolls. Props and dropped weapons the game batch-draws (DrawModelArray) never come here. Hide, tint or swap it, see [`model`](#model). |
+| `draw_model` | `model` | every DrawModelExecute call, every pass: players, your viewmodel, weapons in hands, ragdolls. Props and dropped weapons the game batch-draws (DrawModelArray) never come here. Hide, tint, swap or animate it, see [`model`](#model). |
 | `unload` | none | the script is being unloaded (button, error, `client.unload`, eject). |
 
 ```lua
@@ -345,6 +345,24 @@ Prediction / data map field (not networked), e.g. `"m_MoveType"`, `"m_flStamina"
 
 #### `entity:set_datafield(name, type, value...)`
 
+#### `entity:animate(path, sequence, cycle)`
+
+Poses this player with another model's animation, on your client only: the game's own bone merge (`EF_BONEMERGE`, what server emote plugins use) done to the player's real bones. `path`'s skeleton plays `sequence` (name like `"Emote_Dance_Pump"`, or 0-based index) at `cycle` (0 to 1, only the fraction counts) where the player stands. Bones with the same name follow it, bones the animation model lacks keep their own motion relative to their parent. Because the real bones move, everything built from them follows: the model in every pass (shadows, glow, chams), the weapon in hand (bone merged to the hand), the holstered gear the game hangs on attachments (pistol, knife, grenades, c4, defuser), effects at attachments. Hitboxes, movement and the server don't change.
+
+Call it every frame (`frame_stage` with `stages.render_start` is the place: right before the game sets bones up to draw). It holds for that frame and the next, so a script that stops calling ends it a frame later; `entity:animate(nil)` ends it at once. Returns the sequence length in seconds (add `frametime / length` to `cycle` each frame for its own speed), or `nil` while the model loads (at the next frame start), when it can't load (one console line says why) or has no such sequence. Players only (C_CSPlayer), up to 8 at once, the same animation model rules as [`model:animate`](#modelanimatepath-sequence-cycle).
+
+```lua
+local EMOTES = "models/player/custom_player/kodua/fortnite_emotes_v2.mdl"
+local start = globals.realtime()
+
+callbacks.register("frame_stage", function(stage)
+    local me = entities.local_player()
+    if stage == stages.render_start and me and me:is_alive() then
+        me:animate(EMOTES, "Emote_Dance_Pump", (globals.realtime() - start) / 3.53)
+    end
+end)
+```
+
 ---
 
 ## cmd
@@ -435,6 +453,26 @@ callbacks.register("draw_model", function(m)
         m.model = "models/weapons/v_knife_custom.mdl"
     elseif m.entity and m.entity:is_player() and m.entity:is_enemy() then
         m.color = color(255, 80, 80, 255)
+    end
+end)
+```
+
+#### `model:animate(path, sequence, cycle)`
+
+Poses this draw with another model's animation, the way the game's bone merge (`EF_BONEMERGE`) does: `path`'s skeleton plays `sequence` (name like `"Emote_Dance_Pump"`, or 0-based index) at `cycle` (0 to 1, only the fraction counts) where this model stands, and every bone with the same name follows it. Bones the animation model lacks (pouches, jiggle bones, finger tips) keep their rest offset from their parent. Works on mesh-less animation models (animsets, emote skeletons). Combine with `m.model` to animate the swapped mesh. `m:animate(nil)` cancels it for this draw.
+
+Returns the sequence length in seconds (add `frametime / length` to `cycle` each frame for its own speed), or `nil` while the model loads, when it can't load (one console line says why) or has no such sequence.
+
+Loads like a swap: at the start of the next frame, so the first frame draws the normal pose. At most 16 animation models per session. Only the model's own sequences, not ones it pulls in with `$includemodel`; a blend sequence plays its first animation. Only this draw moves: the entity's bones, attachments and what hangs on them keep the real pose (the holstered gear csgo draws on its fast path never comes through `draw_model`). To pose a player and everything attached to it, use [`entity:animate`](#entityanimatepath-sequence-cycle). `m:animate` is for draws without an entity of their own, or a pose on one pass only. Glow outlines and the rear view mirror show the real pose. Call it on every pass of the entity (shadows come here too) so they match.
+
+```lua
+local EMOTES = "models/player/custom_player/kodua/fortnite_emotes_v2.mdl"
+local start = globals.realtime()
+
+callbacks.register("draw_model", function(m)
+    -- enemy bodies dance in the picture only ( their guns, gear and hitboxes stay put )
+    if m.entity and m.entity:is_player() and m.entity:is_enemy() then
+        m:animate(EMOTES, "Emote_Dance_Pump", (globals.realtime() - start) / 3.53)
     end
 end)
 ```
@@ -836,6 +874,7 @@ Full scripts in [lua_examples/](lua_examples/), copy them into `C:\botox\lua\`:
 | [raw_access.lua](lua_examples/raw_access.lua) | config, netvars, mem.read, mem.vfunc + mem.call |
 | [edgebug_fx.lua](lua_examples/edgebug_fx.lua) | edgebug detect in pre_prediction, own world particles (spark sim, shockwave rings, pillar) via world_to_screen + poly, engine.exec sound |
 | [custom_models.lua](lua_examples/custom_models.lua) | draw_model: custom knife / gun model swap applied by a button, enemy tint, hide arms, ui read once a frame in paint |
+| [fortnite_emotes_local.lua](lua_examples/fortnite_emotes_local.lua) | `entity:animate`: 84 Fortnite emotes on your own player off the plugin's mesh-less emote skeleton ( gun in hand + holstered gear dance along ), intro then loop, keybind toggle / hold, forced third person restored after, weapon in hand or hidden, stop on move |
 | [custom_edgebug.lua](lua_examples/custom_edgebug.lua) | full edgebug from scratch, hotwheels style: own csgo air movement sim on trace.hull, cmd replay in pre_prediction + create_move, mouse lock / strafe camera via frame_stage + set_view_angles. Gate: `lua tools/custom_edgebug_check.lua` |
 
 ---
@@ -847,4 +886,4 @@ Full scripts in [lua_examples/](lua_examples/), copy them into `C:\botox\lua\`:
 - `mem.call` passes integer arguments and returns `eax` only.
 - `set_prop` / `config.set` / `cvar.set` change your client. Whatever the server owns (health, position) snaps back.
 - A script can freeze the game with an endless loop. Botox does not time scripts out.
-- `draw_model` runs per draw: a slow callback costs fps directly. A swap needs a model rigged to the drawn model's bones.
+- `draw_model` runs per draw: a slow callback costs fps directly. A swap needs a model rigged to the drawn model's bones. `model:animate` matches bones by name, so the animation's skeleton must use the drawn model's bone names.

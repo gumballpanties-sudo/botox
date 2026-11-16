@@ -1,4 +1,6 @@
 #include "../../game/sdk/includes/includes.h"
+#include "../../game/sdk/classes/c_angle.h"
+#include "../../globals/math/math.h"
 #include "../hooks.h"
 
 #include "../../dependencies/imgui/imgui.h"
@@ -8,6 +10,7 @@
 #include "../../hacks/chams/chams.h"
 #include "../../hacks/lagcomp/lagcomp.h"
 #include "../../hacks/lua/lua.h"
+#include "../../hacks/lua/lua_api.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/visuals/players/sound_esp/sound_esp.h"
 #include "../../hacks/visuals/screen/rear_mirror.h"
@@ -121,8 +124,28 @@ static bool lua_draw_model( void* ecx, void* edx, void* context, void* state, mo
 		return true;
 
 	const bool swap = draw.m_swap_model && bones;
-	if ( !draw.m_tint && !swap )
+
+	/* model:animate: the drawn ( or swapped ) mesh on the script's pose, root placed where the entity draws */
+	matrix3x4_t* anim_bones = nullptr;
+	if ( draw.m_anim_root && bones ) {
+		const auto* const drawn_state = static_cast< const draw_model_state_t* >( state );
+		const auto* const target      = static_cast< const studiohdr_t* >( swap ? draw.m_swap_hdr : drawn_state->m_studio_hdr );
+
+		matrix3x4_t to_world{ };
+		if ( drawn_state->m_model_to_world )
+			to_world = *drawn_state->m_model_to_world;
+		else {
+			g_math.angle_matrix( c_angle( info.angles.m_x, info.angles.m_y, info.angles.m_z ), to_world );
+			to_world.set_origin( info.origin );
+		}
+
+		anim_bones = const_cast< matrix3x4_t* >( n_lua_api::animate_bones( draw, target, to_world ) );
+	}
+
+	if ( !draw.m_tint && !swap && !anim_bones )
 		return false;
+
+	matrix3x4_t* const draw_bones = anim_bones ? anim_bones : bones;
 
 	float color[ 3 ]{ };
 	g_interfaces.m_render_view->get_color_modulation( color );
@@ -144,9 +167,9 @@ static bool lua_draw_model( void* ecx, void* edx, void* context, void* state, mo
 
 		model_render_info_t swap_info = info;
 		swap_info.model               = const_cast< model_t* >( static_cast< const model_t* >( draw.m_swap_model ) );
-		n_detoured_functions::draw_model_execute( ecx, edx, context, &swap_state, swap_info, bones );
+		n_detoured_functions::draw_model_execute( ecx, edx, context, &swap_state, swap_info, draw_bones );
 	} else
-		n_detoured_functions::draw_model_execute( ecx, edx, context, state, info, bones );
+		n_detoured_functions::draw_model_execute( ecx, edx, context, state, info, draw_bones );
 	s_lua_redraw = false;
 
 	g_interfaces.m_render_view->set_color_modulation( color );

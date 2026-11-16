@@ -8,6 +8,9 @@
 
 #include "lua.h"
 
+struct matrix3x4_t;
+struct studiohdr_t;
+
 /* lua is built as c++ (lua_unity.cpp): include lua.h directly, never lua.hpp (extern "C" = link errors) */
 namespace n_lua_api
 {
@@ -33,6 +36,17 @@ namespace n_lua_api
 	   reset on level change ( the engine purges client models ). lua thread only */
 	void load_models( );
 	void reset_models( );
+	/* eject: model:animate roots hold mdlcache refs */
+	void free_models( );
+
+	/* model:animate pose for one draw of `target` ( the drawn or swapped studiohdr_t ): the root plays its sequence at `to_world`,
+	   target bones take the root bone of the same name ( bone merge ), the rest keep their rest offset from their parent.
+	   one static buffer, valid until the next call ( studiorender copies it inside the draw ). null = draw as is */
+	const matrix3x4_t* animate_bones( const n_lua::draw_model_t& draw, const studiohdr_t* target, const matrix3x4_t& to_world );
+
+	/* entity:animate, from C_CSPlayer::BuildTransformations right after the engine's: rewrites the entity's bone cache with the
+	   script's pose ( bones in bone_mask only ) before SetupBones builds attachments off it. no-op unless a script asked this frame */
+	void pose_entity_bones( void* entity, const studiohdr_t* hdr, const matrix3x4_t& to_world, int bone_mask );
 
 	inline n_lua::script_t* script_of( lua_State* L )
 	{

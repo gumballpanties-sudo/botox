@@ -14,15 +14,22 @@
 #include <cstring>
 #include <new>
 
-/* csgo legacy client.dll CMergedMDL ( tier3/mdlutils.h ), checked by disasm of the ctor + vtable: root CMDL +4, m_MDLToWorld +0x6A0,
-   merge CUtlVector< MDLData_t > +0x6D4 ( element 0x6D0, size +0xC ), pose params +0x6E8, layers +0x748, size 0x75C. vtable 0 = Draw( matrix ),
-   3 = scalar deleting dtor, 4 = SetMDL( name ) ( 5 = handle, reversed ). CMDL: handle +0x3C, Color +0x46, sequence +0x54, time +0x60,
-   use seq fps +0x675, time basis +0x67C */
+n_esp_preview::mdl::ctor_t n_esp_preview::mdl::find_ctor( )
+{
+	static const auto fn = reinterpret_cast< ctor_t >( g_modules[ CLIENT_DLL ].find_pattern( "53 8B D9 56 57 8D 4B 04 C7 03 ? ? ? ? E8 ? ? ? ? 6A" ) );
+	return fn;
+}
+
+n_esp_preview::mdl::set_up_bones_t n_esp_preview::mdl::find_set_up_bones( )
+{
+	static const auto fn = reinterpret_cast< set_up_bones_t >( g_modules[ CLIENT_DLL ].find_pattern(
+		"55 8B EC 83 E4 F0 B8 18 2E 00 00 E8 ? ? ? ? 56 57 8B 3D ? ? ? ? 8B F1 8B CF 89 74 24 18 89 7C 24 30" ) );
+	return fn;
+}
+
 namespace
 {
-	constexpr int k_model_size = 0x75C;
-	constexpr int k_root = 0x4, k_root_to_world = 0x6A0, k_merge = 0x6D4, k_mdl_data = 0x6D0, k_pose = 0x6E8, k_layers = 0x748;
-	constexpr int k_handle = 0x3C, k_color = 0x46, k_sequence = 0x54, k_time = 0x60, k_use_fps = 0x675, k_time_basis = 0x67C;
+	using namespace n_esp_preview::mdl;
 
 	constexpr const char* k_animset = "models/player/custom_player/uiplayer/animset_uiplayer.mdl";
 	constexpr const char* k_agent   = "models/player/custom_player/legacy/tm_phoenix.mdl";
@@ -35,10 +42,8 @@ namespace
 	constexpr float k_fov       = 40.f;
 	constexpr const char* k_texture_name = "botox_esp_preview";
 
-	using ctor_t         = void( __thiscall* )( void* );
 	using set_merge_t    = unsigned short( __thiscall* )( void*, const char*, void*, void*, bool );
 	using attach_t       = void( __thiscall* )( void* );
-	using set_up_bones_t = void( __thiscall* )( void*, const matrix3x4_t*, int, matrix3x4_t*, const float*, void*, int );
 	using destroy_t      = void( __thiscall* )( void*, unsigned int );
 
 	ctor_t s_ctor                 = nullptr;
@@ -276,7 +281,7 @@ bool n_esp_preview::impl_t::init( )
 
 	switch ( this->m_stage ) {
 	case 0:
-		s_ctor = reinterpret_cast< ctor_t >( scan( "53 8B D9 56 57 8D 4B 04 C7 03 ? ? ? ? E8 ? ? ? ? 6A" ) );
+		s_ctor = find_ctor( );
 		break;
 	case 1:
 		s_set_merge = reinterpret_cast< set_merge_t >( scan( "55 8B EC 57 8B F9 8B 0D ? ? ? ? 85 C9 75" ) );
@@ -285,8 +290,7 @@ bool n_esp_preview::impl_t::init( )
 		s_attach = reinterpret_cast< attach_t >( scan( "55 8B EC 83 EC 14 83 3D ? ? ? ? ? 53" ) );
 		break;
 	case 3:
-		s_set_up_bones = reinterpret_cast< set_up_bones_t >(
-			scan( "55 8B EC 83 E4 F0 B8 18 2E 00 00 E8 ? ? ? ? 56 57 8B 3D ? ? ? ? 8B F1 8B CF 89 74 24 18 89 7C 24 30" ) );
+		s_set_up_bones = find_set_up_bones( );
 
 		if ( !s_ctor || !s_set_merge || !s_attach || !s_set_up_bones || !g_interfaces.m_model_cache )
 			return fail( "CMergedMDL signatures missing, preview off\n" );

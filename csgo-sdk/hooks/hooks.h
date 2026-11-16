@@ -67,6 +67,7 @@ namespace n_hooks
 		c_detour_hook m_set_image_data_r8g8b8a8{ };
 		c_detour_hook m_load_file_into_buffer{ };
 		c_detour_hook m_draw_model_execute{ };
+		c_detour_hook m_build_transformations{ };
 		c_detour_hook m_list_leaves_in_box{ };
 		c_detour_hook m_draw_static_props{ };
 		c_detour_hook m_send_datagram{ };
@@ -175,6 +176,8 @@ namespace n_detoured_functions
 	                                       unsigned int padding );
 	void __fastcall draw_model_execute( void* ecx, void* edx, void* context, void* state, model_render_info_t& info,
 	                                    matrix3x4_t* custom_bone_to_world );
+	void __fastcall build_transformations( void* ecx, void* edx, void* studio_hdr, void* pos, void* q, const matrix3x4_t& camera_transform,
+	                                       int bone_mask, void* bone_computed );
 	int __fastcall list_leaves_in_box( void* ecx, void* edx, const c_vector& mins, const c_vector& maxs, unsigned short* list, int list_max );
 	void __fastcall draw_static_props( void* ecx, void* edx, void** props, const void* instances, int count, bool shadow_depth, bool ssao_depth,
 	                                   bool wireframe );
