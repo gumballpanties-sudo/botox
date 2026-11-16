@@ -1265,10 +1265,13 @@ try {
                        'vertical-align: center; wash-color: ${fg};' + '${imgShadow}'
             });
         }
+        /* height-only Image = 0px in a flow: the gun drew centred on the wings and hid them.
+           air pair gets its real drawn width */
         $.CreatePanel('Image', gunBox, '', {
             src: 'file://{images}/icons/equipment/${weapon}.svg',
             scaling: 'stretch-to-fit-y-preserve-aspect',
             style: 'height: 26px; horizontal-align: center; vertical-align: center;' +
+                   (${inAir} ? 'width: ${gunWidth}px;' : '') +
                    'wash-color: ${fg};' + '${imgShadow}'
         });
 

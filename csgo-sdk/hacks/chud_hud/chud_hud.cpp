@@ -1,5 +1,6 @@
 #include "chud_hud.h"
 #include "chud_hud_js.h"
+#include "chud_gun_svg.h"
 #include "../../globals/config/config.h"
 #include "../../globals/logger/logger.h"
 #include "../entity_cache/entity_cache.h"
@@ -326,6 +327,25 @@ namespace
 		}
 
 		return 70;
+	}
+
+	/* air row gun box at the k_add_kill gun height. drawn raster = what set_image_data serves: classic swaps
+	   w / h, moi keeps the stock dims */
+	int killfeed_gun_width( const std::string& weapon )
+	{
+		constexpr float k_gun_h = 26.f;
+
+		const uint8_t* data{ };
+		size_t len{ };
+		int rw{ }, rh{ };
+		if ( GET_VARIABLE( g_variables.m_scaleform, bool ) && GET_VARIABLE( g_variables.m_scaleform_style, int ) != 0 &&
+		     g_scaleform.get_replacement_icon( weapon.c_str( ), data, len, rw, rh ) && rw > 0 && rh > 0 )
+			return static_cast< int >( std::lround( k_gun_h * rw / rh ) );
+
+		if ( const auto* svg = n_chud_gun_svg::find( weapon ) )
+			return static_cast< int >( std::lround( k_gun_h * svg->m_w / svg->m_h ) );
+
+		return killfeed_icon_width( weapon );
 	}
 }
 
@@ -1126,6 +1146,7 @@ void n_chud::impl_t::tick( )
 		replace_all( js, "${sec}", sec );
 		replace_all( js, "${panelBg}", panel_bg );
 		replace_all( js, "${iconWidth}", std::to_string( killfeed_icon_width( kill.m_weapon ) ) );
+		replace_all( js, "${gunWidth}", std::to_string( killfeed_gun_width( kill.m_weapon ) ) );
 		replace_all( js, "${nudge}", nudge );
 		replace_all( js, "${fs18}", fs18 );
 		replace_all( js, "${textShadow}", tshadow );

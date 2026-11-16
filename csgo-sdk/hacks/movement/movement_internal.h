@@ -32,6 +32,8 @@ inline bool aa_slanted( const c_vector& n ) { return std::fminf( std::fabsf( n.m
 /* this tick's wall can wedge the AABB ( slanted face = corner contact, or a prop in the ring ). only then is an xy 0 pin a stuck:
    on a square face a head-on pixelsurf zeroes xy too ( wall clip + lip clip, crease d <= 0 ). set by the styles, read by aa_guard */
 extern bool aa_wedge_risk;
+/* debug log only: pj verdict + `AA: pj passed` witness, called by movement PRE right after its predicted frame restore */
+void auto_align_pj_witness( );
 
 extern bool g_air_stuck_noclip_active;
 extern bool g_air_stuck_owns_cmd;

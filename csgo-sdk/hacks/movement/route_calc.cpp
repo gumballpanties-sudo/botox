@@ -849,14 +849,15 @@ float n_route::creep_wish( c_user_cmd* cmd, const c_vector& n, float gap )
 	constexpr float k_creep_share = 0.75f;
 
 	const c_vector v   = g_ctx.m_local->get_velocity( );
-	const float dt     = n_tick::engine_interval( ), half_g = gravity_per_tick( ) * 0.5f;
+	const float dt     = n_tick::engine_interval( );
 	const c_vector into( -n.m_x, -n.m_y, 0.f );
 	const float v_in = v.m_x * into.m_x + v.m_y * into.m_y;
 	const float want = gap > k_creep_done ? gap * k_creep_share / dt : 0.f;
 	const bool push  = want > v_in;
 	const float need = std::fabs( want - v_in );
 	const float cur  = push ? v_in : -v_in;
-	const float friction = v.m_z + half_g > 0.f ? 0.25f : 1.f;
+	/* AirAccelerate's own: CategorizePosition 0.25 only while 0 < vz <= 140, 1 past it ( the old rising guess pushed 4x, hit at 0.03125 ) */
+	const float friction = g_ctx.m_local->get_surface_friction( );
 	const float accel    = g_convars.float_or( HASH_BT( "sv_airaccelerate" ), 12.f ) * dt * friction;
 	const float cap   = g_convars.float_or( HASH_BT( "sv_air_max_wishspeed" ), 30.f );
 	const auto add    = [ & ]( float w ) { return ( std::min )( accel * w, ( std::min )( w, cap ) - cur ); };

@@ -2,6 +2,7 @@
 #include "../misc/misc.h"
 #include "../cod4_hud/cod4_hud.h"
 #include "../urt_hud/urt_hud.h"
+#include "../gta_hud/gta_hud.h"
 #include "../web/websurf_math.h"
 #include "../web/websurface.h"
 #include "../visuals/screen/depth_source.h"
@@ -2489,6 +2490,21 @@ void n_menu::impl_t::tab_visuals( )
 						n_urt_hud::draw_options( );
 					},
 					ImVec2( 640.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "gta san andreas hud", &GET_VARIABLE( g_variables.m_gta_hud, bool ) );
+
+			if ( GET_VARIABLE( g_variables.m_gta_hud, bool ) ) {
+				ImGui::OptionPopup(
+					"gta san andreas hud settings",
+					[ & ]( ) {
+						// sa radar = 180 m on foot; 39.37 u/m is true scale (almost the whole map), lower = closer
+						ImGui::SliderFloat( "radar units per metre##gta", &GET_VARIABLE( g_variables.m_gta_hud_radar_units, float ), 4.f, 39.37f, "%.1f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+
+						n_gta_hud::draw_options( );
+					},
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			ImGui::Checkbox( "web on surface", &GET_VARIABLE( g_variables.m_web, bool ) );

@@ -409,6 +409,7 @@ void n_movement::impl_t::on_create_move_pre( )
 			b_buttons                 = g_ctx.m_cmd->m_buttons;
 			const int predicted_frame = g_interfaces.m_prediction->m_commands_predicted - 1;
 			g_prediction.restore_entity_to_predicted_frame( predicted_frame );
+			auto_align_pj_witness( );
 			if ( GET_VARIABLE( g_variables.m_jump_bug, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_jump_bug_key, key_bind_t ) ) )
 				this->jump_bug_crouch( g_ctx.m_cmd );
 			gnd_wish_check( "jb_crouch" );

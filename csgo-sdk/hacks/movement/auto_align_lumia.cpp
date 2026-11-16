@@ -264,6 +264,9 @@ void n_movement::impl_t::auto_align_lumia( c_user_cmd* cmd )
 			break;
 		}
 		if(!trial.restore_frame(cmds_pred))return;
+		/* no keys, no ps key: every rung is the same 0 / 0 cmd off the same frame, one sim answers all 9 ( 11-15 log 18 sims / tick ) */
+		if ( !forwardmove && !sidemove )
+			break;
 	}
 	if ( pinned )
 		aa_outs[ aa_out_pin ]++;

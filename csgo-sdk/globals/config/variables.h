@@ -1762,6 +1762,9 @@ namespace n_variables
 		ADD_VARIABLE( std::string, m_urt_hud_cvars, "" );
 		ADD_VARIABLE( key_bind_t, m_urt_hud_map_key, key_bind_t( 0, 1 ) );
 
+		ADD_VARIABLE( bool, m_gta_hud, false );
+		ADD_VARIABLE( float, m_gta_hud_radar_units, 11.f ); // csgo units per sa metre for the 180 m radar range (39.37 = true scale)
+
 		ADD_VARIABLE( bool, m_fps_warning, true );
 
 		ADD_VARIABLE( bool, m_auto_revive, false );

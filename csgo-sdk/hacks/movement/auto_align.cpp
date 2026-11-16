@@ -321,6 +321,95 @@ namespace
 		return ticks > 0;
 	}
 
+	/* pj miss witness ( debug log only ): your airborne feet path; on landing next to a face, a lip ABOVE the landing that a hull
+	   k_creep_gap off lands and a 0.03125 one misses = a brush pj you fell past. gap = your hull off the face the tick feet crossed
+	   its catch height ( park = hit late, far = never reached the face ). skin lips ( props, vphysics near miss ) never hit a sweep */
+	constexpr int k_pj_hist = 96;
+	c_vector s_pj_hist[ k_pj_hist ];
+	int s_pj_hist_n     = 0, s_pj_hist_tick = -1;
+	bool s_pj_seen      = false; /* a pj creep was SENT this airtime ( the guard can revert it ) */
+	bool s_pj_tick      = false; /* the creep ran this auto_align call */
+	float s_pj_log_top  = -1e9f; /* last `AA: pj top=` logged, one line per top per airtime */
+
+	void aa_pj_witness( c_base_entity* local )
+	{
+		const bool gnd   = ( local->get_flags( ) & e_flags::fl_onground ) != 0;
+		const c_vector o = local->get_origin( );
+		if ( !gnd && local->get_move_type( ) == e_move_types::move_type_walk ) {
+			if ( s_pj_hist_n == k_pj_hist ) {
+				std::copy( s_pj_hist + 1, s_pj_hist + k_pj_hist, s_pj_hist );
+				--s_pj_hist_n;
+			}
+			s_pj_hist[ s_pj_hist_n++ ] = o;
+			return;
+		}
+		const int hist_n = s_pj_hist_n;
+		const bool seen  = s_pj_seen;
+		s_pj_hist_n      = 0;
+		s_pj_seen        = false;
+		s_pj_log_top     = -1e9f;
+		const auto col   = local->get_collideable( );
+		if ( !gnd || hist_n < 3 || !col )
+			return;
+		const c_vector mins = col->get_obb_mins( ), maxs = col->get_obb_maxs( );
+		n_tb::c_trace_filter_tb_world_props wfil( local );
+		trace_t wall;
+		float best = 2.f;
+		for ( int i = 0; i < 8; ++i ) {
+			const float a = static_cast< float >( i ) * 0.78539816f;
+			trace_t t;
+			ray_t r( o, c_vector( o.m_x + std::cosf( a ), o.m_y + std::sinf( a ), o.m_z ), mins, maxs );
+			g_interfaces.m_engine_trace->trace_ray( r, mask_playersolid, &wfil, &t );
+			if ( !t.m_start_solid && t.m_fraction < best && t.m_plane.m_normal.m_z == 0.f && !aa_prop( t ) ) {
+				best = t.m_fraction;
+				wall = t;
+			}
+		}
+		if ( best >= 1.f )
+			return;
+		const c_vector n  = wall.m_plane.m_normal;
+		const float pd    = n_tb::hull_plane_dist( wall, mins, maxs );
+		const float sup   = std::fabsf( n.m_x ) * maxs.m_x + std::fabsf( n.m_y ) * maxs.m_y;
+		const auto gap_at = [ & ]( const c_vector& p ) { return p.m_x * n.m_x + p.m_y * n.m_y - pd - sup; };
+		float apex        = o.m_z;
+		for ( int i = 0; i < hist_n; ++i )
+			apex = std::max( apex, s_pj_hist[ i ].m_z );
+		apex           = std::min( apex, o.m_z + 128.f );
+		const float g0 = gap_at( o );
+		c_trace_filter flt( local );
+		/* the landing column, apex down to just over the feet you landed with: only tops you fell past */
+		const auto sweep = [ & ]( float off, trace_t& t ) {
+			c_vector p = o - n * ( g0 - off );
+			p.m_z      = apex;
+			ray_t r( p, c_vector( p.m_x, p.m_y, o.m_z + 0.25f ), mins, maxs );
+			g_interfaces.m_engine_trace->trace_ray( r, mask_playersolid, &flt, &t );
+			return !t.m_start_solid && t.m_fraction < 1.f && t.m_plane.m_normal.m_z >= 0.7f;
+		};
+		trace_t tin, tout;
+		if ( apex < o.m_z + 2.f || !sweep( n_route::k_creep_gap, tin ) )
+			return;
+		const float top = tin.m_end.m_z;
+		if ( sweep( k_aa_eps, tout ) && tout.m_end.m_z > top - 0.05f )
+			return; /* plain ledge: a parked hull lands it too */
+		float lo = n_route::k_creep_gap, hi = k_aa_eps;
+		for ( int i = 0; i < 8; ++i ) {
+			const float mid = 0.5f * ( lo + hi );
+			trace_t t;
+			( sweep( mid, t ) && std::fabsf( t.m_end.m_z - top ) < 0.05f ? lo : hi ) = mid;
+		}
+		/* last falling crossing of the catch height ( feet <= top + 2 ) before the landing, the landing START itself included ( a
+		   fast fall goes air -> ground in one tick ) */
+		float g_at = -1.f;
+		for ( int i = 1; i <= hist_n; ++i ) {
+			const c_vector& p = i < hist_n ? s_pj_hist[ i ] : o;
+			if ( s_pj_hist[ i - 1 ].m_z >= top + 2.f && p.m_z < top + 2.f )
+				g_at = gap_at( p );
+		}
+		const char* why = g_at < 0.f ? "nocross" : g_at < lo ? "inside" : std::fabsf( g_at - k_aa_eps ) < 0.002f ? "park" : g_at < 0.05f ? "near" : "far";
+		botox_dbg_log( "AA: pj passed top=%.4f lip=%.5f gap=%.5f %s n=%.2f %.2f slant=%d style=%d creep=%d land=%.3f", top, lo, g_at, why, n.m_x, n.m_y,
+		               aa_slanted( n ) ? 1 : 0, GET_VARIABLE( g_variables.m_auto_align_type, int ), seen ? 1 : 0, o.m_z );
+	}
+
 	/* air stuck = TryPlayerMove zeroed the move ( allFraction 0, 3+ planes, crease reversal, end-pos stuck box: gamemovement.cpp
 	   TryPlayerMove ) = xy 0, and FinishGravity's half step makes vz read as a pin. a corner wedged in a prop / slanted face.
 	   our move does it this tick or held one more where the cmd we got doesn't = the cmd we got back. both styles */
@@ -373,18 +462,35 @@ namespace
 
 /* end of create_move: a later feature ( fireman / wc ... ) rewrote our park = no server verdict, never grow the margin off it.
    10-07 20:18 log: every repeat refusal sat on a WC STOMP@fire_man, margin 2 -> 32 = park dead on that wall */
-void n_movement::impl_t::auto_align_sent( const c_user_cmd* cmd )
+/* movement PRE right after its predicted frame restore = the START this cmd runs from ( create_move end can hold an edgebug probe's
+   end: a probe that landed read as a landing mid-air, 11-16 critic ). debug log only: pj verdict + witness */
+void auto_align_pj_witness( )
 {
-	/* pj verdict for the log: grounded on the top = caught, fell 2.5u past it = missed */
-	if ( s_pj_armed && g_ctx.m_local ) {
-		const bool gnd = ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) != 0;
-		const float z  = g_ctx.m_local->get_origin( ).m_z;
-		if ( gnd || z < s_pj_top - 2.5f || !g_ctx.m_local->is_alive( ) ) {
-			if ( GET_VARIABLE( g_variables.m_debug_log, bool ) )
-				botox_dbg_log( "AA: pj %s top=%.4f z=%.4f", gnd && std::fabsf( z - s_pj_top ) < 0.5f ? "landed" : "missed", s_pj_top, z );
+	c_base_entity* local = g_ctx.m_local;
+	const int tick       = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_tick_count : 0;
+	const bool on        = local && local->is_alive( ) && GET_VARIABLE( g_variables.m_auto_align, bool ) && GET_VARIABLE( g_variables.m_debug_log, bool );
+	/* a skipped tick ( dead, ladder, an early out before PRE's restore ) = a new airtime, never old history */
+	if ( !on || tick - s_pj_hist_tick > 2 ) {
+		s_pj_hist_n = 0;
+		s_pj_seen   = false;
+	}
+	s_pj_hist_tick = tick;
+	if ( !on )
+		return;
+	/* pj verdict: grounded on the top = caught, fell 2.5u past it = missed */
+	if ( s_pj_armed ) {
+		const bool gnd = ( local->get_flags( ) & e_flags::fl_onground ) != 0;
+		const float z  = local->get_origin( ).m_z;
+		if ( gnd || z < s_pj_top - 2.5f ) {
+			botox_dbg_log( "AA: pj %s top=%.4f z=%.4f", gnd && std::fabsf( z - s_pj_top ) < 0.5f ? "landed" : "missed", s_pj_top, z );
 			s_pj_armed = false;
 		}
 	}
+	aa_pj_witness( local );
+}
+
+void n_movement::impl_t::auto_align_sent( const c_user_cmd* cmd )
+{
 	if ( g_ctx.m_local && ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) )
 		s_park_off = false;
 	if ( !cmd || s_park_cmd != cmd->m_command_number )
@@ -403,17 +509,21 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 {
 	const c_user_cmd got = *cmd;
 	aa_wedge_risk        = false;
+	s_pj_tick            = false;
 	if ( GET_VARIABLE( g_variables.m_auto_align_type, int ) == 1 ) {
 		wall_detected = false;
 		auto_align_lumia( cmd );
 	} else
 		auto_align_botox( cmd );
-	/* square wall, no prop = no wedge: native behaviour, no extra sims. reverted = never sent: no park / pj verdict off it */
+	/* square wall, no prop = no wedge: native behaviour, no extra sims. reverted = never sent: no park / pj verdict / pj count off it */
 	if ( aa_wedge_risk && aa_guard( cmd, got ) ) {
 		aa_outs[ aa_out_guard ]++;
 		aa_flush_drop( );
 		s_pj_armed = false;
-	}
+		if ( s_pj_tick )
+			aa_outs[ aa_out_pj ]--;
+	} else if ( s_pj_tick )
+		s_pj_seen = true;
 }
 
 void n_movement::impl_t::auto_align_botox( c_user_cmd* cmd )
@@ -619,10 +729,12 @@ void n_movement::impl_t::auto_align_botox( c_user_cmd* cmd )
 		int pj_ticks = -1;
 		if ( aa_pj_lip( trace, start_pos, mins, maxs, pj_gap, pj_top, pj_ticks ) ) {
 			const float w = n_route::creep_wish( cmd, trace.m_plane.m_normal, std::max( pj_gap, 0.f ) );
-			if ( GET_VARIABLE( g_variables.m_debug_log, bool ) && ( !s_pj_armed || std::fabsf( pj_top - s_pj_top ) > 0.01f ) )
+			if ( GET_VARIABLE( g_variables.m_debug_log, bool ) && std::fabsf( pj_top - s_pj_log_top ) > 0.01f ) {
+				s_pj_log_top = pj_top;
 				botox_dbg_log( "AA: pj top=%.4f gap=%.5f catch in %d w=%.3f n=%.2f %.2f", pj_top, pj_gap, pj_ticks, w, trace.m_plane.m_normal.m_x,
 				               trace.m_plane.m_normal.m_y );
-			s_pj_armed = true;
+			}
+			s_pj_armed = s_pj_tick = true;
 			s_pj_top   = pj_top;
 			warm_tick = fail_tick = -1;
 			aa_flush_drop( );
@@ -1070,5 +1182,13 @@ bool auto_align_lumia_pixel_jump(c_user_cmd* cmd,const trace_t& wall,const c_vec
     if(!GET_VARIABLE(g_variables.m_auto_align_pixel_jump,bool)||g_prediction.is_target_predict_z_velocity(g_prediction.backup_data.m_velocity.m_z))return false;
     float gap=0,top=0;int ticks=-1;
     if(!aa_pj_lip(wall,origin,mins,maxs,gap,top,ticks))return false;
-    n_route::creep_wish(cmd,wall.m_plane.m_normal,std::max(gap,0.f));return true;
+    /* lumia's creep was uncounted + unlogged: the 11-15 log's lumia pj=0 proved nothing. same lines + verdict as botox */
+    const float w=n_route::creep_wish(cmd,wall.m_plane.m_normal,std::max(gap,0.f));
+    if(GET_VARIABLE(g_variables.m_debug_log,bool)&&std::fabsf(top-s_pj_log_top)>0.01f){
+        s_pj_log_top=top;
+        botox_dbg_log("AA: pj top=%.4f gap=%.5f catch in %d w=%.3f n=%.2f %.2f",top,gap,ticks,w,wall.m_plane.m_normal.m_x,wall.m_plane.m_normal.m_y);
+    }
+    s_pj_armed=s_pj_tick=true;s_pj_top=top;
+    aa_outs[aa_out_pj]++;
+    return true;
 }

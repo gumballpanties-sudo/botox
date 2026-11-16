@@ -105,6 +105,7 @@
     <ClCompile Include="hacks\mc_hud\mc_hud.cpp" />
     <ClCompile Include="hacks\cod4_hud\cod4_hud.cpp" />
     <ClCompile Include="hacks\urt_hud\urt_hud.cpp" />
+    <ClCompile Include="hacks\gta_hud\gta_hud.cpp" />
     <ClCompile Include="hacks\animations\animations.cpp" />
     <ClCompile Include="hacks\visuals\players\dormancy\dormancy.cpp" />
     <ClCompile Include="hacks\network\botox_net.cpp" />
@@ -407,6 +408,7 @@
     <ClInclude Include="hacks\misc\hud_font\hud_font.h" />
     <ClInclude Include="hacks\chud_hud\chud_hud.h" />
     <ClInclude Include="hacks\chud_hud\chud_hud_js.h" />
+    <ClInclude Include="hacks\chud_hud\chud_gun_svg.h" />
     <ClInclude Include="hacks\mc_hud\mc_hud.h" />
     <ClInclude Include="hacks\mc_hud\mc_logic.h" />
     <ClInclude Include="hacks\mc_hud\mc_assets.h" />
@@ -420,6 +422,11 @@
     <ClInclude Include="hacks\urt_hud\urt_hud.h" />
     <ClInclude Include="hacks\urt_hud\urt_core.h" />
     <ClInclude Include="hacks\urt_hud\urt_data.h" />
+    <ClInclude Include="hacks\gta_hud\gta_hud.h" />
+    <ClInclude Include="hacks\gta_hud\gta_data.h" />
+    <ClInclude Include="hacks\gta_hud\gta_font.h" />
+    <ClInclude Include="hacks\gta_hud\gta_logic.h" />
+    <ClInclude Include="hacks\gta_hud\gta_radar.h" />
     <ClInclude Include="game\sdk\structs\fmt_str_n_t.h" />
     <ClInclude Include="utilities\data\data.h" />
     <ClInclude Include="hacks\visuals\players\chams\chams.h" />
