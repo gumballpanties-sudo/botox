@@ -6,6 +6,7 @@
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
 #include "../../hacks/urt_hud/urt_hud.h"
+#include "../../hacks/gta_hud/gta_hud.h"
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/web/websurface.h"
@@ -31,14 +32,15 @@ long __stdcall n_detoured_functions::wndproc( HWND window, unsigned int message,
 
 	/* no hud line up = stock flow: g_input sees the messagemode opener too, else enter on a point never opens the popup.
 	   before chat_on_key: chud's open line would block the down in keys_blocked( ) */
-	const bool chat_was_open = g_mc_hud.m_chat_open || g_chud.m_chat_open || g_cod4_hud.m_chat_open || g_urt_hud.m_chat_open;
+	const bool chat_was_open = g_mc_hud.m_chat_open || g_chud.m_chat_open || g_cod4_hud.m_chat_open || g_urt_hud.m_chat_open || g_gta_hud.m_chat_open;
 	if ( !chat_was_open )
 		g_input.on_wndproc( message, wide_param, long_param );
 
 	const bool chat_input = g_mc_hud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) ) ||
 	                        g_chud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) ) ||
 	                        g_cod4_hud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) ) ||
-	                        g_urt_hud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) );
+	                        g_urt_hud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) ) ||
+	                        g_gta_hud.chat_on_key( message, wide_param, long_param, g_menu.m_opened || point_menu_is_opened( ) );
 
 	if ( chat_was_open && !chat_input )
 		g_input.on_wndproc( message, wide_param, long_param );

@@ -58,7 +58,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 
 	// classic crosshair (styles 2-4), the panorama one is hud_removal's
 	if ( panel_hash == HASH_BT( "HudWeapon" ) ) {
-		if ( n_cod4_hud::enabled( ) || n_urt_hud::enabled( ) || n_gta_hud::enabled( ) )
+		if ( n_cod4_hud::enabled( ) || n_urt_hud::enabled( ) || n_gta_hud::ready( ) )
 			return;
 		g_ctx.m_is_hud_weapon_being_drawn = true;
 		g_ctx.m_crosshair_outline_next    = true;

@@ -3,6 +3,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <string_view>
+#include <utility>
 
 /* gta sa hud rules, pure (tools/gta_hud_test.cpp). numbers from gta_sa.exe 1.0 US: CHud::DrawPlayerInfo 0x58EAF0,
    DrawWanted 0x58D9A0, DrawSuccessFailedMessage 0x58C6A0, DrawBustedWastedMessage 0x58CA50, DrawAreaName 0x58AA50,
@@ -320,7 +323,74 @@ namespace n_gta_logic
 		}
 	};
 
+	/* ---- chat (sa has none: csgo chat in the subtitle look). csgo colour bytes -> CFont ~x~ tokens ---- */
+	inline const char* team_token( int team ) { return team == 2 ? "~y~" : team == 3 ? "~b~~h~~h~" : "~w~"; }
+
+	// html tags dropped (botox lines), 0x01..0x10 = csgo chat colours, non-ascii + '~' dropped (sa font = printable ascii)
+	inline std::string chat_line( std::string_view t, bool html, int sender_team )
+	{
+		std::string out = "~w~";
+		for ( size_t i = 0; i < t.size( ); ++i ) {
+			const auto b = static_cast< unsigned char >( t[ i ] );
+			if ( html && b == '<' ) {
+				const size_t close = t.find( '>', i );
+				if ( close == std::string_view::npos )
+					break;
+				i = close;
+				continue;
+			}
+			if ( html && b == '&' ) {
+				static constexpr std::pair< const char*, char > k_entities[] = { { "&amp;", '&' }, { "&lt;", '<' }, { "&gt;", '>' }, { "&quot;", '"' }, { "&#39;", '\'' } };
+				bool hit = false;
+				for ( const auto& [ name, c ] : k_entities )
+					if ( t.substr( i, std::strlen( name ) ) == name ) {
+						out += c, i += std::strlen( name ) - 1, hit = true;
+						break;
+					}
+				if ( hit )
+					continue;
+			}
+			if ( b >= 1 && b <= 16 ) {
+				switch ( b ) {
+				case 3: out += team_token( sender_team ); break;
+				case 2:
+				case 7:
+				case 15: out += "~r~"; break;
+				case 4:
+				case 5:
+				case 6: out += "~g~"; break;
+				case 9:
+				case 16: out += "~y~"; break;
+				case 10:
+				case 11:
+				case 12: out += "~b~~h~~h~"; break;
+				case 14: out += "~p~"; break;
+				default: out += "~w~"; break;
+				}
+				continue;
+			}
+			if ( b >= 32 && b < 127 && b != '~' )
+				out += static_cast< char >( b );
+		}
+		return out;
+	}
+
 	/* ---- clock: sa "%02d:%02d" game hours:minutes, csgo round clock minutes:seconds ---- */
+	// -1 = no clock (local time). round time left first: community servers sit in warmup with an expired end (pinned
+	// 00:00) or an endless one (99:xx). warmup countdown only with no round clock and under 100 min
+	inline int round_clock_ms( bool warmup, float warmup_end, int round_s, float start, float now )
+	{
+		if ( round_s > 0 ) {
+			const float round = static_cast< float >( round_s );
+			const float left  = std::clamp( round - std::max( now - start, 0.f ), 0.f, round );
+			if ( left > 0.f || !warmup )
+				return static_cast< int >( left * 1000.f );
+		}
+		if ( warmup && warmup_end - now > 0.f && warmup_end - now < 6000.f )
+			return static_cast< int >( ( warmup_end - now ) * 1000.f );
+		return -1;
+	}
+
 	inline void clock_text( int ms, char* out, size_t size )
 	{
 		const int s = std::max( ms, 0 ) / 1000;

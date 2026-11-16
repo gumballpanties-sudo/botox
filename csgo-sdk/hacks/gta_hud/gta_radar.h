@@ -14,7 +14,9 @@ namespace n_gta_radar
 	};
 
 	inline constexpr float k_pi          = 3.14159265f;
-	inline constexpr float k_units_per_m = 39.37f; // csgo inch units, sa metres (height thresholds)
+	// csgo inch units per sa metre for the +2 / -4 m blip shapes. deliberately true scale, not the radar zoom option:
+	// at 11 u/m a jump or a stair flips the shape, at 39.37 it tracks floors like sa
+	inline constexpr float k_units_per_m = 39.37f;
 
 	struct radar_t {
 		float m_cx = 0.f, m_cy = 0.f, m_rx = 1.f, m_ry = 1.f; // screen centre (SX(87), SFB(66)), radii (SX(47), SY(38))

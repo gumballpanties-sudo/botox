@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <ctime>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -22,6 +23,7 @@ namespace font = n_gta_font;
 namespace data = n_gta_data;
 
 extern void botox_dbg_log( const char* fmt, ... );
+extern bool point_menu_is_opened( );
 
 bool n_gta_hud::enabled( ) { return GET_VARIABLE( g_variables.m_gta_hud, bool ); }
 
@@ -30,11 +32,9 @@ namespace
 	using n_gta_hud::blip_t;
 	using n_gta_hud::snapshot_t;
 
-	long long now_ms( )
-	{
-		static const auto start = std::chrono::steady_clock::now( );
-		return std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::steady_clock::now( ) - start ).count( );
-	}
+	// module init, not a function static: game + render thread both call now_ms (no thread safe statics here)
+	const auto k_start = std::chrono::steady_clock::now( );
+	long long now_ms( ) { return std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::steady_clock::now( ) - k_start ).count( ); }
 
 	/* ---- assets: botox-assets gta/, cached under C:\botox\gta\ ---- */
 	constexpr const char* k_cache_dir = "C:\\botox\\";
@@ -168,7 +168,8 @@ namespace
 
 	/* ---- events: game thread writes, render thread drains (both under g_gta_hud.m_lock) ---- */
 	struct events_t {
-		std::string m_success{ }; // mission passed / failed text
+		std::string m_success{ };             // mission passed / failed text
+		std::vector< std::pair< std::string, long long > > m_chat{ }; // ready-made CFont lines + arrival ms
 	} s_ev{ };
 
 	unsigned int net_offset( unsigned int hash ) { return g_netvars[ hash ].m_offset; }
@@ -299,6 +300,68 @@ namespace
 	wasted_t s_wasted{ };
 	success_t s_success{ };
 
+	struct chat_entry_t {
+		std::string m_text;
+		long long m_ms;
+	};
+	std::vector< chat_entry_t > s_chat{ }; // newest last
+	std::string s_chat_prefix{ };          // "Say: " while typing, empty = closed
+	std::string s_chat_typed{ };
+	constexpr int k_chat_lines        = 8;
+	constexpr long long k_chat_life   = 12000;
+
+	/* ---- chat (no sa twin): DrawSubtitles 0x58C250 look = subtitles font, 225 grey, black drop shadow, smaller. stacked upward
+	   from above the voice rows over the radar disc, left edge on the disc, newest lowest, 12 s then a 1 s fade ---- */
+	void draw_chat( )
+	{
+		const long long now = now_ms( );
+		const bool open     = !s_chat_prefix.empty( );
+		const float x       = sx( 36.f );
+		float bottom        = g.m_h - sy( 108.f + 40.f ); // over the lifted voice rows (scaleform k_rm_voice_lift)
+		const auto style    = [ & ]( std::uint8_t a, bool one_line ) {
+			font::details_t d = fresh( );
+			d.set_style( font::font_subtitles );
+			d.m_prop = true;
+			d.set_align( font::align_left );
+			d.m_wrap_end = one_line ? g.m_w * 4.f : x + sx( 260.f );
+			// subtitles run 0.58 x 1.22 + shadow 2; chat at about csgo chat size
+			d.m_scale_x = sx( 0.2f ), d.m_scale_y = sy( 0.45f );
+			d.set_drop_shadow( 1 );
+			d.m_drop_color = { 0, 0, 0, a };
+			d.m_color      = font::hud_rgba( font::hud_light_gray, a );
+			return d;
+		};
+		const auto stack = [ & ]( const char* s, std::uint8_t a, bool one_line ) {
+			font::details_t d = style( a, one_line );
+			font::context_t ctx{ };
+			ctx.m_w = g.m_w, ctx.m_h = g.m_h;
+			bottom -= font::height( d ) * static_cast< float >( font::process_string( ctx, d, false, x, bottom, s ) );
+			text( d, x, bottom, s );
+		};
+		if ( open ) {
+			// one line, the tail that fits the chat width (csgo's input scrolls the same way)
+			const font::details_t d = style( 255, true );
+			std::string typed       = s_chat_typed;
+			std::string line        = s_chat_prefix + typed;
+			while ( !typed.empty( ) && font::string_width( d, line.c_str( ), true ) > sx( 260.f ) )
+				typed.erase( 0, 1 ), line = s_chat_prefix + typed;
+			stack( line.c_str( ), 255, true );
+			// caret: PrintChar never draws '_', so a bar, blinking like the csgo one
+			if ( ( now >> 9 ) & 1 ) {
+				const float cx = x + font::string_width( d, line.c_str( ), true );
+				rect( cx, bottom + sy( 1.f ), cx + std::max( sx( 1.f ), 1.f ), bottom + 20.f * d.m_scale_y, { 225, 225, 225, 255 } );
+			}
+		}
+		int shown = 0;
+		for ( auto it = s_chat.rbegin( ); it != s_chat.rend( ) && shown < k_chat_lines; ++it, ++shown ) {
+			const long long age = now - it->m_ms;
+			if ( !open && age > k_chat_life )
+				break; // the rest is older still
+			const float fade = open ? 1.f : std::clamp( static_cast< float >( k_chat_life - age ) / 1000.f, 0.f, 1.f );
+			stack( it->m_text.c_str( ), static_cast< std::uint8_t >( ftol( 255.f * fade ) ), false );
+		}
+	}
+
 	/* ---- DrawCrossHairs 0x58E020 ---- */
 	void draw_crosshair( )
 	{
@@ -314,6 +377,12 @@ namespace
 			xlu_sprite( t, cx + cw / 2.f, cy - ch / 2.f, cw / 2.f, ch / 2.f, true, false );
 			xlu_sprite( t, cx - cw / 2.f, cy + ch / 2.f, cw / 2.f, ch / 2.f, false, true );
 			xlu_sprite( t, cx + cw / 2.f, cy + ch / 2.f, cw / 2.f, ch / 2.f, true, true );
+			// not in the exe (user ask): the 420 x 420 scope leaves the sides (+ a strip top / bottom) open, black like its corners
+			const font::rgba_t black{ 0, 0, 0, 255 };
+			rect( 0.f, 0.f, cx - cw, g.m_h, black );
+			rect( cx + cw, 0.f, g.m_w, g.m_h, black );
+			rect( cx - cw, 0.f, cx + cw, cy - ch, black );
+			rect( cx - cw, cy + ch, cx + cw, g.m_h, black );
 			return;
 		}
 		if ( !circle_crosshair( w ) )
@@ -509,11 +578,13 @@ namespace
 		}
 	}
 
-	/* ---- csgo overview = sa radar tiles: resource/overviews/<map>.txt + <map>_radar.dds (cod4 loader) ---- */
+	/* ---- csgo overview = sa radar tiles: resource/overviews/<map>.txt + <map>_radar.dds (cod4 loader) ----
+	   parsed + read once per map; a device Reset only drops the texture, rebuilt from the kept bytes */
 	struct overview_t {
 		std::string m_map{ };
-		bool m_tried = false;
+		bool m_tried = false, m_have = false, m_tex_tried = false;
 		float m_pos_x = 0.f, m_pos_y = 0.f, m_scale = 0.f;
+		std::vector< std::uint8_t > m_dds{ };
 		IDirect3DTexture9* m_texture = nullptr;
 	} s_overview{ };
 
@@ -521,42 +592,51 @@ namespace
 	{
 		if ( s_overview.m_texture )
 			s_overview.m_texture->Release( );
-		s_overview = { };
+		s_overview.m_texture   = nullptr;
+		s_overview.m_tex_tried = false;
 	}
 
 	void load_overview( const std::string& map )
 	{
-		if ( s_overview.m_map == map && s_overview.m_tried )
-			return;
-		release_overview( );
-		s_overview.m_map   = map;
-		s_overview.m_tried = true;
-		if ( map.empty( ) || !g_interfaces.m_direct_device )
-			return;
-		char exe[ MAX_PATH ]{ };
-		GetModuleFileNameA( nullptr, exe, MAX_PATH );
-		const std::filesystem::path base = std::filesystem::path( exe ).parent_path( ) / "csgo" / "resource" / "overviews";
-		std::ifstream txt( base / ( map + ".txt" ) );
-		bool have = false;
-		for ( std::string line; std::getline( txt, line ); ) {
-			const auto value = [ & ]( const char* key, float& out ) {
-				const size_t k = line.find( std::string( "\"" ) + key + "\"" );
-				if ( k == std::string::npos )
-					return;
-				const size_t a = line.find( '"', k + std::strlen( key ) + 2 );
-				if ( a != std::string::npos )
-					out = static_cast< float >( std::atof( line.c_str( ) + a + 1 ) ), have = true;
-			};
-			value( "pos_x", s_overview.m_pos_x );
-			value( "pos_y", s_overview.m_pos_y );
-			value( "scale", s_overview.m_scale );
+		if ( s_overview.m_map != map || !s_overview.m_tried ) {
+			release_overview( );
+			s_overview       = { };
+			s_overview.m_map   = map;
+			s_overview.m_tried = true;
+			if ( map.empty( ) )
+				return;
+			char exe[ MAX_PATH ]{ };
+			GetModuleFileNameA( nullptr, exe, MAX_PATH );
+			const std::filesystem::path base = std::filesystem::path( exe ).parent_path( ) / "csgo" / "resource" / "overviews";
+			std::ifstream txt( base / ( map + ".txt" ) );
+			bool have = false;
+			for ( std::string line; std::getline( txt, line ); ) {
+				const auto value = [ & ]( const char* key, float& out ) {
+					const size_t k = line.find( std::string( "\"" ) + key + "\"" );
+					if ( k == std::string::npos )
+						return;
+					const size_t a = line.find( '"', k + std::strlen( key ) + 2 );
+					if ( a != std::string::npos )
+						out = static_cast< float >( std::atof( line.c_str( ) + a + 1 ) ), have = true;
+				};
+				value( "pos_x", s_overview.m_pos_x );
+				value( "pos_y", s_overview.m_pos_y );
+				value( "scale", s_overview.m_scale );
+			}
+			if ( !have || s_overview.m_scale <= 0.f )
+				return;
+			std::ifstream dds( base / ( map + "_radar.dds" ), std::ios::binary );
+			s_overview.m_dds.assign( std::istreambuf_iterator< char >( dds ), std::istreambuf_iterator< char >( ) );
+			s_overview.m_have = !s_overview.m_dds.empty( );
 		}
-		if ( !have || s_overview.m_scale <= 0.f )
+		if ( !s_overview.m_have || s_overview.m_texture || s_overview.m_tex_tried || !g_interfaces.m_direct_device )
 			return;
-		const std::string dds = ( base / ( map + "_radar.dds" ) ).string( );
-		const auto load       = [ & ]( DWORD usage, D3DPOOL pool ) {
-            return D3DXCreateTextureFromFileExA( g_interfaces.m_direct_device, dds.c_str( ), D3DX_DEFAULT_NONPOW2, D3DX_DEFAULT_NONPOW2, 1, usage,
-			                                           D3DFMT_A8R8G8B8, pool, D3DX_FILTER_NONE, D3DX_FILTER_NONE, 0, nullptr, nullptr, &s_overview.m_texture );
+		s_overview.m_tex_tried = true;
+		const auto& f          = s_overview.m_dds;
+		const auto load        = [ & ]( DWORD usage, D3DPOOL pool ) {
+			return D3DXCreateTextureFromFileInMemoryEx( g_interfaces.m_direct_device, f.data( ), static_cast< UINT >( f.size( ) ), D3DX_DEFAULT_NONPOW2,
+			                                            D3DX_DEFAULT_NONPOW2, 1, usage, D3DFMT_A8R8G8B8, pool, D3DX_FILTER_NONE, D3DX_FILTER_NONE, 0,
+			                                            nullptr, nullptr, &s_overview.m_texture );
 		};
 		if ( FAILED( load( 0, D3DPOOL_MANAGED ) ) && FAILED( load( D3DUSAGE_DYNAMIC, D3DPOOL_DEFAULT ) ) )
 			s_overview.m_texture = nullptr;
@@ -662,7 +742,7 @@ namespace
 			const rd::vec_t p = r.to_screen( c );
 			const float wh    = static_cast< float >( static_cast< unsigned int >( sx( 8.f ) ) );
 			rd::vec_t v[ 4 ]{ };
-			rd::rotating_quad( p.x, p.y, rd::arrow_angle( s_s.m_yaw, r ), wh, wh, v );
+			rd::rotating_quad( p.x, p.y, rd::arrow_angle( s_s.m_body_yaw, r ), wh, wh, v );
 			if ( IDirect3DTexture9* const t = texture( hud_tex( "radar_centre" ) ) )
 				l->AddImageQuad( reinterpret_cast< ImTextureID >( t ), ImVec2( v[ 0 ].x, v[ 0 ].y ), ImVec2( v[ 1 ].x, v[ 1 ].y ), ImVec2( v[ 2 ].x, v[ 2 ].y ),
 				                 ImVec2( v[ 3 ].x, v[ 3 ].y ), ImVec2( 0.f, 0.f ), ImVec2( 1.f, 0.f ), ImVec2( 1.f, 1.f ), ImVec2( 0.f, 1.f ), IM_COL32_WHITE );
@@ -704,6 +784,8 @@ void n_gta_hud::impl_t::on_paint_traverse( )
 		std::thread( load_worker ).detach( );
 	}
 
+	drain_chat( on && in_game );
+
 	snapshot_t s{ };
 	s.m_in_game = on && in_game && g_convars.int_or( HASH_BT( "cl_drawhud" ), 1 ) != 0;
 	if ( !s.m_in_game ) {
@@ -718,13 +800,16 @@ void n_gta_hud::impl_t::on_paint_traverse( )
 
 	// subject: local, or whoever is followed in eye / chase
 	c_base_entity* subject = local;
+	bool chase             = false;
 	if ( !local->is_alive( ) ) {
 		const int mode = local->get_observer_mode( );
 		auto* target   = g_interfaces.m_client_entity_list->get< c_base_entity >( local->get_observer_target_handle( ) );
 		if ( ( mode == 4 || mode == 5 ) && target && target->is_player( ) && target->is_alive( ) && target != local )
-			subject = target;
+			subject = target, chase = mode == 5;
+		else if ( ( s.m_team == 2 || s.m_team == 3 ) && mode <= 2 )
+			s.m_wasted = true; // none / death / freeze cam right after dying: sa's wasted screen
 		else
-			s.m_wasted = true; // death / freeze cam: sa's wasted screen
+			s.m_free = true; // spectator team, free roam, fixed cam: nobody's stats to show
 	}
 	s.m_alive  = subject->is_alive( );
 	s.m_health = std::clamp( subject->get_health( ), 0, 100 );
@@ -737,6 +822,8 @@ void n_gta_hud::impl_t::on_paint_traverse( )
 	if ( const char* place = subject->get_last_place( ); place && *place ) {
 		const wchar_t* w = g_interfaces.m_localize ? g_interfaces.m_localize->find_safe( place ) : nullptr;
 		s.m_zone         = ascii( w && *w ? g_utilities.to_utf8( w ) : std::string( place ) );
+		if ( s.m_zone.empty( ) ) // non-latin client language: sa's font has no glyphs, the raw token ("BombsiteA") still reads
+			s.m_zone = ascii( place );
 	}
 
 	// active weapon
@@ -771,7 +858,9 @@ void n_gta_hud::impl_t::on_paint_traverse( )
 	c_angle view{ };
 	engine->get_view_angles( view );
 	static const unsigned int eye_yaw = net_offset( HASH_BT( "CCSPlayer->m_angEyeAngles[1]" ) );
-	s.m_yaw = subject == local ? view.m_y : eye_yaw ? field< float >( subject, eye_yaw ) : subject->get_abs_angles( ).m_y;
+	// radar turns with the rendered camera (CalculateCachedSinCos), arrow = body: in-eye = target eyes, chase = our view angles
+	s.m_body_yaw = subject == local ? view.m_y : eye_yaw ? field< float >( subject, eye_yaw ) : subject->get_abs_angles( ).m_y;
+	s.m_yaw      = subject == local || chase ? view.m_y : s.m_body_yaw;
 	const int subject_team = subject->get_team( );
 	for ( int i = 1; i <= 64; ++i ) {
 		auto* const p = g_interfaces.m_client_entity_list->get< c_base_entity >( i );
@@ -818,16 +907,25 @@ void n_gta_hud::impl_t::on_paint_traverse( )
 		static const unsigned int warmup_end = net_offset( HASH_BT( "CCSGameRulesProxy->m_fWarmupPeriodEnd" ) );
 		static const unsigned int time_ofs   = net_offset( HASH_BT( "CCSGameRulesProxy->m_iRoundTime" ) );
 		static const unsigned int start_ofs  = net_offset( HASH_BT( "CCSGameRulesProxy->m_fRoundStartTime" ) );
-		if ( const std::uintptr_t rules = game_rules( ); rules && time_ofs && start_ofs ) {
-			const void* r     = reinterpret_cast< void* >( rules );
-			const bool warmup = warmup_ofs && field< bool >( r, warmup_ofs );
-			if ( warmup && warmup_end )
-				s.m_clock_ms = static_cast< int >( std::max( field< float >( r, warmup_end ) - now_game, 0.f ) * 1000.f );
-			else if ( const int round = field< int >( r, time_ofs ); round > 0 ) {
-				const float left = std::clamp( static_cast< float >( round ) - std::max( now_game - field< float >( r, start_ofs ), 0.f ), 0.f,
-				                               static_cast< float >( round ) );
-				s.m_clock_ms     = static_cast< int >( left * 1000.f );
-			}
+		const std::uintptr_t rules = game_rules( );
+		bool warmup = false;
+		float wend = 0.f, start = 0.f;
+		int round = 0;
+		if ( rules && time_ofs && start_ofs ) {
+			const void* r = reinterpret_cast< void* >( rules );
+			warmup        = warmup_ofs && field< bool >( r, warmup_ofs );
+			wend          = warmup_end ? field< float >( r, warmup_end ) : 0.f;
+			round         = field< int >( r, time_ofs );
+			start         = field< float >( r, start_ofs );
+			s.m_clock_ms  = round_clock_ms( warmup, wend, round, start, now_game );
+		}
+		// one line per clock state change: says which input pins the clock (see memory proj-gta-hud-1116)
+		static int s_logged = -2;
+		const int state = !rules ? -1 : ( warmup ? 1 : 0 ) | ( round > 0 ? 2 : 0 ) | ( s.m_clock_ms > 0 ? 4 : 0 ) | ( s.m_clock_ms < 0 ? 8 : 0 );
+		if ( state != s_logged ) {
+			s_logged = state;
+			botox_dbg_log( "GTAT: rules %p ofs %u/%u/%u warmup %d wend %.1f round %d start %.1f now %.1f -> %d ms", reinterpret_cast< void* >( rules ),
+			               warmup_ofs, time_ofs, start_ofs, warmup ? 1 : 0, wend, round, start, now_game, s.m_clock_ms );
 		}
 	}
 
@@ -850,10 +948,119 @@ void n_gta_hud::impl_t::on_event( game_event_t* event )
 	s_ev.m_success = gxt( winner == team ? "M_PASSR" : "M_FAIL" );
 }
 
+// game thread (push_notice): csgo + botox chat lines -> CFont lines
+void n_gta_hud::impl_t::on_chat( const char* text, int client, bool html )
+{
+	if ( !n_gta_hud::enabled( ) || !text || !*text )
+		return;
+	const int sender = !html && client > 0 && client <= 64 ? client : 0;
+	int team         = 0;
+	if ( sender )
+		if ( auto* e = g_interfaces.m_client_entity_list->get< c_base_entity >( sender ) )
+			team = e->get_team( );
+	std::string line = chat_line( text, html, team );
+	std::lock_guard< std::mutex > lock( m_lock );
+	// stamped on arrival (render may not drain while out of game / cl_drawhud 0), newest kept
+	if ( s_ev.m_chat.size( ) >= static_cast< size_t >( k_chat_lines ) )
+		s_ev.m_chat.erase( s_ev.m_chat.begin( ) );
+	s_ev.m_chat.emplace_back( std::move( line ), now_ms( ) );
+}
+
+// game thread (paint_traverse): send / drop the typed line, mc_hud's drain
+void n_gta_hud::impl_t::drain_chat( bool active )
+{
+	const bool ui_input = g_menu.m_opened || point_menu_is_opened( );
+	bool send = false, team = false;
+	std::string message{ };
+	{
+		std::scoped_lock lock( m_chat_mutex );
+		m_chat_drain_ms = GetTickCount64( );
+		if ( m_chat_open && !m_chat_result && ( !active || ui_input || !g_ctx.m_is_window_focused ) )
+			m_chat_result = 2;
+		if ( m_chat_open && m_chat_result ) {
+			send             = m_chat_result == 1;
+			team             = m_chat_team;
+			message          = g_utilities.to_utf8( m_chat_input );
+			m_chat_open      = false;
+			m_chat_result    = 0;
+			m_chat_open_char = 0;
+			m_chat_input.clear( );
+		}
+	}
+	std::erase( message, '"' );
+	std::erase( message, ';' );
+	if ( send && !message.empty( ) )
+		g_interfaces.m_engine_client->client_cmd_unrestricted( ( std::string( team ? "say_team \"" : "say \"" ) + message + "\"" ).c_str( ) );
+}
+
+// window thread: the messagemode bind opens our line instead of the csgo chat panel (urt / cod4 / mc copy)
+bool n_gta_hud::impl_t::chat_on_key( unsigned int msg, unsigned int wide_param, long long_param, bool ui_input )
+{
+	if ( msg != WM_KEYDOWN && msg != WM_KEYUP && msg != WM_CHAR )
+		return false;
+	if ( ui_input || wide_param == g_menu.menu_key( ) )
+		return false;
+	std::scoped_lock lock( m_chat_mutex );
+	const bool stale = GetTickCount64( ) - m_chat_drain_ms > 1000ull;
+	if ( m_chat_open && stale ) {
+		m_chat_open      = false;
+		m_chat_result    = 0;
+		m_chat_open_char = 0;
+		m_chat_input.clear( );
+	}
+	if ( msg == WM_KEYUP )
+		return false;
+	if ( !m_chat_open ) {
+		if ( msg != WM_KEYDOWN || stale || !n_gta_hud::ready( ) )
+			return false;
+		if ( !g_interfaces.m_engine_client || !g_interfaces.m_input_system || !g_interfaces.m_engine_client->is_in_game( ) ||
+		     g_interfaces.m_engine_client->is_console_visible( ) )
+			return false;
+		const char* bind = g_interfaces.m_engine_client->key_binding_for_key( g_interfaces.m_input_system->scan_code_to_button_code( long_param ) );
+		if ( !bind || !std::strstr( bind, "messagemode" ) )
+			return false;
+		m_chat_open      = true;
+		m_chat_team      = std::strstr( bind, "messagemode2" ) != nullptr;
+		m_chat_result    = 0;
+		m_chat_open_char = static_cast< wchar_t >( std::towlower( MapVirtualKeyW( wide_param, MAPVK_VK_TO_CHAR ) & 0x7FFF ) );
+		m_chat_input.clear( );
+		return true;
+	}
+	if ( msg == WM_CHAR ) {
+		const wchar_t character = static_cast< wchar_t >( wide_param );
+		if ( m_chat_open_char ) {
+			const wchar_t opener = m_chat_open_char;
+			m_chat_open_char     = 0;
+			if ( character == opener || character == static_cast< wchar_t >( opener - 32 ) )
+				return true;
+		}
+		// MAX_SAY_TEXT 150
+		if ( character >= L' ' && character != 0x7F && m_chat_input.size( ) < 150U )
+			m_chat_input.push_back( character );
+		return true;
+	}
+	switch ( wide_param ) {
+	case VK_RETURN: m_chat_result = 1; break;
+	case VK_ESCAPE: m_chat_result = 2; break;
+	case VK_BACK:
+		if ( !m_chat_input.empty( ) )
+			m_chat_input.pop_back( );
+		break;
+	default: break;
+	}
+	return true;
+}
+
 bool n_gta_hud::hides_scope( )
 {
 	const snapshot_t& s = g_gta_hud.m_snapshot;
-	return enabled( ) && s.m_in_game && s.m_alive && s.m_scoped;
+	return ready( ) && s.m_in_game && s.m_alive && s.m_scoped;
+}
+
+// fonts are what every element needs; without them the stock hud stays (offline, 404, half a cache)
+bool n_gta_hud::ready( )
+{
+	return enabled( ) && s_load_state == 2 && !s_files[ k_font_base ].empty( ) && !s_files[ k_font_base + 1 ].empty( );
 }
 
 void n_gta_hud::impl_t::on_release( ) { }
@@ -871,13 +1078,25 @@ void n_gta_hud::impl_t::on_end_scene( )
 	g.m_frame               = frame_of( now );
 	{
 		std::lock_guard< std::mutex > lock( m_lock );
+		// chat drains in or out of game: lines carry their arrival time
+		for ( auto& [ line, ms ] : s_ev.m_chat )
+			s_chat.push_back( { std::move( line ), ms } );
+		s_ev.m_chat.clear( );
+		if ( s_chat.size( ) > static_cast< size_t >( k_chat_lines ) )
+			s_chat.erase( s_chat.begin( ), s_chat.end( ) - k_chat_lines );
 		if ( !m_snapshot.m_in_game )
 			return;
 		s_s = m_snapshot;
 		if ( !s_ev.m_success.empty( ) )
 			s_success.set( s_ev.m_success.c_str( ) ), s_ev.m_success.clear( );
 	}
-	if ( s_load_state != 2 )
+	{
+		std::scoped_lock lock( m_chat_mutex );
+		s_chat_prefix = m_chat_open ? std::string( m_chat_team ? "Say (team): " : "Say: " ) : std::string( );
+		s_chat_typed  = m_chat_open ? ascii( g_utilities.to_utf8( m_chat_input ) ) : std::string( );
+		std::erase( s_chat_typed, '~' );
+	}
+	if ( !n_gta_hud::ready( ) )
 		return;
 
 	const int w = static_cast< int >( g_ctx.m_width ), h = static_cast< int >( g_ctx.m_height );
@@ -894,13 +1113,16 @@ void n_gta_hud::impl_t::on_end_scene( )
 
 	s_wasted.set( s_s.m_wasted );
 
-	// CHud::Draw order, then DrawAfterFade
-	draw_crosshair( );
-	draw_player_info( );
-	draw_wanted( );
+	// CHud::Draw order, then DrawAfterFade. spectating nobody: no player stats, the radar stays
+	if ( !s_s.m_free ) {
+		draw_crosshair( );
+		draw_player_info( );
+		draw_wanted( );
+	}
 	draw_radar( );
 	draw_big_messages( );
 	draw_area_name( );
+	draw_chat( );
 
 	for ( int v = first_vertex; left != 0.f && v < g.m_list->VtxBuffer.Size; ++v )
 		g.m_list->VtxBuffer[ v ].pos.x += left;

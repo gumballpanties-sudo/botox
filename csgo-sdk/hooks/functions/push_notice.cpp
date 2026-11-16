@@ -13,6 +13,7 @@
 #include "../../hacks/mc_hud/mc_hud.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
 #include "../../hacks/urt_hud/urt_hud.h"
+#include "../../hacks/gta_hud/gta_hud.h"
 #include "../hooks.h"
 
 extern void botox_dbg_log( const char* fmt, ... );
@@ -179,7 +180,8 @@ void __fastcall n_detoured_functions::push_notice( void* ecx, void* edx, const c
 		const bool botox = raw == line;
 		g_cod4_hud.on_chat( line, botox ? 0 : len, botox || ( reinterpret_cast< uintptr_t >( raw ) & 0xFF ) != 0 );
 		g_urt_hud.on_chat( line, botox ? 0 : len, botox || ( reinterpret_cast< uintptr_t >( raw ) & 0xFF ) != 0 );
-		if ( !n_mc_hud::enabled( ) && !n_cod4_hud::enabled( ) && !n_urt_hud::enabled( ) )
+		g_gta_hud.on_chat( line, botox ? 0 : len, botox || ( reinterpret_cast< uintptr_t >( raw ) & 0xFF ) != 0 );
+		if ( !n_mc_hud::enabled( ) && !n_cod4_hud::enabled( ) && !n_urt_hud::enabled( ) && !n_gta_hud::ready( ) )
 			original( ecx, edx, line, len, raw );
 	};
 

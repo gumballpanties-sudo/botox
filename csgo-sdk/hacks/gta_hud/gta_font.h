@@ -357,7 +357,7 @@ namespace n_gta_font
 			if ( tag ) {
 				saved_tag[ 0 ] = '~', saved_tag[ 1 ] = tag, saved_tag[ 2 ] = '~';
 				const size_t n = std::min( std::strlen( text ), sizeof( saved_tag ) - 4 );
-				std::memcpy( saved_tag + 3, text, n );
+				std::memmove( saved_tag + 3, text, n ); // from the 2nd wrap on, text points into saved_tag
 				saved_tag[ 3 + n ] = 0;
 				text               = saved_tag;
 			}

@@ -8,6 +8,7 @@
 #include "../../../globals/logger/logger.h"
 #include "../../visuals/screen/resolution_spoof.h"
 #include "../../chud_hud/chud_hud.h"
+#include "../../gta_hud/gta_hud.h"
 #include <string>
 #include <format>
 #include <cstdio>
@@ -354,11 +355,27 @@ static const char* k_hud_removal = R"js(
         try { q.style.position = null; } catch ( e ) {}
         try { q.SetAttributeString( 'bxrm', '' ); } catch ( e ) {}
     }
+    // voice status (HudLowerLeft > #Status) lifted by lift px, 0 = put back only what we moved
+    var lift = ${lift}, ll = P( 'HudLowerLeft' ), vs = null;
+    try { vs = ll ? ll.FindChildTraverse( 'Status' ) : null; } catch ( e ) {}
+    if ( vs ) {
+        var moved = false;
+        try { moved = vs.GetAttributeString( 'bxlift', '' ) === '1'; } catch ( e ) {}
+        if ( lift > 0 ) {
+            try { vs.style.transform = 'translate3d( 0px, -' + lift + 'px, 0px )'; } catch ( e ) {}
+            try { vs.SetAttributeString( 'bxlift', '1' ); } catch ( e ) {}
+        } else if ( moved ) {
+            try { vs.style.transform = null; } catch ( e ) {}
+            try { vs.SetAttributeString( 'bxlift', '' ); } catch ( e ) {}
+        }
+    }
 })();
 )js";
 
 // panorama reticle (styles 0 / 1), stock in chud mode too. not a menu element, cod4 hud only
 static constexpr int k_rm_crosshair = 1 << hud_element_max;
+// not a removal: gta hud lifts the voice status over its radar (bottom left)
+static constexpr int k_rm_voice_lift = 1 << ( hud_element_max + 1 );
 
 static int s_hud_rm_mask   = 0;
 static int s_hud_rm_chud   = -1;
@@ -409,11 +426,12 @@ void n_scaleform::impl_t::hud_removal( )
 		        1 << hud_element_radar | 1 << hud_element_money | 1 << hud_element_timer | 1 << hud_element_chat | 1 << hud_element_winpanel |
 		        1 << hud_element_alerts | k_rm_crosshair;
 
-	// gta sa hud draws health / armor / money / weapon + ammo, clock, radar, crosshair, mission passed. csgo chat stays (typing works)
-	if ( GET_VARIABLE( g_variables.m_gta_hud, bool ) )
+	// gta sa hud draws health / armor / money / weapon + ammo, clock, radar, crosshair, mission passed, chat over the radar.
+	// ready = art downloaded: offline / 404 keeps the stock hud instead of a blank screen
+	if ( n_gta_hud::ready( ) )
 		mask |= 1 << hud_element_health | 1 << hud_element_ammo | 1 << hud_element_weapon_select | 1 << hud_element_killfeed |
-		        1 << hud_element_radar | 1 << hud_element_money | 1 << hud_element_timer | 1 << hud_element_winpanel | 1 << hud_element_alerts |
-		        k_rm_crosshair;
+		        1 << hud_element_radar | 1 << hud_element_money | 1 << hud_element_timer | 1 << hud_element_chat | 1 << hud_element_winpanel |
+		        1 << hud_element_alerts | k_rm_crosshair | k_rm_voice_lift;
 
 	if ( ejecting )
 		mask = 0;
@@ -458,9 +476,16 @@ void n_scaleform::impl_t::hud_removal( )
 		list += list.empty( ) ? "'Crosshair'" : ",'Crosshair'";
 	}
 
+	// stock "voice disabled" row ends ~4.5% above the bottom, sa radar disc top = 108 / 448: 20.5% of the height puts the row on
+	// the disc. panorama px are 1080 tall, hud_scaling shrinks them
+	int lift = 0;
+	if ( mask & k_rm_voice_lift )
+		lift = static_cast< int >( 1080.f * 0.205f / std::clamp( g_convars.float_or( HASH_BT( "hud_scaling" ), 0.85f ), 0.5f, 1.f ) );
+
 	std::string js = k_hud_removal;
 	replace_str( js, "${hide}", hide );
 	replace_str( js, "${show}", show );
+	replace_str( js, "${lift}", std::to_string( lift ) );
 	m_uiengine->run_script( m_removal_root, js.c_str( ), CSGO_HUD_SCHEMA, 8, 10, false, false );
 
 	if ( s_hud_rm_mask & ~mask ) {
