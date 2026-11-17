@@ -39,6 +39,7 @@
 #include <freetype/ftsynth.h>
 
 #include "imgui_internal.h" // ImMin,ImMax,ImFontAtlasBuild*,
+#include "imgui_px_slot.h"
 #include <ft2build.h>
 #include <stdint.h>
 
@@ -77,6 +78,24 @@ static void* GImGuiFreeTypeAllocatorUserData                              = NULL
 char g_ft_build_fail[ 160 ] = "";
 static FT_Error g_ft_face_error = 0;
 static const char* g_ft_face_step = "";
+
+void botox_dbg_log( const char* fmt, ... ); // globals/logger/debug_log.cpp
+
+/* botox: zeroed alpha pixels. ImFontAtlasFlags_BotoxPixelSlot atlas = the session's reserved range first ( imgui_px_slot.h ) */
+static unsigned char* ImFontAtlasAllocAlpha8( ImFontAtlas* atlas, size_t size )
+{
+	if ( atlas->Flags & ImFontAtlasFlags_BotoxPixelSlot ) {
+		void* const slot = n_px_slot::take( size );
+		botox_dbg_log( "FONT: pixels %.1f mb %s %p reserved %.1f mb", size / ( 1024.0 * 1024.0 ), slot ? "slot" : "heap", slot,
+		               n_px_slot::reserved( ) / ( 1024.0 * 1024.0 ) );
+		if ( slot )
+			return ( unsigned char* )slot;
+	}
+	unsigned char* const px = ( unsigned char* )IM_ALLOC( size );
+	if ( px )
+		memset( px, 0, size );
+	return px;
+}
 
 //-------------------------------------------------------------------------
 // Code
@@ -687,12 +706,8 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 		atlas->TexPixelsRGBA32 = ( unsigned int* )IM_ALLOC( tex_size );
 		if ( atlas->TexPixelsRGBA32 )
 			memset( atlas->TexPixelsRGBA32, 0, tex_size );
-	} else {
-		size_t tex_size        = ( size_t )atlas->TexWidth * atlas->TexHeight * 1;
-		atlas->TexPixelsAlpha8 = ( unsigned char* )IM_ALLOC( tex_size );
-		if ( atlas->TexPixelsAlpha8 )
-			memset( atlas->TexPixelsAlpha8, 0, tex_size );
-	}
+	} else
+		atlas->TexPixelsAlpha8 = ImFontAtlasAllocAlpha8( atlas, ( size_t )atlas->TexWidth * atlas->TexHeight );
 
 	/* botox: no room for the one big block with the glyph chunks still held: free them, try again and render the
 	   glyphs a second time straight into the texture ( alpha only ). peak = the texture alone */
@@ -702,12 +717,8 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 			IM_FREE( buf_bitmap_buffers[ buf_i ] );
 		buf_bitmap_buffers.clear( );
 
-		const size_t tex_size  = ( size_t )atlas->TexWidth * atlas->TexHeight;
-		atlas->TexPixelsAlpha8 = ( unsigned char* )IM_ALLOC( tex_size );
-		if ( atlas->TexPixelsAlpha8 ) {
-			memset( atlas->TexPixelsAlpha8, 0, tex_size );
-			rerender = true;
-		}
+		atlas->TexPixelsAlpha8 = ImFontAtlasAllocAlpha8( atlas, ( size_t )atlas->TexWidth * atlas->TexHeight );
+		rerender               = atlas->TexPixelsAlpha8 != NULL;
 	}
 
 	/* botox: one big block in a 32 bit process - fail the build (caller keeps its old fonts) instead
@@ -879,6 +890,10 @@ const ImFontBuilderIO* ImGuiFreeType::GetBuilderForFreeType( )
 	io.FontBuilder_Build = ImFontAtlasBuildWithFreeType;
 	return &io;
 }
+
+bool ImGuiFreeType::GiveBackPixels( void* pixels ) { return n_px_slot::give_back( pixels ); }
+
+void ImGuiFreeType::ReleasePixelSlot( ) { n_px_slot::release( ); }
 
 void ImGuiFreeType::SetAllocatorFunctions( void* ( *alloc_func )( size_t sz, void* user_data ), void ( *free_func )( void* ptr, void* user_data ),
                                            void* user_data )

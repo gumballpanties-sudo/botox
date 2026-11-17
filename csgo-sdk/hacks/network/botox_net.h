@@ -47,9 +47,10 @@ namespace n_botox_net
 	};
 
 	enum e_hello_flags : std::uint8_t {
-		hello_esp   = 1 << 0,
-		hello_skins = 1 << 1,
-		hello_web   = 1 << 2,
+		hello_esp    = 1 << 0,
+		hello_skins  = 1 << 1,
+		hello_web    = 1 << 2,
+		hello_typing = 1 << 3,
 	};
 
 #pragma pack( push, 1 )
@@ -170,6 +171,8 @@ namespace n_botox_net
 		/* KNIFE_MODELS slot a botox user's knife shows as, 0 = none. read by the CBaseViewModel recv proxies */
 		int knife_slot_of( int player_index ) const;
 
+		bool typing( int player_index ) const;
+
 		std::atomic< int > m_users{ 0 };
 
 	private:
@@ -285,6 +288,7 @@ namespace n_botox_net
 
 		float m_mic_time   = -1.f;
 		float m_last_hello = -1.f;
+		bool m_sent_typing = false;
 		float m_last_skin  = -1.f;
 		int m_esp_cursor   = 1;
 	};

@@ -226,6 +226,7 @@ void n_lua::impl_t::unload( script_t& script, const bool run_callback )
 
 	this->save_settings( script );
 
+	n_lua_api::forget_script( &script );
 	lua_close( L );
 
 	{
@@ -492,6 +493,12 @@ void n_lua::impl_t::on_frame_stage( const int stage )
 		lua_pushinteger( L, stage );
 		return 1;
 	} );
+
+	/* after the scripts ( a swap made this frame counts ), before the game runs the stage: postdataupdate_start = before
+	   prediction copies the network state, render_start = before the frame's view ( the client's own deploy resets ) */
+	if ( ( stage == e_client_frame_stage::net_update_postdataupdate_start || stage == e_client_frame_stage::render_start ) &&
+	     GetCurrentThreadId( ) == this->m_thread )
+		n_lua_api::apply_viewmodel_swaps( stage == e_client_frame_stage::net_update_postdataupdate_start );
 }
 
 void n_lua::impl_t::on_event( game_event_t* event )

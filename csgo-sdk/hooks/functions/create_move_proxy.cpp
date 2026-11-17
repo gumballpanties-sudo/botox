@@ -30,6 +30,7 @@
    leaves the weld pushing a stale direction. no-op on ticks air_stuck did not author */
 extern void air_stuck_final_stamp( c_user_cmd* cmd );
 extern void air_stuck_shot_proof( c_user_cmd* cmd );
+extern void edge_surf_final_stamp( c_user_cmd* cmd );
 
 extern void start_movement_fix( c_user_cmd* cmd );
 extern void end_movement_fix( c_user_cmd* cmd );
@@ -47,7 +48,6 @@ extern void gnd_wish_start( );
 extern void gnd_wish_check( const char* stage, bool final_view = false );
 extern void cmd_start_guard( const char* stage, bool close );
 extern void psa_ride_end( const c_user_cmd* cmd );
-extern void edge_surf( c_user_cmd* cmd );
 
 namespace
 {
@@ -413,7 +413,6 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		{
 			PERF_ZONE( zone_cmd_tung );
 			g_movement.tung_surf( cmd );
-			edge_surf( cmd );
 		}
 		cmd_start_guard( "tung", false );
 
@@ -565,8 +564,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		g_botox_net.on_create_move( );
 	}
 
-	if ( ( GET_VARIABLE( g_variables.m_tung_surf, bool ) || GET_VARIABLE( g_variables.m_edge_surf, bool ) ) &&
-	     !g_hooks.m_process_movement_sv.is_hooked( ) ) {
+	if ( GET_VARIABLE( g_variables.m_tung_surf, bool ) && !g_hooks.m_process_movement_sv.is_hooked( ) ) {
 		static unsigned long long next_try = 0ull;
 		if ( const unsigned long long now = GetTickCount64( ); now >= next_try ) {
 			next_try = now + 5000ull;
@@ -585,6 +583,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 
 	air_stuck_shot_proof( cmd );
 	g_texturebug.preserve_move( cmd );
+	/* an owned edge surf tick leaves with its own move ( anything after movement post could close you onto the ledge top ) */
+	edge_surf_final_stamp( cmd );
 
 	g_ctx.m_last_tick_yaw = cmd->m_view_point.m_y;
 	g_ctx.last_view_point = cmd->m_view_point;

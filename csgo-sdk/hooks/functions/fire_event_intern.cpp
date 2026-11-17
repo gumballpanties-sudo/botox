@@ -114,8 +114,9 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 
 			g_players.god_on_hurt( victim_id );
 
+			/* dead = create_move skips the recorder: end recording + clip session here, not on respawn */
 			if ( victim_id == local_id )
-				g_movement_recorder.force_stop( );
+				g_movement_recorder.reset_all( );
 
 			const int revive_mode = GET_VARIABLE( g_variables.m_auto_revive_mode, int );
 			const auto picked     = player_list_get( victim_id );

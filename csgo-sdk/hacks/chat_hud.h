@@ -35,6 +35,7 @@ __forceinline static FuncType CallVFunction( void* ppClass, int index )
 #define CHAT_TOKEN_AIRSTUCK   "#botox#_print_airstucked"
 #define CHAT_TOKEN_PIXELSURF  "#botox#_print_pixelsurfed"
 #define CHAT_TOKEN_WALLCLIMB  "#botox#_print_wallclimbed"
+#define CHAT_TOKEN_EDGESURF   "#botox#_print_edgesurfed"
 #define CHAT_TOKEN_JUMPSTATS  "#botox#_print_jumpstats"
 #define CHAT_TOKEN_RAW        "#botox#_print_raw"
 

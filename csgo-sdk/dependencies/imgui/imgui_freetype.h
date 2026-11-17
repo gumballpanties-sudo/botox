@@ -47,6 +47,10 @@ namespace ImGuiFreeType
 	IMGUI_API void SetAllocatorFunctions( void* ( *alloc_func )( size_t sz, void* user_data ), void ( *free_func )( void* ptr, void* user_data ),
 	                                      void* user_data = NULL );
 
+	// botox: ImFontAtlasFlags_BotoxPixelSlot pixels ( imgui_px_slot.h ). GiveBackPixels = true when it was the slot ( never IM_FREE it )
+	IMGUI_API bool GiveBackPixels( void* pixels );
+	IMGUI_API void ReleasePixelSlot( );
+
 	// Obsolete names (will be removed soon)
 	// Prefer using '#define IMGUI_ENABLE_FREETYPE'
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS

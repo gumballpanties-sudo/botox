@@ -28,8 +28,11 @@ namespace
 	constexpr float k_start_radius     = 28.f;
 	constexpr float k_preview_line_dist = 300.f;
 	constexpr float k_pos_close_eps    = 0.1f;
-	constexpr float k_approach_give_up = 2.f;
+	constexpr float k_approach_give_up = 3.f;
+	constexpr float k_approach_brake   = 400.f; /* u/s^2, under duck accel + friction: lands without overshoot */
 	constexpr float k_indicator_lerp_k = 6.f;
+	constexpr float k_clip_min_seconds = 0.2f;
+	constexpr size_t k_clip_history    = 8;
 
 	std::string sanitize_clip_name( std::string name )
 	{
@@ -92,6 +95,53 @@ namespace
 		t = std::clamp( t, 0.f, 1.f );
 		return t * t * ( 3.f - 2.f * t );
 	}
+
+	/* clipper: under 1 u/s before this cmd on ground ( ladder / noclip too when only ending: the approach can't steer there ) */
+	bool at_rest( const bool ground_only )
+	{
+		const auto& b     = g_prediction.backup_data;
+		const bool ground = ( b.m_flags & e_flags::fl_onground ) != 0;
+		const bool hang   = b.m_move_type == move_type_ladder || b.m_move_type == move_type_noclip;
+		return ( ground || ( !ground_only && hang ) ) && b.m_velocity.length( ) < 1.f;
+	}
+
+	bool move_input( const c_user_cmd* cmd )
+	{
+		return std::fabs( cmd->m_forward_move ) > 0.5f || std::fabs( cmd->m_side_move ) > 0.5f || std::fabs( cmd->m_up_move ) > 0.5f ||
+		       ( cmd->m_buttons & in_jump );
+	}
+
+	/* cs:go ground accelerate is a speed command ( along wish dir: v -> min( v + step, wish ) ), so ask for the speed that
+	   still brakes to 0 on the spot; last tick = exact remaining distance. world wish, duck crop undone */
+	c_vector approach_wish( const c_vector& delta, const c_vector& vel, const float surface, const float duck_mod )
+	{
+		static auto sv_friction  = g_interfaces.m_convar->find_var( "sv_friction" );
+		static auto sv_stopspeed = g_interfaces.m_convar->find_var( "sv_stopspeed" );
+		const float dt           = g_interfaces.m_global_vars_base->m_interval_per_tick;
+
+		/* friction runs first */
+		c_vector v( vel.m_x, vel.m_y, 0.f );
+		if ( const float s = v.length_2d( ); s >= 0.1f ) {
+			const float fric = ( sv_friction ? sv_friction->get_float( ) : 5.2f ) * surface;
+			const float stop = sv_stopspeed ? sv_stopspeed->get_float( ) : 80.f;
+			v *= std::max( s - std::max( s, stop ) * fric * dt, 0.f ) / s;
+		}
+
+		const float dist = delta.length_2d( );
+		c_vector target{ };
+		if ( dist > 1e-4f )
+			target = c_vector( delta.m_x, delta.m_y, 0.f ) * ( std::min( dist / dt, std::sqrt( 2.f * k_approach_brake * dist ) ) / dist );
+
+		c_vector dir   = target - v;
+		const float e = dir.length_2d( );
+		if ( e < 1e-3f )
+			return { };
+		dir /= e;
+
+		/* walk move zeroes < 1 u/s: 0.5 = dead stop */
+		const float wish = std::max( target.dot_product( dir ), 0.5f ) / std::max( duck_mod, 0.1f );
+		return dir * std::min( wish, 450.f );
+	}
 }
 
 n_movement_recorder::frame_t::frame_t( c_user_cmd* cmd, const c_vector& pos )
@@ -107,6 +157,8 @@ n_movement_recorder::frame_t::frame_t( c_user_cmd* cmd, const c_vector& pos )
 	position     = pos;
 	velocity     = g_prediction.backup_data.m_velocity;
 	has_velocity = true;
+	duck_amount  = g_prediction.backup_data.m_duck_amount;
+	has_duck     = true;
 
 	if ( !g_ctx.m_local )
 		return;
@@ -200,6 +252,8 @@ static bool read_clip_from_file( const std::filesystem::path& file_path, n_movem
 			f.velocity.m_x = jf.value( "vx", 0.f );
 			f.velocity.m_y = jf.value( "vy", 0.f );
 			f.velocity.m_z = jf.value( "vz", 0.f );
+			f.has_duck     = jf.contains( "da" );
+			f.duck_amount  = jf.value( "da", 0.f );
 			clip_out.frames.emplace_back( std::move( f ) );
 		}
 	} catch ( ... ) {
@@ -215,7 +269,8 @@ static bool read_clip_from_file( const std::filesystem::path& file_path, n_movem
 	return true;
 }
 
-static void write_clip_to_file( const std::filesystem::path& file_path, const n_movement_recorder::clip_t& clip )
+/* tmp + rename: a crash or full disk mid write never leaves a half .mr */
+static bool write_clip_to_file( const std::filesystem::path& file_path, const n_movement_recorder::clip_t& clip )
 {
 	json j;
 	j[ "map" ]    = clip.map;
@@ -240,12 +295,30 @@ static void write_clip_to_file( const std::filesystem::path& file_path, const n_
 		jf[ "vx" ]   = f.velocity.m_x;
 		jf[ "vy" ]   = f.velocity.m_y;
 		jf[ "vz" ]   = f.velocity.m_z;
+		if ( f.has_duck )
+			jf[ "da" ] = f.duck_amount;
 		j[ "frames" ].push_back( jf );
 	}
 
-	std::ofstream out( file_path );
-	if ( out.good( ) )
-		out << j.dump( 2 );
+	auto tmp = file_path;
+	tmp += ".tmp";
+	{
+		std::ofstream out( tmp, std::ios::trunc );
+		if ( !out.good( ) )
+			return false;
+		out << j.dump( );
+		out.close( );
+		if ( out.fail( ) )
+			return false;
+	}
+
+	std::error_code ec;
+	std::filesystem::rename( tmp, file_path, ec );
+	if ( ec ) {
+		std::filesystem::remove( tmp, ec );
+		return false;
+	}
+	return true;
 }
 
 void n_movement_recorder::impl_t::refresh_clips( const bool only_if_changed )
@@ -293,15 +366,16 @@ void n_movement_recorder::impl_t::refresh_clips( const bool only_if_changed )
 		m_editor_open = false;
 }
 
-void n_movement_recorder::impl_t::save_frames( const std::vector< frame_t >& frames, const char* kind )
+/* ponytail: json write under m_clips_mutex, a menu save of a 300 s 128 tick clip stalls create_move that long; copy + write unlocked if it bites */
+bool n_movement_recorder::impl_t::save_frames( const std::vector< frame_t >& frames, const char* kind, std::string* saved_as )
 {
 	std::scoped_lock lock( m_clips_mutex );
 
 	if ( m_current_map.empty( ) )
-		return;
+		return false;
 	if ( frames.size( ) < 2 ) {
 		movement_add_window( 0, std::string( "nothing to save" ) );
-		return;
+		return false;
 	}
 
 	ensure_root( );
@@ -322,42 +396,136 @@ void n_movement_recorder::impl_t::save_frames( const std::vector< frame_t >& fra
 	c.display_name       = file_path.stem( ).string( );
 	c.filename           = file_path.filename( ).string( );
 
-	write_clip_to_file( file_path, c );
+	if ( !write_clip_to_file( file_path, c ) ) {
+		movement_add_window( 0, "couldn't write \"" + c.filename + "\"" );
+		botox_dbg_log( "REC: save FAILED %s\n", c.filename.c_str( ) );
+		return false;
+	}
 	movement_add_window( 0, "saved \"" + c.display_name + "\" " + std::to_string( c.frames.size( ) ) + " ticks" );
 	botox_dbg_log( "REC: saved %s ticks=%d tick=%d\n", c.filename.c_str( ), static_cast< int >( c.frames.size( ) ), c.tickrate );
 
+	if ( saved_as )
+		*saved_as = c.display_name;
 	m_clips.emplace_back( std::move( c ) );
 	m_selected_clip = static_cast< int >( m_clips.size( ) ) - 1;
+	return true;
 }
 
-void n_movement_recorder::impl_t::clip_route( )
+void n_movement_recorder::impl_t::drop_clip_session( )
 {
-	const float seconds = std::clamp( GET_VARIABLE( g_variables.m_movement_rec_clip_seconds, float ), 1.f, 120.f );
-	const size_t want   = static_cast< size_t >( seconds * static_cast< float >( server_tickrate( ) ) );
-	const size_t take   = std::min( want, m_clip_buffer.size( ) );
-	if ( take < 2 ) {
-		movement_add_window( 0, std::string( "clip buffer empty" ) );
-		return;
-	}
+	m_clip_active      = false;
+	m_clip_rolled      = false;
+	m_clip_still_ticks = 0;
+	m_clip_session.clear( );
+}
 
-	std::vector< frame_t > frames( m_clip_buffer.end( ) - static_cast< std::ptrdiff_t >( take ), m_clip_buffer.end( ) );
+/* session starts on input from rest ( frame 0 = standing, playback walks there and stands ), ends after the stop delay.
+   moving without a rest start ( after playback, bhop chain ) never opens one */
+void n_movement_recorder::impl_t::clip_tick( const frame_t& f, const bool can_start, const bool still )
+{
+	const float tick = static_cast< float >( server_tickrate( ) );
 
-	/* playback walks onto frame 0 and stands: start the clip where you stood, or the replay drifts */
-	size_t first = frames.size( );
-	for ( size_t i = 0; i + 1 < frames.size( ); ++i ) {
-		const c_vector& v = frames[ i ].velocity;
-		if ( frames[ i ].has_velocity && std::sqrtf( v.m_x * v.m_x + v.m_y * v.m_y ) < 5.f && std::fabs( v.m_z ) < 5.f ) {
-			first = i;
-			break;
+	/* teleport / respawn: more than the move allows ( + 18u step up ) = the run before it is the clip */
+	if ( m_clip_active && !m_clip_session.empty( ) ) {
+		const frame_t& last = m_clip_session.back( );
+		const float reach   = std::max( last.velocity.length( ), f.velocity.length( ) ) / tick * 1.5f + 32.f;
+		if ( const float jump = f.position.dist_to( last.position ); jump > reach ) {
+			botox_dbg_log( "REC: clip teleport %.1fu, session closed\n", jump );
+			finish_clip( );
 		}
 	}
 
-	if ( first < frames.size( ) && frames.size( ) - first >= 2 )
-		frames.erase( frames.begin( ), frames.begin( ) + static_cast< std::ptrdiff_t >( first ) );
-	else
-		movement_add_window( 0, std::string( "clip starts moving: replay may drift" ) );
+	if ( !m_clip_active ) {
+		if ( !can_start )
+			return;
+		m_clip_active      = true;
+		m_clip_rolled      = false;
+		m_clip_still_ticks = 0;
+		m_clip_session.clear( );
+	}
 
-	save_frames( frames, "Clip" );
+	m_clip_session.push_back( f );
+	m_clip_still_ticks = still ? m_clip_still_ticks + 1 : 0;
+
+	const size_t cap = static_cast< size_t >( std::clamp( GET_VARIABLE( g_variables.m_movement_rec_clip_max, float ), 5.f, 300.f ) * tick );
+	while ( m_clip_session.size( ) > cap ) {
+		m_clip_session.pop_front( );
+		m_clip_rolled = true;
+	}
+
+	const int stop_ticks =
+		std::max( 1, static_cast< int >( std::lround( std::clamp( GET_VARIABLE( g_variables.m_movement_rec_clip_stop_delay, float ), 0.f, 2.f ) * tick ) ) );
+	if ( m_clip_still_ticks >= stop_ticks )
+		finish_clip( );
+}
+
+/* trailing still ticks cut; too short = a tap, dropped ( false ) */
+bool n_movement_recorder::impl_t::finish_clip( )
+{
+	std::scoped_lock lock( m_clips_mutex );
+
+	const size_t keep = m_clip_session.size( ) - std::min( static_cast< size_t >( m_clip_still_ticks ), m_clip_session.size( ) );
+	const size_t min_ticks = std::max< size_t >( 2, static_cast< size_t >( k_clip_min_seconds * static_cast< float >( server_tickrate( ) ) ) );
+	const bool kept        = keep >= min_ticks;
+
+	if ( kept ) {
+		buffered_clip_t c{ };
+		c.frames.assign( m_clip_session.begin( ), m_clip_session.begin( ) + static_cast< std::ptrdiff_t >( keep ) );
+		c.rolled = m_clip_rolled;
+		m_clip_history.push_front( std::move( c ) );
+		if ( m_clip_history.size( ) > k_clip_history )
+			m_clip_history.pop_back( );
+		if ( m_clip_selected >= 0 && ++m_clip_selected >= static_cast< int >( m_clip_history.size( ) ) )
+			m_clip_selected = -1;
+		botox_dbg_log( "REC: clip ticks=%d rolled=%d\n", static_cast< int >( keep ), m_clip_rolled ? 1 : 0 );
+	}
+
+	m_clip_active      = false;
+	m_clip_rolled      = false;
+	m_clip_still_ticks = 0;
+	m_clip_session.clear( );
+	return kept;
+}
+
+/* key / button: still moving = cut the session here, then save the newest */
+void n_movement_recorder::impl_t::save_clip( )
+{
+	/* a tap in progress must not quietly save the clip before it */
+	if ( m_clip_active && !finish_clip( ) ) {
+		movement_add_window( 0, std::string( "clip too short" ) );
+		return;
+	}
+	if ( m_clip_history.empty( ) ) {
+		movement_add_window( 0, std::string( "clip buffer empty" ) );
+		return;
+	}
+	save_buffered( 0 );
+}
+
+void n_movement_recorder::impl_t::save_buffered( const size_t index )
+{
+	std::scoped_lock lock( m_clips_mutex );
+
+	if ( index >= m_clip_history.size( ) )
+		return;
+	auto& c = m_clip_history[ index ];
+	if ( !c.saved_as.empty( ) ) {
+		movement_add_window( 0, "already saved as \"" + c.saved_as + "\"" );
+		return;
+	}
+	if ( c.rolled )
+		movement_add_window( 0, std::string( "clip hit max length, starts moving: replay may drift" ) );
+
+	std::string name;
+	if ( save_frames( c.frames, "Clip", &name ) )
+		c.saved_as = name;
+}
+
+void n_movement_recorder::impl_t::clear_clip_history( )
+{
+	std::scoped_lock lock( m_clips_mutex );
+	m_clip_history.clear( );
+	m_clip_selected = -1;
 }
 
 void n_movement_recorder::impl_t::delete_clip( size_t index )
@@ -392,11 +560,15 @@ void n_movement_recorder::impl_t::rename_clip( size_t index, const std::string& 
 	if ( new_path != old_path && std::filesystem::exists( new_path ) )
 		new_path = unique_clip_path( get_root_path( ), display_name );
 
+	/* rename failed = keep the old name, the edit write goes there ( deleting it lost the clip if that write failed too ) */
 	if ( new_path != old_path ) {
 		std::error_code ec;
 		std::filesystem::rename( old_path, new_path, ec );
-		if ( ec )
-			std::filesystem::remove( old_path, ec );
+		std::error_code exists_ec;
+		if ( ec && std::filesystem::exists( old_path, exists_ec ) ) {
+			movement_add_window( 0, "couldn't rename \"" + clip.filename + "\"" );
+			return;
+		}
 	}
 
 	clip.display_name = display_name;
@@ -443,8 +615,11 @@ void n_movement_recorder::impl_t::apply_clip_editor( )
 	}
 
 	rename_clip( static_cast< size_t >( m_editor_clip_index ), m_editor_name );
-	write_clip_to_file( get_root_path( ) / m_clips[ m_editor_clip_index ].filename, m_clips[ m_editor_clip_index ] );
 	m_editor_open = false;
+	if ( !write_clip_to_file( get_root_path( ) / m_clips[ m_editor_clip_index ].filename, m_clips[ m_editor_clip_index ] ) ) {
+		movement_add_window( 0, "couldn't write \"" + m_clips[ m_editor_clip_index ].filename + "\"" );
+		return;
+	}
 	movement_add_window( 0, "edited \"" + old_filename + "\" to \"" + m_clips[ m_editor_clip_index ].filename + "\"" );
 }
 
@@ -473,8 +648,16 @@ bool n_movement_recorder::impl_t::play_clip( size_t index )
 	m_wish_to_start     = true;
 	m_approach_ticks    = 0;
 	m_smooth_t0         = now_real( );
+	m_play_max_drift    = 0.f;
+	m_play_drift_tick   = -1;
+	m_play_capture.clear( );
+	m_play_capture.reserve( c.frames.size( ) );
 	g_interfaces.m_engine_client->get_view_angles( m_smooth_from );
 	apply_replay_jetpack( false );
+
+	/* the approach stands still on frame 0: a moving start can't line up */
+	if ( const frame_t& f0 = c.frames[ 0 ]; f0.has_velocity && f0.velocity.length( ) >= 1.f )
+		movement_add_window( 0, "\"" + c.display_name + "\" starts moving: replay may drift" );
 
 	botox_dbg_log( "REC: play %s ticks=%d dist=%.2f yaw=%d in=%.2f out=%.2f\n", c.filename.c_str( ), static_cast< int >( c.frames.size( ) ),
 	               g_prediction.backup_data.m_origin.dist_to( c.frames[ 0 ].position ), GET_VARIABLE( g_variables.m_movement_rec_yaw, int ),
@@ -482,11 +665,13 @@ bool n_movement_recorder::impl_t::play_clip( size_t index )
 	return true;
 }
 
+/* finished clips survive death / round reset, only the session in progress goes */
 void n_movement_recorder::impl_t::reset_all( )
 {
+	std::scoped_lock lock( m_clips_mutex );
 	force_stop( );
 	m_recording = false;
-	m_clip_buffer.clear( );
+	drop_clip_session( );
 }
 
 void n_movement_recorder::impl_t::check_map_change( )
@@ -502,6 +687,7 @@ void n_movement_recorder::impl_t::check_map_change( )
 		m_recording_frames.clear( );
 		m_editor_open = false;
 		reset_all( );
+		clear_clip_history( );
 		return;
 	}
 
@@ -519,6 +705,7 @@ void n_movement_recorder::impl_t::check_map_change( )
 	m_editor_open   = false;
 	m_recording_frames.clear( );
 	reset_all( );
+	clear_clip_history( );
 	refresh_clips( );
 
 	movement_add_window( 0, std::string{ "joined to: " } + m_current_map );
@@ -526,8 +713,14 @@ void n_movement_recorder::impl_t::check_map_change( )
 
 void n_movement_recorder::impl_t::force_stop( bool keep_played )
 {
+	std::scoped_lock lock( m_clips_mutex );
+
 	const bool was_playing = m_playing;
 	const size_t played    = m_play_idx;
+
+	if ( was_playing )
+		botox_dbg_log( "REC: end idx=%d/%d drift max=%.3f first>1u=%d take=%d\n", static_cast< int >( played ), static_cast< int >( m_play_frames.size( ) ),
+		               m_play_max_drift, m_play_drift_tick, keep_played ? 1 : 0 );
 
 	apply_replay_jetpack( false );
 	m_playing        = false;
@@ -535,13 +728,19 @@ void n_movement_recorder::impl_t::force_stop( bool keep_played )
 	m_play_idx       = 0;
 	m_approach_ticks = 0;
 
-	/* take over: the ticks already sent are the newest in the clip buffer, keep recording from there */
-	if ( keep_played && was_playing && played > 0 ) {
-		const size_t n = std::min( played, m_clip_buffer.size( ) );
-		m_recording_frames.assign( m_clip_buffer.end( ) - static_cast< std::ptrdiff_t >( n ), m_clip_buffer.end( ) );
-		m_recording = true;
-		movement_add_window( 0, "took over at tick " + std::to_string( n ) + ", recording" );
+	/* take over: keep the ticks really sent ( m_play_capture ) and go on recording, clipper session too */
+	if ( keep_played && was_playing && !m_play_capture.empty( ) ) {
+		m_recording_frames = m_play_capture;
+		m_recording        = true;
+		if ( GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) ) {
+			m_clip_session.assign( m_play_capture.begin( ), m_play_capture.end( ) );
+			m_clip_active      = true;
+			m_clip_rolled      = false;
+			m_clip_still_ticks = 0;
+		}
+		movement_add_window( 0, "took over at tick " + std::to_string( m_play_capture.size( ) ) + ", recording" );
 	}
+	m_play_capture.clear( );
 }
 
 void n_movement_recorder::impl_t::set_round_frozen( bool frozen )
@@ -681,13 +880,15 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 
 	const unsigned requests = m_requests.exchange( 0u );
 
+	std::scoped_lock lock( m_clips_mutex );
+
 	if ( !GET_VARIABLE( g_variables.m_movement_rec, bool ) ) {
-		if ( m_playing || m_wish_to_start || m_recording || !m_clip_buffer.empty( ) )
+		if ( m_playing || m_wish_to_start || m_recording || m_clip_active )
 			reset_all( );
+		if ( !m_clip_history.empty( ) )
+			clear_clip_history( );
 		return;
 	}
-
-	std::scoped_lock lock( m_clips_mutex );
 
 	/* freeze time = can't move: moving means a missed round_freeze_end */
 	if ( m_round_frozen ) {
@@ -765,7 +966,7 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 
 	const bool clipper = GET_VARIABLE( g_variables.m_movement_rec_clipper, bool );
 	if ( clip && clipper )
-		clip_route( );
+		save_clip( );
 
 	if ( start_play && !m_recording && !owns_cmd( ) ) {
 		const c_vector& cur_origin = g_prediction.backup_data.m_origin;
@@ -795,8 +996,23 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 
 	if ( m_wish_to_start && !m_play_frames.empty( ) ) {
 		const frame_t& first    = m_play_frames.front( );
-		const c_vector& cur_pos = g_prediction.backup_data.m_origin;
+		const auto& pre         = g_prediction.backup_data;
+		const c_vector& cur_pos = pre.m_origin;
+		const c_vector delta    = first.position - cur_pos;
 		const float dist        = cur_pos.dist_to( first.position );
+		const float dist_2d     = delta.length_2d( );
+		const bool grounded     = ( pre.m_flags & e_flags::fl_onground ) != 0;
+
+		/* frame 0 fully ducked / standing: match it before go, mid duck can't be matched */
+		bool duck    = ( first.buttons & in_duck ) != 0;
+		bool duck_ok = true;
+		if ( first.has_duck && first.duck_amount >= 0.99f ) {
+			duck    = true;
+			duck_ok = pre.m_duck_amount >= 0.99f;
+		} else if ( first.has_duck && first.duck_amount <= 0.01f ) {
+			duck    = false;
+			duck_ok = pre.m_duck_amount <= 0.01f;
+		}
 
 		if ( camera_locked( ) ) {
 			c_angle start_view = camera_at( 0, now_real( ) );
@@ -808,7 +1024,9 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 
 		const float give_up_ticks = k_approach_give_up * static_cast< float >( server_tickrate( ) );
 		const bool timed_out      = static_cast< float >( ++m_approach_ticks ) > give_up_ticks;
-		const bool at_start       = dist <= k_pos_close_eps || ( timed_out && dist < 1.f );
+		/* standing on it: a start mid stride ( old p steer crossed the spot at up to 130 u/s ) replays from the wrong speed */
+		const bool exact    = dist_2d <= k_pos_close_eps && std::fabs( delta.m_z ) <= 1.f && grounded && pre.m_velocity.length( ) < 1.f && duck_ok;
+		const bool at_start = exact || ( timed_out && dist < 1.f );
 
 		/* weapon sets max speed: start only once the recorded one is out */
 		bool weapon_ok = true;
@@ -823,22 +1041,31 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 			m_playing                 = true;
 			m_play_idx                = 0;
 			m_route_render_start_time = g_interfaces.m_global_vars_base->m_current_time;
-			botox_dbg_log( "REC: start dist=%.3f approach=%d wpn=%d\n", dist, m_approach_ticks, static_cast< int >( first.weapon_def ) );
+			botox_dbg_log( "REC: start %s dist=%.3f v=%.2f duck=%.2f/%.2f approach=%d wpn=%d\n", exact ? "exact" : "INEXACT", dist,
+			               pre.m_velocity.length( ), pre.m_duck_amount, first.duck_amount, m_approach_ticks, static_cast< int >( first.weapon_def ) );
 		} else if ( timed_out && !at_start ) {
-			botox_dbg_log( "REC: approach gave up dist=%.2f\n", dist );
+			botox_dbg_log( "REC: approach gave up dist=%.2f dz=%.2f v=%.2f duck_ok=%d\n", dist, delta.m_z, pre.m_velocity.length( ), duck_ok ? 1 : 0 );
 			movement_add_window( 0, std::string( "couldn't reach route start" ) );
 			force_stop( );
 		} else {
-			const c_vector diff = cur_pos - first.position;
-			const float yaw_rad = cmd->m_view_point.m_y * 3.14159265358979323846f / 180.f;
-			const float c       = std::cos( yaw_rad );
-			const float s       = std::sin( yaw_rad );
+			c_vector wish{ };
+			/* air: no steer, land first */
+			if ( grounded ) {
+				const float da  = pre.m_duck_amount;
+				const float mod = ( duck || da > 0.f ) ? 0.34f * da + 1.f - da : 1.f;
+				wish            = approach_wish( delta, pre.m_velocity, g_ctx.m_local->get_surface_friction( ), mod );
+			}
 
-			cmd->m_forward_move = -( diff.m_x * c + diff.m_y * s ) * 20.f;
-			cmd->m_side_move    = ( diff.m_y * c - diff.m_x * s ) * 20.f;
+			const float yaw = deg2rad( cmd->m_view_point.m_y );
+			const float c   = std::cos( yaw );
+			const float s   = std::sin( yaw );
+
+			cmd->m_forward_move = wish.m_x * c + wish.m_y * s;
+			cmd->m_side_move    = wish.m_x * s - wish.m_y * c;
 			cmd->m_up_move      = 0.f;
 			cmd->m_buttons &= ~( in_jump | in_duck | in_forward | in_back | in_moveleft | in_moveright | in_speed );
-			cmd->m_buttons |= first.buttons & in_duck;
+			if ( duck )
+				cmd->m_buttons |= in_duck;
 		}
 	}
 
@@ -860,15 +1087,27 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 	frame_t f( cmd, g_ctx.m_local->get_origin( ) );
 	f.jetpack = m_replay_jetpack_active;
 
-	/* clipper off: buffer only while playing, take over still needs the played ticks */
-	if ( clipper || m_playing ) {
-		const size_t cap = static_cast< size_t >( std::clamp( GET_VARIABLE( g_variables.m_movement_rec_clip_seconds, float ), 1.f, 120.f ) *
-		                                          static_cast< float >( server_tickrate( ) ) );
-		m_clip_buffer.push_back( f );
-		while ( m_clip_buffer.size( ) > cap )
-			m_clip_buffer.pop_front( );
-	} else
-		m_clip_buffer.clear( );
+	/* frame m_play_idx - 1 went out this tick: its recorded start pos vs ours = desync */
+	if ( m_playing && m_play_idx > 0 ) {
+		m_play_capture.push_back( f );
+		const size_t idx  = m_play_idx - 1;
+		const float drift = f.position.dist_to( m_play_frames[ idx ].position );
+		m_play_max_drift  = std::max( m_play_max_drift, drift );
+		if ( drift > 1.f && m_play_drift_tick < 0 ) {
+			m_play_drift_tick = static_cast< int >( idx );
+			botox_dbg_log( "REC: desync tick=%d/%d drift=%.3f v=%.1f rec_v=%.1f\n", m_play_drift_tick, static_cast< int >( m_play_frames.size( ) ), drift,
+			               g_prediction.backup_data.m_velocity.length( ), m_play_frames[ idx ].velocity.length( ) );
+			movement_add_window( 0, "replay desynced at tick " + std::to_string( idx ) );
+		}
+	}
+
+	/* approach / playback ticks are not yours; take over hands the played ticks to the session */
+	if ( !clipper || owns_cmd( ) )
+		drop_clip_session( );
+	else {
+		const bool input = move_input( cmd );
+		clip_tick( f, input && at_rest( true ), !input && at_rest( false ) );
+	}
 
 	if ( m_recording )
 		m_recording_frames.push_back( f );
@@ -1172,15 +1411,22 @@ void n_movement_recorder::impl_t::render_clipper_box( )
 
 	const float dt = g_interfaces.m_global_vars_base->m_interval_per_tick;
 
+	/* render thread: game thread grows these */
 	char buf[ 48 ]{ };
-	if ( m_playing )
-		std::snprintf( buf, sizeof( buf ), "%.1f / %.1f", static_cast< float >( m_play_idx ) * dt, static_cast< float >( m_play_frames.size( ) ) * dt );
-	else if ( m_recording )
-		std::snprintf( buf, sizeof( buf ), "rec %.1f", static_cast< float >( m_recording_frames.size( ) ) * dt );
-	else if ( !m_clip_buffer.empty( ) )
-		std::snprintf( buf, sizeof( buf ), "clip %.1f", static_cast< float >( m_clip_buffer.size( ) ) * dt );
-	else
-		return;
+	{
+		std::scoped_lock lock( m_clips_mutex );
+		if ( m_playing )
+			std::snprintf( buf, sizeof( buf ), "%.1f / %.1f", static_cast< float >( m_play_idx ) * dt, static_cast< float >( m_play_frames.size( ) ) * dt );
+		else if ( m_recording )
+			std::snprintf( buf, sizeof( buf ), "rec %.1f", static_cast< float >( m_recording_frames.size( ) ) * dt );
+		else if ( m_clip_active )
+			std::snprintf( buf, sizeof( buf ), "clip %.1f", static_cast< float >( m_clip_session.size( ) - std::min( m_clip_session.size( ), static_cast< size_t >( m_clip_still_ticks ) ) ) * dt );
+		else if ( !m_clip_history.empty( ) )
+			std::snprintf( buf, sizeof( buf ), "last %.1f%s", static_cast< float >( m_clip_history.front( ).frames.size( ) ) * dt,
+			               m_clip_history.front( ).saved_as.empty( ) ? "" : " saved" );
+		else
+			return;
+	}
 
 	ImFont* font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
 	if ( !font )
@@ -1309,6 +1555,13 @@ void n_movement_recorder::impl_t::on_paint_traverse( )
 			render_path( m_recording_frames, 0.f );
 		else
 			render_route_preview( );
+
+		/* menu: picked clip buffer entry shown in the world */
+		if ( g_menu.m_opened && m_clip_selected >= 0 && m_clip_selected < static_cast< int >( m_clip_history.size( ) ) ) {
+			const auto& frames = m_clip_history[ m_clip_selected ].frames;
+			enqueue_path( frames, 0, frames.size( ), rgba( 255, 255, 255, 200 ), 1.5f );
+			enqueue_world_floor_disc( frames[ 0 ].position, k_start_radius * 0.45f, rgba( 0, 0, 0, 100 ), rgba( 255, 255, 255, 200 ), 64, 1.5f );
+		}
 	}
 
 	render_indicator( );

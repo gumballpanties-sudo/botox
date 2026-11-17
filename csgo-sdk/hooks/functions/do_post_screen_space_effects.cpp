@@ -49,6 +49,9 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 
 		g_ambient_occlusion.on_post_screen_space_effects( setup );
 
+		// under dof ( dof blurs the fog ) and under depth warp ( fog warps with the frame its depth belongs to )
+		g_depth_view.on_post_screen_space_effects_fog( setup );
+
 		// before dof so the blur lands on the distorted frame
 		g_depth_warp.on_post_screen_space_effects( setup );
 

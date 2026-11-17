@@ -1887,6 +1887,32 @@ void n_menu::impl_t::tab_visuals( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			// OtisFX AdaptiveFog.fx knobs + ranges; drawn under dof
+			ImGui::Checkbox( "adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog, bool ) );
+			if ( GET_VARIABLE( g_variables.m_adaptive_fog, bool ) ) {
+				ImGui::OptionPopup(
+					"adaptive fog settings",
+					[ & ]( ) {
+						ImGui::ColorEdit4( "fog color##adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog_color, c_color ),
+						                   color_picker_no_alpha_flags );
+						ImGui::SliderFloat( "max fog##adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog_max, float ), 0.f, 1.f, "%.3f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "fog curve##adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog_curve, float ), 0.f, 175.f, "%.2f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "fog start##adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog_start, float ), 0.f, 1.f, "%.3f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+
+						ImGui::Label( "bloom" );
+						ImGui::SliderFloat( "threshold##adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog_bloom_threshold, float ), 0.f, 50.f,
+						                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "power##adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog_bloom_power, float ), 0.f, 100.f, "%.1f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "width##adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog_bloom_width, float ), 0.f, 1.f, "%.3f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
 			ImGui::Checkbox( "ambient occlusion", &GET_VARIABLE( g_variables.m_ambient_occlusion, bool ) );
 			if ( GET_VARIABLE( g_variables.m_ambient_occlusion, bool ) ) {
 				ImGui::OptionPopup(

@@ -7,6 +7,9 @@
 #include "../../utilities/perf/perf_watch.h"
 #include "../aimbot/aimbot.h"
 
+/* edge_surf.cpp: an edge surf feet approach owned the last cmd */
+bool edge_surf_latched( const c_user_cmd* cmd );
+
 /* 11-10 rewrite ( lab tools/wc_engine/as_catch_lab.cpp policy H, runs/asc5_h_* ): a pin is TryPlayerMove with every bump at
    fraction 0 on ONE wall plane ( gamemovement.cpp:3507 allFraction == 0 ). that happens when the START reads d1 = fl( p.n ) - D > 0
    ( not startsolid, cmodel.cpp:1569 ) while the END of the clipped tangent move rounds to d2 <= 0 on the engine's float grid
@@ -316,11 +319,14 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	const bool feature = GET_VARIABLE( g_variables.m_air_stuck, bool );
 	const bool key     = g_input.check_input( &GET_VARIABLE( g_variables.m_air_stuck_key, key_bind_t ) );
 	const bool alive   = g_ctx.m_local && g_ctx.m_local->is_alive( );
-	as_sync( cmd, feature && key && alive, hold_armed );
+	/* an edge surf feet approach owns this fall ( edge_surf.cpp latch ): a hug / park toward its face over the top lands you on it */
+	const bool esurf = edge_surf_latched( cmd );
+	as_sync( cmd, feature && key && alive && !esurf, hold_armed );
 
-	if ( !feature || !key || !alive || ( g_ctx.m_local->get_flags( ) & fl_onground ) ) {
+	if ( !feature || !key || !alive || esurf || ( g_ctx.m_local->get_flags( ) & fl_onground ) ) {
 		if ( hold_armed )
-			botox_dbg_log( "AS: end t=%d why=%s blk=%d", s_hold.ticks, !feature ? "off" : !key ? "key" : !alive ? "dead" : "ground", ( int )g_input.keys_blocked( ) );
+			botox_dbg_log( "AS: end t=%d why=%s blk=%d", s_hold.ticks, !feature ? "off" : !key ? "key" : !alive ? "dead" : esurf ? "esurf" : "ground",
+			               ( int )g_input.keys_blocked( ) );
 		s_hold.ticks   = 0;
 		s_hold.freeze  = false;
 		was_stuck      = false;

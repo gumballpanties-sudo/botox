@@ -21,10 +21,10 @@ extern void botox_dbg_log( const char* fmt, ... );
 extern bool botox_is_ladder_trace( const trace_t& tr );
 extern bool g_air_stuck_owned_prev_tick;
 extern bool g_air_stuck_axis;
-/* edge surf = own feature ( edge_surf.cpp ): true = it owns this cmd */
-bool edge_surf_online( c_user_cmd* cmd, bool& pinned );
+/* edge surf = own feature ( edge_surf.cpp ): true = it owns this cmd, held = nothing after tb may rewrite it */
+bool edge_surf_online( c_user_cmd* cmd, bool& pinned, bool& held );
+void edge_surf_skip( const c_user_cmd* cmd, const char* why );
 extern bool g_edge_surf_active;
-bool edge_surf_local( );
 
 /* head bounce: a bounce must keep this share of entry xy */
 constexpr float k_xy_creep_frac = 0.5f;
@@ -113,9 +113,8 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 	m_assist          = false;
 	reset_command( );
 	m_hb_hit          = false;
-	/* early returns below skip edge surf: its indicator flag must not stay lit ( listen server: movement.cpp owns it ) */
-	if ( !edge_surf_local( ) )
-		g_edge_surf_active = false;
+	/* early returns below skip edge surf: its indicator flag must not stay lit */
+	g_edge_surf_active = false;
 	s_sims_this_cmd   = 0;
 	s_traces_this_cmd = 0;
 	s_trace_qpc_this_cmd = 0ll;
@@ -147,10 +146,12 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 	   A tb ride already running made WC yield, so this is a fresh contact only */
 	if ( g_wall_climb.caught( cmd ) ) {
 		m_hit = m_hs_hit = m_owns_cmd = false;
+		edge_surf_skip( cmd, "wc" );
 		s_budget_live = false;
 		return;
 	}
 	if ( ( g_prediction.backup_data.m_flags & fl_onground ) && tb_jump_trick_key( ) ) {
+		edge_surf_skip( cmd, "jump" );
 		m_hit = m_hs_hit = m_owns_cmd = false;
 		s_budget_live = false;
 		return;
@@ -168,8 +169,8 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 	const float align_side    = cmd->m_side_move;
 	const int align_buttons   = cmd->m_buttons;
 	/* edge surf first: when it owns the cmd tb + head bounce stay out, the resim below covers it */
-	bool es_pin = false;
-	if ( edge_surf_online( cmd, es_pin ) ) {
+	bool es_pin = false, es_held = false;
+	if ( edge_surf_online( cmd, es_pin, es_held ) ) {
 		/* its pin is a head pin: wall climb / pixel surf / edgebug read it off these like tb's own */
 		m_hit = m_hs_hit = es_pin;
 		m_owns_cmd       = true;
@@ -178,8 +179,9 @@ void n_texturebug::impl_t::on_create_move( c_user_cmd* cmd )
 		this->head_bounce( cmd );
 	}
 	/* wall climb ran first and owns this air wall tick: tb keeps only a real catch. its park / wallstrafe / unstick replaced wc's
-	   flush park ( 10-31 log: 888 STOMP@texture_bug, act W 703 + K 164 = side shove + lost catches ) */
-	if ( g_wall_climb.active( cmd ) && !m_hit && !m_hs_hit && !m_hb_hit ) {
+	   flush park ( 10-31 log: 888 STOMP@texture_bug, act W 703 + K 164 = side shove + lost catches ). an edge surf held tick is kept:
+	   its wall axis keeps you off the ledge top ( no texture bug detection on it: m_hit stays a real pin ) */
+	if ( g_wall_climb.active( cmd ) && !m_hit && !m_hs_hit && !m_hb_hit && !es_held ) {
 		cmd->m_forward_move = pre_forward;
 		cmd->m_side_move    = pre_side;
 		cmd->m_buttons      = pre_buttons;

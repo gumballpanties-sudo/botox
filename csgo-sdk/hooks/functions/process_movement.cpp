@@ -4,8 +4,6 @@
 
 bool tung_surf_apply( c_base_entity* player, c_move_data* mv );
 void tung_surf_apply_sv( c_move_data* mv );
-void edge_surf_apply( c_base_entity* player, c_move_data* mv );
-void edge_surf_apply_sv( c_move_data* mv );
 
 void __fastcall n_detoured_functions::process_movement( void* thisptr, void* edx, c_base_entity* player, c_move_data* move_data )
 {
@@ -14,7 +12,6 @@ void __fastcall n_detoured_functions::process_movement( void* thisptr, void* edx
 
 	move_data->m_game_code_moved_player = false;
 	tung_surf_apply( player, move_data );
-	edge_surf_apply( player, move_data );
 
 	return original( thisptr, edx, player, move_data );
 }
@@ -25,7 +22,6 @@ void __fastcall n_detoured_functions::process_movement_sv( void* thisptr, void* 
 	HOOK_SCOPE_OR_BAIL( original( thisptr, edx, player, move_data ) );
 
 	tung_surf_apply_sv( move_data );
-	edge_surf_apply_sv( move_data );
 
 	return original( thisptr, edx, player, move_data );
 }

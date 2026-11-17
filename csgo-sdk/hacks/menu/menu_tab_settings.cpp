@@ -2493,6 +2493,11 @@ void n_menu::impl_t::tab_settings( )
 					ImGui::Checkbox( "share esp", &GET_VARIABLE( g_variables.m_botox_network_esp, bool ) );
 					ImGui::Checkbox( "share skins", &GET_VARIABLE( g_variables.m_botox_network_skins, bool ) );
 					ImGui::Checkbox( "share web screen", &GET_VARIABLE( g_variables.m_botox_network_web, bool ) );
+					ImGui::Checkbox( "typing bubbles", &GET_VARIABLE( g_variables.m_typing_bubbles, bool ) );
+					if ( GET_VARIABLE( g_variables.m_typing_bubbles, bool ) ) {
+						ImGui::ColorEdit4( "color##typing bubbles", &GET_VARIABLE( g_variables.m_typing_bubbles_color, c_color ), color_picker_alpha_flags );
+						ImGui::SliderFloat( "size##typing bubbles", &GET_VARIABLE( g_variables.m_typing_bubbles_size, float ), 0.5f, 4.f, "%.1fx" );
+					}
 					ImGui::Text( "botox users here: %d", g_botox_net.m_users.load( std::memory_order_relaxed ) );
 				},
 				ImVec2( 220.f, -1.f ) );

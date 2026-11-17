@@ -39,6 +39,12 @@ namespace n_lua_api
 	/* eject: model:animate roots hold mdlcache refs */
 	void free_models( );
 
+	/* engine.swap_viewmodel: your viewmodel on a swap's from model ( swap made mid hold, fresh viewmodel, the client's own deploy )
+	   -> its to model, an ended swap's to -> back to from. network_frame = postdataupdate_start ( before prediction copies the
+	   network state, so it holds ), else render_start. forget_script = a script's swaps end with it. lua thread only */
+	void apply_viewmodel_swaps( bool network_frame );
+	void forget_script( const void* script );
+
 	/* model:animate pose for one draw of `target` ( the drawn or swapped studiohdr_t ): the root plays its sequence at `to_world`,
 	   target bones take the root bone of the same name ( bone merge ), the rest keep their rest offset from their parent.
 	   one static buffer, valid until the next call ( studiorender copies it inside the draw ). null = draw as is */

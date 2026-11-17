@@ -333,6 +333,41 @@ inline int precache_model( const char* path )
 	return index > 0 ? index : -1;
 }
 
+/* lua engine.swap_viewmodel: your viewmodel shows m_to wherever the game picks m_from, server sequences renumbered through
+   m_map ( m_from sequence -> m_to sequence ). done like the knife changer: the proxies rewrite what the server sends, lua's
+   postdataupdate_start apply writes before prediction copies the network state ( POSTDATAUPDATE_END ), so restores keep it.
+   game thread only: lua and recv proxies both run there */
+struct lua_viewmodel_swap_t {
+	const void* m_owner; /* the script's n_lua::script_t, its unload ends the swap */
+	int m_from;
+	int m_to;
+	std::vector< int > m_map;
+};
+inline std::vector< lua_viewmodel_swap_t > g_lua_viewmodel_swaps;
+/* your viewmodel's model as the game picked it ( after the knife changer, before a swap ): picks the map when swaps share a m_to */
+inline int g_lua_viewmodel_game_model = 0;
+
+inline const lua_viewmodel_swap_t* lua_viewmodel_swap_showing( const int model_index )
+{
+	const lua_viewmodel_swap_t* any = nullptr;
+	for ( const auto& swap : g_lua_viewmodel_swaps ) {
+		if ( model_index != swap.m_to )
+			continue;
+		if ( swap.m_from == g_lua_viewmodel_game_model )
+			return &swap;
+		if ( !any )
+			any = &swap;
+	}
+	return any;
+}
+
+/* yours only, a spectated player's keeps theirs. m_hOwner decodes after m_nModelIndex: a brand new viewmodel has none yet */
+inline bool is_local_viewmodel( c_base_entity* viewmodel )
+{
+	const auto local = g_ctx.m_local;
+	return viewmodel && local && g_interfaces.m_client_entity_list->get< c_base_entity >( viewmodel->get_owner_handle( ) ) == local;
+}
+
 /* models/weapons/v_models/arms/glove_x/v_glove_x.mdl -> models/weapons/w_models/arms/w_glove_x.mdl (all 8 in pak01) */
 inline int glove_world_model_index( const char* view_model )
 {
@@ -1040,8 +1075,10 @@ inline bool apply_knife_model( c_base_entity* weapon, const char* model )
 	if ( vm_weapon != weapon )
 		return false;
 
-	const int model_index      = g_interfaces.m_model_info->get_model_index( model );
-	viewmodel->get_model_index( ) = model_index;
+	const int model_index = g_interfaces.m_model_info->get_model_index( model );
+	/* a lua swap on screen owns the viewmodel ( its from can be this knife ), the weapon + world model still get the knife */
+	if ( !lua_viewmodel_swap_showing( viewmodel->get_model_index( ) ) )
+		viewmodel->get_model_index( ) = model_index;
 
 	if ( const auto world_model_handle = vm_weapon->get_world_model_handle( ) ) {
 		if ( const auto world_model = g_interfaces.m_client_entity_list->get< c_base_entity >( world_model_handle ) )
@@ -1461,6 +1498,18 @@ inline void __cdecl model_index_proxy( const c_recv_proxy_data* data, void* stru
 		}
 	}
 
+	/* last, on the final value: a swap's from may be the knife the changer above just put there */
+	if ( !g_lua_viewmodel_swaps.empty( ) && is_local_viewmodel( static_cast< c_base_entity* >( structure ) ) ) {
+		const auto mutable_data     = const_cast< c_recv_proxy_data* >( data );
+		g_lua_viewmodel_game_model = mutable_data->m_value.m_int;
+		for ( const auto& swap : g_lua_viewmodel_swaps ) {
+			if ( mutable_data->m_value.m_int == swap.m_from ) {
+				mutable_data->m_value.m_int = swap.m_to;
+				break;
+			}
+		}
+	}
+
 	if ( g_original_model_index_proxy )
 		g_original_model_index_proxy( data, structure, output );
 }
@@ -1484,7 +1533,14 @@ inline void __cdecl sequence_proxy( const c_recv_proxy_data* data, void* structu
 	if ( viewmodel && local ) {
 		const auto owner = g_interfaces.m_client_entity_list->get< c_base_entity >( viewmodel->get_owner_handle( ) );
 		if ( owner == local ) {
-			if ( const auto model = g_interfaces.m_model_info->get_model( viewmodel->get_model_index( ) ) ) {
+			/* m_nModelIndex decodes first ( DT_BaseViewModel order, no CHANGES_OFTEN ): the model here is this packet's.
+			   the server numbers sequences off m_from, the viewmodel shows m_to */
+			if ( const auto swap = lua_viewmodel_swap_showing( viewmodel->get_model_index( ) ) ) {
+				const auto mutable_data = const_cast< c_recv_proxy_data* >( data );
+				const int incoming      = mutable_data->m_value.m_int;
+				if ( incoming >= 0 && incoming < static_cast< int >( swap->m_map.size( ) ) )
+					mutable_data->m_value.m_int = swap->m_map[ incoming ];
+			} else if ( const auto model = g_interfaces.m_model_info->get_model( viewmodel->get_model_index( ) ) ) {
 				if ( const char* model_name = g_interfaces.m_model_info->get_model_name( model ) ) {
 					const auto mutable_data = const_cast< c_recv_proxy_data* >( data );
 					const char* anim_model  = effective_anim_model( intended_knife_mesh( model_name ) );

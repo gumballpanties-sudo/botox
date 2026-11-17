@@ -12,6 +12,7 @@ namespace n_gpu_timer
 		pass_depth_view = 0,
 		pass_reflections,
 		pass_ambient_occlusion,
+		pass_adaptive_fog,
 		pass_depth_of_field,
 		pass_motion_blur,
 		pass_bloom,
@@ -19,7 +20,7 @@ namespace n_gpu_timer
 		pass_max
 	};
 
-	inline constexpr const char* k_names[ pass_max ] = { "depth_view", "ssr", "ao", "dof", "mblur", "bloom", "cc" };
+	inline constexpr const char* k_names[ pass_max ] = { "depth_view", "ssr", "ao", "fog", "dof", "mblur", "bloom", "cc" };
 
 	inline constexpr int k_ring = 4;
 

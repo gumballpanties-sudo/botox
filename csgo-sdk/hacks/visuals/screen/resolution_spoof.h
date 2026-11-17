@@ -66,9 +66,21 @@ namespace n_resolution_spoof
 		/* manual get / set of exactly what the quad touches. never a D3DSBT_ALL block: its Apply under the engine's
 		   state cache is what moved world textures with the view ( ref-csgo-pure-device-get-state ) */
 		void begin_quad_state( IDirect3DDevice9* device );
-		bool draw_quad( IDirect3DDevice9* device, IDirect3DTexture9* texture, int quad_width, int quad_height );
+
+		// shader = a ps_3_0 is bound, so the draw goes through n_fx_compat::draw_up ( vs_3_0 pair, amd )
+		bool draw_quad( IDirect3DDevice9* device, IDirect3DTexture9* texture, int quad_width, int quad_height, bool shader = false );
 
 		void end_quad_state( IDirect3DDevice9* device );
+
+		/* downscale = exact area average: every low res pixel is the mean of the screen px it covers, split px weighted
+		   by overlap ( gamma space, like an msaa resolve ). trilinear mips picked the lod off the wider axis
+		   ( 1920x1080 -> 1280x960: 1.5 ) and blurred the 1.125 axis to ~540 lines. box is separable: x pass into
+		   m_columns ( target width x screen height ), y pass into the target. one loop per pass: nested loops take
+		   d3dx 10 - 40 s to compile */
+		bool area_shader( IDirect3DDevice9* device );
+
+		IDirect3DPixelShader9* m_area_shader = nullptr;
+		bool m_area_failed                   = false;
 
 		struct quad_state_t {
 			IDirect3DVertexShader9* m_vertex_shader    = nullptr;
@@ -80,30 +92,24 @@ namespace n_resolution_spoof
 			DWORD m_render[ 14 ]{ };
 			DWORD m_stage[ 8 ]{ };
 			DWORD m_sampler[ 8 ]{ };
+			float m_constants[ 2 ][ 4 ]{ };
+			int m_int_constant[ 4 ]{ };
 			n_stream_guard::state_t m_streams{ };
 			bool m_captured = false;
 		} m_quad{ };
 
 		void net_graph_scale( bool enabled );
 
-		struct chain_level_t {
-			IDirect3DTexture9* m_texture = nullptr;
-			IDirect3DSurface9* m_surface = nullptr;
-			int m_width                  = 0;
-			int m_height                 = 0;
-		};
-
-		bool build_chain( IDirect3DDevice9* device, int screen_width, int screen_height, int width, int height, D3DFORMAT format );
-
-		std::vector< chain_level_t > m_chain{ };
-
-		int m_chain_screen_width  = 0;
-		int m_chain_screen_height = 0;
+		// screen size the targets were built for
+		int m_built_screen_width  = 0;
+		int m_built_screen_height = 0;
 
 		IDirect3DTexture9* m_capture         = nullptr;
 		IDirect3DSurface9* m_capture_surface = nullptr;
 
-		bool m_capture_has_mips = false;
+		// area x pass result, fp16 when the card has it ( 8 bit = +-0.5 lsb before the y pass )
+		IDirect3DTexture9* m_columns         = nullptr;
+		IDirect3DSurface9* m_columns_surface = nullptr;
 
 		IDirect3DTexture9* m_texture = nullptr;
 		IDirect3DSurface9* m_surface = nullptr;

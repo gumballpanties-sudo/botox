@@ -2005,6 +2005,10 @@ void    ImFontAtlas::ClearInputData()
 void    ImFontAtlas::ClearTexData()
 {
     IM_ASSERT(!Locked && "Cannot modify a locked ImFontAtlas between NewFrame() and EndFrame/Render()!");
+#ifdef IMGUI_ENABLE_FREETYPE
+    if (TexPixelsAlpha8 && ImGuiFreeType::GiveBackPixels(TexPixelsAlpha8)) // botox: reserved range, not heap
+        TexPixelsAlpha8 = NULL;
+#endif
     if (TexPixelsAlpha8)
         IM_FREE(TexPixelsAlpha8);
     if (TexPixelsRGBA32)

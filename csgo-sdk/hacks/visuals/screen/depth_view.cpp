@@ -10,6 +10,7 @@
 #include "stream_guard.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <d3dx9.h>
 
@@ -86,6 +87,55 @@ float4 main(float2 uv:TEXCOORD0,float2 vpos:VPOS):COLOR0{
 }
 )";
 
+// OtisFX AdaptiveFog.fx, both passes fused: the blend reads the bloom target only at its own pixel, so bloom runs inline and
+// only where fog lands. tap weight sqrt( (x*x+y*y)/8 ) = Otis's sqrt( CurDistance/MaxDistance ), bloom width cancels.
+// lin = map independent reshade lin ( far 1000 over the default 7..28377.9 range ), same as botox-tf2 fx_depthview.hlsl
+static const char k_fog_shader[] = R"(
+sampler2D s_depth:register(s0);
+sampler2D s_frame:register(s1);
+float4 c0:register(c0);
+float4 c1:register(c1);
+float4 c2:register(c2);
+float4 c3:register(c3);
+float lin(float2 uv){
+	float d=tex2Dlod(s_depth,float4(uv,0,0)).r;
+	if(d>=1.0)return 1.0;
+	float z=c3.x*c3.y/(c3.y-d*(c3.y-c3.x));
+	float r=saturate(28377.9*(z-7.0)/(z*28370.9));
+	return r/(1000.0-r*999.0);
+}
+float4 main(float2 uv:TEXCOORD0):COLOR0{
+	float4 col=tex2Dlod(s_frame,float4(uv,0,0));
+	float f=clamp(saturate(lin(uv)-c2.y)*c2.x,0.0,c1.w);
+	[branch]if(f<=0.0)return col;
+	[branch]if(f>=1.0)return float4(c1.rgb,col.a);
+	float2 tap=uv*c0.xy*c0.z;
+	float3 sum=0;
+	[unroll]for(int i=0;i<5;i++){
+		float bx=2.5-i;
+		[unroll]for(int j=0;j<5;j++){
+			float by=-2.5+j;
+			float3 t=tex2Dlod(s_frame,float4(uv+float2(bx,by)*tap,0,0)).rgb;
+			sum+=lerp(t,col.rgb,sqrt((bx*bx+by*by)/8.0));
+		}
+	}
+	float3 bloom=saturate(lerp(col.rgb,sum*c2.z,dot(col.rgb,float3(0.299,0.587,0.114))));
+	return float4(lerp(col.rgb,lerp(bloom,c1.rgb,f),f),col.a);
+}
+)";
+
+static bool view_on( )
+{
+	return GET_VARIABLE( g_variables.m_emphasize, bool ) || GET_VARIABLE( g_variables.m_show_depth, bool );
+}
+
+// max 0 or curve 0 = f 0 on every pixel: no pass at all
+static bool fog_on( )
+{
+	return GET_VARIABLE( g_variables.m_adaptive_fog, bool ) && GET_VARIABLE( g_variables.m_adaptive_fog_max, float ) > 0.f &&
+	       GET_VARIABLE( g_variables.m_adaptive_fog_curve, float ) > 0.f;
+}
+
 void n_depth_view::impl_t::release( )
 {
 	const auto drop = []( auto& resource ) {
@@ -99,6 +149,7 @@ void n_depth_view::impl_t::release( )
 	drop( this->m_frame_surface );
 	drop( this->m_frame_texture );
 	drop( this->m_shader );
+	drop( this->m_fog_shader );
 
 	this->m_width        = 0;
 	this->m_height       = 0;
@@ -112,16 +163,20 @@ void n_depth_view::impl_t::on_device_lost( )
 	this->m_active = false;
 }
 
-IDirect3DPixelShader9* n_depth_view::impl_t::ensure_shader( IDirect3DDevice9* device )
+IDirect3DPixelShader9* n_depth_view::impl_t::ensure_shader( IDirect3DDevice9* device, const bool fog )
 {
-	if ( this->m_shader || this->m_compile_failed )
-		return this->m_shader;
+	IDirect3DPixelShader9*& shader = fog ? this->m_fog_shader : this->m_shader;
+	bool& failed                   = fog ? this->m_fog_compile_failed : this->m_compile_failed;
+	const char* source             = fog ? k_fog_shader : k_shader;
+
+	if ( shader || failed )
+		return shader;
 
 	ID3DXBuffer* code   = nullptr;
 	ID3DXBuffer* errors = nullptr;
 
-	HRESULT result = D3DXCompileShader( k_shader, static_cast< UINT >( std::strlen( k_shader ) ), nullptr, nullptr, "main", "ps_3_0", 0, &code,
-	                                    &errors, nullptr );
+	HRESULT result =
+		D3DXCompileShader( source, static_cast< UINT >( std::strlen( source ) ), nullptr, nullptr, "main", "ps_3_0", 0, &code, &errors, nullptr );
 
 	if ( FAILED( result ) || !code ) {
 		if ( errors ) {
@@ -132,25 +187,25 @@ IDirect3DPixelShader9* n_depth_view::impl_t::ensure_shader( IDirect3DDevice9* de
 		if ( code )
 			code->Release( );
 
-		this->m_compile_failed = true;
+		failed = true;
 		return nullptr;
 	}
 
 	if ( errors )
 		errors->Release( );
 
-	result = device->CreatePixelShader( static_cast< const DWORD* >( code->GetBufferPointer( ) ), &this->m_shader );
+	result = device->CreatePixelShader( static_cast< const DWORD* >( code->GetBufferPointer( ) ), &shader );
 	code->Release( );
 
-	if ( FAILED( result ) || !this->m_shader ) {
-		this->m_shader         = nullptr;
-		this->m_compile_failed = true;
+	if ( FAILED( result ) || !shader ) {
+		shader = nullptr;
+		failed = true;
 		return nullptr;
 	}
 
-	g_console.print( "depth view: shader built" );
+	g_console.print( fog ? "adaptive fog: shader built" : "depth view: shader built" );
 
-	return this->m_shader;
+	return shader;
 }
 
 bool n_depth_view::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description )
@@ -196,24 +251,38 @@ bool n_depth_view::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DES
 
 void n_depth_view::impl_t::on_post_screen_space_effects( c_view_setup* setup )
 {
+	this->submit( setup, false );
+}
+
+void n_depth_view::impl_t::on_post_screen_space_effects_fog( c_view_setup* setup )
+{
+	this->submit( setup, true );
+}
+
+void n_depth_view::impl_t::submit( c_view_setup* setup, const bool fog )
+{
 	if ( !setup )
 		return;
 
-	const bool enabled =
-		( GET_VARIABLE( g_variables.m_emphasize, bool ) || GET_VARIABLE( g_variables.m_show_depth, bool ) ) && !this->m_compile_failed;
+	const bool view = view_on( ) && !this->m_compile_failed;
+	const bool mist = fog_on( ) && !this->m_fog_compile_failed;
 
-	if ( !enabled && !this->m_active ) {
+	// targets are shared: only the view slot drops them, and only once both are off
+	if ( fog ? !mist : ( !view && ( mist || !this->m_active ) ) ) {
 		g_serial_render.idle( );
 		return;
 	}
 
 	frame_t frame{ };
 	frame.m_frame = g_interfaces.m_global_vars_base ? g_interfaces.m_global_vars_base->m_frame_count : 0;
+	frame.m_znear = setup->m_znear;
+	frame.m_zfar  = setup->m_zfar;
+	frame.m_fog   = fog;
 
 	// always the queue when there is one: raw d3d from here races the render thread ( see ambient_occlusion )
 	g_serial_render.idle( );
 
-	const auto pass = [ this, frame ] { n_fx_compat::run( g_interfaces.m_direct_device, "depth_view", [ & ] { this->execute( frame ); } ); };
+	const auto pass = [ this, frame ] { n_fx_compat::run( g_interfaces.m_direct_device, frame.m_fog ? "adaptive_fog" : "depth_view", [ & ] { this->execute( frame ); } ); };
 
 	if ( n_render_queue::submit( pass ) )
 		return;
@@ -228,16 +297,22 @@ void n_depth_view::impl_t::execute( const frame_t frame )
 	if ( !device )
 		return;
 
-	const n_gpu_timer::scope_t gpu_timer( device, n_gpu_timer::pass_depth_view );
+	const n_gpu_timer::scope_t gpu_timer( device, frame.m_fog ? n_gpu_timer::pass_adaptive_fog : n_gpu_timer::pass_depth_view );
 
 	const bool emphasize  = GET_VARIABLE( g_variables.m_emphasize, bool );
 	const bool show_depth = GET_VARIABLE( g_variables.m_show_depth, bool );
+	const bool view       = ( emphasize || show_depth ) && !this->m_compile_failed;
+	const bool mist       = fog_on( ) && !this->m_fog_compile_failed;
 
-	if ( ( !emphasize && !show_depth ) || this->m_compile_failed ) {
+	if ( !view && !mist ) {
 		this->release( );
 		this->m_active = false;
 		return;
 	}
+
+	// zfar <= znear would divide by zero in lin
+	if ( !( frame.m_fog ? mist && frame.m_zfar > frame.m_znear && frame.m_znear > 0.f : view ) )
+		return;
 
 	IDirect3DSurface9* target = nullptr;
 
@@ -253,7 +328,7 @@ void n_depth_view::impl_t::execute( const frame_t frame )
 
 	this->m_active = true;
 
-	IDirect3DPixelShader9* shader = this->ensure_shader( device );
+	IDirect3DPixelShader9* shader = this->ensure_shader( device, frame.m_fog );
 	IDirect3DTexture9* depth      = g_depth_source.ensure( device, description ) ? g_depth_source.texture( ) : nullptr;
 
 	D3DSURFACE_DESC depth_description{ };
@@ -358,36 +433,60 @@ void n_depth_view::impl_t::execute( const frame_t frame )
 	device->SetRenderState( D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE );
 
 	for ( unsigned long stage = 0; stage < k_stages; ++stage ) {
+		// fog bloom taps land between texels: s1 linear like reshade's BackBuffer
+		const DWORD filter = frame.m_fog && stage == 1 ? D3DTEXF_LINEAR : D3DTEXF_POINT;
+
 		device->SetSamplerState( stage, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP );
 		device->SetSamplerState( stage, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP );
 		device->SetSamplerState( stage, D3DSAMP_MIPFILTER, D3DTEXF_NONE );
 		device->SetSamplerState( stage, D3DSAMP_SRGBTEXTURE, 0 );
-		device->SetSamplerState( stage, D3DSAMP_MINFILTER, D3DTEXF_POINT );
-		device->SetSamplerState( stage, D3DSAMP_MAGFILTER, D3DTEXF_POINT );
+		device->SetSamplerState( stage, D3DSAMP_MINFILTER, filter );
+		device->SetSamplerState( stage, D3DSAMP_MAGFILTER, filter );
 	}
 
-	const c_color blend_color = GET_VARIABLE( g_variables.m_emphasize_blend_color, c_color );
+	if ( frame.m_fog ) {
+		const c_color fog_color = GET_VARIABLE( g_variables.m_adaptive_fog_color, c_color );
+		const float power       = GET_VARIABLE( g_variables.m_adaptive_fog_bloom_power, float );
 
-	const float scale_x = std::max( GET_VARIABLE( g_variables.m_show_depth_scale_x, float ), 0.001f );
-	const float scale_y = std::max( GET_VARIABLE( g_variables.m_show_depth_scale_y, float ), 0.001f );
+		// Otis: blur / ( 25 - ( power - threshold * 5 ) ) * ( power + 4 ), folded to one gain
+		float divisor = 25.f - ( power - GET_VARIABLE( g_variables.m_adaptive_fog_bloom_threshold, float ) * 5.f );
 
-	const float constants[ k_constants ][ 4 ] = {
-		{ emphasize ? 1.f : 0.f, show_depth ? 1.f : 0.f, 1.f / width, 1.f / height },
-		{ GET_VARIABLE( g_variables.m_emphasize_focus_depth, float ), GET_VARIABLE( g_variables.m_emphasize_focus_range, float ),
-	      GET_VARIABLE( g_variables.m_emphasize_focus_edge, float ), GET_VARIABLE( g_variables.m_emphasize_spherical, bool ) ? 1.f : 0.f },
-		{ static_cast< float >( GET_VARIABLE( g_variables.m_emphasize_sphere_fov, int ) ), GET_VARIABLE( g_variables.m_emphasize_sphere_x, float ),
-	      GET_VARIABLE( g_variables.m_emphasize_sphere_y, float ), GET_VARIABLE( g_variables.m_emphasize_effect_factor, float ) },
-		{ blend_color[ 0 ] / 255.f, blend_color[ 1 ] / 255.f, blend_color[ 2 ] / 255.f, GET_VARIABLE( g_variables.m_emphasize_blend_factor, float ) },
-		{ static_cast< float >( GET_VARIABLE( g_variables.m_show_depth_present_type, int ) ),
-	      GET_VARIABLE( g_variables.m_show_depth_blend, bool ) ? 1.f : 0.f, GET_VARIABLE( g_variables.m_show_depth_live_preview, bool ) ? 1.f : 0.f,
-	      0.f },
-		{ GET_VARIABLE( g_variables.m_show_depth_upside_down, bool ) ? 1.f : 0.f, GET_VARIABLE( g_variables.m_show_depth_reversed, bool ) ? 1.f : 0.f,
-	      GET_VARIABLE( g_variables.m_show_depth_logarithmic, bool ) ? 1.f : 0.f, GET_VARIABLE( g_variables.m_show_depth_far_plane, float ) },
-		{ scale_x, scale_y, static_cast< float >( GET_VARIABLE( g_variables.m_show_depth_offset_x, int ) ),
-	      static_cast< float >( GET_VARIABLE( g_variables.m_show_depth_offset_y, int ) ) },
-		{ GET_VARIABLE( g_variables.m_show_depth_multiplier, float ), width, height, 0.f } };
+		if ( std::fabs( divisor ) < 1e-4f )
+			divisor = 1e-4f;
 
-	device->SetPixelShaderConstantF( 0, constants[ 0 ], k_constants );
+		const float fog_constants[ 4 ][ 4 ] = {
+			{ 1.f / width, 1.f / height, GET_VARIABLE( g_variables.m_adaptive_fog_bloom_width, float ), 0.f },
+			{ fog_color[ 0 ] / 255.f, fog_color[ 1 ] / 255.f, fog_color[ 2 ] / 255.f, GET_VARIABLE( g_variables.m_adaptive_fog_max, float ) },
+			{ GET_VARIABLE( g_variables.m_adaptive_fog_curve, float ), GET_VARIABLE( g_variables.m_adaptive_fog_start, float ), ( power + 4.f ) / divisor,
+		      0.f },
+			{ frame.m_znear, frame.m_zfar, 0.f, 0.f } };
+
+		device->SetPixelShaderConstantF( 0, fog_constants[ 0 ], 4 );
+	} else {
+		const c_color blend_color = GET_VARIABLE( g_variables.m_emphasize_blend_color, c_color );
+
+		const float scale_x = std::max( GET_VARIABLE( g_variables.m_show_depth_scale_x, float ), 0.001f );
+		const float scale_y = std::max( GET_VARIABLE( g_variables.m_show_depth_scale_y, float ), 0.001f );
+
+		const float constants[ k_constants ][ 4 ] = {
+			{ emphasize ? 1.f : 0.f, show_depth ? 1.f : 0.f, 1.f / width, 1.f / height },
+			{ GET_VARIABLE( g_variables.m_emphasize_focus_depth, float ), GET_VARIABLE( g_variables.m_emphasize_focus_range, float ),
+		      GET_VARIABLE( g_variables.m_emphasize_focus_edge, float ), GET_VARIABLE( g_variables.m_emphasize_spherical, bool ) ? 1.f : 0.f },
+			{ static_cast< float >( GET_VARIABLE( g_variables.m_emphasize_sphere_fov, int ) ), GET_VARIABLE( g_variables.m_emphasize_sphere_x, float ),
+		      GET_VARIABLE( g_variables.m_emphasize_sphere_y, float ), GET_VARIABLE( g_variables.m_emphasize_effect_factor, float ) },
+			{ blend_color[ 0 ] / 255.f, blend_color[ 1 ] / 255.f, blend_color[ 2 ] / 255.f, GET_VARIABLE( g_variables.m_emphasize_blend_factor, float ) },
+			{ static_cast< float >( GET_VARIABLE( g_variables.m_show_depth_present_type, int ) ),
+		      GET_VARIABLE( g_variables.m_show_depth_blend, bool ) ? 1.f : 0.f, GET_VARIABLE( g_variables.m_show_depth_live_preview, bool ) ? 1.f : 0.f,
+		      0.f },
+			{ GET_VARIABLE( g_variables.m_show_depth_upside_down, bool ) ? 1.f : 0.f, GET_VARIABLE( g_variables.m_show_depth_reversed, bool ) ? 1.f : 0.f,
+		      GET_VARIABLE( g_variables.m_show_depth_logarithmic, bool ) ? 1.f : 0.f, GET_VARIABLE( g_variables.m_show_depth_far_plane, float ) },
+			{ scale_x, scale_y, static_cast< float >( GET_VARIABLE( g_variables.m_show_depth_offset_x, int ) ),
+		      static_cast< float >( GET_VARIABLE( g_variables.m_show_depth_offset_y, int ) ) },
+			{ GET_VARIABLE( g_variables.m_show_depth_multiplier, float ), width, height, 0.f } };
+
+		device->SetPixelShaderConstantF( 0, constants[ 0 ], k_constants );
+	}
+
 	device->SetTexture( 0, depth );
 	device->SetTexture( 1, this->m_frame_texture );
 	device->SetRenderTarget( 0, target );

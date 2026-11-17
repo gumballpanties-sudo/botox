@@ -92,6 +92,7 @@ enum e_detection_types {
 	detect_as,
 	detect_ps,
 	detect_wc,
+	detect_es,
 	detect_max
 };
 
@@ -1047,6 +1048,16 @@ namespace n_variables
 		ADD_VARIABLE( int, m_show_depth_offset_y, 0 );
 		ADD_VARIABLE( float, m_show_depth_far_plane, 1000.f );
 		ADD_VARIABLE( float, m_show_depth_multiplier, 1.f );
+
+		// OtisFX AdaptiveFog.fx defaults
+		ADD_VARIABLE( bool, m_adaptive_fog, false );
+		ADD_VARIABLE( c_color, m_adaptive_fog_color, c_color( 230, 230, 230, 255 ) );
+		ADD_VARIABLE( float, m_adaptive_fog_max, 0.8f );
+		ADD_VARIABLE( float, m_adaptive_fog_curve, 1.5f );
+		ADD_VARIABLE( float, m_adaptive_fog_start, 0.05f );
+		ADD_VARIABLE( float, m_adaptive_fog_bloom_threshold, 10.25f );
+		ADD_VARIABLE( float, m_adaptive_fog_bloom_power, 10.f );
+		ADD_VARIABLE( float, m_adaptive_fog_bloom_width, 0.2f );
 
 		ADD_VARIABLE( bool, m_ambient_occlusion, false );
 		ADD_VARIABLE( float, m_ambient_occlusion_radius, 40.f );
@@ -2054,6 +2065,9 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_chat_translator, false );
 		ADD_VARIABLE( int, m_chat_translator_language, 0 );
 		ADD_VARIABLE( bool, m_chat_images, false );
+		ADD_VARIABLE( bool, m_typing_bubbles, false );
+		ADD_VARIABLE( c_color, m_typing_bubbles_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( float, m_typing_bubbles_size, 1.f );
 
 		ADD_VARIABLE( bool, m_practice_window, false );
 		ADD_VARIABLE( key_bind_t, m_practice_cp_key, key_bind_t( 0, 1 ) );
@@ -2086,7 +2100,8 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_movement_rec_lockgoingtostart, true );
 		ADD_VARIABLE( bool, m_movement_rec_clipper, false );
 		ADD_VARIABLE( bool, m_movement_rec_clipper_box, true );
-		ADD_VARIABLE( float, m_movement_rec_clip_seconds, 15.f );
+		ADD_VARIABLE( float, m_movement_rec_clip_max, 60.f );
+		ADD_VARIABLE( float, m_movement_rec_clip_stop_delay, 0.25f );
 		ADD_VARIABLE( bool, m_movement_rec_stop_on_move, false );
 		ADD_VARIABLE( bool, m_movement_rec_force_weapon, true );
 		ADD_VARIABLE( int, m_movement_rec_yaw, 0 );

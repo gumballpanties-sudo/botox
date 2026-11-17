@@ -579,7 +579,7 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 
 	/* merged blocks make the atlas wide: cap it so the driver never refuses the texture, no pow2 height */
 	atlas->TexDesiredWidth = 4096;
-	atlas->Flags |= ImFontAtlasFlags_NoPowerOfTwoHeight;
+	atlas->Flags |= ImFontAtlasFlags_NoPowerOfTwoHeight | ImFontAtlasFlags_BotoxPixelSlot;
 
 	ImFontConfig verdana_font_config = { };
 	verdana_font_config.FontBuilderFlags =
@@ -2028,15 +2028,21 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& under, cons
 
 	/* reload starts a worker, never builds here. pressed mid-build: flag stays up, next build starts after */
 	/* waiting reload: log once a second so a stuck flag shows */
-	if ( this->m_reload_fonts && ( this->m_font_build_running || this->m_uploading_fonts ) ) {
+	/* pending too: the worker parks its set BEFORE the flag drops, so a frame can miss the pickup above and still see the flag
+	   down here. starting then = second build while the parked one holds the pixel slot ( heap fallback, 31 mb, fails ) and
+	   its failed set replaces the good one. flag read FIRST: seen down = its set is already parked */
+	const bool running = this->m_font_build_running.load( );
+	const bool pending = this->m_pending_fonts.load( ) != nullptr;
+
+	if ( this->m_reload_fonts && ( running || this->m_uploading_fonts || pending ) ) {
 		static auto s_said = std::chrono::steady_clock::time_point{ };
 		if ( const auto now = std::chrono::steady_clock::now( ); now - s_said > std::chrono::seconds( 1 ) ) {
 			s_said = now;
-			botox_dbg_log( "FONT: reload waiting running=%d uploading=%d", this->m_font_build_running.load( ), this->m_uploading_fonts != nullptr );
+			botox_dbg_log( "FONT: reload waiting running=%d uploading=%d pending=%d", running, this->m_uploading_fonts != nullptr, pending );
 		}
 	}
 
-	if ( this->m_reload_fonts && !this->m_font_build_running && !this->m_uploading_fonts ) {
+	if ( this->m_reload_fonts && !running && !this->m_uploading_fonts && !pending ) {
 		this->m_font_build_running = true;
 		this->m_reload_fonts       = false;
 
@@ -2185,6 +2191,7 @@ void n_render::impl_t::on_release( )
 	ImGui_ImplDX9_Shutdown( );
 	ImGui_ImplWin32_Shutdown( );
 	ImGui::DestroyContext( );
+	ImGuiFreeType::ReleasePixelSlot( );
 }
 
 void n_render::impl_t::draw_cached_data( )

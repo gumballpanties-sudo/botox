@@ -1210,7 +1210,7 @@ static int part_fired( const int id )
 	case label_tung: return trick( e_points_trick::pixel_surf );
 	case label_jb:   return trick( e_points_trick::jump_bug );
 	case label_tb:
-	case label_esurf: return trick( e_points_trick::texture_bug );
+	case label_esurf: return trick( e_points_trick::edge_surf );
 	case label_air:  return trick( e_points_trick::air_stuck );
 	case label_wc:   return trick( e_points_trick::wall_climb );
 	case label_fr:   return trick( e_points_trick::fireman );

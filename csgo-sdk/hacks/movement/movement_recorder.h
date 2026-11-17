@@ -24,6 +24,8 @@ namespace n_movement_recorder
 		short mouse_dy   = 0;
 		bool jetpack      = false;
 		bool has_velocity = false;
+		bool has_duck     = false;
+		float duck_amount = 0.f;
 		short weapon_def  = 0;
 		int weapon_slot   = -1;
 		c_vector position{ };
@@ -48,6 +50,13 @@ namespace n_movement_recorder
 		}
 	};
 
+	/* one finished clipper session: first move ( from standing ) until standing for the stop delay */
+	struct buffered_clip_t {
+		std::vector< frame_t > frames;
+		bool rolled = false; /* hit max length, front cut: frame 0 is moving */
+		std::string saved_as;
+	};
+
 	enum e_action : unsigned {
 		action_start_rec  = 1u << 0,
 		action_stop_rec   = 1u << 1,
@@ -70,7 +79,16 @@ namespace n_movement_recorder
 		/* game thread only */
 		bool m_recording = false;
 		std::vector< frame_t > m_recording_frames;
-		std::deque< frame_t > m_clip_buffer;
+
+		std::deque< frame_t > m_clip_session;
+		bool m_clip_active      = false;
+		bool m_clip_rolled      = false;
+		int m_clip_still_ticks  = 0;
+
+		/* ticks actually sent this playback: take over source, desync check */
+		std::vector< frame_t > m_play_capture;
+		float m_play_max_drift = 0.f;
+		int m_play_drift_tick  = -1;
 
 		frame_t m_user_input{ };
 		int m_user_move_mask      = 0;
@@ -91,6 +109,8 @@ namespace n_movement_recorder
 		std::recursive_mutex m_clips_mutex;
 		std::vector< clip_t > m_clips;
 		int m_selected_clip = -1;
+		std::deque< buffered_clip_t > m_clip_history; /* newest first */
+		int m_clip_selected = -1;
 
 		float m_indicator_alpha   = 0.f;
 		float m_last_auto_refresh = 0.f;
@@ -121,6 +141,7 @@ namespace n_movement_recorder
 		void on_end_scene( );
 		void camera_lock( float* x, float* y );
 		void force_stop( bool keep_played = false );
+		void reset_all( );
 		void set_round_frozen( bool frozen );
 
 		std::filesystem::path get_root_path( ) const;
@@ -129,6 +150,8 @@ namespace n_movement_recorder
 		void delete_clip( size_t index );
 		bool play_clip( size_t index );
 		void open_clip_editor( size_t index );
+		void save_buffered( size_t index );
+		void clear_clip_history( );
 
 		static int server_tickrate( );
 		bool playable( const clip_t& clip ) const;
@@ -139,9 +162,11 @@ namespace n_movement_recorder
 		c_angle camera_at( size_t idx, float now ) const;
 		void check_map_change( );
 		void apply_replay_jetpack( bool active );
-		void save_frames( const std::vector< frame_t >& frames, const char* kind );
-		void clip_route( );
-		void reset_all( );
+		bool save_frames( const std::vector< frame_t >& frames, const char* kind, std::string* saved_as = nullptr );
+		void save_clip( );
+		void clip_tick( const frame_t& f, bool can_start, bool still );
+		bool finish_clip( );
+		void drop_clip_session( );
 		void render_clip_editor( );
 		void apply_clip_editor( );
 		void rename_clip( size_t index, const std::string& new_name );

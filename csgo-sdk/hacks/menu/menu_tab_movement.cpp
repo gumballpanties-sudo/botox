@@ -631,6 +631,22 @@ void n_menu::impl_t::tab_movement( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			/* real movement, any server: surf a ledge's top edge from beside it */
+			ImGui::Checkbox( "edge surf", &GET_VARIABLE( g_variables.m_edge_surf, bool ) );
+			if ( GET_VARIABLE( g_variables.m_edge_surf, bool ) ) {
+				ImGui::OptionPopup(
+					"edge surf settings",
+					[ & ]( ) {
+						ImGui::Label( "edge surf keybind" );
+						ImGui::Keybind( "edge surf key", &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
+						ImGui::SliderFloat( "reach##esurfreach", &GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.1f, 32.f, "%.1f u" );
+						ImGui::SliderFloat( "lead range##esurfrange", &GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f, "%.0f u" );
+						/* 0 = straight press into the wall, else air strafe toward it turning this many degrees a tick */
+						ImGui::SliderFloat( "delta strafe##esurfdelta", &GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ), 0.f, 15.f, "%.2f" );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
 			ImGui::Checkbox( "pixel surf", &GET_VARIABLE( g_variables.m_pixel_surf, bool ) );
 			if ( GET_VARIABLE( g_variables.m_pixel_surf, bool ) ) {
 				ImGui::OptionPopup(
@@ -1058,21 +1074,6 @@ void n_menu::impl_t::tab_movement( )
 			ImGui::Checkbox( "hide y6o ps", &GET_VARIABLE( g_variables.m_hide_y6o_ps, bool ) );
 			ImGui::Checkbox( "hide sourcemod", &GET_VARIABLE( g_variables.m_hide_sourcemod, bool ) );
 
-			ImGui::Checkbox( "edge surf", &GET_VARIABLE( g_variables.m_edge_surf, bool ) );
-			if ( GET_VARIABLE( g_variables.m_edge_surf, bool ) ) {
-				ImGui::OptionPopup(
-					"edge surf settings",
-					[ & ]( ) {
-						ImGui::Label( "edge surf keybind" );
-						ImGui::Keybind( "edge surf key", &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
-						ImGui::SliderFloat( "reach##esurfreach", &GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.1f, 32.f, "%.1f u" );
-						ImGui::SliderFloat( "lead range##esurfrange", &GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f, "%.0f u" );
-						/* 0 = straight press into the wall, else air strafe toward it turning this many degrees a tick */
-						ImGui::SliderFloat( "delta strafe##esurfdelta", &GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ), 0.f, 5.f, "%.2f" );
-					},
-					ImVec2( 220.f, -1.f ) );
-			}
-
 			ImGui::Checkbox( "poop joomp", &GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) );
 			if ( GET_VARIABLE( g_variables.m_poop_ladder_jump, bool ) ) {
 				ImGui::OptionPopup(
@@ -1482,7 +1483,7 @@ void n_menu::impl_t::tab_movement( )
 					"detection settings",
 					[ & ]( ) {
 						ImGui::MultiCombo( "detections", GET_VARIABLE( g_variables.m_detection_types, std::vector< bool > ),
-					                       { "edgebug", "texturebug", "airstuck", "pixelsurf", "wallclimb" },
+					                       { "edgebug", "texturebug", "airstuck", "pixelsurf", "wallclimb", "edgesurf" },
 					                       GET_VARIABLE( g_variables.m_detection_types, std::vector< bool > ).size( ) );
 						ImGui::Checkbox( "stack edgebugs##detstack", &GET_VARIABLE( g_variables.m_detection_stack_eb, bool ) );
 
@@ -1592,7 +1593,9 @@ void n_menu::impl_t::tab_movement( )
 			ImGui::Checkbox( "clipper", &GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) );
 			if ( GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) ) {
 				ImGui::Checkbox( "show clipper box", &GET_VARIABLE( g_variables.m_movement_rec_clipper_box, bool ) );
-				ImGui::SliderFloat( "clipper duration##recorder", &GET_VARIABLE( g_variables.m_movement_rec_clip_seconds, float ), 1.f, 120.f, "%.0f s" );
+				ImGui::SliderFloat( "clip stop delay##recorder", &GET_VARIABLE( g_variables.m_movement_rec_clip_stop_delay, float ), 0.f, 2.f,
+				                    GET_VARIABLE( g_variables.m_movement_rec_clip_stop_delay, float ) > 0.005f ? "%.2f s" : "instant" );
+				ImGui::SliderFloat( "max clip length##recorder", &GET_VARIABLE( g_variables.m_movement_rec_clip_max, float ), 5.f, 300.f, "%.0f s" );
 			}
 			ImGui::Checkbox( "original playback viewangles", &GET_VARIABLE( g_variables.m_movement_rec_lockva, bool ) );
 			ImGui::Combo( "playback yaw", &GET_VARIABLE( g_variables.m_movement_rec_yaw, int ), "original\0left\0right\0backwards\0spinning\0" );
@@ -1620,7 +1623,7 @@ void n_menu::impl_t::tab_movement( )
 			ImGui::Label( "clear route" );
 			ImGui::Keybind( "recorder clear key", &GET_VARIABLE( g_variables.m_movement_rec_keyclearrecord, key_bind_t ), false );
 			if ( GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) ) {
-				ImGui::Label( "clip route" );
+				ImGui::Label( "save clip" );
 				ImGui::Keybind( "recorder clip key", &GET_VARIABLE( g_variables.m_movement_rec_keyclip, key_bind_t ), false );
 			}
 		}
@@ -1632,7 +1635,7 @@ void n_menu::impl_t::tab_movement( )
 			static constexpr std::pair< const char*, e_action > k_actions[ ] = {
 				{ "start recording", action_start_rec }, { "stop recording", action_stop_rec }, { "save route", action_save },
 				{ "start playback", action_start_play }, { "stop playback", action_stop_play }, { "clear route", action_clear },
-				{ "clip route", action_clip },
+				{ "save clip", action_clip },
 			};
 
 			ImGui::BeginDisabled( !GET_VARIABLE( g_variables.m_movement_rec, bool ) );
@@ -1684,6 +1687,43 @@ void n_menu::impl_t::tab_movement( )
 				mr.refresh_clips( );
 		}
 		menu_group_end( );
+
+		if ( GET_VARIABLE( g_variables.m_movement_rec_clipper, bool ) ) {
+			if ( menu_group_begin( "clip buffer" ) ) {
+				std::scoped_lock lock( mr.m_clips_mutex );
+
+				ImGui::TextDisabled( mr.m_clip_active ? "clipping...   move, stop = clip" : "move from standing, stop = clip" );
+
+				if ( ImGui::BeginListBox( "##recorder clip buffer", ImVec2( -1.f, 110.f ) ) ) {
+					const float tick = static_cast< float >( std::max( mr.server_tickrate( ), 1 ) );
+					for ( std::size_t i = 0; i < mr.m_clip_history.size( ); ++i ) {
+						const auto& c         = mr.m_clip_history[ i ];
+						const std::string row = std::format( "#{}   {:.1f} s   {} ticks{}{}##clip {}", i + 1, static_cast< float >( c.frames.size( ) ) / tick,
+						                                     c.frames.size( ), c.rolled ? "   cut" : "", c.saved_as.empty( ) ? "" : "   saved", i );
+						if ( ImGui::Selectable( row.c_str( ), mr.m_clip_selected == static_cast< int >( i ), ImGuiSelectableFlags_AllowDoubleClick ) ) {
+							mr.m_clip_selected = static_cast< int >( i );
+							if ( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
+								mr.save_buffered( i );
+						}
+					}
+					ImGui::EndListBox( );
+				}
+
+				/* newest = same path as the key: a session in progress gets cut and saved */
+				const bool picked = mr.m_clip_selected >= 0 && mr.m_clip_selected < static_cast< int >( mr.m_clip_history.size( ) );
+				ImGui::BeginDisabled( mr.m_clip_history.empty( ) && !mr.m_clip_active );
+				if ( ImGui::Button( picked ? "save picked clip" : "save newest clip", ImVec2( -1.f, 15.f ) ) ) {
+					if ( picked )
+						mr.save_buffered( static_cast< std::size_t >( mr.m_clip_selected ) );
+					else
+						mr.request( n_movement_recorder::action_clip );
+				}
+				if ( ImGui::Button( "clear clip buffer", ImVec2( -1.f, 15.f ) ) )
+					mr.clear_clip_history( );
+				ImGui::EndDisabled( );
+			}
+			menu_group_end( );
+		}
 
 		menu_columns_end( );
 		break;

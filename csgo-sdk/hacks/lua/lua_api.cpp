@@ -10,6 +10,7 @@
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "../../game/sdk/includes/includes.h"
@@ -17,6 +18,7 @@
 #include "../../globals/logger/logger.h"
 #include "../chat_hud.h"
 #include "../misc/misc.h"
+#include "../skins/skins_internal.h"
 #include "../visuals/players/esp_preview.h"
 
 #include "lua_api.h"
@@ -2781,6 +2783,297 @@ namespace
 		return 1;
 	}
 
+	/* ---- client model swaps: engine.precache_model, engine.model_sequences, entity:set_model_index ---- */
+
+	std::unordered_set< std::string > s_precache_reported; /* one console line per bad path: scripts call this every frame */
+
+	/* engine.precache_model( path ) -> model index or nil. mesh checked like a draw_model swap ( a .mdl whose .vvd / .vtx
+	   don't load gets an index but never reaches DrawModelExecute ), then skins precache_model: load first, add second */
+	int l_engine_precache_model( lua_State* L )
+	{
+		const char* path           = luaL_checkstring( L, 1 );
+		const std::string_view view = path;
+		if ( view.size( ) < 5 || _stricmp( path + view.size( ) - 4, ".mdl" ) != 0 )
+			return luaL_error( L, "engine.precache_model: '%s' is not a .mdl path", path );
+		if ( n_lua_api::s_draw )
+			return luaL_error( L, "engine.precache_model: not inside draw_model ( it loads the model )" );
+		if ( !g_interfaces.m_engine_client->is_in_game( ) ) {
+			lua_pushnil( L );
+			return 1;
+		}
+
+		/* same test as load_models: missing file / sv_pure rejected loose file = error.mdl, no mesh = no hw lods */
+		const model_t* model   = g_interfaces.m_model_info->find_or_load_model( path );
+		const studiohdr_t* hdr = model ? g_interfaces.m_model_info->get_studio_model( model ) : nullptr;
+		const int* hw = hdr ? g_interfaces.m_model_cache->get_hardware_data( g_interfaces.m_model_info->get_cache_handle( model ) ) : nullptr;
+		if ( !hdr || std::strstr( hdr->sz_name, "error.mdl" ) || !hw || hw[ 1 ] <= 0 ) {
+			if ( s_precache_reported.size( ) < 256 && s_precache_reported.insert( path ).second ) {
+				n_lua_api::console_msg( std::string( "[lua] engine.precache_model: can't load " ) + path +
+				                        " ( missing .mdl / .vvd / .vtx, or sv_pure: settings > sv_pure bypass )" );
+				botox_dbg_log( "LUA: precache load failed %s", path );
+			}
+			lua_pushnil( L );
+			return 1;
+		}
+
+		const int index = ::precache_model( path );
+		if ( index > 0 )
+			lua_pushinteger( L, index );
+		else
+			lua_pushnil( L );
+		return 1;
+	}
+
+	struct model_sequences_t {
+		const studiohdr_t* m_hdr;
+		int m_count;
+		const char* m_names[ 256 ];
+		const char* m_activities[ 256 ];
+	};
+	model_sequences_t s_model_sequences;
+
+	void put_sequence( model_sequences_t* job, const int i, const mstudioseqdesc_t* seq )
+	{
+		job->m_names[ i ]      = seq->get_label( );
+		job->m_activities[ i ] = seq->m_activity_name_index ? reinterpret_cast< const char* >( seq ) + seq->m_activity_name_index : "";
+		job->m_count           = i + 1;
+	}
+
+	/* the numbering m_nSequence uses: with $includemodel ( every stock knife ) that's the virtual model's list, csgosrc2019
+	   public/studio.cpp pSeqdesc_Internal. studio.h virtualmodel_t on x86: CThreadFastMutex 8, then CUtlVectors of 20
+	   ( memory, alloc, grow, size, elements ): m_seq +8, m_group +88. virtualsequence_t 16 ( flags, activity, group, index ),
+	   virtualgroup_t 144 ( cache, 7 vectors ), client resolves cache with IVModelInfo::FindModel ( studio_shared.cpp:28 ) */
+	void model_sequences_job( void* context )
+	{
+		auto* const job       = static_cast< model_sequences_t* >( context );
+		const auto* const raw = reinterpret_cast< const std::uint8_t* >( job->m_hdr );
+		const int includes    = *reinterpret_cast< const int* >( raw + 336 ); /* studiohdr_t numincludemodels */
+
+		const auto* const vmodel = includes > 0 ? reinterpret_cast< const std::uint8_t* >( g_interfaces.m_model_info->get_virtual_model( job->m_hdr ) ) : nullptr;
+		const auto* const seqs   = vmodel ? *reinterpret_cast< const std::uint8_t* const* >( vmodel + 8 ) : nullptr;
+		const int seq_count      = vmodel ? *reinterpret_cast< const int* >( vmodel + 8 + 12 ) : 0;
+		const auto* const groups = vmodel ? *reinterpret_cast< const std::uint8_t* const* >( vmodel + 88 ) : nullptr;
+		const int group_count    = vmodel ? *reinterpret_cast< const int* >( vmodel + 88 + 12 ) : 0;
+		/* layout from the 2019 source, not the live binary: implausible = read the model's own list instead */
+		if ( seqs && groups && seq_count >= job->m_hdr->n_local_sequences && seq_count <= 4096 && group_count > includes && group_count <= 512 ) {
+			for ( int i = 0; i < seq_count && i < 256; i++ ) {
+				const int group = *reinterpret_cast< const int* >( seqs + i * 16 + 8 );
+				if ( group < 0 || group >= group_count )
+					return;
+				const studiohdr_t* const group_hdr = g_interfaces.m_model_info->find_model( *reinterpret_cast< void* const* >( groups + group * 144 ) );
+				const mstudioseqdesc_t* const seq  = group_hdr ? group_hdr->get_sequence( *reinterpret_cast< const int* >( seqs + i * 16 + 12 ) ) : nullptr;
+				if ( !seq )
+					return;
+				put_sequence( job, i, seq );
+			}
+			return;
+		}
+
+		for ( int i = 0; i < job->m_hdr->n_local_sequences && i < 256; i++ )
+			put_sequence( job, i, job->m_hdr->get_sequence( i ) );
+	}
+
+	struct sequence_info_t {
+		std::string m_name;
+		std::string m_activity;
+	};
+
+	/* false = no model at index ( or unreadable ) */
+	bool read_sequences( const int index, std::vector< sequence_info_t >& out )
+	{
+		const model_t* model   = index > 0 ? g_interfaces.m_model_info->get_model( index ) : nullptr;
+		const studiohdr_t* hdr = model ? g_interfaces.m_model_info->get_studio_model( model ) : nullptr;
+		if ( !hdr )
+			return false;
+
+		s_model_sequences       = { };
+		s_model_sequences.m_hdr = hdr;
+		if ( !seh_run( &model_sequences_job, &s_model_sequences ) )
+			return false;
+
+		out.clear( );
+		for ( int i = 0; i < s_model_sequences.m_count; i++ ) {
+			const int name_length     = seh_strlen( s_model_sequences.m_names[ i ], 256 );
+			const int activity_length = seh_strlen( s_model_sequences.m_activities[ i ], 256 );
+			out.push_back( { name_length > 0 ? std::string( s_model_sequences.m_names[ i ], name_length ) : std::string( ),
+			                 activity_length > 0 ? std::string( s_model_sequences.m_activities[ i ], activity_length ) : std::string( ) } );
+		}
+		return true;
+	}
+
+	/* engine.model_sequences( model_index ) -> { { name =, activity = }, ... } ( [ 1 ] = sequence 0 ), nil = no such model */
+	int l_engine_model_sequences( lua_State* L )
+	{
+		if ( n_lua_api::s_draw )
+			return luaL_error( L, "engine.model_sequences: not inside draw_model ( it can load included models )" );
+		std::vector< sequence_info_t > sequences;
+		if ( !read_sequences( static_cast< int >( luaL_checkinteger( L, 1 ) ), sequences ) ) {
+			lua_pushnil( L );
+			return 1;
+		}
+
+		lua_createtable( L, static_cast< int >( sequences.size( ) ), 0 );
+		for ( std::size_t i = 0; i < sequences.size( ); i++ ) {
+			lua_createtable( L, 0, 2 );
+			lua_pushstring( L, sequences[ i ].m_name.c_str( ) );
+			lua_setfield( L, -2, "name" );
+			lua_pushstring( L, sequences[ i ].m_activity.c_str( ) );
+			lua_setfield( L, -2, "activity" );
+			lua_rawseti( L, -2, static_cast< lua_Integer >( i + 1 ) );
+		}
+		return 1;
+	}
+
+	struct set_model_index_t {
+		c_base_entity* m_entity;
+		int m_index;
+	};
+
+	void set_model_index_job( void* context )
+	{
+		const auto* const job = static_cast< const set_model_index_t* >( context );
+		job->m_entity->set_model_index( job->m_index );
+	}
+
+	/* ended / replaced swaps still on your viewmodel: put back to m_from by apply_viewmodel_swaps, kept until a postdataupdate_start
+	   wrote it ( prediction's network copy holds `to` until then and restores it every packet ) */
+	std::vector< lua_viewmodel_swap_t > s_viewmodel_restores;
+
+	/* C_BaseEntity::SetModelIndex ( vfunc 75, the skins / agent changers' slot ): unlike a raw m_nModelIndex write it also moves the
+	   model pointer + runs OnNewModel ( Kisak c_baseentity.cpp SetModelIndex ). remap = the swap of this step: its sequence numbers
+	   change with the model ( forward from -> to, reverse = a restore to -> from ). false = crashed inside */
+	bool set_model_index_mapped( c_base_entity* entity, const int index, const lua_viewmodel_swap_t* remap, const bool reverse )
+	{
+		const int old_index    = entity->get_model_index( );
+		const int old_sequence = entity->get_sequence( );
+
+		set_model_index_t job{ entity, index };
+		if ( !seh_run( &set_model_index_job, &job ) )
+			return false;
+
+		if ( !remap )
+			return true;
+
+		const int count = static_cast< int >( remap->m_map.size( ) );
+		if ( !reverse ) {
+			g_lua_viewmodel_game_model = old_index;
+			if ( old_sequence >= 0 && old_sequence < count )
+				entity->get_sequence( ) = remap->m_map[ old_sequence ];
+		} else {
+			int sequence = 0;
+			for ( int i = 0; i < count; i++ )
+				if ( remap->m_map[ i ] == old_sequence ) {
+					sequence = i;
+					break;
+				}
+			entity->get_sequence( ) = sequence;
+		}
+		return true;
+	}
+
+	const lua_viewmodel_swap_t* swap_for_step( const int from, const int to )
+	{
+		for ( const auto& swap : g_lua_viewmodel_swaps )
+			if ( swap.m_from == from && swap.m_to == to )
+				return &swap;
+		return nullptr;
+	}
+
+	/* entity:set_model_index( index ) */
+	int l_entity_set_model_index( lua_State* L )
+	{
+		c_base_entity* const entity = check_entity( L );
+		const int index             = static_cast< int >( luaL_checkinteger( L, 2 ) );
+		if ( n_lua_api::s_draw )
+			return luaL_error( L, "entity:set_model_index: not inside draw_model ( the entity is being drawn )" );
+		if ( index <= 0 || !g_interfaces.m_model_info->get_model( index ) )
+			return luaL_error( L, "entity:set_model_index: no model at index %d ( engine.precache_model first )", index );
+
+		if ( !set_model_index_mapped( entity, index, swap_for_step( entity->get_model_index( ), index ), false ) )
+			return luaL_error( L, "entity:set_model_index: crashed inside SetModelIndex( %d )", index );
+		return 0;
+	}
+
+	/* your viewmodel entity, null when there is none */
+	c_base_entity* local_viewmodel( )
+	{
+		c_base_entity* const local = local_player( );
+		return local ? g_interfaces.m_client_entity_list->get< c_base_entity >( local->get_view_model_handle( ) ) : nullptr;
+	}
+
+	/* engine.swap_viewmodel( from_index, to_index [, map ] ): your viewmodel shows to_index wherever the game picks from_index.
+	   map = { [ from_sequence ] = to_sequence } over the automatic one ( same activity, else same name, else to's ACT_VM_IDLE ).
+	   engine.swap_viewmodel( from_index, nil ) ends it */
+	int l_engine_swap_viewmodel( lua_State* L )
+	{
+		const int from = static_cast< int >( luaL_checkinteger( L, 1 ) );
+		if ( n_lua_api::s_draw )
+			return luaL_error( L, "engine.swap_viewmodel: not inside draw_model" );
+
+		const auto old = std::find_if( g_lua_viewmodel_swaps.begin( ), g_lua_viewmodel_swaps.end( ),
+		                               [ from ]( const lua_viewmodel_swap_t& swap ) { return swap.m_from == from; } );
+
+		/* the old one goes only once the new one is valid ( a failed replace keeps it ). still on screen: restored by the apply */
+		const auto end_old = [ & ]( ) {
+			if ( old == g_lua_viewmodel_swaps.end( ) )
+				return;
+			if ( s_viewmodel_restores.size( ) < 64 )
+				s_viewmodel_restores.push_back( *old );
+			g_lua_viewmodel_swaps.erase( old );
+		};
+
+		if ( lua_isnoneornil( L, 2 ) ) {
+			end_old( );
+			return 0;
+		}
+
+		const int to = static_cast< int >( luaL_checkinteger( L, 2 ) );
+		std::vector< sequence_info_t > from_sequences, to_sequences;
+		if ( from == to || !read_sequences( from, from_sequences ) || !read_sequences( to, to_sequences ) )
+			return luaL_error( L, "engine.swap_viewmodel: needs two different model indexes ( engine.precache_model ), got %d and %d", from, to );
+		if ( old == g_lua_viewmodel_swaps.end( ) && g_lua_viewmodel_swaps.size( ) >= 64 )
+			return luaL_error( L, "engine.swap_viewmodel: 64 swaps at most" );
+
+		lua_viewmodel_swap_t swap{ n_lua_api::script_of( L ), from, to, std::vector< int >( from_sequences.size( ), 0 ) };
+
+		int idle = 0;
+		for ( std::size_t j = 0; j < to_sequences.size( ); j++ )
+			if ( !_stricmp( to_sequences[ j ].m_activity.c_str( ), "ACT_VM_IDLE" ) ) {
+				idle = static_cast< int >( j );
+				break;
+			}
+
+		for ( std::size_t i = 0; i < from_sequences.size( ); i++ ) {
+			int pick = -1;
+			for ( std::size_t j = 0; pick < 0 && !from_sequences[ i ].m_activity.empty( ) && j < to_sequences.size( ); j++ )
+				if ( !_stricmp( to_sequences[ j ].m_activity.c_str( ), from_sequences[ i ].m_activity.c_str( ) ) )
+					pick = static_cast< int >( j );
+			for ( std::size_t j = 0; pick < 0 && j < to_sequences.size( ); j++ )
+				if ( !_stricmp( to_sequences[ j ].m_name.c_str( ), from_sequences[ i ].m_name.c_str( ) ) )
+					pick = static_cast< int >( j );
+			swap.m_map[ i ] = pick >= 0 ? pick : idle;
+		}
+
+		if ( !lua_isnoneornil( L, 3 ) ) {
+			luaL_checktype( L, 3, LUA_TTABLE );
+			lua_pushnil( L );
+			while ( lua_next( L, 3 ) ) {
+				const lua_Integer key   = lua_isinteger( L, -2 ) ? lua_tointeger( L, -2 ) : -1;
+				const lua_Integer value = lua_isinteger( L, -1 ) ? lua_tointeger( L, -1 ) : -1;
+				if ( key < 0 || key >= static_cast< lua_Integer >( swap.m_map.size( ) ) || value < 0 ||
+				     value >= static_cast< lua_Integer >( to_sequences.size( ) ) )
+					return luaL_error( L, "engine.swap_viewmodel: map entry out of range ( from has %d sequences, to has %d, both 0-based )",
+					                   static_cast< int >( swap.m_map.size( ) ), static_cast< int >( to_sequences.size( ) ) );
+				swap.m_map[ static_cast< std::size_t >( key ) ] = static_cast< int >( value );
+				lua_pop( L, 1 );
+			}
+		}
+
+		end_old( );
+		g_lua_viewmodel_swaps.push_back( std::move( swap ) );
+		return 0;
+	}
+
 	int l_draw_index( lua_State* L )
 	{
 		n_lua::draw_model_t* draw = check_draw( L );
@@ -2973,6 +3266,55 @@ void n_lua_api::reset_models( )
 	/* entity indexes mean other players on the next map */
 	for ( entity_anim_t& anim : s_entity_anims )
 		anim = { };
+
+	/* precache indexes are per map: scripts swap again from level_init / frame_stage */
+	g_lua_viewmodel_swaps.clear( );
+	s_viewmodel_restores.clear( );
+	g_lua_viewmodel_game_model = 0;
+	s_precache_reported.clear( );
+	/* skins precache_model tries a path once per table size: a same size table on the next map refused every model */
+	g_precache_tried.clear( );
+	g_precache_last_count = 0;
+}
+
+void n_lua_api::apply_viewmodel_swaps( const bool network_frame )
+{
+	if ( g_lua_viewmodel_swaps.empty( ) && s_viewmodel_restores.empty( ) )
+		return;
+
+	if ( c_base_entity* const viewmodel = local_viewmodel( ) ) {
+		for ( const auto& restore : s_viewmodel_restores ) {
+			if ( viewmodel->get_model_index( ) == restore.m_to && !lua_viewmodel_swap_showing( restore.m_to ) ) {
+				set_model_index_mapped( viewmodel, restore.m_from, &restore, true );
+				break;
+			}
+		}
+
+		const int current = viewmodel->get_model_index( );
+		for ( const auto& swap : g_lua_viewmodel_swaps ) {
+			if ( current == swap.m_from ) {
+				set_model_index_mapped( viewmodel, swap.m_to, &swap, false );
+				break;
+			}
+		}
+	}
+
+	/* written before prediction copies the network state ( POSTDATAUPDATE_END ): restores hold from here on */
+	if ( network_frame )
+		s_viewmodel_restores.clear( );
+}
+
+void n_lua_api::forget_script( const void* script )
+{
+	for ( auto it = g_lua_viewmodel_swaps.begin( ); it != g_lua_viewmodel_swaps.end( ); ) {
+		if ( it->m_owner != script ) {
+			++it;
+			continue;
+		}
+		if ( s_viewmodel_restores.size( ) < 64 )
+			s_viewmodel_restores.push_back( *it );
+		it = g_lua_viewmodel_swaps.erase( it );
+	}
 }
 
 void n_lua_api::free_models( )
@@ -3114,6 +3456,7 @@ void n_lua_api::open( lua_State* L )
 		                                        { "get_datafield", l_entity_get_datafield },
 		                                        { "set_datafield", l_entity_set_datafield },
 		                                        { "animate", l_entity_animate },
+		                                        { "set_model_index", l_entity_set_model_index },
 		                                        { nullptr, nullptr } };
 	static const luaL_Reg entity_meta[ ]    = { { "__eq", l_entity_eq }, { "__tostring", l_entity_tostring }, { nullptr, nullptr } };
 	new_meta( L, k_entity_meta, entity_methods, entity_meta );
@@ -3131,6 +3474,9 @@ void n_lua_api::open( lua_State* L )
 		                                { "player_for_user_id", l_engine_player_for_user_id },
 		                                { "playing_demo", l_engine_playing_demo },
 		                                { "latency", l_engine_latency },
+		                                { "precache_model", l_engine_precache_model },
+		                                { "model_sequences", l_engine_model_sequences },
+		                                { "swap_viewmodel", l_engine_swap_viewmodel },
 		                                { nullptr, nullptr } };
 	add_table( L, "engine", engine );
 

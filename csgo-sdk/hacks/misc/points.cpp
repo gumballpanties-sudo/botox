@@ -17,7 +17,8 @@ namespace
 	std::atomic< unsigned > points_events{ 0 };
 
 	constexpr int k_rows             = static_cast< int >( e_points_trick::pixel_surf_ride );
-	constexpr const char* k_row_names[] = { "edgebug", "fireman", "jumpbug", "headbounce", "pixelsurf", "texturebug", "airstuck", "wallclimb" };
+	constexpr const char* k_row_names[] = { "edgebug", "fireman", "jumpbug", "headbounce", "pixelsurf", "texturebug", "airstuck", "wallclimb",
+	                                        "edgesurf" };
 	static_assert( std::size( k_row_names ) == k_rows, "readout name per trick" );
 
 	/* readout: one row per trick this combo. rows + points_total change together under the lock */
@@ -101,7 +102,7 @@ void points_on_trick( const e_points_trick trick )
 
 	constexpr int k_held_first = static_cast< int >( e_points_trick::pixel_surf );
 	constexpr int k_ride_first = static_cast< int >( e_points_trick::pixel_surf_ride );
-	static_assert( static_cast< int >( e_points_trick::wall_climb_ride ) - k_ride_first == k_ride_first - 1 - k_held_first, "held / ride blocks out of step" );
+	static_assert( static_cast< int >( e_points_trick::edge_surf_ride ) - k_ride_first == k_ride_first - 1 - k_held_first, "held / ride blocks out of step" );
 	static float next_ride_bonus[ k_ride_first - k_held_first ] = { };
 	const float now = g_interfaces.m_global_vars_base->m_real_time;
 	const int index = static_cast< int >( trick );

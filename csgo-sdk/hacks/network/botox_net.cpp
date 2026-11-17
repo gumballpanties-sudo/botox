@@ -2,6 +2,7 @@
 
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
+#include "../misc/misc.h"
 #include "../skins/skins_internal.h"
 #include "../visuals/old_mods.h"
 #include "../web/websurface.h"
@@ -240,11 +241,17 @@ void n_botox_net::impl_t::on_create_move( )
 	const bool share_skins = GET_VARIABLE( g_variables.m_botox_network_skins, bool );
 	const bool share_web   = GET_VARIABLE( g_variables.m_botox_network_web, bool );
 
+	const bool typing = GET_VARIABLE( g_variables.m_typing_bubbles, bool ) && typing_bubbles_local( );
+	if ( typing != m_sent_typing )
+		m_last_hello = -1.f;
+
 	if ( !fresh( m_last_hello, 1.f ) ) {
-		const std::uint8_t flags = ( share_esp ? hello_esp : 0 ) | ( share_skins ? hello_skins : 0 ) | ( share_web ? hello_web : 0 );
+		const std::uint8_t flags = ( share_esp ? hello_esp : 0 ) | ( share_skins ? hello_skins : 0 ) | ( share_web ? hello_web : 0 ) |
+		                           ( typing ? hello_typing : 0 );
 		if ( !send( make_packet( packet_hello, &flags, sizeof( flags ) ) ) )
 			botox_dbg_log( "NET: hello send failed" );
-		m_last_hello = now( );
+		m_last_hello  = now( );
+		m_sent_typing = typing;
 	}
 
 	if ( fresh( m_mic_time, 0.3f ) )
@@ -911,6 +918,16 @@ int n_botox_net::impl_t::knife_slot_of( int player_index ) const
 
 	const auto& user = m_user_seen[ player_index ];
 	return fresh( user.m_knife_time, SKIN_TIMEOUT ) ? user.m_knife_slot : 0;
+}
+
+/* hello comes 1/s + at once on change: 2.5 s = one lost hello */
+bool n_botox_net::impl_t::typing( int player_index ) const
+{
+	if ( player_index < 1 || player_index > 64 || !active( ) )
+		return false;
+
+	const auto& user = m_user_seen[ player_index ];
+	return ( user.m_flags & hello_typing ) && fresh( user.m_time, 2.5f );
 }
 
 void n_botox_net::impl_t::on_frame_stage_notify( int stage )

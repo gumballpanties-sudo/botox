@@ -2930,6 +2930,7 @@ void kill_effects_paint( )
 	}
 
 	g_kfx_quads.clear( );
+	typing_bubbles_paint( );
 	if ( g_kfx.empty( ) )
 		return;
 
@@ -3027,6 +3028,11 @@ void kill_effects_paint( )
 	}
 
 	g_kfx.erase( std::remove_if( g_kfx.begin( ), g_kfx.end( ), [ ]( const kfx_particle_t& p ) { return p.m_age >= p.m_life; } ), g_kfx.end( ) );
+}
+
+void kill_effects_disc( const c_vector& at, const float radius, const float x0, const float y0, const float x1, const float y1, const unsigned int color )
+{
+	kfx_quad( at, radius, x0, y0, x1, y1, kfx_disc, color );
 }
 
 void kill_effects_world( const c_vector& origin, const c_angle& angles )

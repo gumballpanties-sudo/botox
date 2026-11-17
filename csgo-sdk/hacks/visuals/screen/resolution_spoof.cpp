@@ -37,6 +37,18 @@ static constexpr DWORD k_sampler_values[] = { D3DTADDRESS_CLAMP, D3DTADDRESS_CLA
 static_assert( std::size( k_render_states ) == std::size( k_render_values ) );
 static_assert( std::size( k_sampler_states ) == std::size( k_sampler_values ) );
 
+/* one axis. c0 = source px along it, source px per target px ( r ), 1 / source w, 1 / source h. c1.xy = axis.
+   i0.x = ceil( r ) + 1 taps. footprint [ lo, lo + r ) in source px, every px it touches weighted by overlap ( point
+   taps, lod 0: gradients are undefined in a loop ). port in tools/res_spoof_check.py */
+static constexpr char k_area_shader[] = "sampler2D s0:register(s0);float4 c0:register(c0);float4 c1:register(c1);int n:register(i0);"
+                                        "float4 main(float2 uv:TEXCOORD0):COLOR0{"
+                                        "float lo=dot(uv,c1.xy)*c0.x-c0.y*0.5;float hi=lo+c0.y;float t=floor(lo);"
+                                        "float4 sum=0.0;float total=0.0;"
+                                        "[loop]for(int i=0;i<n;i++){"
+                                        "float w=max(min(t+1.0,hi)-max(t,lo),0.0);"
+                                        "sum+=tex2Dlod(s0,float4(lerp(uv,(t+0.5)*c0.zw,c1.xy),0.0,0.0))*w;total+=w;t+=1.0;}"
+                                        "return sum/max(total,1e-6);}";
+
 void n_resolution_spoof::impl_t::release( )
 {
 	if ( this->m_surface ) {
@@ -59,58 +71,50 @@ void n_resolution_spoof::impl_t::release( )
 		this->m_capture = nullptr;
 	}
 
-	this->m_capture_has_mips = false;
-
-	for ( auto& level : this->m_chain ) {
-		if ( level.m_surface )
-			level.m_surface->Release( );
-
-		if ( level.m_texture )
-			level.m_texture->Release( );
+	if ( this->m_columns_surface ) {
+		this->m_columns_surface->Release( );
+		this->m_columns_surface = nullptr;
 	}
 
-	this->m_chain.clear( );
-	this->m_chain_screen_width  = 0;
-	this->m_chain_screen_height = 0;
+	if ( this->m_columns ) {
+		this->m_columns->Release( );
+		this->m_columns = nullptr;
+	}
+
+	this->m_built_screen_width  = 0;
+	this->m_built_screen_height = 0;
 
 	this->m_width  = 0;
 	this->m_height = 0;
 	this->m_format = D3DFMT_UNKNOWN;
 }
 
-bool n_resolution_spoof::impl_t::build_chain( IDirect3DDevice9* device, const int screen_width, const int screen_height, const int width,
-                                              const int height, const D3DFORMAT format )
+bool n_resolution_spoof::impl_t::area_shader( IDirect3DDevice9* device )
 {
-	this->m_chain_screen_width  = screen_width;
-	this->m_chain_screen_height = screen_height;
+	if ( this->m_area_shader )
+		return true;
 
-	int level_width  = screen_width;
-	int level_height = screen_height;
+	if ( this->m_area_failed )
+		return false;
 
-	for ( int i = 0; i < 8; ++i ) {
-		if ( level_width / 2 < width || level_height / 2 < height )
-			break;
+	ID3DXBuffer *code = nullptr, *errors = nullptr;
+	D3DXCompileShader( k_area_shader, sizeof( k_area_shader ) - 1, nullptr, nullptr, "main", "ps_3_0", 0, &code, &errors, nullptr );
 
-		level_width /= 2;
-		level_height /= 2;
-
-		chain_level_t level{ };
-		level.m_width  = level_width;
-		level.m_height = level_height;
-
-		if ( FAILED( device->CreateTexture( level_width, level_height, 1, D3DUSAGE_RENDERTARGET, format, D3DPOOL_DEFAULT, &level.m_texture,
-		                                    nullptr ) ) ||
-		     FAILED( level.m_texture->GetSurfaceLevel( 0, &level.m_surface ) ) ) {
-			if ( level.m_texture )
-				level.m_texture->Release( );
-
-			return false;
-		}
-
-		this->m_chain.push_back( level );
+	if ( errors ) {
+		g_console.print( ( std::string( "resolution spoofer: area shader: " ) + static_cast< const char* >( errors->GetBufferPointer( ) ) ).c_str( ) );
+		errors->Release( );
 	}
 
-	return true;
+	if ( !code || FAILED( device->CreatePixelShader( static_cast< const DWORD* >( code->GetBufferPointer( ) ), &this->m_area_shader ) ) ) {
+		this->m_area_shader = nullptr;
+		this->m_area_failed = true;
+		g_console.print( "resolution spoofer: area shader FAILED, bilinear downscale" );
+	}
+
+	if ( code )
+		code->Release( );
+
+	return this->m_area_shader != nullptr;
 }
 
 void n_resolution_spoof::impl_t::begin_quad_state( IDirect3DDevice9* device )
@@ -127,6 +131,8 @@ void n_resolution_spoof::impl_t::begin_quad_state( IDirect3DDevice9* device )
 	device->GetFVF( &saved.m_fvf );
 	device->GetTexture( 0, &saved.m_texture );
 	device->GetViewport( &saved.m_viewport );
+	device->GetPixelShaderConstantF( 0, saved.m_constants[ 0 ], 2 );
+	device->GetPixelShaderConstantI( 0, saved.m_int_constant, 1 );
 
 	for ( std::size_t i = 0; i < std::size( k_render_states ); ++i ) {
 		device->GetRenderState( k_render_states[ i ], &saved.m_render[ i ] );
@@ -152,7 +158,8 @@ void n_resolution_spoof::impl_t::begin_quad_state( IDirect3DDevice9* device )
 	device->SetFVF( D3DFVF_XYZRHW | D3DFVF_TEX1 );
 }
 
-bool n_resolution_spoof::impl_t::draw_quad( IDirect3DDevice9* device, IDirect3DTexture9* texture, const int quad_width, const int quad_height )
+bool n_resolution_spoof::impl_t::draw_quad( IDirect3DDevice9* device, IDirect3DTexture9* texture, const int quad_width, const int quad_height,
+                                            const bool shader )
 {
 	if ( !texture )
 		return false;
@@ -176,7 +183,13 @@ bool n_resolution_spoof::impl_t::draw_quad( IDirect3DDevice9* device, IDirect3DT
 
 	device->SetTexture( 0, texture );
 
-	// fixed function vertex AND pixel ( no ps ): legal on amd too, so no n_fx_compat::draw_up
+	if ( shader )
+		return SUCCEEDED( n_fx_compat::draw_up( device, D3DPT_TRIANGLESTRIP, 2, vertices, sizeof( vertex_t ) ) );
+
+	// fixed function vertex AND pixel ( no ps ): legal on amd too. draw_up's vs_3_0 may still be bound
+	device->SetVertexShader( nullptr );
+	device->SetFVF( D3DFVF_XYZRHW | D3DFVF_TEX1 );
+
 	return SUCCEEDED( device->DrawPrimitiveUP( D3DPT_TRIANGLESTRIP, 2, vertices, sizeof( vertex_t ) ) );
 }
 
@@ -196,6 +209,8 @@ void n_resolution_spoof::impl_t::end_quad_state( IDirect3DDevice9* device )
 	device->SetVertexDeclaration( saved.m_declaration );
 	device->SetTexture( 0, saved.m_texture );
 	device->SetViewport( &saved.m_viewport );
+	device->SetPixelShaderConstantF( 0, saved.m_constants[ 0 ], 2 );
+	device->SetPixelShaderConstantI( 0, saved.m_int_constant, 1 );
 
 	for ( std::size_t i = 0; i < std::size( k_render_states ); ++i )
 		device->SetRenderState( k_render_states[ i ], saved.m_render[ i ] );
@@ -217,13 +232,18 @@ void n_resolution_spoof::impl_t::end_quad_state( IDirect3DDevice9* device )
 void n_resolution_spoof::impl_t::on_device_lost( )
 {
 	this->release( );
+
+	if ( this->m_area_shader ) {
+		this->m_area_shader->Release( );
+		this->m_area_shader = nullptr;
+	}
 }
 
 void n_resolution_spoof::impl_t::on_release( )
 {
 	this->net_graph_scale( false );
 
-	this->release( );
+	this->on_device_lost( );
 }
 
 bool n_resolution_spoof::impl_t::enabled( )
@@ -336,11 +356,11 @@ bool n_resolution_spoof::impl_t::low_res_grid( float& pixels_x, float& pixels_y 
 	if ( !this->enabled( ) )
 		return false;
 
-	if ( this->m_width <= 0 || this->m_height <= 0 || this->m_chain_screen_width <= 0 || this->m_chain_screen_height <= 0 )
+	if ( this->m_width <= 0 || this->m_height <= 0 || this->m_built_screen_width <= 0 || this->m_built_screen_height <= 0 )
 		return false;
 
-	pixels_x = static_cast< float >( this->m_chain_screen_width ) / static_cast< float >( this->m_width );
-	pixels_y = static_cast< float >( this->m_chain_screen_height ) / static_cast< float >( this->m_height );
+	pixels_x = static_cast< float >( this->m_built_screen_width ) / static_cast< float >( this->m_width );
+	pixels_y = static_cast< float >( this->m_built_screen_height ) / static_cast< float >( this->m_height );
 
 	return pixels_x > 1.001f || pixels_y > 1.001f;
 }
@@ -659,31 +679,29 @@ void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std
 	}
 
 	if ( !this->m_surface || this->m_width != width || this->m_height != height || this->m_format != description.Format ||
-	     this->m_chain_screen_width != static_cast< int >( description.Width ) ||
-	     this->m_chain_screen_height != static_cast< int >( description.Height ) ) {
+	     this->m_built_screen_width != static_cast< int >( description.Width ) ||
+	     this->m_built_screen_height != static_cast< int >( description.Height ) ) {
 		this->release( );
 
-		bool built = SUCCEEDED( device->CreateTexture( description.Width, description.Height, 0,
-		                                               D3DUSAGE_RENDERTARGET | D3DUSAGE_AUTOGENMIPMAP, description.Format, D3DPOOL_DEFAULT,
-		                                               &this->m_capture, nullptr ) );
+		const bool built = SUCCEEDED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, description.Format,
+		                                                     D3DPOOL_DEFAULT, &this->m_capture, nullptr ) ) &&
+		                   SUCCEEDED( this->m_capture->GetSurfaceLevel( 0, &this->m_capture_surface ) ) &&
+		                   SUCCEEDED( device->CreateTexture( width, height, 1, D3DUSAGE_RENDERTARGET, description.Format, D3DPOOL_DEFAULT,
+		                                                     &this->m_texture, nullptr ) ) &&
+		                   SUCCEEDED( this->m_texture->GetSurfaceLevel( 0, &this->m_surface ) );
 
-		this->m_capture_has_mips = built;
+		// no column target = no area pass, the bilinear fallback still runs
+		for ( const D3DFORMAT format : { D3DFMT_A16B16G16R16F, description.Format } ) {
+			if ( !built || this->m_columns_surface )
+				break;
 
-		if ( !built ) {
-			built = SUCCEEDED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, description.Format,
-			                                          D3DPOOL_DEFAULT, &this->m_capture, nullptr ) );
-
-			static bool warned = false;
-			if ( !warned ) {
-				g_console.print( "resolution spoofer: no autogen mips on the capture, falling back to the halving chain" );
-				warned = true;
+			if ( SUCCEEDED( device->CreateTexture( width, description.Height, 1, D3DUSAGE_RENDERTARGET, format, D3DPOOL_DEFAULT, &this->m_columns,
+			                                       nullptr ) ) &&
+			     FAILED( this->m_columns->GetSurfaceLevel( 0, &this->m_columns_surface ) ) ) {
+				this->m_columns->Release( );
+				this->m_columns = nullptr;
 			}
 		}
-
-		built = built && SUCCEEDED( this->m_capture->GetSurfaceLevel( 0, &this->m_capture_surface ) ) &&
-		        SUCCEEDED( device->CreateTexture( width, height, 1, D3DUSAGE_RENDERTARGET, description.Format, D3DPOOL_DEFAULT,
-		                                          &this->m_texture, nullptr ) ) &&
-		        SUCCEEDED( this->m_texture->GetSurfaceLevel( 0, &this->m_surface ) );
 
 		if ( !built ) {
 			this->release( );
@@ -699,19 +717,8 @@ void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std
 			return;
 		}
 
-		if ( !this->m_capture_has_mips &&
-		     !this->build_chain( device, static_cast< int >( description.Width ), static_cast< int >( description.Height ), width, height,
-		                         description.Format ) ) {
-			static bool warned = false;
-			if ( !warned ) {
-				g_console.print( "resolution spoofer: downsample chain incomplete" );
-				warned = true;
-			}
-		}
-
-		// set here too: with mips build_chain never runs, and a mismatch would rebuild every frame
-		this->m_chain_screen_width  = static_cast< int >( description.Width );
-		this->m_chain_screen_height = static_cast< int >( description.Height );
+		this->m_built_screen_width  = static_cast< int >( description.Width );
+		this->m_built_screen_height = static_cast< int >( description.Height );
 
 		this->m_width  = width;
 		this->m_height = height;
@@ -722,13 +729,15 @@ void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std
 		int log_screen_width  = static_cast< int >( description.Width );
 		int log_screen_height = static_cast< int >( description.Height );
 		int log_multisample   = static_cast< int >( description.MultiSampleType );
-		int log_chain         = static_cast< int >( this->m_chain.size( ) );
+		D3DSURFACE_DESC columns{ };
+		int log_area = this->area_shader( device ) && this->m_columns_surface && SUCCEEDED( this->m_columns_surface->GetDesc( &columns ) )
+		                   ? ( columns.Format == D3DFMT_A16B16G16R16F ? 16 : 8 )
+		                   : 0;
 
-		int log_mips = this->m_capture_has_mips ? 1 : 0;
-
-		g_console.print( std::vformat( "resolution spoofer: {:d}x{:d} -> {:d}x{:d}, msaa {:d}, mips {:d}, chain {:d}",
+		// area 16 / 8 = exact box ( column target bits ), 0 = bilinear fallback
+		g_console.print( std::vformat( "resolution spoofer: {:d}x{:d} -> {:d}x{:d}, msaa {:d}, area {:d}",
 		                               std::make_format_args( log_width, log_height, log_screen_width, log_screen_height, log_multisample,
-		                                                      log_mips, log_chain ) )
+		                                                      log_area ) )
 		                     .c_str( ) );
 	}
 
@@ -744,9 +753,6 @@ void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std
 
 		return;
 	}
-
-	if ( this->m_capture_has_mips )
-		this->m_capture->GenerateMipSubLevels( );
 
 	const bool dump = GET_VARIABLE( g_variables.m_resolution_spoof_dump, bool );
 
@@ -789,36 +795,48 @@ void n_resolution_spoof::impl_t::on_present( IDirect3DDevice9* device, const std
 
 	device->SetDepthStencilSurface( nullptr );
 
-	IDirect3DTexture9* source = this->m_capture;
-	bool stepped              = true;
+	bool stepped = true;
 
-	for ( auto& level : this->m_chain ) {
-		if ( debug_mode == 2 )
-			break;
+	if ( debug_mode != 2 ) {
+		const int screen_width  = static_cast< int >( description.Width );
+		const int screen_height = static_cast< int >( description.Height );
 
-		if ( FAILED( device->SetRenderTarget( 0, level.m_surface ) ) || !this->draw_quad( device, source, level.m_width, level.m_height ) ) {
-			static bool warned = false;
-			if ( !warned ) {
-				g_console.print( "resolution spoofer: chain step draw failed" );
-				warned = true;
-			}
+		// SetRenderTarget resets the viewport to the target, which draw_up maps against
+		const auto area_pass = [ & ]( IDirect3DTexture9* source, const int source_width, const int source_height, IDirect3DSurface9* target,
+		                              const int target_width, const int target_height, const bool horizontal ) {
+			const float along = static_cast< float >( horizontal ? source_width : source_height );
+			const float ratio = along / static_cast< float >( horizontal ? target_width : target_height );
 
-			stepped = false;
-			break;
-		}
+			const float constants[ 2 ][ 4 ] = { { along, ratio, 1.f / source_width, 1.f / source_height },
+				                                { horizontal ? 1.f : 0.f, horizontal ? 0.f : 1.f, 0.f, 0.f } };
+			const int taps[ 4 ]             = { std::min( static_cast< int >( std::ceil( ratio ) ) + 1, 255 ), 0, 1, 0 };
 
-		source = level.m_texture;
-	}
+			device->SetPixelShaderConstantF( 0, constants[ 0 ], 2 );
+			device->SetPixelShaderConstantI( 0, taps, 1 );
 
-	if ( stepped && debug_mode != 2 &&
-	     ( FAILED( device->SetRenderTarget( 0, this->m_surface ) ) || !this->draw_quad( device, source, width, height ) ) ) {
+			return SUCCEEDED( device->SetRenderTarget( 0, target ) ) && this->draw_quad( device, source, target_width, target_height, true );
+		};
+
+		// no vs_3_0 = draw_up would pair ps_3_0 with fixed function vertex ( amd garbage ): bilinear instead
+		if ( this->m_columns_surface && n_fx_compat::ready( device ) && this->area_shader( device ) ) {
+			// taps land on texel centres: point, no mips. sampler states are in k_sampler_states, end_quad_state puts them back
+			device->SetSamplerState( 0, D3DSAMP_MINFILTER, D3DTEXF_POINT );
+			device->SetSamplerState( 0, D3DSAMP_MAGFILTER, D3DTEXF_POINT );
+			device->SetSamplerState( 0, D3DSAMP_MIPFILTER, D3DTEXF_NONE );
+			device->SetPixelShader( this->m_area_shader );
+
+			stepped = area_pass( this->m_capture, screen_width, screen_height, this->m_columns_surface, width, screen_height, true ) &&
+			          area_pass( this->m_columns, width, screen_height, this->m_surface, width, height, false );
+
+			device->SetPixelShader( nullptr );
+		} else
+			stepped = SUCCEEDED( device->SetRenderTarget( 0, this->m_surface ) ) && this->draw_quad( device, this->m_capture, width, height );
+
 		static bool warned = false;
-		if ( !warned ) {
+		if ( !stepped && !warned ) {
 			g_console.print( "resolution spoofer: target draw failed" );
 			warned = true;
 		}
-
-		stepped = false;
 	}
 
 	device->EndScene( );

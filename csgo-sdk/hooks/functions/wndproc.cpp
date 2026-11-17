@@ -4,6 +4,7 @@
 #include "../../globals/includes/includes.h"
 #include "../../hacks/chud_hud/chud_hud.h"
 #include "../../hacks/mc_hud/mc_hud.h"
+#include "../../hacks/misc/misc.h"
 #include "../../hacks/cod4_hud/cod4_hud.h"
 #include "../../hacks/urt_hud/urt_hud.h"
 #include "../../hacks/gta_hud/gta_hud.h"
@@ -29,6 +30,7 @@ long __stdcall n_detoured_functions::wndproc( HWND window, unsigned int message,
 
 	n_cod4_hud::on_key( message, wide_param );
 	n_urt_hud::on_key( message, wide_param );
+	typing_bubbles_on_key( message, long_param );
 
 	/* no hud line up = stock flow: g_input sees the messagemode opener too, else enter on a point never opens the popup.
 	   before chat_on_key: chud's open line would block the down in keys_blocked( ) */

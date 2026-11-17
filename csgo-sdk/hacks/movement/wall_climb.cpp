@@ -8,6 +8,8 @@
 #include <vector>
 
 extern bool HITGODA;
+/* edge_surf.cpp: an edge surf feet approach owned the last cmd ( its fall back over a ledge top is not a climb ) */
+bool edge_surf_latched( const c_user_cmd* cmd );
 extern bool HITGODA2;
 extern bool HITGODA3;
 
@@ -379,7 +381,8 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	}
 	// no yield to a pixel surf latch: wc parks flush, so crease pins come often and a latched ride hung you 27-34 ticks
 	// ( 10-06 22:20 log ). pixel_surf yields to active( ) instead, it runs after wc
-	if ( g_air_stuck_holding || HITGODA || HITGODA2 || HITGODA3 || g_texturebug.m_hit || g_texturebug.m_hs_hit || g_edgebug.m_found ) {
+	if ( g_air_stuck_holding || HITGODA || HITGODA2 || HITGODA3 || g_texturebug.m_hit || g_texturebug.m_hs_hit || g_edgebug.m_found ||
+	     edge_surf_latched( cmd ) ) {
 		m_holding = false;
 		++s_count[ wc_yield ];
 		return;

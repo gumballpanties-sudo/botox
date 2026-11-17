@@ -363,6 +363,12 @@ callbacks.register("frame_stage", function(stage)
 end)
 ```
 
+#### `entity:set_model_index(index)`
+
+Gives the entity another model on your client: the game's own `C_BaseEntity::SetModelIndex`. Get `index` from [`engine.precache_model`](#engineprecache_modelpath). Unlike `set_prop("...->m_nModelIndex")`, which only writes the number, it also moves the model the entity draws with and resets its bones, attachments and animation state for it. A bare `m_nModelIndex` write leaves the entity drawing data built for the old model.
+
+The server keeps sending its own model whenever it changes, so a one-off call lasts until then. For your viewmodel use [`engine.swap_viewmodel`](#engineswap_viewmodelfrom_index-to_index-map), which keeps the swap on and renumbers the animations. Use this for anything else, such as a weapon's world model (`CBaseCombatWeapon->m_hWeaponWorldModel`), from `frame_stage` whenever its model index isn't yours. Errors when `index` has no model or when called inside `draw_model`.
+
 ---
 
 ## cmd
@@ -517,6 +523,22 @@ Entity index, `0` when unknown.
 #### `engine.latency()`
 
 Returns `outgoing, incoming` latency in seconds (`0, 0` when not connected).
+
+#### `engine.precache_model(path)`
+
+Model index for a `.mdl`, loading it and adding it to the model precache table if the map didn't. `nil` when not in game or when the model can't be drawn. Like a `draw_model` swap it needs the `.mdl` plus its `.vvd` and `.dx90.vtx` from the same compile. A missing or mismatched file (or a loose file on an sv_pure server) prints one console line and returns `nil`. Without that check you'd get an index whose model is never drawn. Not inside `draw_model`. Botox's skin changer uses the same precache. The index only exists on your client, and a server that precaches more models later can take its slot, so look it up again after `level_init`.
+
+#### `engine.model_sequences(index)`
+
+The model's sequences, numbered the way `m_nSequence` numbers them (sequences pulled in with `$includemodel` included, like every stock knife's): `{ { name = "awp_idle", activity = "ACT_VM_IDLE" }, ... }`. `[1]` is sequence 0, and `activity` is `""` when the sequence has none. `nil` when there's no model at `index`. Not inside `draw_model`. Use it to check or hand-write a `swap_viewmodel` map.
+
+#### `engine.swap_viewmodel(from_index, to_index, map)`
+
+Your viewmodel shows `to_index` wherever the game picks `from_index` (both from [`engine.precache_model`](#engineprecache_modelpath), e.g. the stock `models/weapons/v_snip_awp.mdl` and your AWP). It's applied the way botox's knife changer does it. The incoming model is rewritten as it arrives from the server. Each server update writes it again before prediction saves its copy, so a swap made while the weapon is in your hands sticks too. Botox also switches it back to yours at render start whenever the game resets the viewmodel itself (a fresh viewmodel, weapon deploy). You don't need code that runs every frame. With botox's knife changer on, `from_index` is the knife the changer shows: read it off the viewmodel (`CBaseViewModel->m_nModelIndex`) while holding it, not the stock knife path.
+
+The server still numbers the animations for the stock model, so each incoming sequence is renumbered: the sequence of `to_index` with the same activity (`ACT_VM_IDLE`, `ACT_VM_PRIMARYATTACK`, ...), else the same name, else its idle. `map` (optional) overrides entries: `{ [from_sequence] = to_sequence }`, both 0-based, numbers as in [`engine.model_sequences`](#enginemodel_sequencesindex).
+
+This is the way for a model rigged differently from the stock one (other bone names, its own animations, arms built in): `model.model` in `draw_model` only fits meshes rigged to the stock skeleton. Built-in arms come with their own hands, so hide the game's arms in `draw_model` (names with `v_models/arms/`). Call it again with another `to_index` to change it. A call with bad arguments errors and keeps the old swap. `engine.swap_viewmodel(from_index, nil)` ends it, and so does unloading the script: the game's model comes back with the next server update. On eject the stock model comes back with the full update botox requests on online servers, and on a local server at the next weapon switch. Swaps end on map change, because indexes are per map, so set them again from `level_init` or `frame_stage`. Your client only. Full flow: [viewmodel_swap.lua](lua_examples/viewmodel_swap.lua).
 
 ---
 
@@ -874,6 +896,7 @@ Full scripts in [lua_examples/](lua_examples/), copy them into `C:\botox\lua\`:
 | [raw_access.lua](lua_examples/raw_access.lua) | config, netvars, mem.read, mem.vfunc + mem.call |
 | [edgebug_fx.lua](lua_examples/edgebug_fx.lua) | edgebug detect in pre_prediction, own world particles (spark sim, shockwave rings, pillar) via world_to_screen + poly, engine.exec sound |
 | [custom_models.lua](lua_examples/custom_models.lua) | draw_model: custom knife / gun model swap applied by a button, enemy tint, hide arms, ui read once a frame in paint |
+| [viewmodel_swap.lua](lua_examples/viewmodel_swap.lua) | AWP viewmodel + world model swapped to a differently rigged model (own bones, own anims, arms built in): engine.precache_model, engine.swap_viewmodel (animations renumbered by activity), entity:set_model_index on the world model, stock arms hidden in draw_model |
 | [fortnite_emotes_local.lua](lua_examples/fortnite_emotes_local.lua) | `entity:animate`: 84 Fortnite emotes on your own player off the plugin's mesh-less emote skeleton ( gun in hand + holstered gear dance along ), intro then loop, keybind toggle / hold, forced third person restored after, weapon in hand or hidden, stop on move |
 | [custom_edgebug.lua](lua_examples/custom_edgebug.lua) | full edgebug from scratch, hotwheels style: own csgo air movement sim on trace.hull, cmd replay in pre_prediction + create_move, mouse lock / strafe camera via frame_stage + set_view_angles. Gate: `lua tools/custom_edgebug_check.lua` |
 

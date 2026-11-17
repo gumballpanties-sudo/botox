@@ -360,6 +360,8 @@ void __fastcall n_detoured_functions::push_notice( void* ecx, void* edx, const c
 		return print_detection( "pixelsurfed", pick_prefix( ) );
 	case HASH_BT( CHAT_TOKEN_WALLCLIMB ):
 		return print_detection( "wallclimbed", pick_prefix( ) );
+	case HASH_BT( CHAT_TOKEN_EDGESURF ):
+		return print_detection( "edgesurfed", pick_prefix( ) );
 	case HASH_BT( CHAT_TOKEN_RAW ): {
 		std::string html;
 		if ( !n_chat_extras::pop_line( html ) )

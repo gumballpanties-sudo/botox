@@ -267,6 +267,11 @@ void kill_effects_shutdown( );
 bool kill_effects_hides_ragdoll( int entity_index );
 bool kill_effects_shows_ragdoll( int entity_index );
 bool kill_effects_wants_ragdoll_dme( );
+/* main thread, kill_effects_paint only: disc billboard in the z tested kill fx world pass, offsets in radius units */
+void kill_effects_disc( const c_vector& at, float radius, float x0, float y0, float x1, float y1, unsigned int color );
+void typing_bubbles_on_key( unsigned int msg, long long_param );
+bool typing_bubbles_local( );
+void typing_bubbles_paint( );
 void ragdoll_force_hook( );
 void ragdoll_force_unhook( );
 void RenderHitmarker( );
@@ -288,8 +293,8 @@ bool screen_blur_fullscreen_smooth( ImDrawList* list, ImU32 tint, float amount )
 
 enum class e_points_trick {
 	edge_bug, fireman, jump_bug, head_ceiling,
-	pixel_surf, texture_bug, air_stuck, wall_climb,
-	pixel_surf_ride, texture_bug_ride, air_stuck_ride, wall_climb_ride
+	pixel_surf, texture_bug, air_stuck, wall_climb, edge_surf,
+	pixel_surf_ride, texture_bug_ride, air_stuck_ride, wall_climb_ride, edge_surf_ride
 };
 void points_on_trick( e_points_trick trick );
 inline float g_trick_time = -1.f;
