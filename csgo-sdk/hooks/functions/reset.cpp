@@ -22,6 +22,7 @@
 #include "../../hacks/visuals/screen/reflections.h"
 #include "../../hacks/visuals/screen/resolution_spoof.h"
 #include "../../hacks/visuals/screen/true_motion_blur.h"
+#include "../../hacks/visuals/glass_chams.h"
 #include "../../hacks/visuals/weapon_sheen.h"
 #include "../../hacks/web/websurface.h"
 #include "../hooks.h"
@@ -53,6 +54,7 @@ long __stdcall n_detoured_functions::reset( IDirect3DDevice9* device, D3DPRESENT
 
 	g_depth_source.on_device_lost( );
 	g_weapon_sheen.on_device_lost( );
+	g_glass_chams.on_reset( );
 	g_flip_world.on_device_lost( );
 	g_mc_clouds.on_device_lost( );
 	n_gpu_timer::on_device_lost( );

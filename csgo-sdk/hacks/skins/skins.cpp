@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -166,18 +167,77 @@ bool n_skins::custom_colors_for_material( const char* vmt_path, int paint_kit, p
 	return false;
 }
 
+float n_skins::glove_wear( )
+{
+	const float wear   = GET_VARIABLE( PLAYER_VAR( m_gloves_wear ), float );
+	const auto& colors = GET_VARIABLE( PLAYER_VAR( m_gloves_colors ), std::vector< c_color > );
+
+	if ( !GET_VARIABLE( PLAYER_VAR( m_gloves_custom_color ), bool ) || static_cast< int >( colors.size( ) ) < GLOVE_PALETTE )
+		return wear;
+
+	const c_color* palette[ GLOVE_PALETTE ];
+	for ( int i = 0; i < GLOVE_PALETTE; i++ )
+		palette[ i ] = &colors[ i ];
+
+	return wear_with_color_key( wear, palette, GLOVE_PALETTE );
+}
+
+bool n_skins::custom_glove_colors( const void* processor, int paint_kit, paint_colors_t& out )
+{
+	if ( !processor || paint_kit <= 0 || !GET_VARIABLE( PLAYER_VAR( m_gloves_enable ), bool ) ||
+	     !GET_VARIABLE( PLAYER_VAR( m_gloves_custom_color ), bool ) )
+		return false;
+
+	if ( GET_VARIABLE( PLAYER_VAR( m_gloves_paint_kit ), int ) != paint_kit )
+		return false;
+
+	// own glove only: UpdateGeneratedMaterial stores the processor in the glove's item view before it composites
+	const auto local     = g_ctx.m_local;
+	const auto wearables = local ? local->get_wearables_handle( ) : nullptr;
+	const auto glove     = wearables ? g_interfaces.m_client_entity_list->get< c_base_entity >( wearables[ 0 ] ) : nullptr;
+	if ( !glove )
+		return false;
+
+	const auto view       = item_view_of( glove );
+	const auto processors = *reinterpret_cast< const void* const* const* >( view + ITEM_VIEW_PROCESSORS );
+	const int count       = *reinterpret_cast< const int* >( view + ITEM_VIEW_PROCESSOR_COUNT );
+	if ( !processors || count <= 0 || count > 64 )
+		return false;
+
+	if ( std::find( processors, processors + count, processor ) == processors + count ) {
+		botox_dbg_log( "GLV: palette skip kit %d, not our glove ( %d procs )", paint_kit, count );
+		return false;
+	}
+
+	const auto& colors = GET_VARIABLE( PLAYER_VAR( m_gloves_colors ), std::vector< c_color > );
+	if ( static_cast< int >( colors.size( ) ) < GLOVE_PALETTE )
+		return false;
+
+	for ( int i = 0; i < GLOVE_PALETTE; i++ ) {
+		out.m_rgb[ i ][ 0 ] = static_cast< float >( colors[ i ][ e_color_type::color_type_r ] );
+		out.m_rgb[ i ][ 1 ] = static_cast< float >( colors[ i ][ e_color_type::color_type_g ] );
+		out.m_rgb[ i ][ 2 ] = static_cast< float >( colors[ i ][ e_color_type::color_type_b ] );
+	}
+
+	return true;
+}
+
 namespace
 {
+	// game thread writes ( composites ), menu thread reads
+	std::mutex g_actual_colors_mutex{ };
 	std::unordered_map< int, n_skins::paint_colors_t > g_actual_colors{ };
 }
 
 void n_skins::cache_actual_colors( int paint_kit, const paint_colors_t& colors )
 {
+	const std::lock_guard lock( g_actual_colors_mutex );
 	g_actual_colors[ paint_kit ] = colors;
 }
 
 bool n_skins::get_actual_colors( int paint_kit, paint_colors_t& out )
 {
+	const std::lock_guard lock( g_actual_colors_mutex );
 	const auto found = g_actual_colors.find( paint_kit );
 	if ( found == g_actual_colors.end( ) )
 		return false;

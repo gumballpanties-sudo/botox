@@ -11,8 +11,11 @@ namespace n_skins
 		std::string m_name;
 	};
 
+	// weapons use 4, gloves 8 ( $palettecolor1..8 )
+	constexpr int GLOVE_PALETTE = 8;
+
 	struct paint_colors_t {
-		float m_rgb[ 4 ][ 3 ];
+		float m_rgb[ GLOVE_PALETTE ][ 3 ];
 	};
 
 	struct sticker_t {
@@ -23,6 +26,12 @@ namespace n_skins
 	};
 
 	bool custom_colors_for_material( const char* vmt_path, int paint_kit, paint_colors_t& out );
+
+	// glove wear with the palette folded in ( composite cache key ), raw wear when custom color is off
+	float glove_wear( );
+
+	// game thread: processor belongs to our glove's item view + kit matches -> 8 palette colours
+	bool custom_glove_colors( const void* processor, int paint_kit, paint_colors_t& out );
 
 	const char* knife_anim_redirect( const char* requested_model );
 

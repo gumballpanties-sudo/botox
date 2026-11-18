@@ -190,10 +190,13 @@ inline constexpr const char* k_indicator_style_names = "default\0static\0smooth\
 enum e_smooth_origin {
 	smooth_origin_auto = 0,
 	smooth_origin_right,
-	smooth_origin_bottom
+	smooth_origin_bottom,
+	smooth_origin_left,
+	smooth_origin_top
 };
 
-inline constexpr const char* k_smooth_origin_names = "auto\0right\0bottom\0";
+/* appended, saved configs keep 1 = right / 2 = bottom */
+inline constexpr const char* k_smooth_origin_names = "auto\0right\0bottom\0left\0top\0";
 
 enum e_pre_layout {
 	pre_layout_right = 0,
@@ -431,6 +434,9 @@ namespace n_variables
 		ADD_VARIABLE( int, m_gloves_paint_kit, 0 );
 		ADD_VARIABLE( float, m_gloves_wear, 0.0001f );
 		ADD_VARIABLE( int, m_gloves_seed, 0 );
+		// overwrites the glove kit's 8 $palettecolor values ( CCSClothingVisualsDataProcessor composite keyvalues )
+		ADD_VARIABLE( bool, m_gloves_custom_color, false );
+		ADD_VARIABLE_VECTOR( c_color, 8, m_gloves_colors, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( bool, m_weapon_skins_enable, false );
 		ADD_VARIABLE( int, m_weapon_skins_selected, 0 );
 		ADD_VARIABLE_VECTOR( int, 34, m_weapon_skins_paint_kit, 0 );
@@ -480,6 +486,8 @@ namespace n_variables
 		ADD_VARIABLE( int, m_gloves_paint_kit_tside, 0 );
 		ADD_VARIABLE( float, m_gloves_wear_tside, 0.0001f );
 		ADD_VARIABLE( int, m_gloves_seed_tside, 0 );
+		ADD_VARIABLE( bool, m_gloves_custom_color_tside, false );
+		ADD_VARIABLE_VECTOR( c_color, 8, m_gloves_colors_tside, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( bool, m_weapon_skins_enable_tside, false );
 		ADD_VARIABLE_VECTOR( int, 34, m_weapon_skins_paint_kit_tside, 0 );
 		ADD_VARIABLE_VECTOR( float, 34, m_weapon_skins_wear_tside, 0.0001f );
@@ -651,6 +659,9 @@ namespace n_variables
 		/* two tone slot: camera light, cut = cos of the facing angle (0.5 = 60 deg), edge = softness */
 		ADD_VARIABLE( float, m_chams_two_tone_threshold, 0.5f );
 		ADD_VARIABLE( float, m_chams_two_tone_edge, 0.f );
+		/* glass slot: refraction depth in world units ( screen shift shrinks with distance, flat inside 100 units ) */
+		ADD_VARIABLE( float, m_chams_glass_refract, 12.f );
+		ADD_VARIABLE( float, m_chams_glass_bump, 1.f ); /* model normal map strength, 0 = smooth */
 
 		ADD_VARIABLE( bool, m_chams_ragdolls, false );
 
@@ -688,6 +699,13 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( int, chams_max_layers, m_chams_weapon_layers, -1 );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_weapon_colors, c_color( 114, 155, 221, 153 ) );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_weapon_dark_colors, c_color( 20, 30, 60, 255 ) );
+
+		ADD_VARIABLE_VECTOR( int, chams_max_layers, m_chams_trail_layers, -1 );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_trail_colors, c_color( 114, 155, 221, 153 ) );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_trail_dark_colors, c_color( 20, 30, 60, 153 ) );
+		ADD_VARIABLE( float, m_chams_trail_time, 0.25f );
+		ADD_VARIABLE( int, m_chams_trail_ghosts, 16 );
+		ADD_VARIABLE( bool, m_chams_trail_gradient, true );
 
 		ADD_VARIABLE( bool, m_dropped_weapons, false );
 		ADD_VARIABLE( bool, m_dropped_weapons_box, false );
@@ -1570,6 +1588,10 @@ namespace n_variables
 		ADD_VARIABLE( int, m_velocity_indicator_smooth_origin, 0 );
 		ADD_VARIABLE( int, m_stamina_indicator_smooth_origin, 0 );
 		ADD_VARIABLE( int, m_key_indicators_smooth_origin, 0 );
+		ADD_VARIABLE( float, m_velocity_indicator_smooth_angle, 0.f );
+		ADD_VARIABLE( float, m_stamina_indicator_smooth_angle, 0.f );
+		ADD_VARIABLE( float, m_key_indicators_smooth_angle, 0.f );
+		ADD_VARIABLE( bool, m_key_indicators_smooth_random_angle, false );
 		ADD_VARIABLE( float, m_key_indicators_static_fade, 0.f );
 		ADD_VARIABLE( bool, m_velocity_indicator_shadow, true );
 		ADD_VARIABLE( float, m_velocity_indicator_shadow_blur, 0.f );

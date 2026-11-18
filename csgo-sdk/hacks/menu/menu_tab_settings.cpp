@@ -653,6 +653,8 @@ void n_menu::impl_t::tab_inventory( )
 				COPY_TEAM( m_gloves_paint_kit, int );
 				COPY_TEAM( m_gloves_wear, float );
 				COPY_TEAM( m_gloves_seed, int );
+				COPY_TEAM( m_gloves_custom_color, bool );
+				COPY_TEAM( m_gloves_colors, std::vector< c_color > );
 				// agents were always per team: m_agent_t / m_agent_ct
 				copy_team( static_cast< int* >( nullptr ), g_variables.m_agent_ct, g_variables.m_agent_t, to_t );
 				copy_team( static_cast< std::string* >( nullptr ), g_variables.m_agent_ct_custom, g_variables.m_agent_t_custom, to_t );
@@ -722,6 +724,32 @@ void n_menu::impl_t::tab_inventory( )
 
 				ImGui::SliderFloat( "glove wear", &GET_VARIABLE( TV( m_gloves_wear ), float ), 0.0001f, 1.f, "%.4f" );
 				ImGui::SliderInt( "glove pattern", &GET_VARIABLE( TV( m_gloves_seed ), int ), 0, 1023, "%d" );
+
+				auto& glove_colors = GET_VARIABLE( TV( m_gloves_colors ), std::vector< c_color > );
+				bool& glove_custom = GET_VARIABLE( TV( m_gloves_custom_color ), bool );
+
+				if ( static_cast< int >( glove_colors.size( ) ) >= n_skins::GLOVE_PALETTE ) {
+					if ( ImGui::Checkbox( "custom color##gloves", &glove_custom ) ) {
+						g_skins.m_forcing_update = true;
+
+						// start from the kit's own palette ( cached once the glove composited )
+						n_skins::paint_colors_t actual{ };
+						if ( glove_custom && n_skins::get_actual_colors( GET_VARIABLE( TV( m_gloves_paint_kit ), int ), actual ) ) {
+							for ( int i = 0; i < n_skins::GLOVE_PALETTE; i++ )
+								glove_colors[ i ] = c_color( static_cast< int >( actual.m_rgb[ i ][ 0 ] ), static_cast< int >( actual.m_rgb[ i ][ 1 ] ),
+								                             static_cast< int >( actual.m_rgb[ i ][ 2 ] ) );
+						}
+					}
+
+					if ( glove_custom ) {
+						for ( int row = 0; row < 2; row++ ) {
+							ImGui::TextUnformatted( row ? "colors 5-8" : "colors 1-4" );
+							c_color* palette[ 4 ] = { &glove_colors[ row * 4 ], &glove_colors[ row * 4 + 1 ], &glove_colors[ row * 4 + 2 ],
+								                      &glove_colors[ row * 4 + 3 ] };
+							color_row( row ? "glove b" : "glove a", palette );
+						}
+					}
+				}
 			}
 
 			update_button( );

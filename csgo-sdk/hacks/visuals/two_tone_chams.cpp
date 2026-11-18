@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <array>
 #include <initializer_list>
-#include <unordered_map>
 #include <vector>
 
 namespace
@@ -153,9 +152,6 @@ float4 main( PS_INPUT i ) : COLOR
 	defs_t g_vs_defs{ }, g_ps_defs{ };
 	bool g_gpu_failed = false;
 
-	std::unordered_map< IDirect3DPixelShader9*, int > g_bump_samplers{ };
-	int g_logged = 0;
-
 	void release_gpu( )
 	{
 		for ( IDirect3DVertexShader9*& shader : g_vs ) {
@@ -172,7 +168,7 @@ float4 main( PS_INPUT i ) : COLOR
 
 		g_vs_defs.clear( );
 		g_ps_defs.clear( );
-		g_bump_samplers.clear( );
+		clear_bump_samplers( );
 	}
 
 	bool gpu_ready( IDirect3DDevice9* device )
@@ -218,80 +214,16 @@ float4 main( PS_INPUT i ) : COLOR
 
 		return ok;
 	}
-
-	bool has_tangent_stream( IDirect3DDevice9* device )
-	{
-		IDirect3DVertexDeclaration9* declaration = nullptr;
-		if ( FAILED( device->GetVertexDeclaration( &declaration ) ) || !declaration )
-			return false;
-
-		D3DVERTEXELEMENT9 elements[ MAXD3DDECLLENGTH + 1 ]{ };
-		UINT count  = 0;
-		bool result = false;
-
-		if ( SUCCEEDED( declaration->GetDeclaration( nullptr, &count ) ) && count <= std::size( elements ) &&
-		     SUCCEEDED( declaration->GetDeclaration( elements, &count ) ) ) {
-			for ( UINT i = 0; i < count && elements[ i ].Stream != 0xFF; i++ )
-				result |= elements[ i ].Usage == D3DDECLUSAGE_TANGENT && elements[ i ].UsageIndex == 0;
-		}
-
-		declaration->Release( );
-		return result;
-	}
-
-	/* normal map register of the engine pixel shader, by name from its constant table (phong / character
-	   "NormalMapSampler", bumped vertexlit "BumpmapSampler"). -1 none, -2 no table. cached per shader */
-	int bump_sampler( IDirect3DPixelShader9* shader )
-	{
-		if ( !shader )
-			return -1;
-
-		if ( const auto found = g_bump_samplers.find( shader ); found != g_bump_samplers.end( ) )
-			return found->second;
-
-		int result = -2;
-		UINT size  = 0;
-
-		if ( SUCCEEDED( shader->GetFunction( nullptr, &size ) ) && size ) {
-			std::vector< DWORD > code( ( size + 3 ) / 4 );
-
-			ID3DXConstantTable* table = nullptr;
-			if ( SUCCEEDED( shader->GetFunction( code.data( ), &size ) ) && SUCCEEDED( D3DXGetShaderConstantTable( code.data( ), &table ) ) && table ) {
-				result = -1;
-
-				for ( const char* name : { "NormalMapSampler", "BumpmapSampler" } ) {
-					const D3DXHANDLE handle = table->GetConstantByName( nullptr, name );
-					D3DXCONSTANT_DESC desc{ };
-					UINT descs = 1;
-
-					if ( handle && SUCCEEDED( table->GetConstantDesc( handle, &desc, &descs ) ) && desc.RegisterSet == D3DXRS_SAMPLER ) {
-						result = static_cast< int >( desc.RegisterIndex );
-						break;
-					}
-				}
-
-				table->Release( );
-			}
-		}
-
-		if ( g_logged < 32 ) {
-			g_logged++;
-			botox_dbg_log( "TWO: ps %p bump %d (-1 none, -2 no ctab)", static_cast< void* >( shader ), result );
-		}
-
-		g_bump_samplers.emplace( shader, result );
-		return result;
-	}
 }
 
-void n_two_tone_chams::impl_t::begin( const float light[ 4 ], const float dark[ 4 ], const bool ignorez )
+void n_two_tone_chams::impl_t::begin( const float light[ 4 ], const float dark[ 4 ], const bool ignorez, const bool lay_depth )
 {
 	const float threshold = GET_VARIABLE( g_variables.m_chams_two_tone_threshold, float );
 	const float edge      = GET_VARIABLE( g_variables.m_chams_two_tone_edge, float );
 	const bool translucent = light[ 3 ] < 1.f || dark[ 3 ] < 1.f;
 
 	auto arm = [ l = std::to_array( { light[ 0 ], light[ 1 ], light[ 2 ], light[ 3 ] } ), d = std::to_array( { dark[ 0 ], dark[ 1 ], dark[ 2 ], dark[ 3 ] } ),
-	             threshold, edge, ignorez, translucent ] {
+	             threshold, edge, ignorez, translucent, lay_depth ] {
 		for ( int i = 0; i < 4; i++ ) {
 			g_two_tone_chams.m_light[ i ] = l[ i ];
 			g_two_tone_chams.m_dark[ i ]  = d[ i ];
@@ -301,6 +233,7 @@ void n_two_tone_chams::impl_t::begin( const float light[ 4 ], const float dark[ 
 		g_two_tone_chams.m_params[ 1 ] = edge;
 		g_two_tone_chams.m_ignorez     = ignorez;
 		g_two_tone_chams.m_translucent = translucent;
+		g_two_tone_chams.m_lay_depth   = lay_depth;
 		g_two_tone_chams.m_armed.store( true, std::memory_order_relaxed );
 	};
 
@@ -375,7 +308,7 @@ long n_two_tone_chams::impl_t::draw( const draw_indexed_primitive_t original, ID
 	/* translucent: own blend whatever the material asked (additive, opaque snapshot). not ignorez = depth only
 	   prepass first so inner parts (far arm, legs, gun) never show through. ignorez can't: depth there is the world */
 	if ( this->m_translucent ) {
-		if ( !this->m_ignorez ) {
+		if ( !this->m_ignorez && this->m_lay_depth ) {
 			device->SetRenderState( D3DRS_COLORWRITEENABLE, 0 );
 			device->SetRenderState( D3DRS_ZWRITEENABLE, TRUE );
 			original( device, type, base_vertex, min_vertex, vertices, start_index, primitives );
@@ -417,5 +350,4 @@ void n_two_tone_chams::impl_t::on_device_lost( )
 {
 	release_gpu( );
 	g_gpu_failed = false;
-	g_logged     = 0;
 }

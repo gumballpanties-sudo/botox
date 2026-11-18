@@ -146,8 +146,11 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 	if ( stage == render_start )
 		g_lagcomp.on_frame_stage_notify( );
 
+	/* fast path ragdolls skip DME: ragdoll chams, shot chams on a kill ( snapshot draws on the ragdoll ), removal, kill fx */
 	if ( stage == render_start &&
-	     ( ( GET_VARIABLE( g_variables.m_chams_enable, bool ) && GET_VARIABLE( g_variables.m_chams_ragdolls, bool ) ) ||
+	     ( ( GET_VARIABLE( g_variables.m_chams_enable, bool ) &&
+	         ( GET_VARIABLE( g_variables.m_chams_ragdolls, bool ) ||
+	           n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_shot_layers, std::vector< int > ) ) ) ) ||
 	       GET_VARIABLE( g_variables.m_remove_ragdolls, bool ) || kill_effects_wants_ragdoll_dme( ) ) ) {
 		for ( int i = 1; i <= g_interfaces.m_client_entity_list->get_highest_entity_index( ); ++i ) {
 			const auto entity = g_interfaces.m_client_entity_list->get< c_base_entity >( i );

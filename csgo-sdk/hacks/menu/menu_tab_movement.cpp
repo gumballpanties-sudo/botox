@@ -1136,9 +1136,14 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Combo( "style##velocity indicator style", &GET_VARIABLE( g_variables.m_velocity_indicator_style, int ),
 						              k_indicator_style_names );
 
-						if ( GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) == indicator_style_smooth )
+						if ( const int st = GET_VARIABLE( g_variables.m_velocity_indicator_style, int ); st == indicator_style_smooth || st == indicator_style_kamibebra ) {
 							ImGui::Combo( "comes from##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int ),
 							              k_smooth_origin_names );
+							/* kamibebra auto = fades in place, no direction */
+							if ( st == indicator_style_smooth || GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int ) != smooth_origin_auto )
+								ImGui::SliderFloat( "angle##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_smooth_angle, float ), -90.f, 90.f,
+								                    "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+						}
 
 						if ( GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) == indicator_style_kamidere )
 							ImGui::ColorEdit4( "kami shadow color##velocity indicator", &GET_VARIABLE( g_variables.m_indicator_kami_shadow_color, c_color ),
@@ -1216,9 +1221,13 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Combo( "style##stamina indicator style", &GET_VARIABLE( g_variables.m_stamina_indicator_style, int ),
 						              k_indicator_style_names );
 
-						if ( GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) == indicator_style_smooth )
+						if ( const int st = GET_VARIABLE( g_variables.m_stamina_indicator_style, int ); st == indicator_style_smooth || st == indicator_style_kamibebra ) {
 							ImGui::Combo( "comes from##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_smooth_origin, int ),
 							              k_smooth_origin_names );
+							if ( st == indicator_style_smooth || GET_VARIABLE( g_variables.m_stamina_indicator_smooth_origin, int ) != smooth_origin_auto )
+								ImGui::SliderFloat( "angle##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_smooth_angle, float ), -90.f, 90.f,
+								                    "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+						}
 
 						if ( GET_VARIABLE( g_variables.m_stamina_indicator_style, int ) == indicator_style_kamidere )
 							ImGui::ColorEdit4( "kami shadow color##stamina indicator", &GET_VARIABLE( g_variables.m_indicator_kami_shadow_color, c_color ),
@@ -1335,9 +1344,18 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Combo( "style##keybind indicator style", &GET_VARIABLE( g_variables.m_key_indicators_style, int ),
 						              k_indicator_style_names );
 
-						if ( GET_VARIABLE( g_variables.m_key_indicators_style, int ) == indicator_style_smooth )
+						if ( const int st = GET_VARIABLE( g_variables.m_key_indicators_style, int ); st == indicator_style_smooth || st == indicator_style_kamibebra ) {
 							ImGui::Combo( "comes from##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_origin, int ),
 							              k_smooth_origin_names );
+							/* random = each tag rolls its own angle in +-max on turn on */
+							ImGui::Checkbox( "random angle##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_random_angle, bool ) );
+							if ( GET_VARIABLE( g_variables.m_key_indicators_smooth_random_angle, bool ) )
+								ImGui::SliderFloat( "max angle##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_angle, float ), 0.f, 90.f,
+								                    "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+							else
+								ImGui::SliderFloat( "angle##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_angle, float ), -90.f, 90.f,
+								                    "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+						}
 
 						if ( GET_VARIABLE( g_variables.m_key_indicators_style, int ) == indicator_style_static )
 							ImGui::SliderFloat( "fade in##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_static_fade, float ), 0.f, 1.f,

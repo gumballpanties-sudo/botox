@@ -10,6 +10,7 @@
 #include "../../globals/interfaces/interfaces.h"
 #include "../../utilities/perf/perf_watch.h"
 #include "../visuals/atlas_chams.h"
+#include "../visuals/glass_chams.h"
 #include "../visuals/lsd_chams.h"
 #include "../visuals/two_tone_chams.h"
 
@@ -42,17 +43,18 @@ namespace n_chams
 		chams_material_aquarium,
 		chams_material_sky,
 		chams_material_grid, /* botox 11-12: bind pose grid lines that ride the model */
+		chams_material_glass, /* botox 11-18, no material: model's own materials (normal map), DIP refracts a copy of the bound rt */
 		chams_material_max
 	};
 
 	inline const char* material_names[ chams_material_max ] = { "original", "flat",     "shaded",      "wireframe", "glow",     "metallic", "pearlescent",
 		                                                        "ambient",  "gold",     "damascus",    "crystal",   "wet",      "lsd",      "two tone",
 		                                                        "fresnel",  "lava",     "pearl",       "bubble",    "neon",     "network",  "soap",
-		                                                        "aurora",   "aquarium", "sky",      "grid" };
+		                                                        "aurora",   "aquarium", "sky",      "grid",     "glass" };
 
 	constexpr bool is_atlas( const int index )
 	{
-		return index >= chams_material_fresnel && index < chams_material_max;
+		return index >= chams_material_fresnel && index <= chams_material_grid;
 	}
 
 	constexpr float gold_envmap_tint[ 3 ] = { 0.55f, 0.3f, 0.05f };
@@ -288,8 +290,8 @@ namespace n_chams
 			}
 			}
 
-			/* last shader carrier (grid) is the last built slot */
-			if ( ++this->m_build_index >= chams_material_max - 2 )
+			/* last shader carrier (grid) is the last built slot, glass has none */
+			if ( ++this->m_build_index + 2 > chams_material_grid )
 				this->m_created = true;
 		}
 
@@ -436,7 +438,8 @@ namespace n_chams
 		   (arms after weapon, far fingers) can't show through. same material = same depth, LESSEQUAL passes */
 		template< typename t_draw_pass >
 		void draw_layers( const std::vector< int >& slots, const std::vector< c_color >& colors, const std::vector< c_color >& dark_colors,
-		                  const bool ignorez, const float alpha_scale, t_draw_pass draw_pass, c_material_render_context* prepass_context = nullptr )
+		                  const bool ignorez, const float alpha_scale, t_draw_pass draw_pass, c_material_render_context* prepass_context = nullptr,
+		                  const bool lay_depth = true )
 		{
 			PERF_ZONE( zone_draw_model );
 
@@ -486,9 +489,27 @@ namespace n_chams
 					g_interfaces.m_model_render->forced_material_override( nullptr );
 					apply_original_color( c_color( 255, 255, 255, 255 ), translucent ? ( alpha < 0.99f ? alpha : 0.99f ) : 1.f );
 
-					g_two_tone_chams.begin( light, dark, ignorez );
+					g_two_tone_chams.begin( light, dark, ignorez, lay_depth );
 					draw_pass( );
 					g_two_tone_chams.end( );
+
+					reset_original_color( );
+					continue;
+				}
+
+				if ( index == chams_material_glass ) {
+					const float tint[ 4 ] = { layer_color.base< e_color_type::color_type_r >( ), layer_color.base< e_color_type::color_type_g >( ),
+						                      layer_color.base< e_color_type::color_type_b >( ), layer_color.base< e_color_type::color_type_a >( ) * alpha_scale };
+					if ( tint[ 3 ] <= 0.f )
+						continue;
+
+					// own materials = engine binds the normal map; blend < 1 = engine draws translucent ( two tone )
+					g_interfaces.m_model_render->forced_material_override( nullptr );
+					apply_original_color( c_color( 255, 255, 255, 255 ), tint[ 3 ] < 1.f ? ( tint[ 3 ] < 0.99f ? tint[ 3 ] : 0.99f ) : 1.f );
+
+					g_glass_chams.begin( tint, ignorez, lay_depth );
+					draw_pass( );
+					g_glass_chams.end( );
 
 					reset_original_color( );
 					continue;
@@ -545,7 +566,7 @@ namespace n_chams
 					const float color[ 4 ] = { layer_color.base< e_color_type::color_type_r >( ), layer_color.base< e_color_type::color_type_g >( ),
 						                       layer_color.base< e_color_type::color_type_b >( ), layer_color.base< e_color_type::color_type_a >( ) * alpha_scale };
 
-					g_atlas_chams.begin( index, color, ignorez );
+					g_atlas_chams.begin( index, color, ignorez, lay_depth );
 					draw_pass( );
 					g_atlas_chams.end( );
 				} else

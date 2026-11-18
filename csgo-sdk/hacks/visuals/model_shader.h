@@ -8,7 +8,9 @@
 #include <d3dx9.h>
 
 #include <cstring>
+#include <initializer_list>
 #include <iterator>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -75,6 +77,79 @@ namespace n_model_shader
 		}
 
 		declaration->Release( );
+		return result;
+	}
+
+	inline bool has_tangent_stream( IDirect3DDevice9* device )
+	{
+		IDirect3DVertexDeclaration9* declaration = nullptr;
+		if ( FAILED( device->GetVertexDeclaration( &declaration ) ) || !declaration )
+			return false;
+
+		D3DVERTEXELEMENT9 elements[ MAXD3DDECLLENGTH + 1 ]{ };
+		UINT count  = 0;
+		bool result = false;
+
+		if ( SUCCEEDED( declaration->GetDeclaration( nullptr, &count ) ) && count <= std::size( elements ) &&
+		     SUCCEEDED( declaration->GetDeclaration( elements, &count ) ) ) {
+			for ( UINT i = 0; i < count && elements[ i ].Stream != 0xFF; i++ )
+				result |= elements[ i ].Usage == D3DDECLUSAGE_TANGENT && elements[ i ].UsageIndex == 0;
+		}
+
+		declaration->Release( );
+		return result;
+	}
+
+	inline std::unordered_map< IDirect3DPixelShader9*, int > g_bump_samplers{ };
+	inline int g_bump_logged = 0;
+
+	inline void clear_bump_samplers( )
+	{
+		g_bump_samplers.clear( );
+		g_bump_logged = 0;
+	}
+
+	/* normal map register of the engine pixel shader, by name from its constant table (phong / character
+	   "NormalMapSampler", bumped vertexlit "BumpmapSampler"). -1 none, -2 no table. cached per shader */
+	inline int bump_sampler( IDirect3DPixelShader9* shader )
+	{
+		if ( !shader )
+			return -1;
+
+		if ( const auto found = g_bump_samplers.find( shader ); found != g_bump_samplers.end( ) )
+			return found->second;
+
+		int result = -2;
+		UINT size  = 0;
+
+		if ( SUCCEEDED( shader->GetFunction( nullptr, &size ) ) && size ) {
+			std::vector< DWORD > code( ( size + 3 ) / 4 );
+
+			ID3DXConstantTable* table = nullptr;
+			if ( SUCCEEDED( shader->GetFunction( code.data( ), &size ) ) && SUCCEEDED( D3DXGetShaderConstantTable( code.data( ), &table ) ) && table ) {
+				result = -1;
+
+				for ( const char* name : { "NormalMapSampler", "BumpmapSampler" } ) {
+					const D3DXHANDLE handle = table->GetConstantByName( nullptr, name );
+					D3DXCONSTANT_DESC desc{ };
+					UINT descs = 1;
+
+					if ( handle && SUCCEEDED( table->GetConstantDesc( handle, &desc, &descs ) ) && desc.RegisterSet == D3DXRS_SAMPLER ) {
+						result = static_cast< int >( desc.RegisterIndex );
+						break;
+					}
+				}
+
+				table->Release( );
+			}
+		}
+
+		if ( g_bump_logged < 32 ) {
+			g_bump_logged++;
+			botox_dbg_log( "TWO: ps %p bump %d (-1 none, -2 no ctab)", static_cast< void* >( shader ), result );
+		}
+
+		g_bump_samplers.emplace( shader, result );
 		return result;
 	}
 

@@ -80,6 +80,7 @@ namespace n_hooks
 		c_detour_hook m_draw_static_prop_array_fast{ };
 		c_detour_hook m_push_notice{ };
 		c_detour_hook m_set_visuals_data{ };
+		c_detour_hook m_clothing_composite_kv{ };
 		c_detour_hook m_view_draw_fade{ };
 		c_detour_hook m_push_2d_view{ };
 		c_detour_hook m_draw_world_lists{ };
@@ -192,6 +193,7 @@ namespace n_detoured_functions
 	bool __fastcall svc_msg_voice_data( void* ecx, void* edx, const void* message );
 	void __fastcall push_notice( void* ecx, void* edx, const char* text, int str_len, const char* null );
 	void __fastcall set_visuals_data( void* ecx, void* edx, const char* shader_name );
+	void* __fastcall clothing_composite_kv( void* ecx, void* edx, int param_id );
 
 	/* 128 = pure mode getter ( mov eax,[ecx+0xE0] ): 0 whitelist = loose materials/models/sound/particles rejected, 1 allow, 2 loaded.
 	   caller tests full eax: int, never bool. whitelist check = free function, no args */

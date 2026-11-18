@@ -575,7 +575,8 @@ void n_skins::impl_t::gloves_changer( )
 		m_forcing_update = true;
 	}
 
-	const float wear      = GET_VARIABLE( PLAYER_VAR( m_gloves_wear ), float );
+	// palette rides in the wear: new colours = new composite
+	const float wear      = n_skins::glove_wear( );
 	const int paint_kit   = GET_VARIABLE( PLAYER_VAR( m_gloves_paint_kit ), int );
 	const int seed        = GET_VARIABLE( PLAYER_VAR( m_gloves_seed ), int );
 	const int model_index = g_interfaces.m_model_info->get_model_index( GLOVE_MODELS[ glove_model ] );

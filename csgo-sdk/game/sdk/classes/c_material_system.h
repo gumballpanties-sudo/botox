@@ -184,6 +184,12 @@ public:
 		return g_virtual.call< void >( this, 6, texture );
 	}
 
+	/* csgosrc2019 imaterialsystem.h: BindLightmapPage 10, DepthRange 11, ClearBuffers 12. sets viewport MinZ / MaxZ */
+	void depth_range( float z_near, float z_far )
+	{
+		return g_virtual.call< void >( this, 11, z_near, z_far );
+	}
+
 	void clear_buffers( bool clear_color, bool clear_depth, bool clear_stencil = false )
 	{
 		return g_virtual.call< void >( this, 12, clear_color, clear_depth, clear_stencil );

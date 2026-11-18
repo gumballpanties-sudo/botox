@@ -17,6 +17,7 @@
 #include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../../hacks/visuals/viewmodel_bones.h"
 #include "../../hacks/visuals/viewmodel_fps.h"
+#include "../../hacks/visuals/viewmodel_trail.h"
 #include "../../hacks/visuals/weapon_sheen.h"
 #include "../../utilities/console/console.h"
 #include <algorithm>
@@ -72,6 +73,13 @@ static int shot_owner( const int entity_index )
 	const auto owner = reinterpret_cast< c_base_entity* >(
 		g_interfaces.m_client_entity_list->get_client_entity_from_handle( ragdoll->get_ragdoll_player_handle( ) ) );
 	return owner && owner->is_player( ) ? static_cast< int >( owner->get_index( ) ) : 0;
+}
+
+/* RenderGlowEffects redraws glowers under pMatGlowColor ( type 0 ) + stencil refs 1 / 2. type 3 = skin composites, real draw */
+static bool game_forced_material( )
+{
+	const auto& override_state = g_interfaces.m_studio_render->material_override( );
+	return override_state.m_materials[ 0 ] && override_state.m_type != 3;
 }
 
 static bool should_skip_ragdoll( const model_render_info_t& info )
@@ -207,7 +215,7 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 	custom_bone_to_world = g_viewmodel_fps.apply( state, custom_bone_to_world, info.model );
 
 	/* destructor: snapshot draws after whichever path drew the player / its ragdoll, hidden ragdoll included.
-	   not in a lua redraw: a swapped mesh has another skeleton */
+	   not in a lua redraw: a swapped mesh has another skeleton. not in glow: snapshot would write glow rt + stencil */
 	struct shot_chams_t {
 		~shot_chams_t( )
 		{
@@ -225,7 +233,7 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 	} const shot_chams{ original, ecx, edx, context, state, info,
 		                !s_lua_redraw && !g_rear_mirror.drawing( ) && GET_VARIABLE( g_variables.m_chams_enable, bool ) && context && state &&
 		                        info.model && info.model->m_name && !( info.flags & studio_depth_pass_flags ) && !g_ctx.m_is_glow_being_drawn &&
-		                        strstr( info.model->m_name, "models/player" ) && !strstr( info.model->m_name, "contactshadow" ) &&
+		                        !game_forced_material( ) && strstr( info.model->m_name, "models/player" ) && !strstr( info.model->m_name, "contactshadow" ) &&
 		                        n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_shot_layers, std::vector< int > ) )
 		                    ? shot_owner( info.entity_index )
 		                    : 0 };
@@ -309,17 +317,55 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 			darks_variable  = g_variables.m_chams_sleeve_dark_colors;
 		}
 
-		const auto& layers = GET_VARIABLE( layers_variable, std::vector< int > );
-		const auto& colors = GET_VARIABLE( colors_variable, std::vector< c_color > );
-		const auto& darks  = GET_VARIABLE( darks_variable, std::vector< c_color > );
+		const auto& layers       = GET_VARIABLE( layers_variable, std::vector< int > );
+		const auto& colors       = GET_VARIABLE( colors_variable, std::vector< c_color > );
+		const auto& darks        = GET_VARIABLE( darks_variable, std::vector< c_color > );
+		const auto& trail_layers = GET_VARIABLE( g_variables.m_chams_trail_layers, std::vector< int > );
 
-		if ( !n_chams::impl_t::has_layers( layers ) )
+		// skin composites are a selective override set before dme: every forced pass wipes them, each pass starts from the game's
+		auto& override_state                            = g_interfaces.m_studio_render->material_override( );
+		const studio_material_override_t saved_override = override_state;
+
+		// game forced material ( scope lens mask stencil, C_BaseViewModel::DrawModel ) = not a real viewmodel draw
+		const bool game_forced = saved_override.m_materials[ 0 ] && saved_override.m_type != 3;
+
+		const bool live_layers = n_chams::impl_t::has_layers( layers );
+		const bool trail       = !game_forced && n_chams::impl_t::has_layers( trail_layers );
+
+		if ( !live_layers && !trail )
 			return original( ecx, edx, context, state, info, custom_bone_to_world );
 
+		float entry_color[ 3 ]{ };
+		g_interfaces.m_render_view->get_color_modulation( entry_color );
+		const float entry_blend = g_interfaces.m_render_view->get_blend( );
+
+		if ( trail ) {
+			const auto* const header = state ? static_cast< const studiohdr_t* >( static_cast< const draw_model_state_t* >( state )->m_studio_hdr ) : nullptr;
+			const int bone_count     = header ? header->n_bones : 0;
+
+			g_viewmodel_trail.record( part, info.model, bone_count, custom_bone_to_world );
+
+			// ghosts in their own depth range behind the live viewmodel, no depth write: never over a live part
+			g_viewmodel_trail.for_each_ghost( context, part, info.model, bone_count, [ & ]( matrix3x4_t* ghost_bones, const float alpha ) {
+				override_state = saved_override;
+				g_chams.draw_layers( trail_layers, GET_VARIABLE( g_variables.m_chams_trail_colors, std::vector< c_color > ),
+				                     GET_VARIABLE( g_variables.m_chams_trail_dark_colors, std::vector< c_color > ), false, alpha,
+				                     [ & ]( ) { original( ecx, edx, context, state, info, ghost_bones ); }, nullptr, false );
+			} );
+		}
+
+		override_state = saved_override;
+
 		// weapon draws before arms (C_BaseViewModel::DrawModel): translucent layers must lay depth
-		g_chams.draw_layers(
-			layers, colors, darks, false, 1.f, [ & ]( ) { original( ecx, edx, context, state, info, custom_bone_to_world ); },
-			static_cast< c_material_render_context* >( context ) );
+		if ( live_layers )
+			g_chams.draw_layers(
+				layers, colors, darks, false, 1.f, [ & ]( ) { original( ecx, edx, context, state, info, custom_bone_to_world ); },
+				static_cast< c_material_render_context* >( context ) );
+		else {
+			g_interfaces.m_render_view->set_color_modulation( entry_color );
+			g_interfaces.m_render_view->set_blend( entry_blend );
+			original( ecx, edx, context, state, info, custom_bone_to_world );
+		}
 
 		n_chams::impl_t::reset_original_color( );
 		return;

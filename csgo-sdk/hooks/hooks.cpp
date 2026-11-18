@@ -39,6 +39,7 @@
 #include "../hacks/visuals/screen/fx_compat.h"
 #include "../hacks/visuals/screen/gpu_timer.h"
 #include "../hacks/visuals/atlas_chams.h"
+#include "../hacks/visuals/glass_chams.h"
 #include "../hacks/visuals/lsd_chams.h"
 #include "../hacks/visuals/two_tone_chams.h"
 #include "../hacks/visuals/weapon_sheen.h"
@@ -277,6 +278,12 @@ bool n_hooks::impl_t::on_attach( )
 	initialise_hook( m_set_visuals_data, g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 81 EC ? ? ? ? 53 8B D9 56 57 8B 53 5C" ),
 	                 &n_detoured_functions::set_visuals_data, "CCSWeaponVisualsDataProcessor::SetVisualsData()" );
 
+	/* CCSClothingVisualsDataProcessor vtable slot 3 ( rva 0x4075F0 ), unique: the lea edi,[esi+26Ah] = orig vmt name */
+	initialise_hook( m_clothing_composite_kv,
+	                 g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 E4 F8 83 EC 58 56 8B F1 C7 44 24 18 00 00 00 00 8B 0D ? ? ? ? 57 8B 01 8B 80 60 02 "
+	                                                       "00 00 FF D0 8B C8 8D 54 24 1C 52 8D BE 6A 02 00 00" ),
+	                 &n_detoured_functions::clothing_composite_kv, "CCSClothingVisualsDataProcessor::GenerateCompositeMaterialKeyValues()" );
+
 	if ( g_interfaces.m_file_system )
 		initialise_hook( m_loose_files_allowed, safe_vfunc( g_interfaces.m_file_system, 128 ), &n_detoured_functions::loose_files_allowed,
 		                 "CBaseFileSystem::LooseFilesAllowed()" );
@@ -364,6 +371,7 @@ void n_hooks::impl_t::release_render_resources( )
 	g_lsd_chams.on_device_lost( );
 	g_two_tone_chams.on_device_lost( );
 	g_atlas_chams.on_device_lost( );
+	g_glass_chams.on_device_lost( );
 	g_flip_world.on_device_lost( );
 	g_mc_clouds.on_device_lost( );
 	n_gpu_timer::on_device_lost( );

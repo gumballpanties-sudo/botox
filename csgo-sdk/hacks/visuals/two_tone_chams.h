@@ -9,7 +9,7 @@ namespace n_two_tone_chams
 
 	struct impl_t {
 		// main thread, around one chams layer draw with the model's own materials (no override). colours 0..1 display, alpha pre-scaled
-		void begin( const float light[ 4 ], const float dark[ 4 ], bool ignorez );
+		void begin( const float light[ 4 ], const float dark[ 4 ], bool ignorez, bool lay_depth = true );
 		void end( );
 
 		bool armed( ) const
@@ -28,7 +28,8 @@ namespace n_two_tone_chams
 		float m_dark[ 4 ]   = { };
 		float m_params[ 4 ] = { };
 		bool m_ignorez      = false;
-	bool m_translucent  = false;
+		bool m_translucent  = false;
+		bool m_lay_depth    = true;
 	};
 }
 

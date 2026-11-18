@@ -436,12 +436,13 @@ public:
 
 	[[nodiscard]] float get_spread( )
 	{
-		return g_virtual.call< float >( this, 452 );
+		/* 453 / 483 = skeet, osiris, oversee, evolve; 452 / 482 was the 2019 layout ( -nan ) */
+		return g_virtual.call< float >( this, 453 );
 	}
 
 	[[nodiscard]] float get_inaccuracy( )
 	{
-		return g_virtual.call< float >( this, 482 );
+		return g_virtual.call< float >( this, 483 );
 	}
 
 	void set_sequence( int sequence )

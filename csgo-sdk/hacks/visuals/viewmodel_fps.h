@@ -19,16 +19,18 @@ namespace n_viewmodel_fps
 		{
 			this->m_inside = false;
 
-			const auto globals = g_interfaces.m_global_vars_base;
-
-			if ( !GET_VARIABLE( g_variables.m_viewmodel_low_fps, bool ) || !globals )
-				return;
-
 			g_math.angle_matrix( setup.m_angles, this->m_camera );
 
 			this->m_camera[ 0 ][ 3 ] = setup.m_origin.m_x;
 			this->m_camera[ 1 ][ 3 ] = setup.m_origin.m_y;
 			this->m_camera[ 2 ][ 3 ] = setup.m_origin.m_z;
+
+			this->m_view = true;
+
+			const auto globals = g_interfaces.m_global_vars_base;
+
+			if ( !GET_VARIABLE( g_variables.m_viewmodel_low_fps, bool ) || !globals )
+				return;
 
 			if ( globals->m_frame_count != this->m_frame ) {
 				this->m_frame = globals->m_frame_count;
@@ -47,7 +49,10 @@ namespace n_viewmodel_fps
 			this->m_inside = true;
 		}
 
-		void end( ) { this->m_inside = false; }
+		void end( ) { this->m_inside = this->m_view = false; }
+
+		// inside DrawViewModels: m_camera = the camera the viewmodel sits on ( trail )
+		bool in_view_models( ) const { return this->m_view; }
 
 		// DrawModelExecute: the bones to draw with. anything drawn inside DrawViewModels = arms, gun, stattrak, sleeves
 		matrix3x4_t* apply( void* state, matrix3x4_t* bones, const model_t* model )
@@ -103,22 +108,6 @@ namespace n_viewmodel_fps
 			return out;
 		}
 
-	private:
-		static constexpr int max_bones = 256;
-		static constexpr int max_slots = 8;
-
-		struct slot_t {
-			const model_t* m_model = nullptr;
-
-			int m_seen  = -2;
-			int m_count = 0;
-
-			matrix3x4_t m_held[ max_bones ]{ };
-
-			// by frame parity: last frame's array may still be in flight on the queued material thread
-			matrix3x4_t m_out[ 2 ][ max_bones ]{ };
-		};
-
 		// camera is rigid: inverse = transpose rotation, minus origin
 		void to_camera( const matrix3x4_t& world, matrix3x4_t& local ) const
 		{
@@ -146,6 +135,22 @@ namespace n_viewmodel_fps
 			}
 		}
 
+	private:
+		static constexpr int max_bones = 256;
+		static constexpr int max_slots = 8;
+
+		struct slot_t {
+			const model_t* m_model = nullptr;
+
+			int m_seen  = -2;
+			int m_count = 0;
+
+			matrix3x4_t m_held[ max_bones ]{ };
+
+			// by frame parity: last frame's array may still be in flight on the queued material thread
+			matrix3x4_t m_out[ 2 ][ max_bones ]{ };
+		};
+
 		slot_t m_slot[ max_slots ]{ };
 
 		matrix3x4_t m_camera{ };
@@ -154,6 +159,7 @@ namespace n_viewmodel_fps
 		float m_last = 0.f;
 		bool m_step  = false;
 		bool m_inside = false;
+		bool m_view   = false;
 	};
 }
 

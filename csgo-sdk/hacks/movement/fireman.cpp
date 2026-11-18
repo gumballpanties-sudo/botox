@@ -1741,9 +1741,77 @@ static c_vector fireman_gain_dir( const c_vector& vel, const c_vector& n, const 
 	return best_dir;
 }
 
+struct fireman_wish_t {
+	c_vector dir{ };
+	float add  = 0.f;
+	bool valid = false;
+};
+
+// AirAccelerate adds min( accel, 30 - v.w ) along w: the exact delta's own direction wastes it whenever the delta runs along v
+static fireman_wish_t fireman_best_wish( const c_vector& vel, const c_vector& want, const float accel, const float wish_cap )
+{
+	fireman_wish_t out;
+	const float dx = want.m_x - vel.m_x;
+	const float dy = want.m_y - vel.m_y;
+	float best     = dx * dx + dy * dy;
+	float best_deg = 0.f;
+
+	const auto eval = [ & ]( const float deg ) {
+		const float a = deg * ( std::numbers::pi_v< float > / 180.f );
+		const c_vector w( cosf( a ), sinf( a ), 0.f );
+		const float cap = std::min( accel, wish_cap - ( vel.m_x * w.m_x + vel.m_y * w.m_y ) );
+		const float add = std::clamp( dx * w.m_x + dy * w.m_y, 0.f, std::max( cap, 0.f ) );
+		if ( add <= 0.f )
+			return;
+		const float ex = dx - w.m_x * add;
+		const float ey = dy - w.m_y * add;
+		if ( const float e = ex * ex + ey * ey; e < best ) {
+			best     = e;
+			best_deg = deg;
+			out      = { w, add, true };
+		}
+	};
+
+	for ( int i = 0; i < 72; ++i )
+		eval( static_cast< float >( i ) * 5.f );
+	if ( !out.valid )
+		return out;
+
+	const float coarse = best_deg;
+	for ( int i = -10; i <= 10; ++i )
+		eval( coarse + static_cast< float >( i ) * 0.5f );
+
+	return out;
+}
+
+// AirAccelerate's addspeed cap: min( wishspeed, 30 ), and wishspeed never tops maxspeed * duck crop
+static float fireman_wish_cap( const n_air::world_t& w, const int k = 0 )
+{
+	return std::min( 30.f, n_air::max_speed_at( w, k ) * w.duck );
+}
+
+// cmd wish whose AirAccelerate adds exactly `add`: accelspeed and min( wish, 30 ) - v.dir both must reach it
+static float fireman_wish_for_add( const float add, const float v_dot )
+{
+	const n_air::world_t w = n_air::read_world( );
+	const float per        = w.accel * w.dt * n_air::friction( g_prediction.backup_data.m_velocity.m_z, w );
+	const float eff        = std::max( per > 0.0001f ? add / per : n_air::max_speed_at( w ), add + v_dot );
+	return std::min( eff / std::max( w.duck, 0.01f ), n_air::max_speed_at( w ) );
+}
+
+// best-wish dirs are angled: only latch-free under 1u of origin error ( hull + 1, reach 2 + 1 ), else they grab the neighbour face
+static bool fireman_wish_clear( const c_vector& origin, const c_vector& mins, const c_vector& maxs, const float yaw )
+{
+	constexpr float pad = 1.f;
+
+	c_vector n;
+	return !fireman_can_latch( origin, c_vector( mins.m_x - pad, mins.m_y - pad, mins.m_z ), c_vector( maxs.m_x + pad, maxs.m_y + pad, maxs.m_z ), yaw, n,
+	                           nullptr, 2.f + pad );
+}
+
 // authority per tick off the world ( stamina bleeds during the approach ): the steer re-reads it every cmd, so must the sim
 static int fireman_hold_ticks( c_vector vel, c_vector rel, const n_air::world_t& world, const float hold_dist, const int max_ticks,
-                               const float dt, const bool gain, float vz, float& out_min_dist )
+                               const float dt, const bool gain, float vz, float& out_min_dist, const bool best )
 {
 	const float g = fireman_gravity( );
 
@@ -1763,12 +1831,17 @@ static int fireman_hold_ticks( c_vector vel, c_vector rel, const n_air::world_t&
 		const c_vector to_target = dist > 0.01f ? c_vector( rel.m_x / dist, rel.m_y / dist, 0.f ) : c_vector( 1.f, 0.f, 0.f );
 		// 450 = approach cap (the window's 30 is outside catch_time). must fly the same controller as the
 		// approach (steer_delta) or it refuses ladders the turn can reach
-		const c_vector delta     = fireman_steer_delta( vel, to_target, dist - hold_dist, decel, dt, 450.f, gain, vz );
+		bool perp                = false;
+		const c_vector delta     = fireman_steer_delta( vel, to_target, dist - hold_dist, decel, dt, 450.f, gain, vz, &perp );
 		const float need         = sqrtf( delta.m_x * delta.m_x + delta.m_y * delta.m_y );
+		const float a_tick       = accel_speed * fireman_air_friction( vz, g, dt );
 
-		if ( need > 0.01f )
-			vel = fireman_air_step( vel, c_vector( delta.m_x / need, delta.m_y / need, 0.f ),
-			                        std::min( accel_speed * fireman_air_friction( vz, g, dt ), need ) );
+		if ( best && need > 0.01f && !perp ) {
+			const fireman_wish_t bw = fireman_best_wish( vel, vel + delta, a_tick, fireman_wish_cap( world, t ) );
+			if ( bw.valid )
+				vel = c_vector( vel.m_x + bw.dir.m_x * bw.add, vel.m_y + bw.dir.m_y * bw.add, 0.f );
+		} else if ( need > 0.01f )
+			vel = fireman_air_step( vel, c_vector( delta.m_x / need, delta.m_y / need, 0.f ), std::min( a_tick, need ) );
 
 		rel.m_x -= vel.m_x * dt;
 		rel.m_y -= vel.m_y * dt;
@@ -2384,7 +2457,8 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 		/* the frozen DRIFT ends the ride, not the ladder (log 10-05: h=16 off a 0.3u side at drop 34, then hung 7 ticks at 0 u/s
 		   for the cooldown). straight down still sticks to the floor, or past the cooldown = climb down now: a jumpless move
 		   replaces the drift, and the end jump comes from the floor press / the descend press after expiry */
-		if ( end_hang && m_fireman_data.yaw_valid && ride_drop > fireman_ride_floor_probe ) {
+		// climb down from here sticks the whole way: floor + 1 (or the path end), the midpoint and the next step
+		const auto descend_path_ok = [ & ]( bool& down_floor, float& down_dist ) -> bool {
 			const float down_len = -descend_vz * static_cast< float >( cooldown_ticks + 2 ) * phys_dt_ride + 4.f;
 
 			trace_t down;
@@ -2392,13 +2466,21 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			ray_t down_ray( origin, c_vector( origin.m_x, origin.m_y, origin.m_z - down_len ), mins, maxs );
 			g_interfaces.m_engine_trace->trace_ray( down_ray, mask_playersolid, &down_flt, &down );
 
-			const bool down_floor = down.m_fraction < 1.f && down.m_plane.m_normal.m_z >= 0.7f;
+			down_floor = down.m_fraction < 1.f && down.m_plane.m_normal.m_z >= 0.7f;
+			down_dist  = down_floor ? origin.m_z - down.m_end.m_z : FLT_MAX;
 			// 1u over a floor hit: a prop step skin fails the stick ON it, holds over it (de_train cars)
 			const c_vector down_end( down.m_end.m_x, down.m_end.m_y, down.m_end.m_z + ( down_floor ? 1.f : 0.f ) );
 			const c_vector down_mid( origin.m_x, origin.m_y, ( origin.m_z + down_end.m_z ) * 0.5f );
 
-			if ( !down.m_start_solid && ( down_floor || down.m_fraction >= 1.f ) && fireman_ride_sticks( down_end, mins, maxs, ladder_normal ) &&
-			     fireman_ride_sticks( down_mid, mins, maxs, ladder_normal ) && fireman_ride_next_sticks( origin, mins, maxs, descend_step, ladder_normal ) ) {
+			return !down.m_start_solid && ( down_floor || down.m_fraction >= 1.f ) && fireman_ride_sticks( down_end, mins, maxs, ladder_normal ) &&
+			       fireman_ride_sticks( down_mid, mins, maxs, ladder_normal ) && fireman_ride_next_sticks( origin, mins, maxs, descend_step, ladder_normal );
+		};
+
+		if ( end_hang && m_fireman_data.yaw_valid && ride_drop > fireman_ride_floor_probe ) {
+			bool down_floor = false;
+			float down_dist = FLT_MAX;
+
+			if ( descend_path_ok( down_floor, down_dist ) ) {
 				const float n_h = sqrtf( ladder_normal.m_x * ladder_normal.m_x + ladder_normal.m_y * ladder_normal.m_y );
 				const c_vector& v_now = g_prediction.backup_data.m_velocity;
 
@@ -2408,6 +2490,23 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 				                   n_h > 0.01f ? ( -v_now.m_x * ladder_normal.m_y + v_now.m_y * ladder_normal.m_x ) / n_h : 0.f,
 				                   n_h > 0.01f ? ( v_now.m_x * ladder_normal.m_x + v_now.m_y * ladder_normal.m_y ) / n_h : 0.f );
 			}
+		}
+
+		/* hover: frozen slower than the climb down and short of the floor at expiry (hang grab, adopted jumpless latch) would stand out
+		   the cooldown in mid air (log 11-18: grab hang drop=18 -> hover=13). the jumpless climb never reads m_ignoreLadderJumpTime (:3716) */
+		const float vz_ride = g_prediction.backup_data.m_velocity.m_z;
+		bool hover_floor    = false;
+		float hover_dist    = FLT_MAX;
+
+		// ride tick cooldown_ticks - 1 is the engine's expiry tick: frozen moves left = cooldown_ticks - 1 - ride_ticks.
+		// drop_to_floor is world only: a prop / func_brush floor in the path must agree with it (descend sizing reads ride_drop)
+		if ( !end_hang && !m_fireman_data.ride_descend && !ride_grounded && m_fireman_data.ride_ticks < cooldown_ticks - 1 && m_fireman_data.ride_push == 0 &&
+		     m_fireman_data.yaw_valid && ride_drop > fireman_ride_floor_probe && descend_vz < vz_ride - 1.f &&
+		     -vz_ride * static_cast< float >( cooldown_ticks - 1 - m_fireman_data.ride_ticks ) * phys_dt_ride < ride_drop - fireman_ride_floor_probe &&
+		     descend_path_ok( hover_floor, hover_dist ) && ( !hover_floor || std::fabsf( hover_dist - ride_drop ) < 1.f ) ) {
+			m_fireman_data.ride_descend = true;
+			botox_dbg_log( "[fr] hover descend t=%d drop=%.1f vz=%.0f step=%.0f floor=%d", m_fireman_data.ride_ticks, ride_drop, vz_ride, descend_vz,
+			               ( int )hover_floor );
 		}
 
 		const bool normal_flings = ladder_normal.m_x * ladder_normal.m_x + ladder_normal.m_y * ladder_normal.m_y > 0.25f;
@@ -3550,6 +3649,8 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 		const float phys_dt            = fireman_phys_dt( );
 		const float decel              = accel_speed / std::max( phys_dt, 0.001f );
 		const float vz_now      = g_prediction.backup_data.m_velocity.m_z;
+		const float accel_tick  = accel_speed * fireman_air_friction( vz_now, fireman_gravity( ), phys_dt );
+		const float wish_cap    = fireman_wish_cap( air_world );
 		const float hold_dist = 8.f;
 		const float catch_time = fall_time > ignore_jump_time ? fall_time - ignore_jump_time : 0.f;
 		const int sim_ticks    = std::clamp( static_cast< int >( catch_time / std::max( phys_dt, 0.001f ) ), 1, 128 );
@@ -3557,7 +3658,7 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 		const bool steer_gain = side_pick || approach || ( drop_in_on && m_fireman_data.drop_in_fall );
 
 		float best_dist      = FLT_MAX;
-		const int best_ticks = fireman_hold_ticks( steer_flat, rel, air_world, hold_dist, sim_ticks, phys_dt, steer_gain, vz_now, best_dist );
+		const int best_ticks = fireman_hold_ticks( steer_flat, rel, air_world, hold_dist, sim_ticks, phys_dt, steer_gain, vz_now, best_dist, !side_pick );
 
 		const bool in_grab_range = clearance <= grab_clearance;
 
@@ -3685,9 +3786,22 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 				side_ov = fireman_side_overlap( origin, maxs, m_fireman_data.side_point, m_fireman_data.side_u, m_fireman_data.side_half );
 				side_du = steer_flat.m_x * m_fireman_data.side_u.m_x + steer_flat.m_y * m_fireman_data.side_u.m_y;
 			}
-			botox_dbg_log( "[fr] grab drop=%.0f room=%.0f v=%.0f grab_at=%.0f end=%s nz=%.2f side=%d h=%.0f hang=%d ov=%.2f du=%.1f air=%d turned=%.0f", drop_left,
+			// ticks the frozen ride will stand on the floor before expiry = how late this grab is
+			const int stand = ride_end.floor && ride_end.step > 0.01f && ride_end.room < FLT_MAX
+			                      ? std::max( fireman_catch_ticks( ) - static_cast< int >( std::ceilf( ride_end.room / ride_end.step ) ), 0 )
+			                      : -1;
+			botox_dbg_log( "[fr] grab drop=%.0f room=%.0f v=%.0f grab_at=%.0f end=%s nz=%.2f side=%d h=%.0f hang=%d ov=%.2f du=%.1f air=%d turned=%.0f stand=%d win=%d", drop_left,
 			                   ride_end.room, fall_speed, ride_end.grab_at, ride_end.floor ? "floor" : "ladder", latch_normal.m_z, ( int )side_face, steer_h,
-			                   ( int )( ride_end.room < ride_end.step ), side_ov, side_du, m_fireman_data.air_ticks, m_fireman_data.air_turned );
+			                   ( int )( ride_end.room < ride_end.step ), side_ov, side_du, m_fireman_data.air_ticks, m_fireman_data.air_turned, stand,
+			                   m_fireman_data.fall_win_ticks );
+			if ( stand >= 2 ) {
+				const int hist_n = std::min( m_fireman_data.fall_hist_n, 24 );
+				for ( int i = m_fireman_data.fall_hist_n - hist_n; i < m_fireman_data.fall_hist_n; ++i ) {
+					const auto& h = m_fireman_data.fall_hist[ i % 24 ];
+					botox_dbg_log( "[fr] hist %d drop=%.0f gap=%.1f dist=%.1f h=%.0f ov=%.2f err=%.1f need=%.0f along=%.0f w=%d in=%.0f spin=%.1f", i - m_fireman_data.fall_hist_n,
+					               h.drop, h.gap, h.dist, h.h, h.ov, h.err, h.need, h.along, h.wrote, h.in, h.spin );
+				}
+			}
 		} else if ( can_latch ) {
 			static int hold_log = 0;
 			if ( ( hold_log++ % 8 ) == 0 )
@@ -3777,9 +3891,22 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 				const float win_time  = drop_left > 0.f && fall_speed > 1.f ? drop_left / fall_speed : phys_dt;
 				const float need_rate = drive_len / std::max( win_time, phys_dt );
 				const float want_in   = std::max( std::max( air_veer_cap, std::min( need_rate, 450.f ) ) - along, 0.f );
-				const float push = want_in > 1.f ? fireman_air_wish_speed( want_in ) : 30.f;
+				float push            = want_in > 1.f ? fireman_air_wish_speed( want_in ) : 30.f;
+				float drive_yaw       = drive_dir.to_angle( ).m_y;
 
-				fireman_write_wish( cmd, ladder.yaw, drive_dir.to_angle( ).m_y, push );
+				/* cross drift cancelled while closing; a straight drive that latches stays straight (the latch is the catch).
+				   never side picks: e2e 128t early 1 -> 522, slid 119 -> 301 on thin sides */
+				const float want_along  = std::max( along, std::max( air_veer_cap, std::min( need_rate, 450.f ) ) );
+				const fireman_wish_t dw = side_pick ? fireman_wish_t{ } : fireman_best_wish( steer_flat, drive_dir * want_along, accel_tick, wish_cap );
+				c_vector dw_normal;
+				const bool drive_best = dw.valid && !fireman_can_latch( origin, mins, maxs, drive_yaw, dw_normal ) &&
+				                        fireman_wish_clear( origin, mins, maxs, dw.dir.to_angle( ).m_y );
+				if ( drive_best ) {
+					drive_yaw = dw.dir.to_angle( ).m_y;
+					push      = fireman_wish_for_add( dw.add, steer_flat.m_x * dw.dir.m_x + steer_flat.m_y * dw.dir.m_y );
+				}
+
+				fireman_write_wish( cmd, ladder.yaw, drive_yaw, push );
 				lock_earned( );
 				cmd->m_buttons &= ~move_buttons;
 				/* jump held: an unpredicted latch keeps the fall (:3706) ...unless a ride from here ends inside its first
@@ -3795,16 +3922,17 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 
 				static int drive_log = 0;
 				if ( ( drive_log++ % 8 ) == 0 )
-					botox_dbg_log( "[fr] drive gap=%.1f dist=%.0f err=%.1f lat=%.1f along=%.0f push=%.0f drop=%.0f v=%.0f", face_gap, ladder.dist,
-					                   drive_len, park_lat, along, push, drop_left, fall_speed );
+					botox_dbg_log( "[fr] drive gap=%.1f dist=%.0f err=%.1f lat=%.1f along=%.0f push=%.0f drop=%.0f v=%.0f bw=%d", face_gap, ladder.dist,
+					                   drive_len, park_lat, along, push, drop_left, fall_speed, ( int )drive_best );
 
 				hist.err   = drive_len;
 				hist.along = along;
-				hist.wrote = 2;
+				hist.wrote = drive_best ? 4 : 2;
 				return;
 			}
 
 			bool steer_wrote = false;
+			bool steer_best  = false;
 			float steer_need = -1.f;
 
 			if ( steer_on && !cliff_risk ) {
@@ -3827,12 +3955,14 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 
 				const float cross_s = ( origin.m_x - ladder.point.m_x ) * face_normal.m_x + ( origin.m_y - ladder.point.m_y ) * face_normal.m_y;
 				const float cross_to = hull_reach + park_gap;
+				bool cross_active    = false;
 
 				if ( cross_s < cross_to ) {
 					const float top_z  = fireman_column_top( origin, mins, maxs, ladder.point, face_normal );
 					const float feet_z = origin.m_z + mins.m_z;
 
 					if ( top_z > -FLT_MAX && top_z < FLT_MAX && feet_z > top_z ) {
+						cross_active        = true;
 						const float t_top   = ( vz_now + sqrtf( vz_now * vz_now + 2.f * g_safe * ( feet_z - top_z ) ) ) / g_safe;
 						const float rate    = ( cross_to - cross_s ) / std::max( t_top - phys_dt, phys_dt );
 						const float want_n  = ( steer_flat.m_x + delta.m_x ) * face_normal.m_x + ( steer_flat.m_y + delta.m_y ) * face_normal.m_y;
@@ -3854,10 +3984,10 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 							const c_vector w   = fireman_gain_dir( steer_flat, face_normal, u_want >= u_now ? 1.f : -1.f,
 							                                       accel_speed * fireman_air_friction( vz_now, fireman_gravity( ), phys_dt ) );
 
-							delta     = c_vector( w.m_x * 450.f, w.m_y * 450.f, 0.f );
-							need      = 450.f;
-							gain_perp = false;
-							strafed   = true;
+							delta         = c_vector( w.m_x * 450.f, w.m_y * 450.f, 0.f );
+							need          = 450.f;
+							gain_perp     = false;
+							strafed       = true;
 						}
 
 						botox_dbg_log( "[fr] cross s=%.1f to=%.1f top=%.0f feet=%.0f t=%.3f rate=%.0f want_n=%.0f vn=%.0f h=%.0f need=%.0f str=%d", cross_s, cross_to,
@@ -3874,10 +4004,21 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 				hist.along = steer_flat.m_x * to_target.m_x + steer_flat.m_y * to_target.m_y;
 
 				if ( need > 2.f ) {
-					float steer_yaw = c_vector( delta.m_x, delta.m_y, 0.f ).to_angle( ).m_y;
+					float steer_yaw  = c_vector( delta.m_x, delta.m_y, 0.f ).to_angle( ).m_y;
+					float steer_wish = -1.f;
+
+					// isotropic residual: may trade the cross deadline's normal speed or wobble a thin side, so neither gets it
+					if ( !gain_perp && !cross_active && !side_pick ) {
+						const c_vector want_v( steer_flat.m_x + delta.m_x, steer_flat.m_y + delta.m_y, 0.f );
+						const fireman_wish_t bw = fireman_best_wish( steer_flat, want_v, accel_tick, wish_cap );
+						if ( bw.valid && fireman_wish_clear( origin, mins, maxs, bw.dir.to_angle( ).m_y ) ) {
+							steer_yaw  = bw.dir.to_angle( ).m_y;
+							steer_wish = fireman_wish_for_add( bw.add, steer_flat.m_x * bw.dir.m_x + steer_flat.m_y * bw.dir.m_y );
+						}
+					}
 
 					c_vector steer_normal;
-					bool steer_ok = !fireman_can_latch( origin, mins, maxs, steer_yaw, steer_normal );
+					bool steer_ok = steer_wish >= 0.f || !fireman_can_latch( origin, mins, maxs, steer_yaw, steer_normal );
 					const bool back_contact = !steer_ok && steer_normal.m_x * face_normal.m_x + steer_normal.m_y * face_normal.m_y < -0.5f;
 
 					if ( !steer_ok && gain_perp ) {
@@ -3900,7 +4041,9 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 					}
 
 					if ( steer_ok ) {
-						const float steer_wish = fireman_air_wish_speed( need );
+						steer_best = steer_wish >= 0.f;
+						if ( !steer_best )
+							steer_wish = fireman_air_wish_speed( need );
 
 						fireman_write_wish( cmd, ladder.yaw, steer_yaw, steer_wish );
 						lock_earned( );
@@ -3913,11 +4056,11 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 
 						static int veer_log = 0;
 						if ( ( veer_log++ % 16 ) == 0 )
-							botox_dbg_log( "[fr] veer need=%.0f eta=%d dist=%.0f gap=%.1f err=%.1f latch=%d along=%.0f yaw=%.0f wish=%.0f h=%.0f sim=%d trn=%d gain=%d fr=%.2f vz=%.0f auth=%.1f in=%.0f spin=%.1f",
+							botox_dbg_log( "[fr] veer need=%.0f eta=%d dist=%.0f gap=%.1f err=%.1f latch=%d along=%.0f yaw=%.0f wish=%.0f h=%.0f sim=%d trn=%d gain=%d fr=%.2f vz=%.0f auth=%.1f in=%.0f spin=%.1f bw=%d",
 							                   need, best_ticks, rel_len, face_gap, steer_error, ( int )can_latch,
 							                   steer_flat.m_x * to_target.m_x + steer_flat.m_y * to_target.m_y, steer_yaw, steer_wish,
 							                   steer_h, sim_ticks, ( int )turning, ( int )gain_perp, fireman_air_friction( vz_now, fireman_gravity( ), phys_dt ), vz_now, accel_speed,
-							                   in_move, view_spin );
+							                   in_move, view_spin, ( int )steer_best );
 					} else if ( back_contact ) {
 						lock_earned( );
 
@@ -3939,7 +4082,7 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 				}
 			}
 
-			hist.wrote = steer_wrote ? 1 : 0;
+			hist.wrote = steer_wrote ? ( steer_best ? 3 : 1 ) : 0;
 
 			if ( steer_on && !steer_wrote && ( can_latch || face_gap < 24.f ) ) {
 				cmd->m_forward_move = 0.f;

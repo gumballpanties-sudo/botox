@@ -246,7 +246,7 @@ float4 main( PS_INPUT i ) : COLOR
 )";
 
 	constexpr int k_first = n_chams::chams_material_fresnel;
-	constexpr int k_count = n_chams::chams_material_max - k_first;
+	constexpr int k_count = n_chams::chams_material_grid + 1 - k_first;
 
 	IDirect3DVertexShader9* g_vs[ 2 ]{ };
 	IDirect3DPixelShader9* g_ps[ k_count ]{ };
@@ -324,18 +324,19 @@ float4 main( PS_INPUT i ) : COLOR
 	}
 }
 
-void n_atlas_chams::impl_t::begin( const int slot, const float color[ 4 ], const bool ignorez )
+void n_atlas_chams::impl_t::begin( const int slot, const float color[ 4 ], const bool ignorez, const bool lay_depth )
 {
 	// Atlas TIME_WRAP 1024: float precision stays fine
 	const float time = g_interfaces.m_global_vars_base ? std::fmod( g_interfaces.m_global_vars_base->m_real_time, 1024.f ) : 0.f;
 
-	auto arm = [ slot, c = std::to_array( { color[ 0 ], color[ 1 ], color[ 2 ], color[ 3 ] } ), time, ignorez ] {
+	auto arm = [ slot, c = std::to_array( { color[ 0 ], color[ 1 ], color[ 2 ], color[ 3 ] } ), time, ignorez, lay_depth ] {
 		for ( int i = 0; i < 4; i++ )
 			g_atlas_chams.m_color[ i ] = c[ i ];
 
 		g_atlas_chams.m_slot    = slot;
 		g_atlas_chams.m_time    = time;
-		g_atlas_chams.m_ignorez = ignorez;
+		g_atlas_chams.m_ignorez   = ignorez;
+		g_atlas_chams.m_lay_depth = lay_depth;
 		g_atlas_chams.m_armed.store( true, std::memory_order_relaxed );
 	};
 
@@ -404,7 +405,7 @@ long n_atlas_chams::impl_t::draw( const draw_indexed_primitive_t original, IDire
 
 	// Atlas draw_depth_first: blended = depth only prepass, then colour on the nearest surface only
 	if ( blends ) {
-		if ( !this->m_ignorez ) {
+		if ( !this->m_ignorez && this->m_lay_depth ) {
 			device->SetRenderState( D3DRS_COLORWRITEENABLE, 0 );
 			device->SetRenderState( D3DRS_ZWRITEENABLE, TRUE );
 			original( device, type, base_vertex, min_vertex, vertices, start_index, primitives );

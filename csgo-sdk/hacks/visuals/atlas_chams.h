@@ -10,7 +10,7 @@ namespace n_atlas_chams
 
 	struct impl_t {
 		// main thread, around one chams layer draw (slot carrier already forced). slot = n_chams index
-		void begin( int slot, const float color[ 4 ], bool ignorez );
+		void begin( int slot, const float color[ 4 ], bool ignorez, bool lay_depth = true );
 		void end( );
 
 		bool armed( ) const
@@ -29,6 +29,7 @@ namespace n_atlas_chams
 		float m_color[ 4 ] = { };
 		float m_time     = 0.f;
 		bool m_ignorez   = false;
+		bool m_lay_depth = true;
 	};
 }
 

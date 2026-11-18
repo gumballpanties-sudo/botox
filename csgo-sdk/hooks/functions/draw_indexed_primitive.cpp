@@ -1,5 +1,6 @@
 #include "../../globals/includes/includes.h"
 #include "../../hacks/visuals/atlas_chams.h"
+#include "../../hacks/visuals/glass_chams.h"
 #include "../../hacks/visuals/lsd_chams.h"
 #include "../../hacks/visuals/two_tone_chams.h"
 #include "../../hacks/visuals/weapon_sheen.h"
@@ -14,13 +15,17 @@ long __stdcall n_detoured_functions::draw_indexed_primitive( IDirect3DDevice9* d
 	const bool two_tone = g_two_tone_chams.armed( );
 	const bool lsd      = g_lsd_chams.armed( );
 	const bool atlas    = g_atlas_chams.armed( );
-	if ( !two_tone && !lsd && !atlas && !g_weapon_sheen.armed( ) )
+	const bool glass    = g_glass_chams.armed( );
+	if ( !two_tone && !lsd && !atlas && !glass && !g_weapon_sheen.armed( ) )
 		return original( device, type, base_vertex, min_vertex, vertices, start_index, primitives );
 
 	HOOK_SCOPE_OR_BAIL( original( device, type, base_vertex, min_vertex, vertices, start_index, primitives ) );
 
 	if ( two_tone )
 		return g_two_tone_chams.draw( original, device, type, base_vertex, min_vertex, vertices, start_index, primitives );
+
+	if ( glass )
+		return g_glass_chams.draw( original, device, type, base_vertex, min_vertex, vertices, start_index, primitives );
 
 	if ( lsd )
 		return g_lsd_chams.draw( original, device, type, base_vertex, min_vertex, vertices, start_index, primitives );

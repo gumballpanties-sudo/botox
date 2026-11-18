@@ -526,19 +526,22 @@ inline bool weapon_is_ours( c_base_entity* weapon, unsigned int handle )
 }
 
 /* custom colors cache buster: composite cache key = (kit, seed, wear, lod, model), no palette
-   (CBaseVisualsDataCompare::SerializeToBuffer). fold palette hash into wear, max +0.00128 (invisible). */
-inline float wear_with_color_key( float wear, const c_color* const colors[ 4 ] )
+   (CBaseVisualsDataCompare::SerializeToBuffer). fold palette hash into wear, 1..1023 steps of 1e-6 (max 0.001, invisible).
+   never 0 ( key = raw wear reuses the kit palette composite ), steps down near 1 instead of clamping every palette to 1.
+   ponytail: 1 in 1023 palette pairs share a key = stale composite until the next colour change */
+inline float wear_with_color_key( float wear, const c_color* const colors[ ], int count = 4 )
 {
 	unsigned int hash = 2166136261u;
 
-	for ( int i = 0; i < 4; i++ ) {
+	for ( int i = 0; i < count; i++ ) {
 		for ( int c = e_color_type::color_type_r; c <= e_color_type::color_type_b; c++ ) {
 			hash ^= static_cast< unsigned int >( ( *colors[ i ] )[ c ] );
 			hash *= 16777619u;
 		}
 	}
 
-	return ( std::min )( wear + static_cast< float >( hash % 128u ) * 0.00001f, 1.f );
+	const float offset = static_cast< float >( 1u + hash % 1023u ) * 0.000001f;
+	return wear + offset <= 1.f ? wear + offset : wear - offset;
 }
 
 inline e_class_ids class_id_of( c_base_entity* entity )
@@ -601,6 +604,10 @@ using clear_custom_materials_t = void( __thiscall* )( void* owner, bool purge );
 constexpr std::uintptr_t CMO_COUNT_OFFSET  = 0x10;
 constexpr std::uintptr_t ITEM_DEF_IN_VIEW  = 0x1EA;
 constexpr std::uintptr_t ITEM_VIEW_CMO     = 0x10;
+
+// m_ppVisualsDataProcessors ( CUtlVector ): memory +0x230, size +0x23C. live UpdateGeneratedMaterial appends before compositing
+constexpr std::uintptr_t ITEM_VIEW_PROCESSORS      = 0x230;
+constexpr std::uintptr_t ITEM_VIEW_PROCESSOR_COUNT = 0x23C;
 
 /* CEconItemView::UpdateGeneratedMaterial; game calls ( 0, 0xFFFF, 9 ) from InitializeAttributes.
    9 = COMPOSITE_TEXTURE_SIZE_512; anything else purges + re-composites smaller. */
@@ -977,7 +984,6 @@ inline void regen_glove_material( c_base_entity* glove, int paint_kit, int seed,
 		clear_owner( reinterpret_cast< void* >( glove_cmo ) );
 
 	// arms take the FIRST visuals processor by name (0x717850), stale ones win. ponytail: old ones leak, Release is non-virtual
-	constexpr std::uintptr_t ITEM_VIEW_PROCESSOR_COUNT = 0x23C;
 	*reinterpret_cast< int* >( glove_view + ITEM_VIEW_PROCESSOR_COUNT ) = 0;
 
 	if ( paint_kit > 0 ) {

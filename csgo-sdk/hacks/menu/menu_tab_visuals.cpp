@@ -9,6 +9,7 @@
 #include "../visuals/crosshair/custom_crosshair.h"
 #include "../visuals/edicts/edicts.h"
 #include "../visuals/old_mods.h"
+#include "../visuals/viewmodel_trail.h"
 
 static void bool_combo( const char* label, std::initializer_list< std::pair< const char*, bool* > > items )
 {
@@ -750,21 +751,39 @@ void n_menu::impl_t::tab_visuals( )
 			chams_dropdown( "gloves material", g_variables.m_chams_arms_layers, g_variables.m_chams_arms_colors, g_variables.m_chams_arms_dark_colors );
 			chams_dropdown( "sleeve material", g_variables.m_chams_sleeve_layers, g_variables.m_chams_sleeve_colors,
 			                g_variables.m_chams_sleeve_dark_colors );
+			chams_dropdown( "trail material", g_variables.m_chams_trail_layers, g_variables.m_chams_trail_colors,
+			                g_variables.m_chams_trail_dark_colors );
+
+			if ( n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_trail_layers, std::vector< int > ) ) ) {
+				ImGui::SliderFloat( "trail length", &GET_VARIABLE( g_variables.m_chams_trail_time, float ), n_viewmodel_trail::min_time,
+				                    n_viewmodel_trail::max_time, "%.2f s", ImGuiSliderFlags_AlwaysClamp );
+				ImGui::SliderInt( "trail ghosts", &GET_VARIABLE( g_variables.m_chams_trail_ghosts, int ), 1, n_viewmodel_trail::max_ghosts, "%d",
+				                  ImGuiSliderFlags_AlwaysClamp );
+				ImGui::Checkbox( "trail gradient", &GET_VARIABLE( g_variables.m_chams_trail_gradient, bool ) );
+			}
 
 			ImGui::EndDisabled( );
 
-			bool two_tone_used = false;
+			bool two_tone_used = false, glass_used = false;
 			for ( const std::uint32_t layers : { g_variables.m_chams_visible_layers, g_variables.m_chams_occluded_layers, g_variables.m_chams_backtrack_layers,
 			                                     g_variables.m_chams_shot_layers, g_variables.m_chams_sound_layers, g_variables.m_chams_weapon_layers,
-			                                     g_variables.m_chams_arms_layers, g_variables.m_chams_sleeve_layers } )
-				for ( const int slot : GET_VARIABLE( layers, std::vector< int > ) )
+			                                     g_variables.m_chams_arms_layers, g_variables.m_chams_sleeve_layers, g_variables.m_chams_trail_layers } )
+				for ( const int slot : GET_VARIABLE( layers, std::vector< int > ) ) {
 					two_tone_used |= slot == n_chams::chams_material_two_tone;
+					glass_used |= slot == n_chams::chams_material_glass;
+				}
 
 			if ( two_tone_used ) {
 				ImGui::SliderFloat( "two tone threshold", &GET_VARIABLE( g_variables.m_chams_two_tone_threshold, float ), 0.f, 1.f, "%.2f",
 				                    ImGuiSliderFlags_AlwaysClamp );
 				ImGui::SliderFloat( "two tone edge", &GET_VARIABLE( g_variables.m_chams_two_tone_edge, float ), 0.f, 0.5f, "%.2f",
 				                    ImGuiSliderFlags_AlwaysClamp );
+			}
+
+			if ( glass_used ) {
+				ImGui::SliderFloat( "glass refraction", &GET_VARIABLE( g_variables.m_chams_glass_refract, float ), 0.f, 64.f, "%.1f",
+				                    ImGuiSliderFlags_AlwaysClamp );
+				ImGui::SliderFloat( "glass bump", &GET_VARIABLE( g_variables.m_chams_glass_bump, float ), 0.f, 3.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
 			}
 		}
 		menu_group_end( );
