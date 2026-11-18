@@ -171,7 +171,7 @@ inline constexpr const char* k_keybind_labels[ label_max ][ 2 ] = {
 	{ "freelook climb", "lfc" }, { "fast ladder", "fl" },     { "one hop", "oh" },        { "auto crouch", "ac" },
 	{ "auto bounce", "ab" },   { "tung surf", "tung" },       { "edge skip", "es" },      { "half sideways", "hsw" },
 	{ "zeus bug", "zb" },      { "air freeze", "az" },        { "edge surf", "esurf" },   { "pj assist", "pjast" },
-	{ "edge catch", "ec" },    { "air align", "aalign" },
+	{ "edge catch", "ec" },    { "air align", "ag" },
 };
 
 enum e_indicator_style {

@@ -102,6 +102,43 @@ static int aal_ticks_to( float z, float vz, const float pin, const float ipt, co
 	return -1;
 }
 
+/* CategorizePosition grounds an END whose 2u hull trace crosses the floor face, 1/32 under the standing z ( route_engine sim_categorize ) */
+constexpr float k_aal_ground_band = 2.f - 1.f / 32.f;
+
+/* a tb rise past its crossing: ticks to the next bhop's, route_engine sim_tick order. stamina bleeds at each tick's start ( a takeoff cmd adds its
+   jump cost after it ), the landing tick ( END within the ground band over the standing z, no snap ) adds land cost x its START fall speed, the
+   takeoff tick bleeds, then the impulse scales ( virtual START vz: ducked impulse, standing impulse + pin ). exact on purpose: U coasts to arrive
+   at the deadline, an early one = in at 119 u/s before the real crossing ( twin ). ponytail: sv_jump_impulse, a jumpFactor < 1 surface rises
+   slower ( route_engine measures it at one spot only ). -1 = no landing / that jump never rises past target */
+static int aal_ticks_bhop( float z, float vz, const float pin, const float ipt, const float floor_z, float stam, const bool duck, const bool takeoff,
+                           const float target )
+{
+	static auto cv_jump  = g_interfaces.m_convar->find_var( "sv_jump_impulse" );
+	static auto cv_rec   = g_interfaces.m_convar->find_var( "sv_staminarecoveryrate" );
+	static auto cv_land  = g_interfaces.m_convar->find_var( "sv_staminalandcost" );
+	static auto cv_jcost = g_interfaces.m_convar->find_var( "sv_staminajumpcost" );
+	static auto cv_max   = g_interfaces.m_convar->find_var( "sv_staminamax" );
+	const float stam_max = cv_max ? cv_max->get_float( ) : 80.f;
+	const int land       = aal_ticks_to( z, vz, pin, ipt, floor_z + k_aal_ground_band, false );
+	if ( land < 0 )
+		return -1;
+	const float bleed = ( cv_rec ? cv_rec->get_float( ) : 60.f ) * ipt;
+	float fall        = 0.f;
+	for ( int k = 0; k <= land; ++k ) {
+		stam = std::max( 0.f, stam - bleed );
+		if ( k == 0 && takeoff )
+			stam = std::min( stam + ( cv_jcost ? cv_jcost->get_float( ) : 0.08f ) * vz, stam_max );
+		fall           = -vz;
+		const float v1 = vz + pin;
+		z += ipt * v1;
+		vz = v1 + pin;
+	}
+	stam             = std::max( 0.f, std::min( stam + ( cv_land ? cv_land->get_float( ) : 0.05f ) * fall, stam_max ) - bleed );
+	const float jump = cv_jump ? cv_jump->get_float( ) : 301.993377f;
+	const int rise   = aal_ticks_to( std::max( z, floor_z ), ( duck ? jump : jump + pin ) * std::clamp( 1.f - stam / 100.f, 0.f, 1.f ), pin, ipt, target, true );
+	return rise < 0 ? -1 : land + 1 + rise;
+}
+
 /* edge surf's guide ( K park / D delta strafe / S stop-in-time ) against the point's wall: the hull parks h off the face, closing 0, before
    it crosses the point z. auto align / tb run after and own the last ulps. ponytail: arrival along the wall gated at 64u, never steered */
 void n_movement::impl_t::air_align( c_user_cmd* cmd )
@@ -109,9 +146,11 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 	constexpr float k_duck_crop = 0.34f;
 	constexpr float k_wish_max  = 450.f;
 	constexpr float k_along     = 64.f;
+	constexpr float k_jump_rise = 66.f; /* 57 jump + 9 air duck lift: a floor further under the seam never rises past it */
 	constexpr int k_move_keys   = in_forward | in_back | in_moveleft | in_moveright;
 	static int s_cmd    = -1;
 	static bool s_own   = false;
+	static bool s_fall  = false; /* the owned cmd flew a fall plan */
 	static c_vector s_pick{ };
 	g_air_align_owns   = false;
 	g_air_align_aa_off = false;
@@ -149,6 +188,8 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 	g_prediction.restore_entity_to_predicted_frame( frame );
 	const c_vector org = local->get_origin( ), vel = local->get_velocity( );
 	const c_vector mins = local->get_collideable( )->get_obb_mins( ), maxs = local->get_collideable( )->get_obb_maxs( );
+	/* prediction datamap field, offset 0 on a miss ( route_engine's guard ) */
+	const float stam0   = local->get_stamina( ) >= 0.f && local->get_stamina( ) <= 200.f ? local->get_stamina( ) : 0.f;
 	const float ipt     = g_interfaces.m_global_vars_base->m_interval_per_tick;
 	const float pin     = g_prediction.get_engine_target_predict_z_velocity( );
 	static auto sv_airaccelerate = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
@@ -173,11 +214,20 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 	const float tall    = local->get_collideable( )->get_obb_maxs( ).m_z;
 	const float z_end = local->get_origin( ).m_z, vz_end = local->get_velocity( ).m_z;
 	g_prediction.restore_entity_to_predicted_frame( frame );
-	if ( !end_air )
+	/* a fall plan's landing tick: the idle sim lands too. it is an air move ( START airborne ), the plan runs through it off the START itself ( the
+	   ground zeroed the END vz ). any other landing / ground START hands off */
+	const bool land_tick = !end_air && !start_gnd && s_own && s_fall;
+	if ( !end_air && !land_tick )
 		return release( start_gnd ? "ground" : "land" );
-	const float vz0  = vz_end - 2.f * pin;
-	const float z0   = z_end - ipt * ( vz_end - pin );
+	const float vz0  = land_tick ? vel.m_z : vz_end - 2.f * pin;
+	const float z0   = land_tick ? org.m_z : z_end - ipt * ( vz_end - pin );
 	const float crop = duck_cmd || end_duck ? k_duck_crop : 1.f;
+	/* a fall plan bets on a hop on the first ground tick: autohop ( bunny hop / sv_autobunnyhopping ) with your jump key down ( raw: bunny hop
+	   strips it in the air ), not under delay hop / the jb key. a manual scroll hop is unknown ahead = no fall plan */
+	const bool hop = ( m_user_buttons_raw & in_jump ) &&
+	                 ( GET_VARIABLE( g_variables.m_bunny_hop, bool ) || g_convars.float_or( HASH_BT( "sv_autobunnyhopping" ), 0.f ) != 0.f ) &&
+	                 !( GET_VARIABLE( g_variables.m_delay_hop, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_delay_hop_key, key_bind_t ) ) ) &&
+	                 !( GET_VARIABLE( g_variables.m_jump_bug, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_jump_bug_key, key_bind_t ) ) );
 
 	const float turn      = std::clamp( GET_VARIABLE( g_variables.m_air_align_delta_strafe, float ), 0.f, 15.f );
 	const float reach     = std::clamp( GET_VARIABLE( g_variables.m_air_align_reach, float ), 0.f, 64.f );
@@ -192,6 +242,7 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 		char act = 'F';
 		c_vector n{ };
 		float d = 0.f, gap = 0.f, h = 0.f, v_old = 0.f, v = 0.f, along = 0.f, dist = FLT_MAX;
+		bool fall = false;
 	} best;
 	const char* none = "radius";
 	float none_dist  = FLT_MAX;
@@ -214,11 +265,35 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 			continue;
 		}
 		const float target = p.pos.m_z + p.aa_dz - ( p.aa_kind == air_align_tb_head ? tall : 0.f );
-		const int kc       = aal_ticks_to( z0, vz0, pin, ipt, target, p.aa_kind == air_align_tb_rise );
+		const bool rise    = p.aa_kind == air_align_tb_rise;
+		int kc             = aal_ticks_to( z0, vz0, pin, ipt, target, rise );
 		const c_vector& n  = p.aa_n;
 		const float gap    = es_hull_gap( org, n, p.aa_d, mins, maxs );
+		/* tb rise on a small ledge: crossed 1-2 ticks after takeoff, no air tick to align in ( log 11-18 mirage 8u step, 10 bhops: rise every
+		   arc ). past it = the next bhop's crossing off the floor: the one under you = the one at your landing along the wall ( a step / drop
+		   there = no plan ). landing + takeoff are air moves, the plan runs through them */
+		bool fall = false;
+		if ( rise && kc < 0 && hop && gap > 0.f && org.m_z > target - k_jump_rise ) {
+			c_trace_filter_tb_world_props filter( local );
+			const auto floor_at = [ & ]( const c_vector& at, float& z ) {
+				trace_t tr{ };
+				ray_t ray( at, c_vector( at.m_x, at.m_y, target - k_jump_rise ), mins, maxs );
+				tb_trace( ray, mask_playersolid, &filter, &tr );
+				z = tr.m_end.m_z;
+				return !tr.m_start_solid && tr.m_fraction < 1.f && tr.m_plane.m_normal.m_z >= 0.7f;
+			};
+			float f0 = 0.f, f1 = 0.f;
+			if ( const int land = floor_at( org, f0 ) ? aal_ticks_to( z0, vz0, pin, ipt, f0 + k_aal_ground_band, false ) : -1; land >= 0 ) {
+				const float vn = vel.m_x * n.m_x + vel.m_y * n.m_y, t = static_cast< float >( land + 1 ) * ipt;
+				const c_vector at( org.m_x + ( vel.m_x - vn * n.m_x ) * t, org.m_y + ( vel.m_y - vn * n.m_y ) * t, org.m_z );
+				if ( floor_at( at, f1 ) && std::fabsf( f1 - f0 ) < 0.5f ) {
+					kc   = aal_ticks_bhop( z0, vz0, pin, ipt, f0, stam0, duck_cmd || end_duck, start_gnd, target );
+					fall = kc >= 0;
+				}
+			}
+		}
 		if ( kc < 0 || gap <= 0.f ) {
-			miss( kc < 0 ? p.aa_kind == air_align_tb_rise ? "rise" : "arc" : "past" );
+			miss( kc < 0 ? rise ? "rise" : "arc" : "past" );
 			continue;
 		}
 		const float t_arr = static_cast< float >( kc + 1 ) * ipt;
@@ -273,7 +348,7 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 			miss( "plan" );
 			continue;
 		}
-		best = { i, kc, act, n, p.aa_d, gap, h, v_old, v, along, mine ? -1.f : dist };
+		best = { i, kc, act, n, p.aa_d, gap, h, v_old, v, along, mine ? -1.f : dist, fall };
 	}
 	if ( best.i < 0 ) {
 		static unsigned long long s_none_next = 0ull;
@@ -324,24 +399,29 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 	const points_check_t& pt = m_bounce_points_check[ best.i ];
 	const bool gnd           = ( local->get_flags( ) & fl_onground ) != 0 || local->get_move_type( ) != e_move_types::move_type_walk;
 	const float ge           = es_hull_gap( local->get_origin( ), n, best.d, mins, maxs );
-	/* a pj point's landing on its lip top IS the pj: that cmd is sent as planned */
-	const bool lip = gnd && pt.aa_kind == air_align_pj && std::fabsf( local->get_origin( ).m_z - pt.pos.m_z ) < 0.05f;
+	/* a pj point's landing on its lip top IS the pj: that cmd is sent as planned. a tb rise's fall plan lands as planned on the floor: its
+	   press holds the closing into the takeoff ( twin: you pressing on that tick instead = 2146 / 2304 rows hit the face ) */
+	const bool lip  = gnd && pt.aa_kind == air_align_pj && std::fabsf( local->get_origin( ).m_z - pt.pos.m_z ) < 0.05f;
+	const bool keep = gnd && best.fall && ge > 0.f && local->get_move_type( ) == e_move_types::move_type_walk;
 	g_prediction.restore_entity_to_predicted_frame( frame );
-	if ( gnd && !lip )
+	if ( gnd && !lip && !keep )
 		return release( "land" );
 	if ( lip )
 		why = 'j';
 	else if ( ge < best.gap && ge < 0.5f * best.h ) {
 		out = press( 0.f );
 		why = 'v';
-	}
+	} else if ( keep )
+		why = 'l';
 
 	cmd->m_forward_move = out.m_forward_move;
 	cmd->m_side_move    = out.m_side_move;
 	cmd->m_buttons      = out.m_buttons;
 	g_air_align_owns    = true;
-	g_air_align_aa_off  = pt.aa_kind == air_align_pj || best.gap > 2.f * best.h || std::fabsf( best.v_old ) > 1.f;
+	/* a fall plan's park holds ~40 ticks to the takeoff, tb takes the last ulps there: auto align's contact seek would only shove it in */
+	g_air_align_aa_off  = pt.aa_kind == air_align_pj || best.fall || best.gap > 2.f * best.h || std::fabsf( best.v_old ) > 1.f;
 	s_own               = true;
+	s_fall              = best.fall;
 	s_pick              = pt.pos;
 	s_aal_sent.cmd      = cmd->m_command_number;
 	s_aal_sent.duck     = duck_cmd;
@@ -353,8 +433,8 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 	if ( const unsigned long long now = GetTickCount64( ); debug && ( now >= s_next || best.act != s_last ) ) {
 		s_next = now + 250ull;
 		s_last = best.act;
-		botox_dbg_log( "AIRAL: act=%c why=%c kind=%d gap=%.4e h=%.1e close=%.3f v=%.3f kc=%d along=%.1f xy=%.1f vz=%.1f duck=%d crop=%.2f dz=%.1f gnd=%d n=%.3f %.3f pos=%.1f %.1f %.1f",
-		               best.act, why, pt.aa_kind, best.gap, best.h, best.v_old, best.v, best.kc, best.along, vxy, vel.m_z,
+		botox_dbg_log( "AIRAL: act=%c why=%c kind=%d gap=%.4e h=%.1e close=%.3f v=%.3f kc=%d fall=%d stam=%.1f along=%.1f xy=%.1f vz=%.1f duck=%d crop=%.2f dz=%.1f gnd=%d n=%.3f %.3f pos=%.1f %.1f %.1f",
+		               best.act, why, pt.aa_kind, best.gap, best.h, best.v_old, best.v, best.kc, best.fall ? 1 : 0, stam0, best.along, vxy, vel.m_z,
 		               duck_cmd ? 1 : 0, crop, z0 - org.m_z, start_gnd ? 1 : 0, n.m_x, n.m_y, org.m_x, org.m_y, org.m_z );
 	}
 }
