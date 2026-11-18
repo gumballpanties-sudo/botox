@@ -1241,7 +1241,10 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 				const bool kok = sim( keys, k );
 				const bool kpin = kok && !( k.m_flags & fl_onground ) && pinned( k.m_vel );
 				const bool ksnag = kok && !kpin && !( k.m_flags & fl_onground ) && snags( k.m_vel );
-					const bool kflush = kok && !kpin && !( k.m_flags & fl_onground ) && flush( k );
+					// 11-17: auto align's pj creep / contact seek press is exempt ( no wc = it goes out anyway ): vetoed, a cut ladder parks at the
+					// same START gap every tick and auto align asks the same press again = never flush. a later feature's rewrite is not exempt
+					const bool aa_press = aa_sent_cmd == cmd->m_command_number && keys.m_forward_move == aa_sent_fwd && keys.m_side_move == aa_sent_side;
+					const bool kflush = kok && !kpin && !( k.m_flags & fl_onground ) && flush( k ) && !aa_press;
 					s_count[ wc_margin ] += kflush && have_park;
 				// lab P69: every park snags ( or none is robust ) and your keys snag too = away rungs, one step out of DIST_EPSILON for the
 				// crossing tick ( 0.2 F = 1/160u clears a 0.0024 seam ). wallA seam snags 128 -> 27, first + rows +1%
@@ -1260,7 +1263,13 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 						}
 					}
 				s_count[ wc_aa_leave ] += !you_leave && wish_leaves_wall( keys, wall_n );
-				if ( you_leave ) {
+				// 11-17 log ( nuke skin lip -189.97 ): your keys land ( auto align's flush, a pixel jump ) where no rung did ( ladder clock cut
+				// to 2 sims ): a park here turned that landing into a miss. lab FL_KLAND neutral on the grid
+				const bool kland = kok && ( k.m_flags & fl_onground );
+				if ( kland ) {
+					++s_count[ wc_own ];
+					branch = "keys_land";
+				} else if ( you_leave ) {
 					++s_count[ wc_leave ];
 					branch = "leave";
 					if ( kpin )

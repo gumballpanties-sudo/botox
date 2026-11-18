@@ -9,6 +9,8 @@
 extern bool g_air_stuck_owns_cmd;
 bool ps_latched( );
 bool eb_cmd_taken( );
+bool edge_surf_armed( );
+bool edge_surf_eb_end( bool& lift );
 extern void botox_dbg_log( const char* fmt, ... );
 
 namespace {
@@ -700,6 +702,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 	/* to-edge IS the autostrafe switch, in both modes. */
 	const bool to_edge    = GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool );
 	const bool autostrafe = to_edge;
+	const bool esurf      = GET_VARIABLE( g_variables.m_edgebug_edge_surf, bool );
 	/* 09-28: 6 normal, enhanced = old search amount slider default 4 */
 	int search_count = detection_mode == 1 ? 4 : 6;
 	/* 6 / 7 are the to-edge pair: needs eight variants. */
@@ -722,13 +725,24 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 	const float user_fwd = m_user_forward_move;
 	const float user_side = m_user_side_move;
 	const int user_buttons = m_user_buttons;
+	/* dont unduck: duck key held = every sim cmd holds it too */
+	const bool dont_unduck = GET_VARIABLE( g_variables.m_edgebug_dont_unduck, bool );
+	const bool keep_duck   = dont_unduck && ( user_buttons & in_duck ) != 0;
+	/* held plan lets go of the duck later: drop it, this tick searches a ducked one */
+	if ( m_found && keep_duck && m_replay_hits <= m_prediction_ticks &&
+	     std::any_of( m_predicted_cmds + m_replay_hits, m_predicted_cmds + m_prediction_ticks + 1,
+	                  [ ]( const predicted_cmd_t& c ) { return ( c.buttons & in_duck ) == 0; } ) )
+		drop_plan( "unduck" );
 	static int last_variant = 0, last_fam = 0, last_st = 3, last_bug_duck = -1;
 	static float last_bend = 0.f;
+	static bool last_lift  = false;
 	/* mouse steer re-plan: turned >= 1 deg since the plan latched, ticks(2)+ before its bug tick ( never swap a bug
 	   that close ). runs write m_run_cmds, so no find keeps the old plan in m_predicted_cmds */
 	if ( m_found && steer )
 		m_steer_since_plan += delta_angle.m_y;
-	const bool replan = m_found && steer && fabsf( m_steer_since_plan ) >= 1.f && m_prediction_ticks - m_replay_hits >= eb_ticks( 2 );
+	/* edgesurf on eb: a held plan with no lift keeps searching for one */
+	const bool replan = m_found && m_prediction_ticks - m_replay_hits >= eb_ticks( 2 ) &&
+	                    ( ( steer && fabsf( m_steer_since_plan ) >= 1.f ) || ( esurf && !last_lift ) );
 	if ( !m_found || replan ) do {
 		/* gate counters, logged once a second: vz = too slow to open, gap = cadence skip,
 		   air = nothing in reach, run = full searches, hit = finds. */
@@ -765,6 +779,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		/* runs collect plans; the held plan ( m_found ) stays live until one is picked below */
 		m_steer_since_plan = 0.f;
 		m_plan_count       = 0;
+		m_fallback_ok        = false;
 		const int want_paths = steer ? std::clamp( GET_VARIABLE( g_variables.m_edgebug_paths, int ), 1, k_plan_max ) : 1;
 		const auto enough    = [ & ]( ) { return m_plan_count >= want_paths; };
 		/* course yaw off the live entity before any sim: bend cone + FindEdgeTarget reference, re-taken every search tick. */
@@ -817,7 +832,10 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		if ( !allow_duck && !allow_stand )
 			allow_duck = allow_stand = true;
 		/* current stance: the duck KEY, not fl_ducking ( a release plan ducks from tick 0 ) */
-		if ( GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) ) {
+		if ( dont_unduck ) {
+			allow_duck  = true;
+			allow_stand = !keep_duck;
+		} else if ( GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) ) {
 			allow_duck  = ( user_buttons & in_duck ) != 0;
 			allow_stand = !allow_duck;
 		}
@@ -838,6 +856,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		int fam_now = 0;
 		/* constant for the whole search. */
 		const float grav_tick = get_edgebug_half_gravity_per_tick( );
+		const float duck_dt   = n_tick::engine_interval( );
+		const float duck_gap  = g_convars.float_or( HASH_BT( "sv_timebetweenducks" ), 0.4f );
 		/* TAIL PROBE: past reach_tick, re-run the conservative hull sweep for the ticks left and end the
 		   run when clear. only after the opening geometry, so it can't cut a run that could still graze. */
 		const int probe_every = std::clamp( eb_ticks( 2 ), 1, 8 );
@@ -936,23 +956,29 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			c_vector pending_pos{ };
 			float pending_vz   = 0.f;
 			bool pending_duck  = false;
+			bool pending_lift  = false;
 			/* end_pos taken at candidate time: a held candidate may latch ticks later. */
 			/* same variant landing within 4u of a kept plan = same path, not an alternative */
 			bool run_found = false;
-			auto latch = [ & ]( const int tick_index, const c_vector& end_pos, const bool duck ) {
+			auto latch = [ & ]( const int tick_index, const c_vector& end_pos, const bool duck, const bool lift ) {
 				run_found = true;
-				for ( int p = 0; p < m_plan_count; p++ )
+				const bool spare = esurf && !lift;
+				if ( spare && m_fallback_ok )
+					return;
+				for ( int p = 0; p < m_plan_count && !spare; p++ )
 					if ( m_plans[ p ].variant == v && m_plans[ p ].end_pos.dist_to( end_pos ) < 4.f )
 						return;
-				if ( m_plan_count >= k_plan_max )
+				if ( !spare && m_plan_count >= k_plan_max )
 					return;
-				plan_t& pl = m_plans[ m_plan_count++ ];
+				m_fallback_ok |= spare;
+				plan_t& pl = spare ? m_fallback : m_plans[ m_plan_count++ ];
 				std::memcpy( pl.cmds, m_run_cmds, sizeof( predicted_cmd_t ) * ( tick_index + 1 ) );
 				pl.ticks   = tick_index;
 				pl.variant = v;
 				pl.bend    = bend;
 				pl.fam     = fam_now;
 				pl.duck    = duck;
+				pl.lift    = lift;
 				pl.end_pos = end_pos;
 			};
 			/* a candidate on the trimmed window's last tick still gets its confirm tick ( buffer allows max_ticks ). */
@@ -1071,6 +1097,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				   inside 0.4 s refused ( sv_timebetweenducks, :168 ). */
 				if ( undo_at >= 0 && i >= undo_at )
 					cmd->m_buttons &= ~in_duck;
+				if ( keep_duck )
+					cmd->m_buttons |= in_duck;
 				/* confirm tick is past the replay: real duck = plan's last bit ( m_ducked hold ) or the user's own,
 				   never this variant's overlay ( a press here would fake the "still airborne" ). */
 				if ( pending >= 0 ) {
@@ -1103,8 +1131,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 						contact_z    = g_ctx.m_local->get_origin( ).m_z;
 					}
 					else if ( const float vz_now = g_ctx.m_local->get_velocity( ).m_z;
-					          vz_now <= 0.f && ( detection_mode != 2 || roundf( vz_now ) == roundf( pending_vz - 2.f * grav_tick ) ) )
-						latch( pending, pending_pos, pending_duck ); /* mode 2: ebanat's exact free step after the slowdown */
+					          vz_now <= 0.f && ( esurf || ( detection_mode != 2 || roundf( vz_now ) == roundf( pending_vz - 2.f * grav_tick ) ) ) )
+						latch( pending, pending_pos, pending_duck, pending_lift ); /* mode 2: ebanat's exact free step after the slowdown */
 					pending = -1;
 					break;
 				}
@@ -1116,20 +1144,34 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 				ctx.was_falling = search_vel_backup.m_z < -6.f * vz_scale;
 				ctx.on_ground = ( g_ctx.m_local->get_flags( ) & 1 ) != 0;
 				ctx.mode = detection_mode;
-				const bool bug_tick = EdgeBugCheck( ctx );
+				/* edgesurf on eb: only the exact feet pin at an edge top. lift = the takeover's air duck goes in: a new press pays 2.0 duck speed,
+				   < 1.5 strips it, 0.4 s after the last FinishDuck ( cs_gamemovement.cpp:158-203 ). sims run at frozen tickbase: date plan ducks by tick */
+				bool lift           = false;
+				const bool bug_tick = esurf ? ctx.was_falling && edge_surf_eb_end( lift ) : EdgeBugCheck( ctx );
+				if ( lift ) {
+					int last_duck = -1;
+					for ( int j = 0; j <= i; j++ )
+						if ( m_run_cmds[ j ].buttons & in_duck )
+							last_duck = j;
+					const float t0   = static_cast< float >( g_ctx.m_local->get_tick_base( ) ) * duck_dt;
+					const float shot = last_duck >= 0 ? std::max( g_ctx.m_local->get_last_duck_time( ), t0 + static_cast< float >( last_duck ) * duck_dt )
+					                                  : g_ctx.m_local->get_last_duck_time( );
+					lift = last_duck < i && g_ctx.m_local->get_duck_speed( ) >= 3.5f && t0 + static_cast< float >( i + 1 ) * duck_dt >= shot + duck_gap;
+				}
 				const bool bug_duck = ( g_ctx.m_local->get_flags( ) & fl_ducking ) != 0;
 				if ( bug_tick && !( bug_duck ? allow_duck : allow_stand ) )
 					stance_rej++;
 				if ( bug_tick && ( bug_duck ? allow_duck : allow_stand ) ) {
 					/* no buffer left to confirm: take it. */
 					if ( i + 1 >= max_ticks ) {
-						latch( i, g_ctx.m_local->get_origin( ), bug_duck );
+						latch( i, g_ctx.m_local->get_origin( ), bug_duck, lift );
 						break;
 					}
 					pending      = i;
 					pending_pos  = g_ctx.m_local->get_origin( );
 					pending_vz   = g_ctx.m_local->get_velocity( ).m_z;
 					pending_duck = bug_duck;
+					pending_lift = lift;
 				}
 				search_vel_backup = g_ctx.m_local->get_velocity( );
 				/* tail probe: past reach tick, no pending candidate, ticks left worth saving. */
@@ -1142,7 +1184,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			}
 			/* window / budget ran out before the confirm tick: take it unconfirmed. */
 			if ( !run_found && pending >= 0 )
-				latch( pending, pending_pos, pending_duck );
+				latch( pending, pending_pos, pending_duck, pending_lift );
 			if ( save )
 				std::memcpy( s_eb_snap_cmds[ v ], m_run_cmds, sizeof( predicted_cmd_t ) * written );
 			cmd->m_view_point = orig_viewangle;
@@ -1194,10 +1236,13 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			/* odd = duck held all run, always a ducked bug */
 			if ( !allow_duck && ( v & 1 ) )
 				continue;
+			/* keep_duck: even = its odd twin re-simmed ( duck forced ), no press / release sweeps to feed */
+			if ( keep_duck && !( v & 1 ) )
+				continue;
 			if ( out_of_budget( ) )
 				break;
 			snap_limit = std::min( snap_cap, snap_used + snap_quota );
-			run_variant( v, -1, -1, 0.f, -1, -1, duck_sweep && snap_quota > 0 );
+			run_variant( v, -1, -1, 0.f, -1, -1, duck_sweep && snap_quota > 0 && !keep_duck );
 			base_runs++;
 			base_ran[ v ]       = true;
 			base_contact[ v ]   = contact_tick;
@@ -1376,6 +1421,9 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		if ( GET_VARIABLE( g_variables.m_edgebug_ebanat_shapes, bool ) && autostrafe && near_geometry && m_plan_count == 0 ) {
 			fam_now = 4;
 			for ( int v = 8; v < 16 && !enough( ) && !out_of_budget( ); v++ ) {
+				/* duck forced: 8 = 11, 10 = 9, 15 = 3 */
+				if ( keep_duck && ( v == 8 || v == 10 || v == 15 ) )
+					continue;
 				run_variant( v, -1 );
 				eb_runs++;
 			}
@@ -1387,11 +1435,22 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		const auto aim_at = [ & ]( const int ticks ) {
 			return orig_viewangle.m_y + std::clamp( delta_angle.m_y * static_cast< float >( ticks + 1 ) * 0.5f, -90.f, 90.f );
 		};
+		/* eb -> esurf ( edge_surf.cpp ): with the edge surf key down a bug that ducks has to head 4 deg closer than one that never
+		   does to win: only a standing end has the air duck lift that makes the same ledge an edge surf, and a duck pressed and
+		   released on the way is refused again for 0.4 s ( log 11-17: 13 of 29 bugs ended ducked, a standing one got no lift ) */
+		const float duck_cost = edge_surf_armed( ) ? 4.f : 0.f;
+		const auto ducks      = [ ]( const predicted_cmd_t* c, const int ticks, const bool end_duck ) {
+			return end_duck || std::any_of( c, c + ticks + 1, [ ]( const predicted_cmd_t& t ) { return ( t.buttons & in_duck ) != 0; } );
+		};
+		if ( esurf && m_plan_count == 0 && m_fallback_ok ) {
+			m_plans[ 0 ]  = m_fallback;
+			m_plan_count = 1;
+		}
 		int sel       = -1;
 		float sel_err = 0.f;
 		for ( int p = 0; p < m_plan_count; p++ ) {
 			const plan_t& pl = m_plans[ p ];
-			const float err  = eb_aim_err( pl.cmds[ 0 ].origin, pl.end_pos, aim_at( pl.ticks ) );
+			const float err  = eb_aim_err( pl.cmds[ 0 ].origin, pl.end_pos, aim_at( pl.ticks ) ) + ( esurf && !pl.lift ? 360.f : 0.f ) + ( ducks( pl.cmds, pl.ticks, pl.duck ) ? duck_cost : 0.f );
 			if ( sel < 0 || err < sel_err - 0.5f ) {
 				sel     = p;
 				sel_err = err;
@@ -1399,8 +1458,9 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		}
 		/* re-plan swaps only for a clearly better heading: 4 deg margin, else the path flickers between near twins */
 		if ( replan && sel >= 0 ) {
-			const float cur_err = eb_aim_err( m_predicted_cmds[ m_replay_hits ].origin, m_follow_end, aim_at( m_prediction_ticks - m_replay_hits ) );
-			const bool keep     = sel_err > cur_err - 4.f;
+			const float cur_err = eb_aim_err( m_predicted_cmds[ m_replay_hits ].origin, m_follow_end, aim_at( m_prediction_ticks - m_replay_hits ) ) +
+			                      ( esurf && !last_lift ? 360.f : 0.f ) + ( ducks( m_predicted_cmds, m_prediction_ticks, last_bug_duck == 1 ) ? duck_cost : 0.f );
+			const bool keep     = sel_err > cur_err - 4.f || ( !steer && !m_plans[ sel ].lift );
 			botox_dbg_log( "EB: steer %s at %d/%d best=%.1f cur=%.1f of %d steer=%.2f\n", keep ? "keep" : "swap", m_replay_hits, m_prediction_ticks,
 			               sel_err, cur_err, m_plan_count, delta_angle.m_y );
 			if ( keep )
@@ -1419,6 +1479,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			last_bend          = pl.bend;
 			last_fam           = pl.fam;
 			last_bug_duck      = pl.duck ? 1 : 0;
+			last_lift          = pl.lift;
 			last_st            = ( allow_duck ? 1 : 0 ) | ( allow_stand ? 2 : 0 );
 			m_viz_count        = 0;
 			m_viz_alts         = 0;
@@ -1454,6 +1515,10 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		               best_contact, n_tick::interval( ), m_backup_velocity.m_z, m_found ? 1 : 0, last_variant,
 		               m_found ? m_prediction_ticks : -1, m_found ? m_found_tick : 0, m_plan_count, want_paths, bend_runs, last_bend, eb_runs, refine_runs, wide_runs, snap_runs, last_fam,
 		               ( allow_duck ? 1 : 0 ) | ( allow_stand ? 2 : 0 ), stance_rej, m_found ? last_bug_duck : -1 );
+		if ( esurf )
+			botox_dbg_log( "EB: esurf plans=%d lifts=%d pick=%d\n", m_plan_count,
+			               static_cast< int >( std::count_if( m_plans, m_plans + m_plan_count, [ ]( const plan_t& p ) { return p.lift; } ) ),
+			               m_found ? ( last_lift ? 1 : 0 ) : -1 );
 	} while ( false );
 	if ( m_found ) {
 		ReStorePrediction( );

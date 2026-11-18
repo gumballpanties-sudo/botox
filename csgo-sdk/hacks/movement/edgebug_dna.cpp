@@ -117,8 +117,11 @@ void n_edgebug::impl_t::dna_post( c_user_cmd* cmd )
 		const int search      = std::max( GET_VARIABLE( g_variables.m_edgebug_dna_range, int ), 1 );
 		const int divisor     = advanced ? search : 2;
 		const bool dna_custom = GET_VARIABLE( g_variables.m_edgebug_dna_custom_angle, bool );
-		const bool cur_stance = GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool );
-		const bool user_duck  = ( m_user_buttons & in_duck ) != 0;
+		const bool dont_unduck = GET_VARIABLE( g_variables.m_edgebug_dont_unduck, bool );
+		const bool cur_stance  = GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) && !dont_unduck;
+		const bool user_duck   = ( m_user_buttons & in_duck ) != 0;
+		/* dont unduck: duck held = crouched rounds only */
+		const bool keep_duck   = dont_unduck && user_duck;
 		const float dna_limit = GET_VARIABLE( g_variables.m_edgebug_dna_angle_limit, float );
 		const c_user_cmd base = *cmd;
 		const c_angle originalangles = base.m_view_point;
@@ -164,6 +167,8 @@ void n_edgebug::impl_t::dna_post( c_user_cmd* cmd )
 
 		const auto run = [ & ]( const int round, const float yd ) {
 			const bool crouched = round == 0 || round == 2, strafing = round > 1;
+			if ( keep_duck && !crouched )
+				return;
 			*cmd = base;
 			if ( crouched )
 				cmd->m_buttons |= in_duck;

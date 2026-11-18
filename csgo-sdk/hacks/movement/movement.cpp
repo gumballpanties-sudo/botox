@@ -726,6 +726,7 @@ static void ps_line_project( const std::vector< c_vector >& pts, std::vector< st
 }
 
 bool can = false;
+extern void edge_surf_render( );
 void n_movement::impl_t::on_paint_traverse( )
 {
 	can = true;
@@ -740,6 +741,7 @@ void n_movement::impl_t::on_paint_traverse( )
 	g_edge_catch.render( );
 	this->auto_bounce_render( );
 	g_wall_climb.render( );
+	edge_surf_render( );
 
 	if ( GET_VARIABLE( g_variables.m_pixel_surf_line_render, bool ) && !m_pixelsurf_data.m_trajectory_segments.empty( ) ) {
 		const bool is_pixelsurf_active = m_pixelsurf_data.m_predicted_succesful || m_pixelsurf_data.m_pin_detected;
@@ -1827,6 +1829,16 @@ static bool jb_will_work( )
 	return ok;
 }
 
+/* cmd whose landing crouch the jump bug added ( edge catch sims that crouch itself, strips it off its plans ) */
+int g_jb_duck_cmd = -1;
+
+static void jb_landing_duck( )
+{
+	if ( !( g_ctx.m_cmd->m_buttons & e_command_buttons::in_duck ) )
+		g_jb_duck_cmd = g_ctx.m_cmd->m_command_number;
+	g_ctx.m_cmd->m_buttons |= e_command_buttons::in_duck;
+}
+
 void n_movement::impl_t::jump_bug( )
 {
 	if ( g_prediction.backup_data.m_flags & 1 )
@@ -1844,7 +1856,7 @@ void n_movement::impl_t::jump_bug( )
 		static bool ducked = false;
 		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) && !ducked &&
 		     jb_will_work( ) ) {
-			g_ctx.m_cmd->m_buttons |= e_command_buttons::in_duck;
+			jb_landing_duck( );
 			ducked = true;
 		} else
 			ducked = false;
@@ -1853,7 +1865,7 @@ void n_movement::impl_t::jump_bug( )
 	} else {
 		/* jump + jb key held = every landing edge, ungated ( can_jb only arms on rising vz, a ledge drop never rises ) */
 		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) && jb_will_work( ) )
-			g_ctx.m_cmd->m_buttons |= e_command_buttons::in_duck;
+			jb_landing_duck( );
 		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground )
 			g_ctx.m_cmd->m_buttons &= ~e_command_buttons::in_jump;
 		if ( !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_prediction.backup_data.m_flags & fl_onground )
@@ -1886,7 +1898,7 @@ void n_movement::impl_t::kangaroo( )
 
 		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) && !ducked_kangaroo &&
 		     jb_will_work( ) ) {
-			g_ctx.m_cmd->m_buttons |= e_command_buttons::in_duck;
+			jb_landing_duck( );
 			ducked_kangaroo              = true;
 			m_kangaroo_data.m_successful = true;
 		} else {
@@ -1899,7 +1911,7 @@ void n_movement::impl_t::kangaroo( )
 			ducked_kangaroo = false;
 	} else {
 		if ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground && !( g_prediction.backup_data.m_flags & e_flags::fl_onground ) && jb_will_work( ) ) {
-			g_ctx.m_cmd->m_buttons |= e_command_buttons::in_duck;
+			jb_landing_duck( );
 			m_kangaroo_data.m_successful = true;
 		}
 

@@ -501,15 +501,22 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderFloat( "edgebug lock##ebloblock", &GET_VARIABLE( g_variables.m_edgebug_lob_lock, float ), 0.f, 10.f, "%.2f" );
 						}
 						/* standing -> standing ebs only, holding duck -> ducked ebs only */
-						ImGui::Checkbox( "current stance only##ebcurstance", &GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) );
+						if ( ImGui::Checkbox( "current stance only##ebcurstance", &GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) ) &&
+						     GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) )
+							GET_VARIABLE( g_variables.m_edgebug_dont_unduck, bool ) = false;
+						/* standing -> both, holding duck -> ducked ebs only, never released */
+						if ( ImGui::Checkbox( "dont unduck##ebdontunduck", &GET_VARIABLE( g_variables.m_edgebug_dont_unduck, bool ) ) &&
+						     GET_VARIABLE( g_variables.m_edgebug_dont_unduck, bool ) )
+							GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) = false;
 						if ( style == 0 ) {
 							ImGui::SliderFloat( "edge bug predict time", &GET_VARIABLE( g_variables.m_edgebug_predict_time, float ),
 							                    0.02f, 2.f, "%.2f s" );
 							/* none picked = both */
-							if ( !GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) )
+							if ( !GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) && !GET_VARIABLE( g_variables.m_edgebug_dont_unduck, bool ) )
 								ImGui::MultiCombo( "stance##ebtypes", GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > ),
 								                   { "ducked", "standing" }, GET_VARIABLE( g_variables.m_edgebug_types, std::vector< bool > ).size( ) );
 
+							ImGui::Checkbox( "edgesurf on eb##ebesurf", &GET_VARIABLE( g_variables.m_edgebug_edge_surf, bool ) );
 							ImGui::Checkbox( "autostrafe to edge", &GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool ) );
 							if ( GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool ) ) {
 								/* cone on the PATH, not the push: max bend off the starting course; lips
@@ -643,6 +650,11 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderFloat( "lead range##esurfrange", &GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f, "%.0f u" );
 						/* 0 = straight press into the wall, else air strafe toward it turning this many degrees a tick */
 						ImGui::SliderFloat( "delta strafe##esurfdelta", &GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ), 0.f, 15.f, "%.2f" );
+						/* flat displacement ledges ( nuke parking curbs ), displacement terrain never */
+						ImGui::Checkbox( "flat displacement ledges##esurfdisp", &GET_VARIABLE( g_variables.m_edge_surf_flat_disp, bool ) );
+						ImGui::Checkbox( "visualize##esurfviz", &GET_VARIABLE( g_variables.m_edge_surf_visualize, bool ) );
+						ImGui::ColorEdit4( "visualize color##esurfvizcolor", &GET_VARIABLE( g_variables.m_edge_surf_visualize_color, c_color ),
+						                   color_picker_alpha_flags );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}

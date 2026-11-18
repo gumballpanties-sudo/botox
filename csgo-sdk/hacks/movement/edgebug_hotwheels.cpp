@@ -84,7 +84,10 @@ void n_edgebug::impl_t::hw_post( c_user_cmd* cmd )
 		if ( m_hw.will_edgebug )
 			return;
 		/* hw: own rounds, not the stance combo */
-		if ( GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) && ducked != ( ( m_user_buttons & in_duck ) != 0 ) )
+		/* dont unduck: duck held = ducked rounds only, standing = both */
+		const bool user_duck = ( m_user_buttons & in_duck ) != 0;
+		if ( GET_VARIABLE( g_variables.m_edgebug_dont_unduck, bool ) ? ( user_duck && !ducked )
+		                                                             : ( GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) && ducked != user_duck ) )
 			return;
 		ReStorePrediction( );
 		m_hw.starting_yaw = original_view_point.m_y;

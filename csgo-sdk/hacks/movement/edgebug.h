@@ -77,6 +77,8 @@ namespace n_edgebug
 		void del_frame_start( );
 		void del_mouse_fix( c_user_cmd* cmd );
 		bool donor_live( ) const { return m_donor.ticks_left != 0; }
+		/* every cmd of the locked plan sent: next START is its bug tick's end */
+		bool replay_spent( ) const { return m_replay_hits > m_prediction_ticks; }
 		bool m_found = false;
 		int m_found_tick = 0;
 		int m_prediction_ticks = 0;
@@ -141,11 +143,15 @@ namespace n_edgebug
 			predicted_cmd_t cmds[k_predicted_cmd_max];
 			int ticks = 0, variant = 0, fam = 0;
 			bool duck = false; /* FL_DUCKING on the sim's bug tick */
+			bool lift = false; /* edgesurf on eb: edge_surf_feet can take its end */
 			float bend = 0.f;
 			c_vector end_pos{ };
 		};
 		plan_t m_plans[k_plan_max];
 		int m_plan_count = 0;
+		/* edgesurf on eb: m_plans holds liftable plans only, the first other find waits here */
+		plan_t m_fallback;
+		bool m_fallback_ok = false;
 		c_vector m_follow_end{ };
 		c_vector m_viz_alt[k_plan_max][k_predicted_cmd_max + 1];
 		int m_viz_alt_count[k_plan_max]{ };

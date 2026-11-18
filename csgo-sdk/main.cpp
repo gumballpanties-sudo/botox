@@ -146,6 +146,43 @@ static bool header_heal( )
 	return true;
 }
 
+/* tier0 out of memory ( tier0 +0xabb0 ): OutputDebugStringA( "***** OUT OF MEMORY! attempted allocation size: %u ****" ) then its
+   crt abort( ) = int 0x29 fastfail at tier0 +0x29314, which no handler sees. that print ( 0x40010006 ) is the only witness */
+static bool crash_is_oom( const EXCEPTION_RECORD* record )
+{
+	static constexpr char k_oom[ ] = "***** OUT OF MEMORY!";
+	return record->ExceptionCode == 0x40010006 && record->NumberParameters >= 2 && record->ExceptionInformation[ 0 ] >= sizeof( k_oom ) &&
+	       record->ExceptionInformation[ 1 ] && !strncmp( reinterpret_cast< const char* >( record->ExceptionInformation[ 1 ] ), k_oom, sizeof( k_oom ) - 1 );
+}
+
+/* 32 bit address space at the oom: a big ask fails on the largest free block, not the free total */
+static void crash_append_address_space( )
+{
+	unsigned long long free_total = 0ull, largest = 0ull, priv = 0ull, reserved = 0ull, mapped = 0ull, image = 0ull;
+	MEMORY_BASIC_INFORMATION region{ };
+	for ( std::uintptr_t at = 0x10000; VirtualQuery( reinterpret_cast< void* >( at ), &region, sizeof( region ) ); ) {
+		const unsigned long long size = region.RegionSize;
+		if ( region.State == MEM_FREE ) {
+			free_total += size;
+			largest = size > largest ? size : largest;
+		} else if ( region.State == MEM_RESERVE )
+			reserved += size;
+		else if ( region.Type == MEM_PRIVATE )
+			priv += size;
+		else if ( region.Type == MEM_MAPPED )
+			mapped += size;
+		else
+			image += size;
+
+		const std::uintptr_t next = reinterpret_cast< std::uintptr_t >( region.BaseAddress ) + region.RegionSize;
+		if ( next <= at )
+			break;
+		at = next;
+	}
+	crash_append( " va: free=%llu mb largest_free=%llu mb private=%llu mb reserved=%llu mb mapped=%llu mb image=%llu mb", free_total >> 20,
+	              largest >> 20, priv >> 20, reserved >> 20, mapped >> 20, image >> 20 );
+}
+
 static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 {
 	const auto record         = info->ExceptionRecord;
@@ -153,13 +190,16 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 
 	/* a heal logs whatever raised it (e06d7363 = c++ throw): that's who would have crashed us */
 	const bool healed = header_heal( );
+	const bool oom    = crash_is_oom( record );
 
-	if ( !healed && code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_STACK_OVERFLOW && code != EXCEPTION_ILLEGAL_INSTRUCTION &&
+	if ( !healed && !oom && code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_STACK_OVERFLOW && code != EXCEPTION_ILLEGAL_INSTRUCTION &&
 	     code != EXCEPTION_PRIV_INSTRUCTION && code != EXCEPTION_INT_DIVIDE_BY_ZERO && code != 0xC0000374 && code != 0xC000000D )
 		return EXCEPTION_CONTINUE_SEARCH;
 
-	/* some first chance faults get handled (engine probes): 8 per session, one thread at a time */
-	if ( InterlockedIncrement( &g_crash_hits ) > 8 || InterlockedExchange( &g_crash_busy, 1 ) )
+	/* some first chance faults get handled (engine probes): 8 per session, one thread at a time. the oom gets its own one: the
+	   game dies right after it, whatever the 8 already spent */
+	static volatile long s_oom_logged = 0;
+	if ( ( oom ? InterlockedExchange( &s_oom_logged, 1 ) != 0 : InterlockedIncrement( &g_crash_hits ) > 8 ) || InterlockedExchange( &g_crash_busy, 1 ) )
 		return EXCEPTION_CONTINUE_SEARCH;
 
 	const auto tib = reinterpret_cast< const NT_TIB* >( NtCurrentTeb( ) );
@@ -181,6 +221,16 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 	if ( code == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 )
 		crash_append( " (%s 0x%08x)", record->ExceptionInformation[ 0 ] == 8 ? "exec" : record->ExceptionInformation[ 0 ] ? "write" : "read",
 		              static_cast< unsigned >( record->ExceptionInformation[ 1 ] ) );
+
+	if ( oom ) {
+		char said[ 96 ] = { };
+		strncpy_s( said, reinterpret_cast< const char* >( record->ExceptionInformation[ 1 ] ), _TRUNCATE );
+		for ( char& c : said )
+			if ( c == '\r' || c == '\n' )
+				c = ' ';
+		crash_append( " OOM \"%s\"", said );
+		crash_append_address_space( );
+	}
 
 	const auto stack_start = slot;
 
@@ -226,8 +276,11 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 
 	/* jumped into unmapped code (null vfunc, freed object): nothing handles that, so it's the real crash. 1 per session */
 	char dump_path[ MAX_PATH ] = { };
-	const bool dump = g_minidump_write && code == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 &&
-	                  record->ExceptionInformation[ 1 ] == fault && !crash_in_image( fault ) && InterlockedIncrement( &g_crash_dumps ) == 1;
+	/* oom: the memory map only ( who holds the address space ), small, the game is dead either way */
+	const bool dump = g_minidump_write &&
+	                  ( oom || ( code == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 && record->ExceptionInformation[ 1 ] == fault &&
+	                             !crash_in_image( fault ) ) ) &&
+	                  InterlockedIncrement( &g_crash_dumps ) == 1;
 	if ( dump ) {
 		sprintf_s( dump_path, "C:\\botox\\crash_%02d%02d%02d.dmp", now.wHour, now.wMinute, now.wSecond );
 		crash_append( "\r\n  dump: %s", dump_path );
@@ -248,9 +301,9 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 		const HANDLE dump_file = CreateFileA( dump_path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr );
 		if ( dump_file != INVALID_HANDLE_VALUE ) {
 			MINIDUMP_EXCEPTION_INFORMATION exception{ GetCurrentThreadId( ), info, FALSE };
-			g_minidump_write( GetCurrentProcess( ), GetCurrentProcessId( ), dump_file,
-			                  static_cast< MINIDUMP_TYPE >( MiniDumpWithIndirectlyReferencedMemory | MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules ),
-			                  &exception, nullptr, nullptr );
+			const int type = oom ? MiniDumpWithFullMemoryInfo | MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules
+			                     : MiniDumpWithIndirectlyReferencedMemory | MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules;
+			g_minidump_write( GetCurrentProcess( ), GetCurrentProcessId( ), dump_file, static_cast< MINIDUMP_TYPE >( type ), &exception, nullptr, nullptr );
 			CloseHandle( dump_file );
 		}
 	}

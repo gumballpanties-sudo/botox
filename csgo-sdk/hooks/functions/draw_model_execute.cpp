@@ -8,6 +8,7 @@
 #include "../../globals/globals.h"
 #include "../../globals/interfaces/interfaces.h"
 #include "../../hacks/chams/chams.h"
+#include "../../hacks/chams/shot_chams.h"
 #include "../../hacks/lagcomp/lagcomp.h"
 #include "../../hacks/lua/lua.h"
 #include "../../hacks/lua/lua_api.h"
@@ -57,6 +58,20 @@ static bool is_enemy_ragdoll( const int entity_index )
 		g_interfaces.m_client_entity_list->get_client_entity_from_handle( ragdoll->get_ragdoll_player_handle( ) ) );
 
 	return owner && owner != g_ctx.m_local && owner->is_player( ) && owner->is_enemy( g_ctx.m_local );
+}
+
+static int shot_owner( const int entity_index )
+{
+	if ( entity_index >= 1 && entity_index <= 64 )
+		return entity_index;
+
+	const auto ragdoll = cs_ragdoll( entity_index );
+	if ( !ragdoll )
+		return 0;
+
+	const auto owner = reinterpret_cast< c_base_entity* >(
+		g_interfaces.m_client_entity_list->get_client_entity_from_handle( ragdoll->get_ragdoll_player_handle( ) ) );
+	return owner && owner->is_player( ) ? static_cast< int >( owner->get_index( ) ) : 0;
 }
 
 static bool should_skip_ragdoll( const model_render_info_t& info )
@@ -190,6 +205,30 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 
 	// first: chams, sheen + motion blur bones all see the held pose
 	custom_bone_to_world = g_viewmodel_fps.apply( state, custom_bone_to_world, info.model );
+
+	/* destructor: snapshot draws after whichever path drew the player / its ragdoll, hidden ragdoll included.
+	   not in a lua redraw: a swapped mesh has another skeleton */
+	struct shot_chams_t {
+		~shot_chams_t( )
+		{
+			if ( m_owner > 0 )
+				g_shot_chams.draw( m_owner, [ this ]( matrix3x4_t* bones ) { m_original( m_ecx, m_edx, m_context, m_state, m_info, bones ); } );
+		}
+
+		decltype( original ) m_original;
+		void* m_ecx;
+		void* m_edx;
+		void* m_context;
+		void* m_state;
+		model_render_info_t& m_info;
+		int m_owner;
+	} const shot_chams{ original, ecx, edx, context, state, info,
+		                !s_lua_redraw && !g_rear_mirror.drawing( ) && GET_VARIABLE( g_variables.m_chams_enable, bool ) && context && state &&
+		                        info.model && info.model->m_name && !( info.flags & studio_depth_pass_flags ) && !g_ctx.m_is_glow_being_drawn &&
+		                        strstr( info.model->m_name, "models/player" ) && !strstr( info.model->m_name, "contactshadow" ) &&
+		                        n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_shot_layers, std::vector< int > ) )
+		                    ? shot_owner( info.entity_index )
+		                    : 0 };
 
 	if ( ( GET_VARIABLE( g_variables.m_remove_ragdolls, bool ) && should_skip_ragdoll( info ) && !kill_effects_shows_ragdoll( info.entity_index ) ) ||
 	     kill_effects_hides_ragdoll( info.entity_index ) )

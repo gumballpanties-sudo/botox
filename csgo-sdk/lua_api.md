@@ -300,7 +300,7 @@ Client class id number.
 
 #### `entity:name()`
 
-Player name for players, class name otherwise.
+Player name for players, `class_name()` otherwise (also for a player whose info has not arrived yet, mid join).
 
 #### `entity:weapon()`
 

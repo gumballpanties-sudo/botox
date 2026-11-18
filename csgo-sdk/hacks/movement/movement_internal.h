@@ -32,6 +32,11 @@ inline bool aa_slanted( const c_vector& n ) { return std::fminf( std::fabsf( n.m
 /* this tick's wall can wedge the AABB ( slanted face = corner contact, or a prop in the ring ). only then is an xy 0 pin a stuck:
    on a square face a head-on pixelsurf zeroes xy too ( wall clip + lip clip, crease d <= 0 ). set by the styles, read by aa_guard */
 extern bool aa_wedge_risk;
+/* auto align's pj creep ( either style ) or lumia's contact seek on an axial face, kept by the guard: cmd number + the press. wall climb's
+   park margin lets exactly that press through ( vetoed, a clock cut ladder + the same press every tick = never flush ) */
+extern int aa_sent_cmd;
+extern float aa_sent_fwd, aa_sent_side;
+extern bool aa_seek_tick; /* lumia contact seek sent this call, axial face */
 /* debug log only: pj verdict + `AA: pj passed` witness, called by movement PRE right after its predicted frame restore */
 void auto_align_pj_witness( );
 

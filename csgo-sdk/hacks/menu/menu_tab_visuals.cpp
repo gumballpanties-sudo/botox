@@ -329,6 +329,12 @@ void n_menu::impl_t::tab_visuals( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			ImGui::Checkbox( "line of sight", &GET_VARIABLE( g_variables.m_players_line_of_sight, bool ) );
+			if ( GET_VARIABLE( g_variables.m_players_line_of_sight, bool ) ) {
+				ImGui::SameLine( );
+				ImGui::ColorEdit4( "##line of sight color", &GET_VARIABLE( g_variables.m_players_line_of_sight_color, c_color ), color_picker_alpha_flags );
+			}
+
 			ImGui::Checkbox( "show hitboxes", &GET_VARIABLE( g_variables.m_players_hitboxes, bool ) );
 			if ( GET_VARIABLE( g_variables.m_players_hitboxes, bool ) ) {
 				ImGui::OptionPopup(
@@ -674,6 +680,15 @@ void n_menu::impl_t::tab_visuals( )
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
+
+			ImGui::Checkbox( "grenade trajectories", &GET_VARIABLE( g_variables.m_grenade_trajectories, bool ) );
+			if ( GET_VARIABLE( g_variables.m_grenade_trajectories, bool ) ) {
+				ImGui::SameLine( );
+				ImGui::ColorEdit4( "##grenade trajectories color", &GET_VARIABLE( g_variables.m_grenade_trajectories_color, c_color ),
+				                   color_picker_alpha_flags );
+			}
+
+			ImGui::Checkbox( "grenade proximity warning", &GET_VARIABLE( g_variables.m_grenade_warning, bool ) );
 		}
 		menu_group_end( );
 
@@ -693,6 +708,14 @@ void n_menu::impl_t::tab_visuals( )
 
 			chams_dropdown( "backtrack material", g_variables.m_chams_backtrack_layers, g_variables.m_chams_backtrack_colors,
 			                g_variables.m_chams_backtrack_dark_colors );
+
+			chams_dropdown( "shot material", g_variables.m_chams_shot_layers, g_variables.m_chams_shot_colors, g_variables.m_chams_shot_dark_colors );
+
+			if ( n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_shot_layers, std::vector< int > ) ) ) {
+				ImGui::SliderFloat( "shot duration", &GET_VARIABLE( g_variables.m_chams_shot_duration, float ), 0.2f, 10.f, "%.1f s",
+				                    ImGuiSliderFlags_AlwaysClamp );
+				ImGui::Checkbox( "shot xqz", &GET_VARIABLE( g_variables.m_chams_shot_xqz, bool ) );
+			}
 
 			chams_dropdown( "sound material", g_variables.m_chams_sound_layers, g_variables.m_chams_sound_colors,
 			                g_variables.m_chams_sound_dark_colors );
@@ -732,8 +755,8 @@ void n_menu::impl_t::tab_visuals( )
 
 			bool two_tone_used = false;
 			for ( const std::uint32_t layers : { g_variables.m_chams_visible_layers, g_variables.m_chams_occluded_layers, g_variables.m_chams_backtrack_layers,
-			                                     g_variables.m_chams_sound_layers, g_variables.m_chams_weapon_layers, g_variables.m_chams_arms_layers,
-			                                     g_variables.m_chams_sleeve_layers } )
+			                                     g_variables.m_chams_shot_layers, g_variables.m_chams_sound_layers, g_variables.m_chams_weapon_layers,
+			                                     g_variables.m_chams_arms_layers, g_variables.m_chams_sleeve_layers } )
 				for ( const int slot : GET_VARIABLE( layers, std::vector< int > ) )
 					two_tone_used |= slot == n_chams::chams_material_two_tone;
 
@@ -1197,6 +1220,8 @@ void n_menu::impl_t::tab_visuals( )
 			}
 
 			ImGui::Checkbox( "remove visual recoil", &GET_VARIABLE( g_variables.m_remove_visual_recoil, bool ) );
+			ImGui::Checkbox( "remove scope overlay", &GET_VARIABLE( g_variables.m_remove_scope, bool ) );
+			ImGui::Checkbox( "instant scope", &GET_VARIABLE( g_variables.m_instant_scope, bool ) );
 #ifdef _DEBUG
 			ImGui::Checkbox( "disable interp", &GET_VARIABLE( g_variables.m_disable_interp, bool ) );
 #endif
@@ -2372,6 +2397,15 @@ void n_menu::impl_t::tab_visuals( )
 			}
 
 			safe_checkbox( "force crosshair", &GET_VARIABLE( g_variables.m_force_crosshair, bool ) );
+
+			ImGui::Checkbox( "recoil overlay", &GET_VARIABLE( g_variables.m_recoil_overlay, bool ) );
+			ImGui::Checkbox( "inaccuracy overlay", &GET_VARIABLE( g_variables.m_inaccuracy_overlay, bool ) );
+			if ( GET_VARIABLE( g_variables.m_recoil_overlay, bool ) || GET_VARIABLE( g_variables.m_inaccuracy_overlay, bool ) ) {
+				ImGui::SameLine( );
+				ImGui::ColorEdit4( "##inaccuracy overlay color", &GET_VARIABLE( g_variables.m_inaccuracy_overlay_color, c_color ), color_picker_alpha_flags );
+			}
+
+			ImGui::Checkbox( "penetration reticle", &GET_VARIABLE( g_variables.m_penetration_reticle, bool ) );
 
 			ImGui::Checkbox( "default crosshair color", &GET_VARIABLE( g_variables.m_panorama_crosshair_color, bool ) );
 

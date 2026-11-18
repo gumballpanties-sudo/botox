@@ -42,6 +42,7 @@
 #include "../hacks/visuals/lsd_chams.h"
 #include "../hacks/visuals/two_tone_chams.h"
 #include "../hacks/visuals/weapon_sheen.h"
+#include "../hacks/visuals/grenade/grenade_live.h"
 #include "../hacks/web/websurface.h"
 #include "../utilities/memory/relative.h"
 #include "../utilities/memory/virtual.h"
@@ -444,6 +445,7 @@ void n_hooks::impl_t::on_release( )
 
 	g_chams.release( );
 	g_weapon_sheen.release_material( );
+	g_grenade_live.release_material( );
 
 	Web_Destroy( );
 

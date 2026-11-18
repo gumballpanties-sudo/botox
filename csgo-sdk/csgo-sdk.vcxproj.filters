@@ -45,6 +45,8 @@
     <ClCompile Include="hacks\entity_cache\entity_cache.cpp" />
     <ClCompile Include="hacks\visuals\edicts\edicts.cpp" />
     <ClCompile Include="hacks\visuals\grenade\grenade_path.cpp" />
+    <ClCompile Include="hacks\visuals\grenade\grenade_live.cpp" />
+    <ClCompile Include="hacks\visuals\overlays\overlays.cpp" />
     <ClCompile Include="hacks\visuals\bullets\bullets.cpp" />
     <ClCompile Include="hacks\visuals\lsd_chams.cpp" />
     <ClCompile Include="hacks\visuals\two_tone_chams.cpp" />
@@ -352,6 +354,9 @@
     <ClInclude Include="hacks\visuals\edicts\edicts.h" />
     <ClInclude Include="hacks\visuals\edicts\lighting_modulation.h" />
     <ClInclude Include="hacks\visuals\grenade\grenade_path.h" />
+    <ClInclude Include="hacks\visuals\grenade\grenade_live.h" />
+    <ClInclude Include="hacks\visuals\overlays\overlays.h" />
+    <ClInclude Include="hacks\chams\shot_chams.h" />
     <ClInclude Include="hacks\visuals\bullets\bullets.h" />
     <ClInclude Include="game\sdk\classes\c_view_render_beams.h" />
     <ClInclude Include="game\sdk\classes\c_physics_collisons.h" />

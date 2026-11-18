@@ -2,6 +2,7 @@
 #include "../../globals/includes/includes.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/movement/movement.h"
+#include "../../hacks/visuals/grenade/grenade_live.h"
 #include "../../hacks/visuals/players/players.h"
 #include "../../hacks/visuals/screen/ambient_occlusion.h"
 #include "../../hacks/visuals/screen/bloom.h"
@@ -32,6 +33,7 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 	if ( setup ) {
 		kill_effects_world( setup->m_origin, setup->m_angles );
 		floor_level_world( );
+		g_grenade_live.on_post_screen_space_effects( setup );
 	}
 
 	// inject splash up: no screen pass (their first shader builds stall frames)

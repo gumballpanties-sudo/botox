@@ -2902,6 +2902,34 @@ namespace {
 
 		return material_system;
 	}
+
+	/* each walk = every material loaded ( list grows all map: skins / stickers / agents ). old shaders, modulation, decals and
+	   world texture walked on a bare 1 s timer, all re-armed off the same level shutdown reset = 4 walks stacked in ONE frame
+	   every second, a 1 hz hitch that grows with the map. now ( tf2 world_fx3 rule ): past the caller's 1 s throttle only when the
+	   count moved, or 5 s since the last ( the game reverting one in place keeps the count ), and one walk a frame at most ( a
+	   taken slot = due next frame, so they drift apart for good ). forced = settings change / deferred rest / first walk */
+	struct material_walk_gate_t {
+		int m_count  = -1;
+		float m_full = 0.f;
+	};
+
+	bool material_walk_slot( material_walk_gate_t& gate, const bool forced )
+	{
+		const float now = g_interfaces.m_global_vars_base->m_real_time;
+		const int count = g_interfaces.m_material_system->get_num_materials( );
+		if ( !forced && count == gate.m_count && now < gate.m_full && now >= gate.m_full - 5.f )
+			return false;
+
+		static int s_frame = -1;
+		const int frame    = g_interfaces.m_global_vars_base->m_frame_count;
+		if ( frame == s_frame )
+			return false;
+		s_frame = frame;
+
+		gate.m_count = count;
+		gate.m_full  = now + 5.f;
+		return true;
+	}
 }
 
 void n_misc::impl_t::old_shaders( )
@@ -2936,6 +2964,9 @@ void n_misc::impl_t::old_shaders( )
 
 	const float now = g_interfaces.m_global_vars_base->m_real_time;
 	if ( now < old_shader_next_walk && now >= old_shader_next_walk - 1.f )
+		return;
+	static material_walk_gate_t s_gate;
+	if ( !material_walk_slot( s_gate, old_shader_next_walk == 0.f ) )
 		return;
 	old_shader_next_walk = now + 1.f;
 
@@ -3064,13 +3095,15 @@ void n_misc::impl_t::world_modulation( )
 
 	const bool colour_changed = std::memcmp( last_written, wanted, sizeof( wanted ) ) != 0;
 
-	if ( colour_changed )
-		std::memcpy( last_written, wanted, sizeof( wanted ) );
-
 	const bool walk = colour_changed || now >= world_modulation_next_walk || now < world_modulation_next_walk - 1.f;
 
-	if ( !walk )
+	/* slot before the copy: a deferred colour change must still read as changed next frame */
+	static material_walk_gate_t s_gate;
+	if ( !walk || !material_walk_slot( s_gate, colour_changed || world_modulation_next_walk == 0.f ) )
 		return;
+
+	if ( colour_changed )
+		std::memcpy( last_written, wanted, sizeof( wanted ) );
 
 	int rebuild_budget = 64;
 	bool deferred      = false;
@@ -3754,6 +3787,9 @@ namespace
 
 		if ( world_decal_was_on && now < world_decal_next_walk && now >= world_decal_next_walk - 1.f )
 			return;
+		static material_walk_gate_t s_gate;
+		if ( !material_walk_slot( s_gate, !world_decal_was_on ) )
+			return;
 
 		world_decal_was_on    = true;
 		world_decal_next_walk = now + 1.f;
@@ -3852,6 +3888,10 @@ void n_misc::impl_t::world_texture( )
 	const float now    = g_interfaces.m_global_vars_base->m_real_time;
 
 	if ( !changed && now < world_texture_next_walk && now >= world_texture_next_walk - 1.f )
+		return;
+	/* before the signature is taken: a deferred change still reads as changed next frame */
+	static material_walk_gate_t s_gate;
+	if ( any && !material_walk_slot( s_gate, changed || world_texture_next_walk == 0.f ) )
 		return;
 
 	world_texture_last_signature = signature;
@@ -4335,9 +4375,21 @@ void n_misc::impl_t::performance( bool restore )
 			knob.m_convar->set_value( knob.m_value );
 	}
 
+	/* a stream / recorder hook in our Present ( discord screenshare, obs, shadowplay ) hands frames to an encoder in another
+	   process: high priority here can starve it, and its hook then waits in Present. hook loaded = normal priority. 1 hz poll */
+	static bool capture                     = false;
+	static unsigned long long capture_next = 0ull;
+	if ( const unsigned long long now = GetTickCount64( ); now >= capture_next ) {
+		capture_next   = now + 1000ull;
+		const bool was = capture;
+		capture        = GetModuleHandleA( "DiscordHook.dll" ) || GetModuleHandleA( "graphics-hook32.dll" ) || GetModuleHandleA( "nvspcap.dll" );
+		if ( capture != was )
+			botox_dbg_log( "PERF: capture hook %s", capture ? "loaded ( high priority held off )" : "gone" );
+	}
+
 	const HANDLE process = GetCurrentProcess( );
 	static DWORD stored_class = 0;
-	if ( enabled && GET_VARIABLE( g_variables.m_performance_high_priority, bool ) ) {
+	if ( enabled && GET_VARIABLE( g_variables.m_performance_high_priority, bool ) && !capture ) {
 		if ( !stored_class && ( stored_class = GetPriorityClass( process ) ) != 0 )
 			SetPriorityClass( process, HIGH_PRIORITY_CLASS );
 	} else if ( stored_class ) {

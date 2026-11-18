@@ -1035,11 +1035,13 @@ namespace
 	{
 		c_base_entity* entity = check_entity( L );
 
+		/* no player info yet ( a slot mid join ) falls to the client class: vtable 143 GetClassname is unverified on players */
 		player_info_t info{ };
+		c_base_client* client_class = nullptr;
 		if ( entity->is_player( ) && g_interfaces.m_engine_client->get_player_info( static_cast< int >( entity->get_index( ) ), &info ) )
 			lua_pushstring( L, info.m_name );
 		else
-			lua_pushstring( L, entity->get_class_name( ) ? entity->get_class_name( ) : "" );
+			lua_pushstring( L, ( client_class = entity->get_client_class( ) ) && client_class->m_network_name ? client_class->m_network_name : "" );
 		return 1;
 	}
 

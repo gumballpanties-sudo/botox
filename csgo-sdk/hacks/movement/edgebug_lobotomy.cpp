@@ -238,7 +238,10 @@ void n_edgebug::impl_t::lob_post( c_user_cmd* cmd )
 					s.last_type = 0;
 				}
 				/* odd variant = duck held all run */
-				if ( GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) && ( ( v & 1 ) != 0 ) != ( ( m_user_buttons & in_duck ) != 0 ) )
+				/* dont unduck: duck held = odd only, standing = both */
+				const bool user_duck = ( m_user_buttons & in_duck ) != 0;
+				if ( GET_VARIABLE( g_variables.m_edgebug_dont_unduck, bool ) ? ( user_duck && !( v & 1 ) )
+				                                                             : ( GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) && ( ( v & 1 ) != 0 ) != user_duck ) )
 					continue;
 				ReStorePrediction( );
 				s.vel_backup        = local->get_velocity( );

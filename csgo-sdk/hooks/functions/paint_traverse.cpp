@@ -22,7 +22,9 @@
 #include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/visuals/bullets/bullets.h"
 #include "../../hacks/visuals/edicts/edicts.h"
+#include "../../hacks/visuals/grenade/grenade_live.h"
 #include "../../hacks/visuals/grenade/grenade_path.h"
+#include "../../hacks/visuals/overlays/overlays.h"
 #include "../../hacks/visuals/players/dormancy/dormancy.h"
 #include "../../hacks/visuals/players/esp_preview.h"
 #include "../../hacks/visuals/players/players.h"
@@ -48,7 +50,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 
 	/* retail CHudScope panel name, 2019 source says "HudScope" */
 	if ( panel_hash == HASH_BT( "HudZoom" ) ) {
-		if ( n_cod4_hud::hides_scope( ) || n_urt_hud::hides_scope( ) || n_gta_hud::hides_scope( ) )
+		if ( n_cod4_hud::hides_scope( ) || n_urt_hud::hides_scope( ) || n_gta_hud::hides_scope( ) || g_overlays.hides_scope( ) )
 			return;
 		g_ctx.m_is_scope_being_drawn = true;
 		original( ecx, edx, panel, force_repaint, force );
@@ -124,6 +126,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 					PERF_ZONE( zone_paint_grenade );
 					g_grenade_path.on_paint_traverse( );
 					g_grenade_aim.on_paint_traverse( );
+					g_grenade_live.on_paint_traverse( );
 				}
 				g_bullets.on_paint_traverse( );
 
@@ -131,6 +134,8 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 					PERF_ZONE( zone_paint_players );
 					g_players.on_paint_traverse( );
 				}
+
+				g_overlays.on_paint_traverse( );
 			}
 
 			// main menu too: own render target, only while the menu shows the box

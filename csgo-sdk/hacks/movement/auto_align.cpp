@@ -504,19 +504,34 @@ void n_movement::impl_t::auto_align_sent( const c_user_cmd* cmd )
 }
 
 bool aa_wedge_risk = false;
+int aa_sent_cmd     = -1;
+float aa_sent_fwd = 0.f, aa_sent_side = 0.f;
+bool aa_seek_tick = false;
+
+/* edge_surf.cpp: an edge surf feet approach owned the last cmd */
+bool edge_surf_latched( const c_user_cmd* cmd );
 
 void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 {
 	const c_user_cmd got = *cmd;
 	aa_wedge_risk        = false;
 	s_pj_tick            = false;
+	aa_seek_tick         = false;
+	/* edge surf runs its own align on the ledge it owns ( arrival gap in ulps ): a flush park / pin search / bounce here only moves it */
+	if ( edge_surf_latched( cmd ) ) {
+		wall_detected = false;
+		aa_flush_drop( );
+		return;
+	}
 	if ( GET_VARIABLE( g_variables.m_auto_align_type, int ) == 1 ) {
 		wall_detected = false;
 		auto_align_lumia( cmd );
 	} else
 		auto_align_botox( cmd );
 	/* square wall, no prop = no wedge: native behaviour, no extra sims. reverted = never sent: no park / pj verdict / pj count off it */
+	bool kept = true;
 	if ( aa_wedge_risk && aa_guard( cmd, got ) ) {
+		kept = false;
 		aa_outs[ aa_out_guard ]++;
 		aa_flush_drop( );
 		s_pj_armed = false;
@@ -524,6 +539,9 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 			aa_outs[ aa_out_pj ]--;
 	} else if ( s_pj_tick )
 		s_pj_seen = true;
+	/* pj creep can be 0 / 0 ( parked under k_creep_gap ): marked by what ran, not by a changed cmd */
+	if ( kept && ( s_pj_tick || aa_seek_tick ) )
+		aa_sent_cmd = cmd->m_command_number, aa_sent_fwd = cmd->m_forward_move, aa_sent_side = cmd->m_side_move;
 }
 
 void n_movement::impl_t::auto_align_botox( c_user_cmd* cmd )

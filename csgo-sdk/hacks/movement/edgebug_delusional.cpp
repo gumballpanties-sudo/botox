@@ -111,8 +111,11 @@ void n_edgebug::impl_t::del_post( c_user_cmd* cmd )
 		const int search      = GET_VARIABLE( g_variables.m_edgebug_del_search, int );
 		const int divisor     = search;
 		const float del_limit = GET_VARIABLE( g_variables.m_edgebug_del_angle_limit, float );
-		const bool cur_stance = GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool );
-		const bool user_duck  = ( m_user_buttons & in_duck ) != 0;
+		const bool dont_unduck = GET_VARIABLE( g_variables.m_edgebug_dont_unduck, bool );
+		const bool cur_stance  = GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) && !dont_unduck;
+		const bool user_duck   = ( m_user_buttons & in_duck ) != 0;
+		/* dont unduck: duck held = crouched rounds only */
+		const bool keep_duck   = dont_unduck && user_duck;
 		const c_user_cmd base = *cmd;
 		const c_angle originalangles = base.m_view_point;
 		m_donor.startingyaw    = originalangles.m_y;
@@ -155,6 +158,8 @@ void n_edgebug::impl_t::del_post( c_user_cmd* cmd )
 
 		const auto run = [ & ]( const int round, const float yd ) {
 			const bool crouched = round == 0 || round == 2, strafing = round > 1;
+			if ( keep_duck && !crouched )
+				return;
 			*cmd = base;
 			if ( crouched )
 				cmd->m_buttons |= in_duck;

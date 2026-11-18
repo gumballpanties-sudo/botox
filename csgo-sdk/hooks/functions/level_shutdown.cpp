@@ -7,6 +7,8 @@
 #include "../../hacks/visuals/edicts/edicts.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/chams/chams.h"
+#include "../../hacks/chams/shot_chams.h"
+#include "../../hacks/visuals/grenade/grenade_live.h"
 #include "../../hacks/visuals/players/sound_esp/sound_esp.h"
 #include "../../hacks/web/websurface.h"
 #include "../../hacks/lua/lua.h"
@@ -19,6 +21,8 @@ void __fastcall n_detoured_functions::level_shutdown( void* thisptr )
 	g_lua.on_level_shutdown( );
 
 	g_edicts.reset( );
+	g_grenade_live.reset( );
+	g_shot_chams.reset( );
 
 	g_entity_cache.reset( );
 

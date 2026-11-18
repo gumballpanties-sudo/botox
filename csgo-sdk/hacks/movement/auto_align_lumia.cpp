@@ -59,9 +59,10 @@ void n_movement::impl_t::auto_align_lumia( c_user_cmd* cmd )
 	if ( tb_key( ) )
 		return;
 
-	if ( GET_VARIABLE( g_variables.m_wall_climb, bool ) &&
-	     g_input.check_input( &GET_VARIABLE( g_variables.m_wall_climb_key, key_bind_t ) ) )
-		return;
+	/* wall climb key: was a full return = no flush while wc held, wc's clock cut ladder left you 0.023 off a flush-only skin lip ( 11-17 log,
+	   nuke -189.97: 2 / 2 lands without the key, 0 / 2 with ). now only the pin loop + bounce search stop ( wc exits pins: pin, exit, pin ) */
+	const bool wc_held = GET_VARIABLE( g_variables.m_wall_climb, bool ) &&
+	                     g_input.check_input( &GET_VARIABLE( g_variables.m_wall_climb_key, key_bind_t ) );
 
 	if ( m_fireman_data.is_ladder )
 		return;
@@ -220,10 +221,15 @@ void n_movement::impl_t::auto_align_lumia( c_user_cmd* cmd )
 				if(!trial.restore_frame(cmds_pred))return;
 			}
 		}
+		/* wall climb lets this press past its park margin: axial only ( a slanted brush face is where the margin stops server pins ) */
+		aa_seek_tick = should_align && !aa_slanted( trace.m_plane.m_normal );
 		if ( should_align )
 			aa_outs[ aa_out_touch ]++;
 		return;
 	}
+
+	if ( wc_held )
+		return;
 
 	bool pinned = false;
 	for ( int i = 45; i > 0; i -= 5 ) {

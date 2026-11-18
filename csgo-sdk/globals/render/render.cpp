@@ -57,6 +57,7 @@ struct font_set_t {
 	ImFont* m_custom_outline[ e_custom_font_names::custom_font_name_max ]{ };
 	float m_build_ms = 0.f;
 	void* m_stage    = nullptr;
+	bool m_lean      = false;
 	int m_upload_fails = 0;
 	std::chrono::steady_clock::time_point m_retry_at{ };
 };
@@ -453,10 +454,18 @@ static int font_text_flags( const std::vector< bool >& font_flags )
 	       ( font_flags[ e_font_flags::font_flag_outline ] ? e_text_flags::text_flag_outline : 0 );
 }
 
+/* lean build = every full tier font at basic glyphs ( no cjk / thai / indic ... merges ): the full atlas is one ~33 mb block, a
+   fragmented 32 bit process ( injected mid server, a stream hook loaded: largest free 28 mb, log 11-17 ) has none, and a failed
+   build kept the boot set = one 11 px face for every font. build worker only */
+static bool s_font_lean = false;
+
 /* merge system fallback fonts into the last added font so non-ascii names render, not '?'. call right
    after the owning AddFont*; size + builder_flags must match the base font. */
-static void merge_extended_glyphs( ImFontAtlas* atlas, const float size, const unsigned int builder_flags, const e_glyph_tier tier )
+static void merge_extended_glyphs( ImFontAtlas* atlas, const float size, const unsigned int builder_flags, e_glyph_tier tier )
 {
+	if ( s_font_lean )
+		tier = e_glyph_tier::glyph_tier_basic;
+
 	if ( size <= 0.f )
 		return;
 
@@ -910,7 +919,20 @@ static void build_fonts_worker( const font_request_t request )
 
 	const auto start = std::chrono::steady_clock::now( );
 
-	if ( !build_fonts( *set, request ) ) {
+	bool built = build_fonts( *set, request );
+	if ( !built && std::strncmp( g_ft_build_fail, "pixel alloc failed", 18 ) == 0 ) {
+		const std::string full_fail = g_ft_build_fail;
+		IM_DELETE( set->m_atlas );
+		*set        = font_set_t{ };
+		s_font_lean = true;
+		built       = build_fonts( *set, request );
+		s_font_lean = false;
+		set->m_lean = built;
+		botox_dbg_log( "FONT: lean rebuild after '%s' ok=%d %dx%d", full_fail.c_str( ), built, built ? set->m_atlas->TexWidth : 0,
+		               built ? set->m_atlas->TexHeight : 0 );
+	}
+
+	if ( !built ) {
 		IM_DELETE( set->m_atlas );
 		set->m_atlas = nullptr;
 	}
@@ -962,6 +984,14 @@ void n_render::impl_t::install_fonts( font_set_t* set )
 
 	const ImFont* const ind = this->m_custom_fonts[ e_custom_font_names::custom_font_name_indicator ];
 	botox_dbg_log( "FONT: installed atlas=%p ind=%p %.1f px", static_cast< void* >( set->m_atlas ), static_cast< const void* >( ind ), ind ? ind->FontSize : 0.f );
+	if ( set->m_lean ) {
+		const unsigned free_mb = largest_free_block_mb( );
+		g_console.print< n_console::log_level::WARNING >(
+			std::vformat( "fonts: no room for the full atlas ( largest free block {} mb ), built without cjk / thai / indic glyphs - inject before joining "
+			              "a server for them",
+			              std::make_format_args( free_mb ) )
+				.c_str( ) );
+	}
 
 	/* queued text carries the retired atlas' ImFont pointers: drop it, the game thread refills next pass */
 	{

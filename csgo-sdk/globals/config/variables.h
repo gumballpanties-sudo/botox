@@ -656,6 +656,11 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_backtrack_colors, c_color( 114, 155, 221, 153 ) );
 		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_backtrack_dark_colors, c_color( 20, 30, 60, 153 ) );
 		ADD_VARIABLE( bool, m_chams_backtrack_xqz, false );
+		ADD_VARIABLE_VECTOR( int, chams_max_layers, m_chams_shot_layers, -1 );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_shot_colors, c_color( 255, 255, 255, 200 ) );
+		ADD_VARIABLE_VECTOR( c_color, chams_max_layers, m_chams_shot_dark_colors, c_color( 60, 60, 60, 200 ) );
+		ADD_VARIABLE( float, m_chams_shot_duration, 2.f );
+		ADD_VARIABLE( bool, m_chams_shot_xqz, true );
 		ADD_VARIABLE( int, m_chams_backtrack_type, 0 );
 		ADD_VARIABLE( bool, m_chams_backtrack_gradient, false );
 		ADD_VARIABLE( int, m_chams_backtrack_gradient_range, 64 );
@@ -714,6 +719,17 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_grenade_path_detonate_color, c_color( 255, 90, 90, 255 ) );
 		ADD_VARIABLE( float, m_grenade_path_thickness, 1.5f );
 		ADD_VARIABLE( bool, m_grenade_path_radius, true );
+		ADD_VARIABLE( bool, m_grenade_warning, false );
+		ADD_VARIABLE( bool, m_grenade_trajectories, false );
+		ADD_VARIABLE( c_color, m_grenade_trajectories_color, c_color( 255, 71, 0, 255 ) );
+		ADD_VARIABLE( bool, m_players_line_of_sight, false );
+		ADD_VARIABLE( c_color, m_players_line_of_sight_color, c_color( 255, 0, 0, 255 ) );
+		ADD_VARIABLE( bool, m_inaccuracy_overlay, false );
+		ADD_VARIABLE( bool, m_recoil_overlay, false );
+		ADD_VARIABLE( c_color, m_inaccuracy_overlay_color, c_color( 30, 30, 30, 60 ) );
+		ADD_VARIABLE( bool, m_penetration_reticle, false );
+		ADD_VARIABLE( bool, m_remove_scope, false );
+		ADD_VARIABLE( bool, m_instant_scope, false );
 
 		ADD_VARIABLE( bool, m_precipitation, false );
 		ADD_VARIABLE( int, m_precipitation_type, 0 );
@@ -1308,6 +1324,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_edgebug_autostrafe_max_angle, 180.f );
 		ADD_VARIABLE_VECTOR( bool, 2, m_edgebug_types, true );
 		ADD_VARIABLE( bool, m_edgebug_cur_stance, false );
+		ADD_VARIABLE( bool, m_edgebug_dont_unduck, false );
 		ADD_VARIABLE( int, m_edgebug_search_amount, 2 );
 		ADD_VARIABLE( bool, m_edgebug_mouse_steer, true );
 		ADD_VARIABLE( int, m_edgebug_paths, 3 );
@@ -1318,6 +1335,7 @@ namespace n_variables
 		ADD_VARIABLE( int, m_edgebug_refine_steps, 7 );
 		ADD_VARIABLE( bool, m_edgebug_path_bend, true );
 		ADD_VARIABLE( bool, m_edgebug_ebanat_shapes, true );
+		ADD_VARIABLE( bool, m_edgebug_edge_surf, false );
 		ADD_VARIABLE( bool, m_edgebug_mouse_lock, false );
 		ADD_VARIABLE( int, m_edgebug_mouse_lock_type, 1 );
 		ADD_VARIABLE( float, m_edgebug_mouse_lock_strength, 100.f );
@@ -1369,6 +1387,9 @@ namespace n_variables
 		ADD_VARIABLE( float, m_edge_surf_range, 96.f );
 		ADD_VARIABLE( float, m_edge_surf_reach, 6.f );
 		ADD_VARIABLE( float, m_edge_surf_delta_strafe, 0.f );
+		ADD_VARIABLE( bool, m_edge_surf_visualize, false );
+		ADD_VARIABLE( c_color, m_edge_surf_visualize_color, c_color( 120, 230, 255, 255 ) );
+		ADD_VARIABLE( bool, m_edge_surf_flat_disp, true );
 		ADD_VARIABLE( bool, m_fix_air_stucks, false );
 
 		ADD_VARIABLE( bool, m_ladder_bug, false );
@@ -1501,6 +1522,7 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( std::string, 16, m_detection_prefixes, "" );
 		ADD_VARIABLE( int, m_detection_prefixes_count, 0 );
 		ADD_VARIABLE( bool, m_hit_marker, false );
+		ADD_VARIABLE( int, m_hit_marker_style, 0 );
 		ADD_VARIABLE( float, m_hit_marker_size, 10.f );
 		ADD_VARIABLE( float, m_hit_marker_speed, 1.f );
 		ADD_VARIABLE( float, m_hit_marker_thickness, 1.f );

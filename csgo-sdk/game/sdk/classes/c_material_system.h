@@ -221,6 +221,21 @@ public:
 		return g_virtual.call< void >( this, 1 );
 	}
 
+	void begin_render( )
+	{
+		return g_virtual.call< void >( this, 2 );
+	}
+
+	void end_render( )
+	{
+		return g_virtual.call< void >( this, 3 );
+	}
+
+	void* get_dynamic_mesh( bool buffered, void* vertex_override, void* index_override, c_material* auto_bind )
+	{
+		return g_virtual.call< void* >( this, 62, buffered, vertex_override, index_override, auto_bind );
+	}
+
 	void bind_local_cubemap( c_texture* texture )
 	{
 		return g_virtual.call< void >( this, 5, texture );

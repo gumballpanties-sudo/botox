@@ -8,6 +8,7 @@
 #include <cstring>
 
 static void fix_original_stamina( );
+void pred_fix_base_velocity( c_base_entity* e );
 
 void n_prediction::impl_t::update( )
 {
@@ -102,6 +103,7 @@ void n_prediction::impl_t::begin( c_base_entity* local, c_user_cmd* cmd, const b
 	cmd->m_buttons |= local->get_button_forced( ); /* engine never strips m_afButtonDisabled ( kisak prediction.cpp:1059 ) */
 	g_interfaces.m_game_movement->start_track_prediction_errors( local );
 	g_prediction.update_button_state( local, cmd );
+	pred_fix_base_velocity( local );
 	g_interfaces.m_prediction->check_moving_ground( local, g_interfaces.m_global_vars_base->m_frame_time );
 	g_interfaces.m_prediction->set_local_view_angles( cmd->m_view_point );
 	if ( !lean && local->physics_run_think( 0 ) )
@@ -191,6 +193,30 @@ static void fix_original_friction( )
 			botox_dbg_log( "FRIC: stale=%.3f fixed=%.2f vz=%.2f", friction, fixed, local->get_velocity( ).m_z );
 	}
 	friction = fixed;
+}
+
+/* m_vecBaseVelocity ships 20 bits over -1000..1000 ( kisak player.cpp:8279 ): a server 0 decodes to -2^-10 an axis. the first cmd
+   run off that START adds ( 1 + dt / 2 ) of it as momentum ( CheckMovingGround ) = 0.00098 u/s an axis the server never has
+   ( log 11-17: every edge surf sim off by 129 * 2^-17 = pins the sim rode landed on the ledge / fell through on the server ).
+   an axis under one quantum = the server's 0 on it ( per axis: a real push along one axis leaves the garbage on the other two ).
+   called before every CheckMovingGround: our sims + the engine's RunCommand */
+void pred_fix_base_velocity( c_base_entity* e )
+{
+	constexpr float k_step = 2000.f / 1048575.f;
+	if ( !e )
+		return;
+	c_vector& b = e->get_base_velocity( );
+	/* netvar miss = offset 0 = the vtable pointer: never write through it */
+	if ( reinterpret_cast< std::uintptr_t >( &b ) == reinterpret_cast< std::uintptr_t >( e ) )
+		return;
+	const c_vector was = b;
+	for ( float* const v : { &b.m_x, &b.m_y, &b.m_z } )
+		if ( *v != 0.f && std::fabs( *v ) < k_step )
+			*v = 0.f;
+	if ( static int s_logged = 0; s_logged < 4 && ( was.m_x != b.m_x || was.m_y != b.m_y || was.m_z != b.m_z ) && GET_VARIABLE( g_variables.m_debug_log, bool ) ) {
+		++s_logged;
+		botox_dbg_log( "PRED: base velocity garbage %.3e %.3e %.3e -> %.3e %.3e %.3e", was.m_x, was.m_y, was.m_z, b.m_x, b.m_y, b.m_z );
+	}
 }
 
 /* m_flStamina ships 14 bits over 0..100 ( +-0.003 ), so offline every START holds it rounded: ~1 coord ulp a tick of air speed,

@@ -28,6 +28,7 @@ namespace n_edge_catch
 		bool family( c_user_cmd* cmd, bool first_neg );
 		int chain( c_user_cmd* cmd, int prefix, bool neg, bool save, int base );
 		bool jb_works( c_user_cmd* cmd, int k, int from, int base );
+		bool jb_drops( c_user_cmd* cmd, int k, float land_z );
 		void apply( c_user_cmd* cmd, const tick_t& t, const c_angle& view ) const;
 		void sim( c_user_cmd* cmd, int index, const tick_t& t, int buttons );
 		bool out( ) const;
@@ -53,6 +54,9 @@ namespace n_edge_catch
 		c_vector m_best_land{ };
 		bool m_jb         = false;
 		bool m_jb_plan    = false;
+		bool m_jb_up      = false; /* jb verdict came from the upgrade bisect above a plain landing */
+		int m_stripped    = 0;     /* plan ticks the jump bug's crouch was taken off */
+		bool m_jb_stamp   = false; /* this cmd's duck = the jump bug's landing crouch */
 		bool m_duck       = false;
 		bool m_brake      = false; /* plan ticks wish straight back ( overshoot ), one side */
 		bool m_fail       = false; /* last full search on this lip found nothing */
@@ -64,7 +68,7 @@ namespace n_edge_catch
 		int m_hit         = 0;
 		int m_last        = 0;
 		int m_miss        = 0;
-		int m_kind        = 0;
+		int m_kind        = 0; /* 1 = eb, 2 = overshoot, 3 = jb crouch carries you off your landing */
 		float m_ground_z  = 0.f;
 		float m_miss_vz   = 0.f;
 		c_vector m_land_pos{ };

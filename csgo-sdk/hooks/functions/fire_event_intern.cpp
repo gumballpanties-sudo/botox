@@ -11,6 +11,7 @@
 #include "../../hacks/visuals/players/dormancy/dormancy.h"
 #include "../../hacks/visuals/players/players.h"
 #include "../../hacks/visuals/bullets/bullets.h"
+#include "../../hacks/chams/shot_chams.h"
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/misc/misc.h"
@@ -244,6 +245,7 @@ bool __fastcall n_detoured_functions::fire_event_intern( void* ecx, void* edx, g
 			on_hit_sound( );
 			g_bullets.on_player_hurt( m_victim );
 			g_players.hitboxes_on_hurt( m_victim );
+			g_shot_chams.on_player_hurt( m_victim );
 
 			if ( const auto victim_ent = g_interfaces.m_client_entity_list->get< c_base_entity >( m_victim ) ) {
 				int hitbox = e_hitboxes::hitbox_chest;

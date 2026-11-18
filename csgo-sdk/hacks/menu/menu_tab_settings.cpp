@@ -1776,6 +1776,8 @@ void n_menu::impl_t::tab_misc( )
 			ImGui::OptionPopup(
 				"hit marker settings",
 				[]( ) {
+					ImGui::Combo( "style##hitmarkerstyle", &GET_VARIABLE( g_variables.m_hit_marker_style, int ), "botox\0skeet\0" );
+					const bool skeet = GET_VARIABLE( g_variables.m_hit_marker_style, int ) == 1;
 					ImGui::SliderFloat( "size##hitmarkersize", &GET_VARIABLE( g_variables.m_hit_marker_size, float ), 4.f, 30.f, "%.0f" );
 					ImGui::SliderFloat( "speed##hitmarkerspeed", &GET_VARIABLE( g_variables.m_hit_marker_speed, float ), 0.25f, 3.f,
 					                    "%.2f" );
@@ -1784,8 +1786,12 @@ void n_menu::impl_t::tab_misc( )
 					ImGui::ColorEdit4( "color##hitmarkercolor", &GET_VARIABLE( g_variables.m_hit_marker_color, c_color ),
 					                   color_picker_alpha_flags );
 
-					ImGui::Checkbox( "outline##hitmarkeroutline", &GET_VARIABLE( g_variables.m_hit_marker_outline, bool ) );
-					if ( GET_VARIABLE( g_variables.m_hit_marker_outline, bool ) ) {
+					if ( skeet )
+						ImGui::ColorEdit4( "shadow color##hitmarkershadowcolor", &GET_VARIABLE( g_variables.m_hit_marker_outline_color, c_color ),
+						                   color_picker_alpha_flags );
+					else
+						ImGui::Checkbox( "outline##hitmarkeroutline", &GET_VARIABLE( g_variables.m_hit_marker_outline, bool ) );
+					if ( !skeet && GET_VARIABLE( g_variables.m_hit_marker_outline, bool ) ) {
 						ImGui::ColorEdit4( "outline color##hitmarkeroutlinecolor",
 						                   &GET_VARIABLE( g_variables.m_hit_marker_outline_color, c_color ), color_picker_alpha_flags );
 						ImGui::SliderFloat( "outline thickness##hitmarkeroutlinethickness",

@@ -39,6 +39,7 @@ extern void botox_dbg_log( const char* fmt, ... );
 
 extern bool g_air_stuck_owns_cmd;
 extern bool g_air_stuck_view_forced;
+bool g_fireman_view_forced = false;
 extern bool HITGODA;
 extern bool HITGODA2;
 
@@ -585,6 +586,16 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 	g_texturebug.preserve_move( cmd );
 	/* an owned edge surf tick leaves with its own move ( anything after movement post could close you onto the ledge top ) */
 	edge_surf_final_stamp( cmd );
+
+	/* fireman view silent_view could not hide ( ladder moves read the view ): FSN animates the 3p model with your view instead */
+	{
+		c_angle engine{ };
+		g_interfaces.m_engine_client->get_view_angles( engine );
+		c_angle d = cmd->m_view_point - engine;
+		d.normalize( );
+		g_fireman_view_forced = local && local->is_alive( ) && ( g_movement.m_fireman_data.owns_cmd || g_movement.m_fireman_data.is_ladder ) &&
+		                        ( std::fabsf( d.m_x ) > 0.001f || std::fabsf( d.m_y ) > 0.001f );
+	}
 
 	g_ctx.m_last_tick_yaw = cmd->m_view_point.m_y;
 	g_ctx.last_view_point = cmd->m_view_point;
