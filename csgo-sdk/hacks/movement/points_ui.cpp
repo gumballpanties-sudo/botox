@@ -71,6 +71,8 @@ namespace
 		entry[ "is_free_point" ]                = point.is_free_point;
 		entry[ "point_type" ]                   = point.point_type;
 		entry[ "show_3d_radius" ]               = point.show_3d_radius;
+		entry[ "aa_kind" ]                      = point.aa_kind;
+		entry[ "aa_dz" ]                        = point.aa_dz;
 		return entry;
 	}
 
@@ -111,6 +113,8 @@ namespace
 		point.is_free_point                = entry.value( "is_free_point", false );
 		point.point_type                   = entry.value( "point_type", 0 );
 		point.show_3d_radius               = entry.value( "show_3d_radius", false );
+		point.aa_kind                      = entry.value( "aa_kind", 0 );
+		point.aa_dz                        = entry.value( "aa_dz", 0.f );
 
 		point.currentScale  = 0.f;
 		point.open_settings = false;
@@ -389,6 +393,10 @@ static void design_draw( const P& p, int type, const c_vector_2d& centre, float 
 			line( pt( c * half * 0.35f, s * half * 0.35f ), pt( c * half, s * half ) );
 		}
 		break;
+	case 12:
+		line( pt( -half * 0.7f, -half * 0.3f ), pt( half * 0.7f, -half * 0.3f ) );
+		line( pt( -half * 0.7f, half * 0.3f ), pt( half * 0.7f, half * 0.3f ) );
+		break;
 	}
 }
 
@@ -439,6 +447,8 @@ const point_style_t& point_style( int style )
 		  g_variables.m_point_shape_hb, false, true, true },
 		{ "pixeljump assist point", "pixeljump", 0, g_variables.m_point_gaps_pj, g_variables.m_point_design_pj, g_variables.m_point_design_type_pj,
 		  g_variables.m_point_shape_pj, false, true, true },
+		{ "air align point", "air align", 0, g_variables.m_point_gaps_aa, g_variables.m_point_design_aa, g_variables.m_point_design_type_aa,
+		  g_variables.m_point_shape_aa, false, true, true },
 		{ "calculator point", "calc", 0, g_variables.m_point_gaps_calc, 0, 0, g_variables.m_point_shape_calc, false, true, false },
 		{ "finder pixelsurf", "pixelsurf", g_variables.m_point_clr_pf_ps, 0, 0, 0, 0, true, false, false },
 		{ "finder headbounce", "headbounce", g_variables.m_point_clr_pf_hb, 0, 0, 0, 0, true, false, false },
@@ -812,7 +822,8 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 		for ( auto& point : points )
 			point.open_settings = false;
 	}
-	if ( ( GET_VARIABLE( g_variables.m_bouncee_assist, bool ) || GET_VARIABLE( g_variables.m_pixel_jump_assist, bool ) ) && render_bounce ) {
+	if ( ( GET_VARIABLE( g_variables.m_bouncee_assist, bool ) || GET_VARIABLE( g_variables.m_pixel_jump_assist, bool ) || GET_VARIABLE( g_variables.m_air_align, bool ) ) &&
+	     render_bounce ) {
 		for ( size_t i = 0; i < m_bounce_points_check.size( ); ++i ) {
 			points_check_t& point = m_bounce_points_check[ i ];
 			/* same stale-flag rule as the pixelsurf loop above */
@@ -820,11 +831,14 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 				point.open_settings = false;
 				continue;
 			}
-			/* pixeljump assist point = type 2 in the bounce list */
-			const int style = point.point_type == 2 ? point_style_pj : point_style_hb;
+			/* bounce list: type 2 = pixeljump assist point, type 3 = air align point ( own popup, owner 2 ) */
+			const int style = point.point_type == 2 ? point_style_pj : point.point_type == 3 ? point_style_aa : point_style_hb;
+			const int owner = point.point_type == 3 ? 2 : 1;
 			float assist_height   = GET_VARIABLE( g_variables.m_pixel_surf_assist_render_height, float );
 			c_vector adjusted_pos = point.pos;
-			adjusted_pos.m_z += assist_height;
+			/* air align points sit on the finder dot they were placed on */
+			if ( point.point_type != 3 )
+				adjusted_pos.m_z += assist_height;
 			c_vector_2d screenPos;
 			if ( !g_render.world_to_screen( adjusted_pos, screenPos ) ) {
 				point.open_settings = false;
@@ -881,13 +895,13 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 				if ( !point.open_settings && isEnterPressed( ) ) {
 					gloabal_settings_timer = GetTickCount64( ) + 500;
 					point.open_settings    = true;
-					point_edit_open( point, 1 );
+					point_edit_open( point, owner );
 				}
 			} else {
 				point.open_settings = false;
 			}
 			if ( point.open_settings )
-				point_edit_sync( point, 1 );
+				point_edit_sync( point, owner );
 			float targetScale     = isHovered ? hover_scale : 1.0f;
 			point.currentScale    = LerpFloat( point.currentScale, targetScale, dt * scaleSpeed );
 			float effectiveRadius = baseRadius * point.currentScale * points_pulse( point.active && !point.is_free_point && inRadius );
@@ -973,7 +987,8 @@ void render_point_settings_window( )
 	bool changed    = false;
 
 	constexpr auto background_height = 25.f;
-	const auto title_text            = s_point_edit_owner.load( ) == 1 ? "bounce point settings" : "pixelsurf point settings";
+	const int owner                  = s_point_edit_owner.load( );
+	const auto title_text            = owner == 2 ? "air align point settings" : owner == 1 ? "bounce point settings" : "pixelsurf point settings";
 	auto* title_font                 = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ];
 	const auto title_text_size = title_font ? title_font->CalcTextSizeA( title_font->FontSize, FLT_MAX, 0.f, title_text ) : ImVec2( 0.f, 11.f );
 
@@ -1019,9 +1034,11 @@ void render_point_settings_window( )
 			changed  = true;
 		}
 		changed |= ImGui::SliderFloat( "radius", &e.radius, 50.f, 1000.f, "%.0f" );
-		changed |= ImGui::SliderFloat( "delta strafe", &e.delta_strafe, 0.f, 5.f, "%.2f" );
+		if ( owner != 2 )
+			changed |= ImGui::SliderFloat( "delta strafe", &e.delta_strafe, 0.f, 5.f, "%.2f" );
 		changed |= ImGui::Checkbox( "3d radius ring", &e.show_3d_radius );
-
+	}
+	if ( owner != 2 ) {
 		changed |= ImGui::Checkbox( "jump", &e.jump );
 		changed |= ImGui::Checkbox( "jump (crouch)", &e.c_jump );
 		changed |= ImGui::Checkbox( "minijump", &e.minijump );
@@ -1146,10 +1163,11 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 	if ( ImGui::GetCurrentContext( ) == nullptr )
 		return;
 
-	static bool ps_key_was_down = false, hb_key_was_down = false, pj_key_was_down = false;
+	static bool ps_key_was_down = false, hb_key_was_down = false, pj_key_was_down = false, aa_key_was_down = false;
 	const bool place_surf   = consume_key_edge( GET_VARIABLE( g_variables.m_pixel_surf_assist_point_key, key_bind_t ), ps_key_was_down );
 	const bool place_bounce = consume_key_edge( GET_VARIABLE( g_variables.m_bounce_assist_point_key, key_bind_t ), hb_key_was_down );
 	const bool place_pj     = consume_key_edge( GET_VARIABLE( g_variables.m_pixel_jump_assist_point_key, key_bind_t ), pj_key_was_down );
+	const bool place_aa     = consume_key_edge( GET_VARIABLE( g_variables.m_air_align_point_key, key_bind_t ), aa_key_was_down );
 
 	const float dt = ImGui::GetIO( ).DeltaTime;
 	pf_fade( animated_points, surf, dt );
@@ -1157,7 +1175,7 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 	pf_fade( animated_points3, tb, dt );
 	pf_fade( animated_points4, pj, dt );
 
-	constexpr int k_hb = 0, k_pj = 1, k_ps = 2;
+	constexpr int k_hb = 0, k_pj = 1, k_ps = 2, k_tb = 3;
 	std::vector< AnimatedPoint >* const lists[ k_pf_types ] = { &animated_points2, &animated_points4, &animated_points, &animated_points3 };
 	constexpr int k_style[ k_pf_types ]                     = { point_style_pf_hb, point_style_pf_pj, point_style_pf_ps, point_style_pf_tb };
 
@@ -1203,6 +1221,10 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 				pick[ t ]    = i;
 			}
 		}
+		if ( g.dot[ k_tb ] && !g.dot[ k_tb ]->is_removing && d_sq < pick_sq[ k_tb ] ) {
+			pick_sq[ k_tb ] = d_sq;
+			pick[ k_tb ]    = i;
+		}
 	}
 
 	const float ease = 1.f - std::exp( -5.f * dt );
@@ -1245,6 +1267,34 @@ void pf_render_dots( const std::vector< c_vector >& surf, const std::vector< c_v
 		m_bounce_points_check.emplace_back( p, g_interfaces.m_engine_client->get_level_name_short( ) ).point_type = 2;
 		save_points_file( bounce_points_file( ), m_bounce_points_check );
 		botox_dbg_log( "[pf place] pixeljump assist point z %.4f\n", p.m_z );
+	}
+	/* air align point: nearest live ps / tb / pj dot ( ties ps, tb, pj ). tb rise dots are drawn under their seam: stored at the seam */
+	if ( place_aa ) {
+		int t = -1;
+		for ( const int k : { k_ps, k_tb, k_pj } )
+			if ( pick[ k ] >= 0 && ( t < 0 || pick_sq[ k ] < pick_sq[ t ] ) )
+				t = k;
+		c_vector p{ }, drawn{ };
+		int kind = air_align_ps;
+		if ( t >= 0 ) {
+			p = drawn = groups[ pick[ t ] ].dot[ t ]->position;
+			kind      = t == k_ps ? air_align_ps : t == k_pj ? air_align_pj : air_align_tb_head;
+		}
+		/* a tb dot the finder lost the info of: its kind / seam z unknown ( a rise dot is drawn under its seam ) = no point */
+		pf_tb_t info{ };
+		if ( t == k_tb && !pf_tb_info( p, info ) )
+			t = -1;
+		else if ( t == k_tb )
+			kind = info.kind == pf_tb_rise ? air_align_tb_rise : info.kind == pf_tb_feet ? air_align_tb_feet : air_align_tb_head;
+		if ( t >= 0 ) {
+			/* drawn where you placed it, the seam z kept as an offset */
+			auto& added      = m_bounce_points_check.emplace_back( drawn, g_interfaces.m_engine_client->get_level_name_short( ) );
+			added.point_type = 3;
+			added.aa_kind    = kind;
+			added.aa_dz      = p.m_z - drawn.m_z;
+			save_points_file( bounce_points_file( ), m_bounce_points_check );
+			botox_dbg_log( "[pf place] air align point kind %d z %.4f\n", kind, p.m_z );
+		}
 	}
 
 	/* hidden = draw only, fade + place keys keep running */

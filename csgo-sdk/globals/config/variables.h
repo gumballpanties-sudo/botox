@@ -124,6 +124,7 @@ enum e_keybind_indicators {
 	key_az,
 	key_esurf,
 	key_ec,
+	key_aal,
 	key_max
 };
 
@@ -157,6 +158,7 @@ enum e_keybind_labels {
 	label_esurf,
 	label_pjast,
 	label_ec,
+	label_aal,
 	label_max
 };
 
@@ -169,7 +171,7 @@ inline constexpr const char* k_keybind_labels[ label_max ][ 2 ] = {
 	{ "freelook climb", "lfc" }, { "fast ladder", "fl" },     { "one hop", "oh" },        { "auto crouch", "ac" },
 	{ "auto bounce", "ab" },   { "tung surf", "tung" },       { "edge skip", "es" },      { "half sideways", "hsw" },
 	{ "zeus bug", "zb" },      { "air freeze", "az" },        { "edge surf", "esurf" },   { "pj assist", "pjast" },
-	{ "edge catch", "ec" },
+	{ "edge catch", "ec" },    { "air align", "aalign" },
 };
 
 enum e_indicator_style {
@@ -1264,6 +1266,10 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_point_design_ps, true );
 		ADD_VARIABLE( bool, m_point_design_hb, true );
 		ADD_VARIABLE( bool, m_point_design_pj, true );
+		ADD_VARIABLE( int, m_point_design_type_aa, 12 );
+		ADD_VARIABLE( int, m_point_shape_aa, 0 );
+		ADD_VARIABLE( int, m_point_gaps_aa, 0 );
+		ADD_VARIABLE( bool, m_point_design_aa, true );
 		ADD_VARIABLE( bool, m_auto_align, false );
 		ADD_VARIABLE( bool, m_auto_align_pixel_jump, true );
 
@@ -1447,6 +1453,12 @@ namespace n_variables
 		ADD_VARIABLE( int, m_pixel_jump_assist_ticks, 12 );
 		ADD_VARIABLE( float, m_pixel_jump_assist_radius, 6.f );
 		ADD_VARIABLE( bool, m_pixel_jump_assist_render, false );
+		/* air align: points = bounce list point_type 3, placed on ps / tb / pj finder dots */
+		ADD_VARIABLE( bool, m_air_align, false );
+		ADD_VARIABLE( key_bind_t, m_air_align_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( key_bind_t, m_air_align_point_key, key_bind_t( 0, 1 ) );
+		ADD_VARIABLE( float, m_air_align_delta_strafe, 5.f );
+		ADD_VARIABLE( float, m_air_align_reach, 8.f );
 		/* one key per point list, so bounce candidates don't steal ps
 		   presses. migrated from the bounce key on load */
 		ADD_VARIABLE( key_bind_t, m_pixel_surf_assist_point_key, key_bind_t( 0, 1 ) );

@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwctype>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -767,33 +768,324 @@ void n_misc::impl_t::draw_watermark_delusional( )
 	g_render.end_stretch_block( block );
 }
 
+#pragma comment( lib, "gdi32" )
+
+namespace
+{
+	/* interwebz CDraw.cpp:14 vgui font "Calibri" tall 20, weight 0, flags 0x200 outline; Surface.cpp:55 DrawStringA( center, 250, 20 ).
+	   csgo vgui ported 1:1 (Kisak vgui_surfacelib): CWin32Font Create / GetCharABCWidths / GetCharRGBA = GDI bilevel, so texels are 0 or 255,
+	   FontEffects ApplyOutlineToTexture, CFontManager::GetTextSize, CMatSystemSurface::DrawPrintText. kept as pixel runs, rebuilt on text change */
+	struct vgui_run_t
+	{
+		int   m_x0, m_x1, m_y;
+		ImU32 m_color;
+	};
+
+	struct vgui_text_t
+	{
+		int                       m_wide = 0, m_tall = 0, m_frame = 0;
+		std::vector< vgui_run_t > m_runs;
+	};
+
+	/* CWin32Font glyph: abc already widened for the outline, rgba = m_b x tall cell ( FontTextureCache entry ). spaces keep abc only */
+	struct vgui_glyph_t
+	{
+		int                          m_a = 0, m_b = 0, m_c = 0;
+		std::vector< unsigned char > m_rgba;
+	};
+
+	struct vgui_font_t
+	{
+		int                                         m_tall = 0;
+		std::unordered_map< wchar_t, vgui_glyph_t > m_glyphs;
+	};
+
+	/* GDI opened only while new chars show up: CWin32Font::Create, then GetCharABCWidths + GetCharRGBA once per char */
+	bool load_interwebz_glyphs( vgui_font_t& font, const std::wstring& text )
+	{
+		constexpr int outline = 1;
+
+		std::wstring missing;
+		for ( const wchar_t ch : text )
+			if ( !font.m_glyphs.contains( ch ) && missing.find( ch ) == std::wstring::npos )
+				missing += ch;
+
+		if ( font.m_tall && missing.empty( ) )
+			return true;
+
+		const HDC dc = CreateCompatibleDC( nullptr );
+		if ( !dc )
+			return false;
+
+		const HFONT hfont = CreateFontA( 20, 0, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+		                                 NONANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Calibri" );
+		const HGDIOBJ old_font = hfont ? SelectObject( dc, hfont ) : nullptr;
+
+		TEXTMETRICA    tm{ };
+		HBITMAP        dib        = nullptr;
+		HGDIOBJ        old_bitmap = nullptr;
+		unsigned char* bits       = nullptr;
+		int            bitmap_wide = 0, bitmap_tall = 0;
+
+		if ( hfont ) {
+			SetMapMode( dc, MM_TEXT );
+			SetTextAlign( dc, TA_LEFT | TA_TOP | TA_UPDATECP );
+		}
+
+		if ( hfont && GetTextMetricsA( dc, &tm ) ) {
+			bitmap_wide = tm.tmMaxCharWidth + outline * 2;
+			bitmap_tall = tm.tmHeight + outline * 2;
+
+			BITMAPINFOHEADER header{ };
+			header.biSize        = sizeof( header );
+			header.biWidth       = bitmap_wide;
+			header.biHeight      = -bitmap_tall;
+			header.biPlanes      = 1;
+			header.biBitCount    = 32;
+			header.biCompression = BI_RGB;
+
+			dib = CreateDIBSection( dc, reinterpret_cast< BITMAPINFO* >( &header ), DIB_RGB_COLORS, reinterpret_cast< void** >( &bits ), nullptr, 0 );
+			if ( dib )
+				old_bitmap = SelectObject( dc, dib );
+		}
+
+		if ( old_bitmap && bits ) {
+			const int height = font.m_tall = tm.tmHeight + outline * 2; /* m_iHeight = cell tall = GetTextSize tall */
+
+			for ( const wchar_t ch : missing ) {
+				vgui_glyph_t& glyph = font.m_glyphs[ ch ];
+
+				int a = 0, b = tm.tmMaxCharWidth, c = 0;
+
+				if ( ABC abc{ }; GetCharABCWidthsW( dc, ch, ch, &abc ) ) {
+					a = abc.abcA;
+					b = static_cast< int >( abc.abcB );
+					c = abc.abcC;
+				} else if ( SIZE size{ }; GetTextExtentPoint32W( dc, &ch, 1, &size ) )
+					b = size.cx;
+
+				/* abc cache widens the cell for the outline, advance unchanged */
+				glyph.m_a = a - outline;
+				glyph.m_b = b + outline * 2;
+				glyph.m_c = c - outline;
+
+				if ( iswspace( ch ) )
+					continue;
+
+				const int rgba_wide = std::max( glyph.m_b, 1 ), rgba_tall = std::max( height, 1 );
+				std::vector< unsigned char >& rgba = glyph.m_rgba;
+				rgba.assign( static_cast< std::size_t >( rgba_wide ) * rgba_tall * 4, 0 );
+
+				/* GetCharRGBA render-to-bitmap path ( no FONTFLAG_ANTIALIAS ): glyph black box lands at column outline */
+				SetBkColor( dc, RGB( 0, 0, 0 ) );
+				SetTextColor( dc, RGB( 255, 255, 255 ) );
+				SetBkMode( dc, OPAQUE );
+				MoveToEx( dc, -glyph.m_a, 0, nullptr );
+
+				const RECT rect{ 0, 0, glyph.m_b, height };
+				ExtTextOutW( dc, 0, 0, ETO_OPAQUE, &rect, nullptr, 0, nullptr );
+				ExtTextOutW( dc, 0, 0, 0, nullptr, &ch, 1, nullptr );
+				SetBkMode( dc, TRANSPARENT );
+				GdiFlush( );
+
+				const int wide = std::min( glyph.m_b, bitmap_wide ), tall = std::min( height, bitmap_tall );
+
+				for ( int j = outline; j < tall - outline; j++ ) {
+					for ( int i = outline; i < wide - outline; i++ ) {
+						if ( i >= rgba_wide || j >= rgba_tall )
+							continue;
+
+						const unsigned char* const src = bits + ( i + j * bitmap_wide ) * 4;
+						unsigned char* const       dst = &rgba[ ( i + j * rgba_wide ) * 4 ];
+
+						dst[ 0 ] = src[ 0 ];
+						dst[ 1 ] = src[ 1 ];
+						dst[ 2 ] = src[ 2 ];
+						dst[ 3 ] = static_cast< unsigned char >( static_cast< float >( src[ 0 ] ) * 0.34f + static_cast< float >( src[ 1 ] ) * 0.55f +
+						                                         static_cast< float >( src[ 2 ] ) * 0.11f );
+					}
+				}
+
+				/* ApplyOutlineToTexture: empty texel next to a lit one ( all 4 channels != 0 ) turns opaque black */
+				for ( int y = 0; y < rgba_tall; y++ ) {
+					for ( int x = 0; x < rgba_wide; x++ ) {
+						unsigned char* const texel = &rgba[ ( x + y * rgba_wide ) * 4 ];
+						if ( texel[ 3 ] != 0 )
+							continue;
+
+						for ( int sx = -outline; sx <= outline; sx++ ) {
+							for ( int sy = -outline; sy <= outline; sy++ ) {
+								const int tx = x + sx, ty = y + sy;
+								if ( ( !sx && !sy ) || tx < 0 || tx >= rgba_wide || ty < 0 || ty >= rgba_tall )
+									continue;
+
+								const unsigned char* const test = &rgba[ ( tx + ty * rgba_wide ) * 4 ];
+								if ( test[ 0 ] && test[ 1 ] && test[ 2 ] && test[ 3 ] ) {
+									texel[ 0 ] = texel[ 1 ] = texel[ 2 ] = 0;
+									texel[ 3 ] = 255;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if ( old_bitmap )
+			SelectObject( dc, old_bitmap );
+		if ( dib )
+			DeleteObject( dib );
+		if ( old_font )
+			SelectObject( dc, old_font );
+		if ( hfont )
+			DeleteObject( hfont );
+
+		DeleteDC( dc );
+
+		return font.m_tall > 0 && std::ranges::all_of( text, [ & ]( const wchar_t ch ) { return font.m_glyphs.contains( ch ); } );
+	}
+
+	void raster_interwebz_text( vgui_text_t& out, const std::wstring& text )
+	{
+		static vgui_font_t font;
+
+		out.m_wide = out.m_tall = 0;
+		out.m_runs.clear( );
+
+		if ( !load_interwebz_glyphs( font, text ) )
+			return;
+
+		const int height = out.m_tall = font.m_tall;
+
+		struct cell_t
+		{
+			const vgui_glyph_t* m_glyph;
+			int                 m_x;
+		};
+
+		std::vector< cell_t > cells;
+		cells.reserve( text.size( ) );
+
+		float xx    = 0.f;
+		int   total = 0, min_x = 0, max_x = 0;
+
+		for ( const wchar_t ch : text ) {
+			const vgui_glyph_t& glyph = font.m_glyphs.at( ch );
+			const int           a = glyph.m_a, b = glyph.m_b, c = glyph.m_c;
+
+			/* GetTextSize: '&' never counts, '\n' restarts the line, wide = ceil of the widest run */
+			if ( ch == L'\n' )
+				xx = 0.f;
+			else if ( ch != L'&' ) {
+				xx += static_cast< float >( a + b + c );
+				if ( xx > static_cast< float >( out.m_wide ) )
+					out.m_wide = static_cast< int >( std::ceil( xx ) );
+			}
+
+			/* DrawPrintText: spaces skipped, cell x = total + floor( a + 0.6 ), total += floor( a + b + c + 0.6 ); all ints, so exact */
+			if ( !iswspace( ch ) && !glyph.m_rgba.empty( ) ) {
+				cells.push_back( { &glyph, total + a } );
+				min_x = std::min( min_x, total + a );
+				max_x = std::max( max_x, total + a + b );
+			}
+
+			total += a + b + c;
+		}
+
+		const int            canvas_wide = max_x - min_x;
+		std::vector< ImU32 > canvas( static_cast< std::size_t >( canvas_wide ) * height, 0 );
+
+		/* quads draw in string order with alpha blend; texels are 0 / 255 so a later cell simply covers an earlier one */
+		for ( const cell_t& cell : cells ) {
+			const int rgba_wide = std::max( cell.m_glyph->m_b, 1 );
+
+			for ( int j = 0; j < height; j++ ) {
+				for ( int i = 0; i < rgba_wide; i++ ) {
+					const unsigned char* const texel = &cell.m_glyph->m_rgba[ ( i + j * rgba_wide ) * 4 ];
+					if ( texel[ 3 ] )
+						canvas[ static_cast< std::size_t >( cell.m_x - min_x + i ) + static_cast< std::size_t >( j ) * canvas_wide ] =
+							IM_COL32( texel[ 0 ], texel[ 1 ], texel[ 2 ], texel[ 3 ] );
+				}
+			}
+		}
+
+		for ( int y = 0; y < height; y++ ) {
+			const ImU32* const row = canvas.data( ) + static_cast< std::size_t >( y ) * canvas_wide;
+
+			for ( int x = 0; x < canvas_wide; ) {
+				int end = x + 1;
+				while ( end < canvas_wide && row[ end ] == row[ x ] )
+					end++;
+
+				if ( row[ x ] )
+					out.m_runs.push_back( { x + min_x, end + min_x, y, row[ x ] } );
+
+				x = end;
+			}
+		}
+	}
+}
+
+namespace
+{
+	/* interwebz text cache ( watermark + media player ), render thread only. past 64 strings, ones unused for 120 frames go */
+	const vgui_text_t& interwebz_text( const std::string& line )
+	{
+		static std::unordered_map< std::string, vgui_text_t > cache;
+		const int frame = ImGui::GetFrameCount( );
+
+		const auto [ it, fresh ] = cache.try_emplace( line );
+		if ( fresh ) {
+			/* interwebz getWidht reads the text as utf-8 */
+			std::wstring wide( static_cast< std::size_t >( std::max( MultiByteToWideChar( CP_UTF8, 0, line.c_str( ), -1, nullptr, 0 ), 1 ) ), L'\0' );
+			MultiByteToWideChar( CP_UTF8, 0, line.c_str( ), -1, wide.data( ), static_cast< int >( wide.size( ) ) );
+			wide.pop_back( );
+
+			raster_interwebz_text( it->second, wide );
+		}
+
+		it->second.m_frame = frame;
+
+		if ( cache.size( ) > 64 )
+			std::erase_if( cache, [ frame ]( const auto& entry ) { return frame - entry.second.m_frame > 120; } );
+
+		return it->second;
+	}
+
+	/* cell top-left at the int text pos; vgui multiplies texels by the text color: body = color, outline = black at color alpha */
+	void draw_interwebz_text( ImDrawList* list, const vgui_text_t& text, const ImVec2 pos, const ImU32 color )
+	{
+		const auto modulate = [ color ]( const ImU32 texel ) {
+			ImU32 out = 0;
+			for ( int shift = 0; shift < 32; shift += 8 )
+				out |= ( ( ( texel >> shift ) & 0xFF ) * ( ( color >> shift ) & 0xFF ) + 127 ) / 255 << shift;
+			return out;
+		};
+
+		const float x = std::floor( pos.x ), y = std::floor( pos.y );
+
+		for ( const vgui_run_t& run : text.m_runs )
+			list->AddRectFilled( ImVec2( x + static_cast< float >( run.m_x0 ), y + static_cast< float >( run.m_y ) ),
+			                     ImVec2( x + static_cast< float >( run.m_x1 ), y + static_cast< float >( run.m_y + 1 ) ), modulate( run.m_color ) );
+	}
+}
+
 void n_misc::impl_t::draw_watermark_interwebz( )
 {
-	const auto font = g_render.m_fonts[ e_font_names::font_name_interwebz_calibri ];
-	if ( !font )
-		return;
-
 	std::string brand = watermark_brand( );
 	std::transform( brand.begin( ), brand.end( ), brand.begin( ), []( const unsigned char c ) { return static_cast< char >( std::toupper( c ) ); } );
 
 	const std::string label = watermark_label( );
-	const std::string line  = brand + " CS:GO" + ( label.empty( ) ? "" : " | " + label );
-	const char* const text  = line.c_str( );
+	const vgui_text_t& text = interwebz_text( brand + " CS:GO" + ( label.empty( ) ? "" : " | " + label ) );
 
-	const float  font_size = font->FontSize;
-	const float  width     = std::floor( font->CalcTextSizeA( font_size, FLT_MAX, 0.f, text ).x / 2.f );
-	const ImVec2 position( 250.f - width, 20.f + 16.f - std::round( font->Ascent ) );
-
-	constexpr ImVec2 offsets[ 8 ] = { { -1.f, -1.f }, { 0.f, -1.f }, { 1.f, -1.f }, { -1.f, 0.f },
-		                             { 1.f, 0.f },   { -1.f, 1.f }, { 0.f, 1.f },  { 1.f, 1.f } };
+	if ( text.m_runs.empty( ) )
+		return;
 
 	const auto draw_list = ImGui::GetForegroundDrawList( );
 	const auto block     = g_render.begin_stretch_block( draw_list );
 
-	for ( const auto& offset : offsets )
-		draw_list->AddText( font, font_size, ImVec2( position.x + offset.x, position.y + offset.y ), IM_COL32( 0, 0, 0, 255 ), text );
-
-	draw_list->AddText( font, font_size, position, IM_COL32( 255, 255, 255, 255 ), text );
+	/* DrawStringA center: x -= GetTextSize wide / 2 ( int ), cell top at y */
+	draw_interwebz_text( draw_list, text, ImVec2( static_cast< float >( 250 - text.m_wide / 2 ), 20.f ), IM_COL32_WHITE );
 
 	g_render.end_stretch_block( block );
 }
@@ -1167,8 +1459,21 @@ void n_misc::impl_t::draw_media_player( )
 	if ( !title_font || !artist_font )
 		return;
 
-	const float title_px  = size_override > 0.f ? size_override : title_font->FontSize;
-	const float artist_px = size_override > 0.f ? size_override : artist_font->FontSize;
+	/* interwebz theme: every line through the watermark's vgui raster, line height = cell tall. gdi failed = imgui calibri */
+	const int style       = GET_VARIABLE( g_variables.m_watermark_style, int );
+	const float vgui_tall = style == 5 ? static_cast< float >( interwebz_text( " " ).m_tall ) : 0.f;
+	const bool vgui       = vgui_tall > 0.f;
+
+	const float title_px  = vgui ? vgui_tall : size_override > 0.f ? size_override : title_font->FontSize;
+	const float artist_px = vgui ? vgui_tall : size_override > 0.f ? size_override : artist_font->FontSize;
+
+	const auto measure = [ & ]( ImFont* font, const float px, const std::string& text ) {
+		if ( vgui ) {
+			const vgui_text_t& raster = interwebz_text( text );
+			return ImVec2( static_cast< float >( raster.m_wide ), static_cast< float >( raster.m_tall ) );
+		}
+		return font->CalcTextSizeA( px, FLT_MAX, 0.f, text.c_str( ) );
+	};
 
 	/* 0 tr 1 tl 2 tc 3 bc 4 bl 5 br 6 cl 7 cr. lumi = 10 px edge, 2 px under the watermark ( lumi.dll default 10 / 37 ) */
 	const bool lumi        = GET_VARIABLE( g_variables.m_media_player_lumi, bool );
@@ -1193,7 +1498,6 @@ void n_misc::impl_t::draw_media_player( )
 	if ( title.empty( ) )
 		return;
 
-	const int style           = GET_VARIABLE( g_variables.m_watermark_style, int );
 	const media_look_t look   = media_player_look( style );
 	const bool background     = GET_VARIABLE( g_variables.m_media_player_background, bool );
 	const int frame_style     = look.m_box ? style : 0;
@@ -1203,7 +1507,10 @@ void n_misc::impl_t::draw_media_player( )
 	static constexpr ImVec2 outline[ 8 ] = { { -1.f, -1.f }, { 0.f, -1.f }, { 1.f, -1.f }, { -1.f, 0.f },
 		                                     { 1.f, 0.f },   { -1.f, 1.f }, { 0.f, 1.f },  { 1.f, 1.f } };
 
-	const auto put = [ ]( ImDrawList* list, const int effect, ImFont* font, const float px, const ImVec2 pos, const ImU32 color, const std::string& text ) {
+	const auto put = [ & ]( ImDrawList* list, const int effect, ImFont* font, const float px, const ImVec2 pos, const ImU32 color, const std::string& text ) {
+		if ( vgui ) /* outline baked in the glyphs, effect unused */
+			return draw_interwebz_text( list, interwebz_text( text ), pos, color );
+
 		const ImU32 black = color & IM_COL32_A_MASK;
 
 		if ( effect == 1 )
@@ -1249,7 +1556,7 @@ void n_misc::impl_t::draw_media_player( )
 
 		float target_w = player_w;
 		for ( int k = first; k < first + shown; k++ )
-			target_w = ( std::max )( target_w, artist_font->CalcTextSizeA( artist_px, FLT_MAX, 0.f, text_at( k ).c_str( ) ).x + pad * 2.f );
+			target_w = ( std::max )( target_w, measure( artist_font, artist_px, text_at( k ) ).x + pad * 2.f );
 
 		const float ease = 1.f - std::exp( -ImGui::GetIO( ).DeltaTime * 10.f );
 		scroll           = snap ? static_cast< float >( first ) : scroll + ( static_cast< float >( first ) - scroll ) * ease;
@@ -1280,7 +1587,7 @@ void n_misc::impl_t::draw_media_player( )
 			if ( !alpha )
 				continue;
 
-			const float text_w = artist_font->CalcTextSizeA( artist_px, FLT_MAX, 0.f, text.c_str( ) ).x;
+			const float text_w = measure( artist_font, artist_px, text ).x;
 			const float text_x = align == 0 ? min.x + pad : align == 1 ? std::floor( ( min.x + max.x - text_w ) * 0.5f ) : max.x - pad - text_w;
 			put( list, effect, artist_font, artist_px, ImVec2( text_x, min.y + pad + row * step ),
 			     ( look.m_title & ~IM_COL32_A_MASK ) | ( alpha << IM_COL32_A_SHIFT ), text );
@@ -1351,7 +1658,7 @@ void n_misc::impl_t::draw_media_player( )
 		auto line = artist.empty( ) ? title : artist + " - " + title;
 		if ( !time_now.empty( ) )
 			line += "  " + time_now;
-		const auto line_size    = artist_font->CalcTextSizeA( artist_px, FLT_MAX, 0.f, line.c_str( ) );
+		const auto line_size    = measure( artist_font, artist_px, line );
 		const bool progress_bar = GET_VARIABLE( g_variables.m_media_player_progress_bar, bool );
 		const auto art          = GET_VARIABLE( g_variables.m_media_player_cover_art, bool ) ? g_media_player.m_image : nullptr;
 		const float progress    = g_media_player.get_progress( );
@@ -1481,7 +1788,7 @@ void n_misc::impl_t::draw_media_player( )
 		auto line = artist.empty( ) ? title : title + " - " + artist;
 		if ( !time_now.empty( ) )
 			line += "  " + time_now;
-		const auto line_size = artist_font->CalcTextSizeA( artist_px, FLT_MAX, 0.f, line.c_str( ) );
+		const auto line_size = measure( artist_font, artist_px, line );
 		const float total_w  = line_size.x + ( buttons ? cell_gap * 2.f + buttons_w : 0.f );
 
 		const auto draw_list = ImGui::GetForegroundDrawList( );
@@ -1498,8 +1805,8 @@ void n_misc::impl_t::draw_media_player( )
 		return;
 	}
 
-	const auto title_size  = title_font->CalcTextSizeA( title_px, FLT_MAX, 0.f, title.c_str( ) );
-	const auto artist_size = artist_font->CalcTextSizeA( artist_px, FLT_MAX, 0.f, artist.c_str( ) );
+	const auto title_size  = measure( title_font, title_px, title );
+	const auto artist_size = measure( artist_font, artist_px, artist );
 
 	const float padding   = background ? 10.f : 0.f;
 	const float min_width = background ? 140.f : 0.f;
@@ -1520,7 +1827,7 @@ void n_misc::impl_t::draw_media_player( )
 
 	const float content_h = art ? ( std::max )( art_size, text_col_h ) : text_col_h;
 
-	const float time_w     = time_now.empty( ) ? 0.f : artist_font->CalcTextSizeA( artist_px, FLT_MAX, 0.f, time_now.c_str( ) ).x;
+	const float time_w     = time_now.empty( ) ? 0.f : measure( artist_font, artist_px, time_now ).x;
 	const bool control_row = buttons || time_w > 0.f;
 	const float control_h  = control_row ? ( std::max )( artist_size.y, cell ) : 0.f;
 	const float control_w  = buttons_w + time_w + ( buttons && time_w > 0.f ? 8.f : 0.f );

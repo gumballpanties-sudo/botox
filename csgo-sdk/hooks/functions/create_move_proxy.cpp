@@ -31,6 +31,7 @@
 extern void air_stuck_final_stamp( c_user_cmd* cmd );
 extern void air_stuck_shot_proof( c_user_cmd* cmd );
 extern void edge_surf_final_stamp( c_user_cmd* cmd );
+extern void air_align_final_stamp( c_user_cmd* cmd );
 
 extern void start_movement_fix( c_user_cmd* cmd );
 extern void end_movement_fix( c_user_cmd* cmd );
@@ -586,6 +587,7 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 	g_texturebug.preserve_move( cmd );
 	/* an owned edge surf tick leaves with its own move ( anything after movement post could close you onto the ledge top ) */
 	edge_surf_final_stamp( cmd );
+	air_align_final_stamp( cmd );
 
 	/* fireman view silent_view could not hide ( ladder moves read the view ): FSN animates the 3p model with your view instead */
 	{

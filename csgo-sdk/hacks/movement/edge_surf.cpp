@@ -16,14 +16,14 @@ extern bool botox_is_ladder_trace( const trace_t& tr );
 extern bool g_edge_surf_active;
 extern bool g_air_stuck_owns_cmd;
 
-static float es_ulp( const float a )
+float es_ulp( const float a )
 {
 	int ex = 0;
 	std::frexp( a, &ex );
 	return a != 0.f ? std::ldexp( 1.f, ex - 24 ) : 1e-7f;
 }
 
-static float es_hull_gap( const c_vector& o, const c_vector& n, const float d, const c_vector& mins, const c_vector& maxs )
+float es_hull_gap( const c_vector& o, const c_vector& n, const float d, const c_vector& mins, const c_vector& maxs )
 {
 	return o.m_x * n.m_x + o.m_y * n.m_y + o.m_z * n.m_z - d + std::min( n.m_x * mins.m_x, n.m_x * maxs.m_x ) + std::min( n.m_y * mins.m_y, n.m_y * maxs.m_y ) +
 	       std::min( n.m_z * mins.m_z, n.m_z * maxs.m_z );
@@ -80,9 +80,13 @@ bool edge_surf_latched( const c_user_cmd* cmd )
 	return cmd && g_edge_surf_latch_cmd >= 0 && g_edge_surf_latch_cmd == cmd->m_command_number - 1;
 }
 
+/* air_align.cpp: its key near a ps point on a ledge top = that pin is edge surf's ( set in movement pre before its yields ) */
+extern bool g_air_align_ledge;
+
 bool edge_surf_armed( )
 {
-	return GET_VARIABLE( g_variables.m_edge_surf, bool ) && !g_ctx.m_eject_restoring && g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
+	return GET_VARIABLE( g_variables.m_edge_surf, bool ) && !g_ctx.m_eject_restoring && g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) ||
+	       g_air_align_ledge;
 }
 
 /* edgebug "edgesurf on eb": eb key arms only the takeover at a feet pin + the latched chain after it, never a fresh guide */
@@ -572,7 +576,7 @@ bool edge_surf_online( c_user_cmd* cmd, bool& pinned, bool& held )
 }
 
 /* mv->m_flMaxSpeed = weapon speed ( kisak cs_player_shared.cpp:365 ) x stamina scale ( cs_gamemovement.cpp:283 ), never raw m_flMaxspeed */
-static float es_max_speed( c_base_entity* local )
+float es_max_speed( c_base_entity* local )
 {
 	float speed = std::max( local->get_max_speed( ), 0.f );
 	if ( auto* const weapon = g_interfaces.m_client_entity_list->get< c_base_entity >( local->get_active_weapon_handle( ) );
@@ -1750,4 +1754,13 @@ void edge_surf_render( )
 	text.m_color      = pick;
 	text.m_draw_flags = text_flag_dropshadow;
 	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_text, std::make_any< text_draw_object_t >( text ) );
+}
+
+/* air_align.cpp flies this guide against a point's wall */
+char edge_surf_guide( const float err, const float gap, const float r_min, const float v_old, const float vxy, const int kc, const float authority,
+                      const float turn, const float reach, const bool owned, const float ipt, float& v )
+{
+	const es_guide_t g = es_guide( err, gap, r_min, v_old, vxy, kc, authority, turn, reach, owned, true, ipt );
+	v                  = g.v;
+	return g.act;
 }

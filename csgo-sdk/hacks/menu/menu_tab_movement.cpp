@@ -750,6 +750,26 @@ void n_menu::impl_t::tab_movement( )
 					ImVec2( 220.f, -1.f ) );
 			}
 
+			/* delta strafes you flush onto a placed ps / tb / pj point's wall in the air */
+			ImGui::Checkbox( "air align", &GET_VARIABLE( g_variables.m_air_align, bool ) );
+			if ( GET_VARIABLE( g_variables.m_air_align, bool ) ) {
+				ImGui::OptionPopup(
+					"air align settings",
+					[ & ]( ) {
+						ImGui::Label( "air align keybind" );
+						ImGui::Keybind( "air align key", &GET_VARIABLE( g_variables.m_air_align_key, key_bind_t ) );
+
+						ImGui::Label( "set air align point key" );
+						ImGui::Keybind( "set air align point key", &GET_VARIABLE( g_variables.m_air_align_point_key, key_bind_t ) );
+
+						ImGui::SliderFloat( "delta strafe##aaldelta", &GET_VARIABLE( g_variables.m_air_align_delta_strafe, float ), 0.f, 15.f, "%.2f",
+						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::SliderFloat( "reach##aalreach", &GET_VARIABLE( g_variables.m_air_align_reach, float ), 0.f, 64.f, "%.1f u",
+						                    ImGuiSliderFlags_AlwaysClamp );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
 			ImGui::Checkbox( "auto bounce", &GET_VARIABLE( g_variables.m_auto_bounce, bool ) );
 			if ( GET_VARIABLE( g_variables.m_auto_bounce, bool ) ) {
 				ImGui::OptionPopup(
@@ -1401,7 +1421,7 @@ void n_menu::impl_t::tab_movement( )
 					                       { "edgebug", "pixelsurf", "edgejump", "longjump", "delayhop", "minijump", "jumpbug", "texturebug",
 					                         "airstuck", "wallclimb", "autostrafe", "ps assist", "fireman", "ladder bug", "ladder glide",
 					                         "freelook climb", "fast ladder", "one hop", "auto crouch", "auto bounce", "tung surf", "edge skip", "half sideways",
-					                         "zeus bug", "air freeze", "edge surf", "edge catch" },
+					                         "zeus bug", "air freeze", "edge surf", "edge catch", "air align" },
 					                       GET_VARIABLE( g_variables.m_key_indicators, std::vector< bool > ).size( ) );
 
 						/* per-bind label override; empty = stock label (hint). buffer 16 = 15 chars keeps the

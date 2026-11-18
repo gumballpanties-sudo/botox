@@ -86,6 +86,8 @@ void n_movement::impl_t::autobounce_assist( c_user_cmd* cmd )
 		}
 	};
 	for ( int i = 0; i < static_cast< int >( m_bounce_points_check.size( ) ); i++ ) {
+		if ( m_bounce_points_check[ i ].point_type == 3 ) /* 3 = air align's */
+			continue;
 		if ( m_bounce_points_check[ i ].point_type != 2 ) /* 2 = pixeljump assist's */
 			consider( m_bounce_points_check[ i ] );
 	}

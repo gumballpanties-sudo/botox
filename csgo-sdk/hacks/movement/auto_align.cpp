@@ -510,6 +510,7 @@ bool aa_seek_tick = false;
 
 /* edge_surf.cpp: an edge surf feet approach owned the last cmd */
 bool edge_surf_latched( const c_user_cmd* cmd );
+extern bool g_air_align_aa_off;
 
 void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 {
@@ -518,6 +519,13 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 	s_pj_tick            = false;
 	aa_seek_tick         = false;
 	/* edge surf runs its own align on the ledge it owns ( arrival gap in ulps ): a flush park / pin search / bounce here only moves it */
+	/* air align owns an approach not parked yet ( or a pj, parked inside the lip ): a creep / contact seek / flush push here shoves it into a
+	   1/32 wall hit ( log 11-18: pj w=192 at gap 0.40, sill closing 84 at gap 0.038 ) */
+	if ( g_air_align_aa_off ) {
+		wall_detected = false;
+		aa_flush_drop( );
+		return;
+	}
 	if ( edge_surf_latched( cmd ) ) {
 		wall_detected = false;
 		aa_flush_drop( );

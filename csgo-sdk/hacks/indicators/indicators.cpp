@@ -24,6 +24,7 @@ extern bool HITGODA;
 extern bool HITGODA2;
 extern bool HITGODA3;
 extern bool g_edge_surf_active;
+extern bool g_air_align_owns;
 
 extern void botox_dbg_log( const char* fmt, ... );
 
@@ -2045,6 +2046,10 @@ void n_indicators::impl_t::keybind_indicators( )
 	if ( GET_VARIABLE( g_variables.m_pixel_jump_assist, bool ) && key_indicators.size( ) > e_keybind_indicators::key_psa &&
 	     key_indicators[ e_keybind_indicators::key_psa ] )
 		add_hit( label_pjast, HITGODA3, g_input.check_input( &GET_VARIABLE( g_variables.m_pixel_jump_assist_key, key_bind_t ) ) );
+
+	if ( GET_VARIABLE( g_variables.m_air_align, bool ) && key_indicators.size( ) > e_keybind_indicators::key_aal &&
+	     key_indicators[ e_keybind_indicators::key_aal ] )
+		add_hit( label_aal, g_air_align_owns, g_input.check_input( &GET_VARIABLE( g_variables.m_air_align_key, key_bind_t ) ) );
 
 	const auto add_plain = [ & ]( const bool enabled, const e_keybind_indicators toggle, const e_keybind_labels id, const std::uint32_t key ) {
 		if ( enabled && key_indicators.size( ) > toggle && key_indicators[ toggle ] )

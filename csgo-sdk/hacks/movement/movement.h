@@ -74,8 +74,18 @@ struct points_check_t {
 	bool show_3d_radius = false;
 	c_vector surf_dir{ };
 	int surf_dir_state = 0;
+	/* air align ( point_type 3 ): kind saved, wall probed at runtime ( state 1 ok, 2 none until aa_retry real time ) */
+	int aa_kind = 0;
+	float aa_dz = 0.f; /* trick z - pos z ( a tb rise dot is drawn under its seam ), saved */
+	int aa_state = 0;
+	c_vector aa_n{ };
+	float aa_d = 0.f;
+	float aa_retry = 0.f;
+	bool aa_ledge = false; /* no face over the dot = a ledge top ( edge surf's feet pin ) */
 	points_check_t( const c_vector& Pos = c_vector(), const std::string& Map = "" ) : pos( Pos ), map( Map ), is_free_point( false ), point_type( 0 ) { }
 };
+/* air align point kind = the finder dot it sits on: the z the hull must cross flush */
+enum air_align_kind_t : int { air_align_ps = 0, air_align_tb_head, air_align_tb_feet, air_align_tb_rise, air_align_pj };
 
 struct AnimatedPoint {
 	c_vector position;
@@ -107,6 +117,7 @@ enum point_style_id_t : int {
 	point_style_ps = 0,
 	point_style_hb,
 	point_style_pj,
+	point_style_aa,
 	point_style_calc,
 	point_style_pf_ps,
 	point_style_pf_hb,
@@ -115,7 +126,7 @@ enum point_style_id_t : int {
 	point_style_count,
 };
 inline constexpr const char* k_point_design_names[ ] = { "arrow", "single arrow", "line", "cross", "x", "dot",
-                                                         "inner ring", "diamond", "square", "triangle", "chevron", "burst" };
+                                                         "inner ring", "diamond", "square", "triangle", "chevron", "burst", "parallel lines" };
 inline constexpr const char* k_point_shape_names[ ]  = { "circle", "square", "diamond", "hexagon", "octagon", "triangle" };
 inline constexpr int k_point_design_count            = static_cast< int >( sizeof( k_point_design_names ) / sizeof( k_point_design_names[ 0 ] ) );
 inline constexpr int k_point_shape_count             = static_cast< int >( sizeof( k_point_shape_names ) / sizeof( k_point_shape_names[ 0 ] ) );
@@ -955,6 +966,7 @@ namespace n_movement
 		void movement_fix( const c_angle& old_view_point );
 		void autobounce_assist( c_user_cmd* cmd );
 		void pixeljump_assist( c_user_cmd* cmd );
+		void air_align( c_user_cmd* cmd );
 		void auto_bounce( c_user_cmd* cmd, bool yield = false );
 		void auto_bounce_render( );
 		void pixelsurf_assist( c_user_cmd* cmd );

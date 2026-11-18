@@ -98,6 +98,7 @@
     <ClCompile Include="hacks\movement\edge_skip.cpp" />
     <ClCompile Include="hacks\movement\edge_catch.cpp" />
     <ClCompile Include="hacks\movement\edge_surf.cpp" />
+    <ClCompile Include="hacks\movement\air_align.cpp" />
     <ClCompile Include="hacks\movement\edgebug.cpp" />
     <ClCompile Include="hacks\movement\edgebug_delusional.cpp" />
     <ClCompile Include="hacks\movement\edgebug_dna.cpp" />

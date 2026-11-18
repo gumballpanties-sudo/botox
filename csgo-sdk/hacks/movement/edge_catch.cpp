@@ -8,6 +8,7 @@
 #include "wall_climb.h"
 
 extern bool g_air_stuck_owns_cmd;
+extern bool g_air_align_owns;
 extern int g_jb_duck_cmd;
 bool ps_latched( );
 bool bind_cmd_taken( );
@@ -546,7 +547,7 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 		reset( );
 		return;
 	}
-	if ( const char* gate = m_start_move_type != move_type_walk ? "mt" : g_air_stuck_owns_cmd ? "as" : g_wall_climb.caught( cmd ) ? "wc" :
+	if ( const char* gate = m_start_move_type != move_type_walk ? "mt" : g_air_stuck_owns_cmd ? "as" : g_air_align_owns ? "aal" : g_wall_climb.caught( cmd ) ? "wc" :
 	                        ps_latched( ) ? "ps" : bind_cmd_taken( ) ? "bind" : g_edge_skip.active( ) ? "es" : nullptr ) {
 		if ( m_active )
 			botox_dbg_log( "EC: cut by=%s at %d/%d jb=%d\n", gate, m_hit, m_last, m_jb_plan ? 1 : 0 );

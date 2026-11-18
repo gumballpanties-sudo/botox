@@ -7,6 +7,7 @@
 #include "wall_climb.h"
 
 extern bool g_air_stuck_owns_cmd;
+extern bool g_air_align_owns;
 bool ps_latched( );
 bool bind_cmd_taken( );
 void play_trick_sound( const int sound_index, const float volume, const char* custom_path );
@@ -393,7 +394,7 @@ void n_edge_skip::impl_t::post( c_user_cmd* cmd )
 		reset( );
 		return;
 	}
-	if ( m_start_move_type != move_type_walk || g_air_stuck_owns_cmd || g_wall_climb.caught( cmd ) || ps_latched( ) || bind_cmd_taken( ) ) {
+	if ( m_start_move_type != move_type_walk || g_air_stuck_owns_cmd || g_air_align_owns || g_wall_climb.caught( cmd ) || ps_latched( ) || bind_cmd_taken( ) ) {
 		reset( );
 		return;
 	}

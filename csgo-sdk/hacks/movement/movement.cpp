@@ -66,6 +66,9 @@ bool g_air_stuck_owned_prev_tick = false;
 void edge_surf_skip( const c_user_cmd* cmd, const char* why );
 bool edge_surf_latched( const c_user_cmd* cmd );
 extern int g_edge_surf_pin_cmd;
+extern bool g_air_align_owns;
+extern bool g_air_align_aa_off;
+extern bool g_air_align_ledge;
 
 c_angle g_air_stuck_authored_view{ };
 bool g_air_stuck_authored_view_valid = false;
@@ -357,6 +360,9 @@ void n_movement::impl_t::on_create_move_pre( )
 
 	g_air_stuck_owned_prev_tick     = g_air_stuck_owns_cmd;
 	g_air_stuck_owns_cmd            = false;
+	g_air_align_owns                = false;
+	g_air_align_aa_off              = false;
+	g_air_align_ledge               = false;
 	g_air_stuck_authored_view_valid = false;
 	/* this-tick fact: stale would re-press a dead weld cmd */
 	g_air_stuck_stamp_valid = false;
@@ -433,6 +439,9 @@ void n_movement::impl_t::on_create_move_pre( )
 				g_ctx.m_cmd->m_buttons |= in_duck;
 			else if ( m_pixelsurf_data.should_unduck )
 				g_ctx.m_cmd->m_buttons &= ~in_duck;
+			/* after the duck pins ( its press crop reads the sent duck ), before auto align ( owns the last ulps at the wall ) */
+			this->air_align( g_ctx.m_cmd );
+			gnd_wish_check( "air_align" );
 			if ( GET_VARIABLE( g_variables.m_auto_align, bool ) && !( g_prediction.backup_data.m_flags & 1 ) &&
 			     !( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) ) {
 				static long long aa_total = 0ll, aa_calls = 0ll, aa_worst = 0ll, aa_sim_total = 0ll, aa_sim_worst = 0ll;
@@ -1990,7 +1999,7 @@ void n_movement::impl_t::jump_bug_assist( c_user_cmd* cmd )
 	if ( !cmd || !local || !GET_VARIABLE( g_variables.m_jump_bug_assist, bool ) || !GET_VARIABLE( g_variables.m_jump_bug, bool ) ||
 	     !g_input.check_input( &GET_VARIABLE( g_variables.m_jump_bug_key, key_bind_t ) ) )
 		return;
-	if ( ( cmd->m_buttons & in_duck ) || g_air_stuck_holding || HITGODA2 || HITGODA3 || g_wall_climb.active( cmd ) || g_texturebug.m_owns_cmd ||
+	if ( ( cmd->m_buttons & in_duck ) || g_air_stuck_holding || HITGODA2 || HITGODA3 || g_air_align_owns || g_wall_climb.active( cmd ) || g_texturebug.m_owns_cmd ||
 	     g_texturebug.m_hit || g_texturebug.m_hs_hit || m_pixelsurf_data.should_pixel_surf || m_edgebug_data.m_will_edgebug )
 		return;
 	auto* col       = local->get_collideable( );
@@ -3181,7 +3190,7 @@ void n_movement::impl_t::auto_strafe_mouse( float* x, float* y )
 
 void n_movement::impl_t::AutoStrafe( c_user_cmd* cmd )
 {
-	if ( !auto_strafe_live( ) ) {
+	if ( !auto_strafe_live( ) || g_air_align_owns ) {
 		s_as_mouse_x = s_as_mouse_y = 0.f;
 		return;
 	}
@@ -3318,7 +3327,7 @@ void n_movement::impl_t::strafe_optimizer( c_user_cmd* cmd )
 	if ( GET_VARIABLE( g_variables.m_auto_strafe, bool ) &&
 	     g_input.check_input( &GET_VARIABLE( g_variables.m_auto_strafe_key, key_bind_t ) ) )
 		return;
-	if ( g_air_stuck_owns_cmd || starts_on_surf_pin( ) )
+	if ( g_air_stuck_owns_cmd || g_air_align_owns || starts_on_surf_pin( ) )
 		return;
 
 	const int move_type = g_ctx.m_local->get_move_type( );
