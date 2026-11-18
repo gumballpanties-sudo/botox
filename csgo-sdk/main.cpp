@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cstdarg> // crash witness line builder
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -191,15 +192,18 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 	/* a heal logs whatever raised it (e06d7363 = c++ throw): that's who would have crashed us */
 	const bool healed = header_heal( );
 	const bool oom    = crash_is_oom( record );
+	/* c0000409 here = crash_on_abort's own record: a real fastfail never reaches a vectored handler */
+	const bool abort_hit = code == 0xC0000409;
+	const bool fatal     = oom || abort_hit;
 
-	if ( !healed && !oom && code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_STACK_OVERFLOW && code != EXCEPTION_ILLEGAL_INSTRUCTION &&
+	if ( !healed && !fatal && code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_STACK_OVERFLOW && code != EXCEPTION_ILLEGAL_INSTRUCTION &&
 	     code != EXCEPTION_PRIV_INSTRUCTION && code != EXCEPTION_INT_DIVIDE_BY_ZERO && code != 0xC0000374 && code != 0xC000000D )
 		return EXCEPTION_CONTINUE_SEARCH;
 
 	/* some first chance faults get handled (engine probes): 8 per session, one thread at a time. the oom gets its own one: the
 	   game dies right after it, whatever the 8 already spent */
 	static volatile long s_oom_logged = 0;
-	if ( ( oom ? InterlockedExchange( &s_oom_logged, 1 ) != 0 : InterlockedIncrement( &g_crash_hits ) > 8 ) || InterlockedExchange( &g_crash_busy, 1 ) )
+	if ( ( fatal ? InterlockedExchange( &s_oom_logged, 1 ) != 0 : InterlockedIncrement( &g_crash_hits ) > 8 ) || InterlockedExchange( &g_crash_busy, 1 ) )
 		return EXCEPTION_CONTINUE_SEARCH;
 
 	const auto tib = reinterpret_cast< const NT_TIB* >( NtCurrentTeb( ) );
@@ -221,6 +225,9 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 	if ( code == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 )
 		crash_append( " (%s 0x%08x)", record->ExceptionInformation[ 0 ] == 8 ? "exec" : record->ExceptionInformation[ 0 ] ? "write" : "read",
 		              static_cast< unsigned >( record->ExceptionInformation[ 1 ] ) );
+
+	if ( abort_hit )
+		crash_append( " ABORT ( std::terminate = c++ throw out of a thread / noexcept, or purecall )" );
 
 	if ( oom ) {
 		char said[ 96 ] = { };
@@ -278,7 +285,7 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 	char dump_path[ MAX_PATH ] = { };
 	/* oom: the memory map only ( who holds the address space ), small, the game is dead either way */
 	const bool dump = g_minidump_write &&
-	                  ( oom || ( code == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 && record->ExceptionInformation[ 1 ] == fault &&
+	                  ( fatal || ( code == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 && record->ExceptionInformation[ 1 ] == fault &&
 	                             !crash_in_image( fault ) ) ) &&
 	                  InterlockedIncrement( &g_crash_dumps ) == 1;
 	if ( dump ) {
@@ -312,6 +319,28 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 
+/* abort( ) ( std::terminate, purecall ) = SIGABRT then an int 0x29 fastfail no vectored handler sees: 11-18 config load died with no
+   line, no dump, last log lines unflushed. runs on the dying thread, so the stack scan finds the throw site under the dispatch frames */
+static void __cdecl crash_on_abort( int )
+{
+	CONTEXT context{ };
+	RtlCaptureContext( &context );
+
+	EXCEPTION_RECORD record{ };
+	record.ExceptionCode             = 0xC0000409;
+	record.ExceptionAddress          = _ReturnAddress( );
+	record.NumberParameters          = 1;
+	record.ExceptionInformation[ 0 ] = 7; // FAST_FAIL_FATAL_APP_EXIT
+
+	EXCEPTION_POINTERS info{ &record, &context };
+	crash_witness( &info );
+	botox_dbg_log_close( );
+}
+
+using abort_handler_t = void( __cdecl* )( int );
+static abort_handler_t g_prev_abort = SIG_DFL;
+static bool g_abort_hooked          = false;
+
 static void crash_witness_install( void* instance )
 {
 	MEMORY_BASIC_INFORMATION region{ };
@@ -343,6 +372,9 @@ static void crash_witness_install( void* instance )
 		g_minidump_write = reinterpret_cast< minidump_write_t >( GetProcAddress( dbghelp, "MiniDumpWriteDump" ) );
 
 	g_crash_witness = AddVectoredExceptionHandler( 1, crash_witness );
+
+	g_prev_abort   = signal( SIGABRT, crash_on_abort );
+	g_abort_hooked = g_prev_abort != SIG_ERR;
 }
 
 static void crash_witness_remove( )
@@ -351,6 +383,13 @@ static void crash_witness_remove( )
 		RemoveVectoredExceptionHandler( g_crash_witness );
 
 	g_crash_witness = nullptr;
+
+	/* an unmapped module must not stay the abort handler. put back only if still ours ( someone may have set theirs since ) */
+	if ( g_abort_hooked ) {
+		g_abort_hooked = false;
+		if ( const abort_handler_t current = signal( SIGABRT, g_prev_abort ); current != crash_on_abort )
+			signal( SIGABRT, current );
+	}
 }
 
 static std::atomic< bool > g_media_thread_alive{ false };

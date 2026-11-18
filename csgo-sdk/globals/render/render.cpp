@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -244,7 +245,18 @@ namespace
 			const std::streamoff size = file ? static_cast< std::streamoff >( file.tellg( ) ) : 0;
 
 			if ( size > 0 ) {
-				it->second.resize( static_cast< std::size_t >( size ) );
+				/* cjk .ttc = 10-20 mb, a fragmented 32 bit process has no such block = bad_alloc ( 11-18 config load abort ). file skipped,
+				   its glyphs draw '?'; out of the cache so a later rebuild tries again */
+				try {
+					it->second.resize( static_cast< std::size_t >( size ) );
+				}
+				catch ( const std::bad_alloc& ) {
+					botox_dbg_log( "FONT: no room for '%s' %.1f mb ( largest free %u mb ), skipped", path.c_str( ),
+					               static_cast< double >( size ) / ( 1024.0 * 1024.0 ), largest_free_block_mb( ) );
+					g_font_files.erase( it );
+					static const std::vector< unsigned char > s_none{ };
+					return s_none;
+				}
 				file.seekg( 0 );
 
 				if ( !file.read( reinterpret_cast< char* >( it->second.data( ) ), size ) )
@@ -911,6 +923,20 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 	return built;
 }
 
+/* std::thread entry is noexcept: a throw out of a bake = std::terminate = abort, game dead ( 11-18 ). caught = failed bake */
+template < class F >
+static bool font_build_caught( F&& build )
+{
+	try {
+		return build( );
+	}
+	catch ( const std::exception& e ) {
+		std::snprintf( g_ft_build_fail, sizeof( g_ft_build_fail ), "threw %s", e.what( ) );
+		botox_dbg_log( "FONT: build %s", g_ft_build_fail );
+		return false;
+	}
+}
+
 /* worker body: one build, parked for on_end_scene. the flag drops LAST - it is what eject and the
    next reload wait on, so nothing of ours may run after it but the thread's own return */
 static void build_fonts_worker( const font_request_t request )
@@ -919,13 +945,13 @@ static void build_fonts_worker( const font_request_t request )
 
 	const auto start = std::chrono::steady_clock::now( );
 
-	bool built = build_fonts( *set, request );
-	if ( !built && std::strncmp( g_ft_build_fail, "pixel alloc failed", 18 ) == 0 ) {
+	bool built = font_build_caught( [ & ] { return build_fonts( *set, request ); } );
+	if ( !built && ( std::strncmp( g_ft_build_fail, "pixel alloc failed", 18 ) == 0 || std::strncmp( g_ft_build_fail, "threw", 5 ) == 0 ) ) {
 		const std::string full_fail = g_ft_build_fail;
 		IM_DELETE( set->m_atlas );
 		*set        = font_set_t{ };
 		s_font_lean = true;
-		built       = build_fonts( *set, request );
+		built       = font_build_caught( [ & ] { return build_fonts( *set, request ); } );
 		s_font_lean = false;
 		set->m_lean = built;
 		botox_dbg_log( "FONT: lean rebuild after '%s' ok=%d %dx%d", full_fail.c_str( ), built, built ? set->m_atlas->TexWidth : 0,
@@ -1075,7 +1101,7 @@ static void build_indicator_fonts_worker( const indicator_font_request_t request
 
 	const auto start = std::chrono::steady_clock::now( );
 
-	if ( !build_indicator_fonts( *set, request ) ) {
+	if ( !font_build_caught( [ & ] { return build_indicator_fonts( *set, request ); } ) ) {
 		IM_DELETE( set->m_atlas );
 		set->m_atlas = nullptr;
 	}
