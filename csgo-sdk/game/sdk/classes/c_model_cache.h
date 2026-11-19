@@ -34,6 +34,12 @@ public:
 		return g_virtual.call< int, unsigned short >( this, 12, handle );
 	}
 
+	// slot 13 GetRef: refcount, no change
+	int get_ref( unsigned short handle )
+	{
+		return g_virtual.call< int, unsigned short >( this, 13, handle );
+	}
+
 	/* slot 14 = FindMDL + 4 (SetCacheNotify, FindMDL, AddRef, Release, GetRef, GetStudioHdr). loads the mdl
 	   if needed: game thread only, never from inside the FindMDL hook. */
 	studiohdr_t* get_studio_hdr( unsigned short handle )

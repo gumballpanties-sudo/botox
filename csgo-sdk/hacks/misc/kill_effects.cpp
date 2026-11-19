@@ -15,6 +15,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <float.h>
+#include <intrin.h>
 #include <iterator>
 #include <condition_variable>
 #include <memory>
@@ -570,15 +572,17 @@ namespace
 		float m_su, m_sv;
 	};
 
-	enum e_kfx_kind : int { kfx_square, kfx_disc, kfx_glow, kfx_smoke, kfx_star };
+	// kfx_star .. kfx_cross = soul shape combo 1..5, same order
+	enum e_kfx_kind : int { kfx_square, kfx_disc, kfx_glow, kfx_smoke, kfx_star, kfx_star5, kfx_triangle, kfx_box, kfx_cross };
 
 	// rebuilt every paint, drawn in kill_effects_world ( main thread both )
 	std::vector< kfx_vertex_t > g_kfx_quads{ };
 
-	// spin = 0..1 shader param packed into frac( kind ), smoke + star only
+	// spin = 0..1 shader param packed into frac( kind ), smoke + shapes only; capped < 1 so kind never rounds into the next kind
 	void kfx_quad( const c_vector& at, const float radius, const float x0, const float y0, const float x1, const float y1, const e_kfx_kind kind,
-	               const ImU32 color, const float spin = 0.f )
+	               const ImU32 color, float spin = 0.f )
 	{
+		spin = std::clamp( spin, 0.f, 0.999f );
 		// imgui packs abgr, d3d diffuse = argb
 		const unsigned int argb = ( color & 0xff00ff00u ) | ( ( color & 0xffu ) << 16 ) | ( ( color >> 16 ) & 0xffu );
 		const auto corner       = [ & ]( const float x, const float y, const float su, const float sv ) {
@@ -622,6 +626,7 @@ namespace
 	constexpr float k_melt_stop        = 0.55f;
 	constexpr float k_melt_film_cap    = 2.5f;
 	constexpr float k_melt_edge        = 0.15f;
+	constexpr float k_melt_feather     = 0.6f;
 	constexpr float k_melt_lift        = 0.1f;
 	constexpr float k_melt_max_dt      = 1.f / 120.f;
 	constexpr int k_melt_max_sub       = 64;
@@ -1069,10 +1074,11 @@ namespace
 		return lo + ( hi - lo ) * ty;
 	}
 
-	unsigned int melt_pack( const float* rgb )
+	/* alpha = coverage: 1 body / thick goo, 0 at the puddle rim */
+	unsigned int melt_pack( const float* rgb, const float cover = 1.f )
 	{
 		const auto channel = [ ]( const float value ) { return static_cast< unsigned int >( std::clamp( value, 0.f, 255.f ) ); };
-		return 0xff000000u | ( channel( rgb[ 0 ] ) << 16 ) | ( channel( rgb[ 1 ] ) << 8 ) | channel( rgb[ 2 ] );
+		return ( channel( cover * 255.f + 0.5f ) << 24 ) | ( channel( rgb[ 0 ] ) << 16 ) | ( channel( rgb[ 1 ] ) << 8 ) | channel( rgb[ 2 ] );
 	}
 
 	/* bones + skin set: per vertex state, positions as of now ( capture fallback ), drip streaks */
@@ -1562,14 +1568,16 @@ namespace
 			}
 
 		const auto inside = [ & ]( const int i, const int j ) { return open[ local( i, j ) ] && smooth[ local( i, j ) ] > k_melt_edge; };
-		const auto emit   = [ & ]( const c_vector& p, const std::size_t l ) {
-            mesh.m_vertices.push_back( { p.m_x, p.m_y, p.m_z, normal[ l ].m_x, normal[ l ].m_y, normal[ l ].m_z, melt_pack( &rgb[ l * 3 ] ), 0.f, 0.f, 0.f, 1.f } );
-            return static_cast< int >( mesh.m_vertices.size( ) ) - 1;
+		/* thin goo at the rim fades into the floor instead of ending on a hard cut line */
+		const auto emit = [ & ]( const c_vector& p, const std::size_t l, const float depth ) {
+			mesh.m_vertices.push_back( { p.m_x, p.m_y, p.m_z, normal[ l ].m_x, normal[ l ].m_y, normal[ l ].m_z,
+			                             melt_pack( &rgb[ l * 3 ], std::clamp( depth / k_melt_feather, 0.f, 1.f ) ), 0.f, 0.f, 0.f, 1.f } );
+			return static_cast< int >( mesh.m_vertices.size( ) ) - 1;
 		};
 		const auto corner = [ & ]( const int i, const int j ) {
 			const std::size_t l = local( i, j );
 			if ( center[ l ] < 0 )
-				center[ l ] = emit( c_vector( melt_pool_x( sim, i ), melt_pool_y( sim, j ), floor[ l ] + smooth[ l ] ), l );
+				center[ l ] = emit( c_vector( melt_pool_x( sim, i ), melt_pool_y( sim, j ), floor[ l ] + smooth[ l ] ), l, smooth[ l ] );
 			return center[ l ];
 		};
 		/* w = wet corner, o = the other one ( dry, or wet on another floor level: edge stops halfway, never bridges the step ) */
@@ -1586,7 +1594,7 @@ namespace
 			const float base     = level ? floor[ lw ] + ( floor[ lo ] - floor[ lw ] ) * t : floor[ lw ];
 			const float x        = melt_pool_x( sim, wi ) + ( melt_pool_x( sim, oi ) - melt_pool_x( sim, wi ) ) * t;
 			const float y        = melt_pool_y( sim, wj ) + ( melt_pool_y( sim, oj ) - melt_pool_y( sim, wj ) ) * t;
-			const int made       = emit( c_vector( x, y, base + k_melt_lift ), lw );
+			const int made       = emit( c_vector( x, y, base + k_melt_lift ), lw, 0.f );
 			if ( shared )
 				slot = made;
 			return made;
@@ -2199,7 +2207,7 @@ vs_out main( vs_in i )
 	o.normal   = i.normal;
 	o.world    = i.position;
 	o.color    = float4( i.color.rgb, i.extra.y );
-	o.uv       = float4( i.uv, i.extra.x, 0.0 );
+	o.uv       = float4( i.uv, i.extra.x, i.color.a );
 	return o;
 }
 )";
@@ -2210,6 +2218,22 @@ float4 eye : register( c0 );
 float4 params : register( c1 );
 float4 light : register( c2 );
 
+float hash( float2 p )
+{
+	p = 50.0 * frac( p * 0.3183099 + float2( 0.71, 0.113 ) );
+	return frac( p.x * p.y * ( p.x + p.y ) );
+}
+
+// value noise d/dx, d/dy
+float2 slope( float2 p )
+{
+	const float2 i = floor( p );
+	const float2 f = frac( p );
+	const float2 u = f * f * ( 3.0 - 2.0 * f );
+	const float a = hash( i ), b = hash( i + float2( 1, 0 ) ), c = hash( i + float2( 0, 1 ) ), d = hash( i + 1.0 );
+	return 6.0 * f * ( 1.0 - f ) * ( float2( b - a, c - a ) + ( a - b - c + d ) * u.yx );
+}
+
 float4 main( float3 normal : TEXCOORD0, float3 world : TEXCOORD1, float4 color : TEXCOORD2, float4 uv : TEXCOORD3 ) : COLOR
 {
 	const float3 v = normalize( eye.xyz - world );
@@ -2217,6 +2241,11 @@ float4 main( float3 normal : TEXCOORD0, float3 world : TEXCOORD1, float4 color :
 	n              = dot( n, v ) < 0.0 ? -n : n;
 
 	const float wet  = color.a;
+	// up facing wet goo: lumps + a turned octave ( its lattice off the first ) so the flat puddle catches light like liquid
+	const float2 turned = float2( 0.8 * world.x - 0.6 * world.y, 0.6 * world.x + 0.8 * world.y );
+	const float2 g2     = slope( turned * 0.6 + 7.3 ) * 0.08;
+	const float2 g      = slope( world.xy * 0.25 ) * 0.12 + float2( 0.8 * g2.x + 0.6 * g2.y, 0.8 * g2.y - 0.6 * g2.x );
+	n                   = normalize( n - float3( g, 0.0 ) * wet * saturate( n.z ) );
 	const float3 tex = tex2D( capture, uv.xy ).rgb;
 	const float3 base = lerp( color.rgb, tex, saturate( uv.z * params.y ) );
 
@@ -2225,7 +2254,7 @@ float4 main( float3 normal : TEXCOORD0, float3 world : TEXCOORD1, float4 color :
 	const float spec = pow( max( saturate( dot( n, h ) ), 1e-4 ), lerp( 16.0, 72.0, wet ) ) * lerp( 0.04, 0.3, wet );
 	const float rim  = pow( 1.0 - saturate( dot( n, v ) ), 4.0 ) * 0.05 * wet;
 
-	return float4( base * ( ( 0.78 + 0.3 * ndl ) * ( 1.0 - 0.15 * wet ) ) + spec + rim, params.x );
+	return float4( base * ( ( 0.78 + 0.3 * ndl ) * ( 1.0 - 0.15 * wet ) ) + spec + rim, params.x * uv.w );
 }
 )";
 
@@ -2300,13 +2329,21 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 
 	const float kind = shape.z;
 	if ( kind > 3.5 ) {
-		// star: 4 points, tip 1 / notch 0.43 ( star-2-solid svg ), frac( kind ) = orientation; fold to first octant, sign dist to tip-notch edge
-		const float spin = frac( kind ) * 6.2831853;
-		const float2 cs  = float2( cos( spin ), sin( spin ) );
-		float2 q         = abs( float2( shape.x * cs.x - shape.y * cs.y, shape.x * cs.y + shape.y * cs.x ) );
-		if ( q.y > q.x )
-			q = q.yx;
-		const float d = dot( q - float2( 1.0, 0.0 ), float2( 0.402, 0.916 ) );
+		/* shapes 4 star / 5 star / triangle / square / cross, tips at r 1, frac( kind ) = orientation.
+		   fold to half a sector ( tip on +y ), sign dist to tip-notch edge; notch r = cos( pi / n ) = polygon.
+		   4 star notch 0.431 ( star-2-solid svg ), 5 star 0.454 ( material star svg ) */
+		const float id     = floor( kind );
+		const float n      = id < 4.5 ? 4.0 : id < 5.5 ? 5.0 : id < 6.5 ? 3.0 : 4.0;
+		const float rf     = id < 4.5 ? 0.431 : id < 5.5 ? 0.454 : id < 6.5 ? 0.5 : 0.7071068;
+		const float sector = 6.2831853 / n;
+		float a            = atan2( shape.x + 1e-6, shape.y ) + frac( kind ) * 6.2831853;
+		a                  = abs( a - sector * floor( a / sector + 0.5 ) );
+		const float2 q     = r * float2( sin( a ), cos( a ) );
+		const float h      = 0.5 * sector;
+		const float2 e     = float2( rf * sin( h ), rf * cos( h ) - 1.0 );
+		float d            = dot( q - float2( 0.0, 1.0 ), normalize( float2( -e.y, e.x ) ) );
+		if ( id > 7.5 )
+			d = max( q.x - 0.23, q.y - 0.973 ); // cross: + of two boxes, svg arm width / length 0.236
 		return float4( color.rgb, color.a * saturate( -d / max( fwidth( d ), 1e-4 ) + 0.5 ) );
 	}
 	if ( kind > 2.5 ) {
@@ -2902,6 +2939,79 @@ namespace
 			return true;
 		} );
 	}
+
+	/* RAG: TEMP diag 11-19 ( user: melt once, death particles off -> later kills fly / stretch / jitter; fresh inject fine ).
+	   cached bones only ( setup_bones is a suspect ). v = pelvis u/s, span = head-pelvis, reach = farthest hitbox from pelvis
+	   ( limp ~40u ), fp = fast path byte, hid = melt hides it, ref = mdl cache refcount, fpu / csr = main thread fp state */
+	struct rag_watch_t {
+		c_base_entity* m_entity = nullptr;
+		int m_index = 0, m_step = 0;
+		float m_since = 0.f, m_last = 0.f;
+		c_vector m_prev{ };
+	};
+	std::vector< rag_watch_t > g_rag_watch{ };
+
+	void ragdoll_watch( const float cur )
+	{
+		static constexpr float k_at[] = { 0.05f, 0.25f, 0.75f, 2.f };
+		static auto physics           = g_interfaces.m_convar->find_var( "cl_ragdoll_physics_enable" );
+		static int last_mode          = -1;
+
+		const int mode = GET_VARIABLE( g_variables.m_death_particles, bool ) ? GET_VARIABLE( g_variables.m_death_particles_type, int ) : -1;
+		if ( mode != last_mode ) {
+			botox_dbg_log( "RAG: mode %d -> %d ( -1 = death particles off, 7 = melt ) melts=%d hidden=%d spawned=%d", last_mode, mode,
+			               static_cast< int >( g_melts.size( ) ), static_cast< int >( g_melt_hidden.size( ) ), g_melt_id_next - 1 );
+			last_mode = mode;
+		}
+
+		auto& list = *g_interfaces.m_client_entity_list;
+		std::erase_if( g_rag_watch, [ & ]( const rag_watch_t& w ) { return cur < w.m_since || list.get< c_base_entity >( w.m_index ) != w.m_entity; } );
+
+		for ( int i = 1; i <= list.get_highest_entity_index( ); i++ ) {
+			const auto entity = list.get< c_base_entity >( i );
+			if ( !entity )
+				continue;
+			const auto client_class = static_cast< c_client_networkable* >( entity )->get_client_class( );
+			if ( !client_class || client_class->m_class_id != e_class_ids::ccs_ragdoll ||
+			     std::any_of( g_rag_watch.begin( ), g_rag_watch.end( ), [ & ]( const rag_watch_t& w ) { return w.m_entity == entity; } ) )
+				continue;
+
+			g_rag_watch.push_back( { entity, i, 0, cur, cur, { } } );
+			const model_t* model       = entity->get_model( );
+			const unsigned short cache = model ? g_interfaces.m_model_info->get_cache_handle( model ) : 0xffffu;
+			botox_dbg_log( "RAG: new idx=%d fp=%d hid=%d mode=%d melts=%d hidden=%d phys=%d force=%.0f vel=%.0f ref=%d fpu=%x csr=%x", i,
+			               entity->can_use_fast_path( ) ? 1 : 0, kill_effects_hides_ragdoll( i ) ? 1 : 0, mode, static_cast< int >( g_melts.size( ) ),
+			               static_cast< int >( g_melt_hidden.size( ) ), physics ? physics->get_int( ) : -1, entity->get_ragdoll_force( ).length( ),
+			               entity->get_ragdoll_velocity( ).length( ), cache != 0xffffu ? g_interfaces.m_model_cache->get_ref( cache ) : -1,
+			               _controlfp( 0, 0 ), _mm_getcsr( ) );
+		}
+
+		for ( rag_watch_t& w : g_rag_watch ) {
+			if ( w.m_step >= static_cast< int >( std::size( k_at ) ) || cur - w.m_since < k_at[ w.m_step ] )
+				continue;
+
+			auto& bones = w.m_entity->get_cached_bone_data( );
+			hitbox_resolver_t resolver{ };
+			if ( !resolver.setup( w.m_entity ) || bones.count( ) <= 0 || !bones.base( ) ) {
+				botox_dbg_log( "RAG: idx=%d t=%.2f no bones", w.m_index, cur - w.m_since );
+				w.m_step++;
+				continue;
+			}
+
+			const c_vector pelvis = resolver.position( e_hitboxes::hitbox_pelvis, bones.base( ) );
+			float reach           = 0.f;
+			for ( int h = 0; h < resolver.m_set->m_hit_boxes; h++ )
+				reach = ( std::max )( reach, ( resolver.position( h, bones.base( ) ) - pelvis ).length( ) );
+			const float v = w.m_step ? ( pelvis - w.m_prev ).length( ) / ( std::max )( cur - w.m_last, 0.001f ) : 0.f;
+
+			botox_dbg_log( "RAG: idx=%d t=%.2f pel=(%.0f %.0f %.0f) v=%.0f span=%.1f reach=%.1f fp=%d hid=%d", w.m_index, cur - w.m_since, pelvis.m_x,
+			               pelvis.m_y, pelvis.m_z, v, ( resolver.position( e_hitboxes::hitbox_head, bones.base( ) ) - pelvis ).length( ), reach,
+			               w.m_entity->can_use_fast_path( ) ? 1 : 0, kill_effects_hides_ragdoll( w.m_index ) ? 1 : 0 );
+			w.m_prev = pelvis;
+			w.m_last = cur;
+			w.m_step++;
+		}
+	}
 } // namespace
 
 void kill_effects_paint( )
@@ -2911,6 +3021,10 @@ void kill_effects_paint( )
 	const float cur    = g_interfaces.m_global_vars_base->m_current_time;
 
 	hl2_dissolve_paint( in_game, cur );
+	if ( in_game )
+		ragdoll_watch( cur );
+	else
+		g_rag_watch.clear( );
 
 	if ( !in_game || !GET_VARIABLE( g_variables.m_death_particles, bool ) || cur + 1.f < g_kfx_last_cur ) {
 		g_kfx.clear( );
@@ -2935,7 +3049,7 @@ void kill_effects_paint( )
 		return;
 
 	const bool glow  = GET_VARIABLE( g_variables.m_death_particles_glow, bool );
-	const bool stars = GET_VARIABLE( g_variables.m_death_particles_soul_stars, bool );
+	const int shape  = std::clamp( GET_VARIABLE( g_variables.m_death_particles_soul_shape, int ), 0, 5 );
 
 	for ( kfx_particle_t& particle : g_kfx ) {
 		particle.m_age += dt;
@@ -3008,11 +3122,12 @@ void kill_effects_paint( )
 			kfx_quad( particle.m_pos, size, -1.f, -1.f, 1.f, 1.f, kfx_smoke, color.get_u32( alpha * 0.55f ), spin - std::floor( spin ) );
 			continue;
 		}
-		if ( particle.m_style >= 0 && stars ) {
-			// star over its glow, m_seed = fixed random orientation
+		if ( particle.m_style >= 0 && shape ) {
+			// shape over its glow, m_seed = fixed random orientation
 			if ( glow )
 				kfx_quad( particle.m_pos, size, -2.8f, -2.8f, 2.8f, 2.8f, kfx_glow, color.get_u32( alpha * 0.5f ) );
-			kfx_quad( particle.m_pos, size * 1.6f, -1.f, -1.f, 1.f, 1.f, kfx_star, color.get_u32( alpha ), particle.m_seed );
+			kfx_quad( particle.m_pos, size * 1.6f, -1.f, -1.f, 1.f, 1.f, static_cast< e_kfx_kind >( kfx_star + shape - 1 ), color.get_u32( alpha ),
+			          particle.m_seed );
 			continue;
 		}
 		if ( glow && particle.m_style >= 0 ) {

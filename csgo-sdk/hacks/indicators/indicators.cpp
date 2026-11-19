@@ -1466,14 +1466,18 @@ static float slide_spawn_x( const slide_dir_t& d, const float right_x, const flo
 	return d.m_side == smooth_origin_left ? g_ctx.m_width - right_x - w : right_x;
 }
 
-/* keybind tags: random angle = own roll in +-|angle| per activation, else the slider live */
-static float key_slide_roll( )
+/* random angle option: roll in +-|angle| per spawn */
+static float slide_roll( const float a )
 {
-	if ( !GET_VARIABLE( g_variables.m_key_indicators_smooth_random_angle, bool ) )
-		return 0.f;
-	const float a = GET_VARIABLE( g_variables.m_key_indicators_smooth_angle, float );
 	const float m = std::isfinite( a ) ? std::min( std::fabs( a ), 90.f ) : 0.f;
 	return m > 0.f ? part_rand( -m, m ) : 0.f;
+}
+
+/* keybind tags: random = own roll per activation, else the slider live */
+static float key_slide_roll( )
+{
+	return GET_VARIABLE( g_variables.m_key_indicators_smooth_random_angle, bool ) ? slide_roll( GET_VARIABLE( g_variables.m_key_indicators_smooth_angle, float ) )
+	                                                                              : 0.f;
 }
 
 static slide_dir_t key_slide_dir( const int fallback, const float rolled )
@@ -2538,6 +2542,7 @@ struct speed_pair_opts_t {
 	bool m_kami_glide = false;
 	int m_smooth_origin  = smooth_origin_auto;
 	float m_smooth_angle = 0.f;
+	bool m_smooth_random = false; /* pre rolls its own angle each show */
 };
 
 static void speed_pair( speed_pair_state_t& st, const int style, const char* anim_key, const std::string& main_text, const std::string& pre_value,
@@ -2644,7 +2649,8 @@ static void speed_pair( speed_pair_state_t& st, const int style, const char* ani
 				k.m_pre_fresh = false;
 				k.m_pre_slide = ImVec2( 0.f, 0.f );
 				if ( opts.m_smooth_origin >= smooth_origin_right && opts.m_smooth_origin <= smooth_origin_top ) {
-					const slide_dir_t dir = slide_dir( opts.m_smooth_origin, smooth_origin_right, opts.m_smooth_angle );
+					const slide_dir_t dir =
+						slide_dir( opts.m_smooth_origin, smooth_origin_right, opts.m_smooth_random ? slide_roll( opts.m_smooth_angle ) : opts.m_smooth_angle );
 					const float drop      = ( dir.m_side == smooth_origin_top ? -k_smooth_spawn_drop : k_smooth_spawn_drop ) *
 					                   ( g_ctx.m_height > 0.f ? g_ctx.m_height / 1080.f : 1.f );
 					const float primary = !dir.m_axis_y ? slide_run_x( dir, smooth_spawn_x( 2 ), k.m_pre_x ) : pre_y + drop;
@@ -2709,14 +2715,16 @@ static void speed_pair( speed_pair_state_t& st, const int style, const char* ani
 			s.m_has_main                     = true;
 		}
 
-		const slide_dir_t dir = slide_dir( opts.m_smooth_origin, smooth_origin_right, opts.m_smooth_angle );
-		const float drop      = ( dir.m_side == smooth_origin_top ? -k_smooth_spawn_drop : k_smooth_spawn_drop ) *
-		                   ( g_ctx.m_height > 0.f ? g_ctx.m_height / 1080.f : 1.f );
+		const auto pre_dir = [ & ]( ) { return slide_dir( opts.m_smooth_origin, smooth_origin_right, opts.m_smooth_random ? p.m_angle : opts.m_smooth_angle ); };
+		slide_dir_t dir    = pre_dir( );
+		const float drop   = ( dir.m_side == smooth_origin_top ? -k_smooth_spawn_drop : k_smooth_spawn_drop ) * ( g_ctx.m_height > 0.f ? g_ctx.m_height / 1080.f : 1.f );
 
 		if ( show_pre && ( !s.m_has_pre || p.m_removing ) ) {
 			p                  = { };
 			p.m_target_opacity = 1.f;
 			p.m_appear_until   = now + k_smooth_appear_delay;
+			p.m_angle          = opts.m_smooth_random ? slide_roll( opts.m_smooth_angle ) : 0.f;
+			dir                = pre_dir( );
 			/* x relative to the number's right edge unless stacked */
 			const float anchor  = stacked ? 0.f : m.m_x + main_size.x;
 			const float tx      = stacked ? pre_centre_x : anchor;
@@ -2965,7 +2973,8 @@ void n_indicators::impl_t::velocity( const bool on_ground )
 	            GET_VARIABLE( g_variables.m_velocity_indicator_scale, float ),
 	            { GET_VARIABLE( g_variables.m_velocity_indicator_pre_layout, int ), GET_VARIABLE( g_variables.m_velocity_indicator_pre_scale, float ),
 	              GET_VARIABLE( g_variables.m_velocity_indicator_pre_align, int ), took_off, false,
-	              GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int ), GET_VARIABLE( g_variables.m_velocity_indicator_smooth_angle, float ) } );
+	              GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int ), GET_VARIABLE( g_variables.m_velocity_indicator_smooth_angle, float ),
+	              GET_VARIABLE( g_variables.m_velocity_indicator_smooth_random_angle, bool ) } );
 
 	if ( this->m_indicator_data.m_tick_prev_velocity + 5 < g_interfaces.m_global_vars_base->m_tick_count ) {
 		this->m_indicator_data.m_last_velocity      = velocity;

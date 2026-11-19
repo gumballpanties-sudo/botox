@@ -1198,8 +1198,14 @@ bool ImGui::ScrollbarEx( const ImRect& bb_frame, ImGuiID id, ImGuiAxis axis, ImS
 	else
 		grab_rect =
 			ImRect( bb.Min.x, ImLerp( bb.Min.y, bb.Max.y, grab_v_norm ), bb.Max.x, ImLerp( bb.Min.y, bb.Max.y, grab_v_norm ) + grab_h_pixels );
+	/* a menu theme with a track ( ScrollbarBg alpha > 0, render.cpp init = 0 ) colours the grab from the Scrollbar slots */
+	const bool themed = style.Colors[ ImGuiCol_ScrollbarBg ].w > 0.f;
+	if ( themed )
+		window->DrawList->AddRectFilled( bb.Min, bb.Max, GetColorU32( ImGuiCol_ScrollbarBg ), style.ScrollbarRounding );
+	const ImColor idle = themed ? ImColor( style.Colors[ hovered ? ImGuiCol_ScrollbarGrabHovered : ImGuiCol_ScrollbarGrab ] )
+	                            : ImColor( 51 / 255.f, 51 / 255.f, 51 / 255.f, 1.f );
 	window->DrawList->AddRectFilled( grab_rect.Min, grab_rect.Max,
-	                                 ImColor::Blend( ImColor( 51 / 255.f, 51 / 255.f, 51 / 255.f, 1.f ),
+	                                 ImColor::Blend( idle,
 	                                                 ImColor( accent_color.Value.x, accent_color.Value.y, accent_color.Value.z ),
 	                                                 scrollbar_animation.AnimationData->second ),
 	                                 style.ScrollbarRounding );

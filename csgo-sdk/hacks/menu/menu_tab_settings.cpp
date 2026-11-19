@@ -1895,7 +1895,8 @@ void n_menu::impl_t::tab_misc( )
 					}
 					if ( type == 5 ) {
 						ImGui::Checkbox( "glow##deathparticles", &GET_VARIABLE( g_variables.m_death_particles_glow, bool ) );
-						ImGui::Checkbox( "stars##deathparticles", &GET_VARIABLE( g_variables.m_death_particles_soul_stars, bool ) );
+						ImGui::Combo( "shape##deathparticles", &GET_VARIABLE( g_variables.m_death_particles_soul_shape, int ),
+						              "circle\0" "4 star\0" "5 star\0" "triangle\0" "square\0" "cross\0" );
 					}
 
 					if ( type == 7 ) {

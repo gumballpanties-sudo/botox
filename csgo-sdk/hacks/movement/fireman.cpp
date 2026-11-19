@@ -975,7 +975,7 @@ static bool fireman_launched( const fireman_sim_t& s )
 	return s.valid && !s.ladder && !s.ground && s.vz > 30.f;
 }
 
-static float fireman_launch_apex( const fireman_sim_t& s, const bool crouch )
+static float fireman_launch_apex( const fireman_sim_t& s )
 {
 	if ( !fireman_launched( s ) )
 		return -FLT_MAX;
@@ -983,10 +983,7 @@ static float fireman_launch_apex( const fireman_sim_t& s, const bool crouch )
 	const float gravity = g_convars[ HASH_BT( "sv_gravity" ) ] ? std::max( g_convars[ HASH_BT( "sv_gravity" ) ]->get_float( ), 1.f ) : 800.f;
 	const float apex    = s.z + s.vz * s.vz / ( 2.f * gravity );
 
-	if ( crouch )
-		return apex + ( s.ducked ? 0.f : 9.f );
-
-	return apex - ( s.ducked ? 18.f : 0.f );
+	return apex + ( s.ducked ? 0.f : 9.f );
 }
 
 struct fireman_drop_target_t {
@@ -1339,13 +1336,14 @@ static bool fireman_ride_next_sticks( const c_vector& origin, const c_vector& mi
 	return fireman_ride_sticks( pos, mins, maxs, normal );
 }
 
-// LadderMove airborne IN_BACK only (csgosrc2019 gamemovement.cpp:3718-3776), = tools/fr_fast_descend_check.py ladder_velocity
-static c_vector fireman_ladder_back_velocity( const c_vector& n, const float pitch, const float yaw )
+// LadderMove airborne jumpless climb (csgosrc2019 gamemovement.cpp:3718-3776), = tools/fr_fast_descend_check.py ladder_velocity.
+// forward / right = climb speed per key (IN_BACK -200, IN_MOVELEFT right -200)
+static c_vector fireman_ladder_velocity( const c_vector& n, const float pitch, const float yaw, const float forward, const float right )
 {
-	c_vector fwd;
-	g_math.angle_vectors( c_angle( pitch, yaw, 0.f ), &fwd );
+	c_vector fwd, rgt;
+	g_math.angle_vectors( c_angle( pitch, yaw, 0.f ), &fwd, &rgt, nullptr );
 
-	const c_vector velocity = fwd * -200.f;
+	const c_vector velocity = fwd * forward + rgt * right;
 	const c_vector perp     = c_vector( 0.f, 0.f, 1.f ).cross_product( n ).normalized( );
 	const float into        = velocity.dot_product( n );
 	const c_vector cross    = n * into;
@@ -2325,10 +2323,10 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 		cmd->m_forward_move = 0.f;
 		cmd->m_side_move    = 0.f;
 		cmd->m_up_move      = 0.f;
-		cmd->m_buttons &= ~( move_buttons | in_duck );
+		// in_speed (walk) = ClimbSpeed * 0.34 (cs_gamemovement.cpp:849): descend 106 not 312, push off 68 not 200
+		cmd->m_buttons &= ~( move_buttons | in_duck | in_speed );
 
 		const int ride_base    = cmd->m_buttons & ~in_jump;
-		const bool crouch_jump = GET_VARIABLE( g_variables.m_fire_man_crouch_jump, bool );
 
 		const bool trace_grounded = ( g_prediction.backup_data.m_flags & fl_onground ) != 0 ||
 		                            ( ride_drop >= 0.f && ride_drop < fireman_ride_floor_probe );
@@ -2370,7 +2368,7 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 		                      ( floor_detach || ( GET_VARIABLE( g_variables.m_fire_man_push_off, bool ) && push_room >= 1 ) ) && push_keeps_floor( );
 
 		bool floor_launch = false;
-		int press_duck    = crouch_jump ? in_duck : 0;
+		int press_duck    = in_duck;
 		float press_apex  = -FLT_MAX;
 
 		if ( ride_grounded && !push_press && !push_now && m_fireman_data.ride_released ) {
@@ -2381,18 +2379,16 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			if ( !plain.valid || m_fireman_data.ride_ticks >= cooldown_ticks + 2 )
 				floor_launch = cooldown_done;
 			else {
-				press_apex   = fireman_launch_apex( plain, crouch_jump );
+				press_apex   = fireman_launch_apex( plain );
 				press_duck   = 0;
 				floor_launch = press_apex > -FLT_MAX;
 
-				if ( crouch_jump ) {
-					const float ducked_apex = fireman_launch_apex( fireman_sim( cmd, ride_base | in_jump | in_duck ), true );
+				const float ducked_apex = fireman_launch_apex( fireman_sim( cmd, ride_base | in_jump | in_duck ) );
 
-					if ( ducked_apex > -FLT_MAX && ducked_apex >= press_apex ) {
-						press_apex   = ducked_apex;
-						press_duck   = in_duck;
-						floor_launch = true;
-					}
+				if ( ducked_apex > -FLT_MAX && ducked_apex >= press_apex ) {
+					press_apex   = ducked_apex;
+					press_duck   = in_duck;
+					floor_launch = true;
 				}
 			}
 		}
@@ -2410,7 +2406,11 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 		float descend_pitch      = 0.f;
 		bool descend_fast        = false;
 
-		if ( ride_drop > fireman_ride_floor_probe && std::fabsf( ladder_normal.m_z ) < 0.05f ) {
+		// vertical formula only on a truly vertical face: at nz .01 its sized step really lands 0.97 over the floor (gate J), the slant
+		// block sizes with the real vector and sends the same fast cmd
+		constexpr float vertical_nz = 1e-3f;
+
+		if ( ride_drop > fireman_ride_floor_probe && std::fabsf( ladder_normal.m_z ) < vertical_nz ) {
 			const float room = ride_drop - 1.f;
 
 			if ( -fast_vz * phys_dt_ride <= room ) {
@@ -2424,21 +2424,39 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 
 		c_vector descend_step( 0.f, 0.f, descend_vz );
 
+		// every LadderMove climb lies in the face plane: 0 < |nz| < vertical_nz the fast cmd moves out 312 * nz (= this projection, exact),
+		// straight down would close on the brush. nz 0: dot is 0, step untouched. slant block below overwrites it
+		if ( ladder_normal.length_squared( ) > 0.25f ) {
+			descend_step = descend_step - ladder_normal * descend_step.dot_product( ladder_normal );
+			descend_vz   = descend_step.m_z;
+		}
+
 		/* slant: the stick trace runs along -normal, i.e. DOWN, so at floor+0 it hits the floor = :5075 WALK, no 270
 		   (log 10-07 15:49 nz=0.31: pitch-0 step -188 landed on the floor, exit h=55). size by pitch to stop 1u over it */
-		if ( std::fabsf( ladder_normal.m_z ) >= 0.05f && ladder_normal.length_squared( ) > 0.25f && m_fireman_data.yaw_valid &&
+		if ( std::fabsf( ladder_normal.m_z ) >= vertical_nz && ladder_normal.length_squared( ) > 0.25f && m_fireman_data.yaw_valid &&
 		     ( ride_drop < 0.f || ride_drop > fireman_ride_floor_probe ) ) {
 			const float max_down = ride_drop < 0.f ? FLT_MAX : ( ride_drop - 1.f ) / phys_dt_ride;
 			bool found           = false;
 
 			for ( float p = -89.f; p <= 89.f; p += 0.5f ) {
-				const c_vector v = fireman_ladder_back_velocity( ladder_normal, p, m_fireman_data.ladder_yaw );
+				const c_vector v = fireman_ladder_velocity( ladder_normal, p, m_fireman_data.ladder_yaw, -200.f, 0.f );
 
 				if ( v.m_z < 0.f && -v.m_z <= max_down && ( !found || v.m_z < descend_step.m_z ) ) {
 					descend_step  = v;
 					descend_pitch = p;
 					found         = true;
 				}
+			}
+
+			/* the static fast cmd works on slants too: in plane, zero drift, all 4 mirrors one vector (fr_fast_descend_check G).
+			   nz .2 = -300 vs face-on best -216. the scan above stays the floor step sizer */
+			const c_vector fast = fireman_ladder_velocity( ladder_normal, -89.f, m_fireman_data.ladder_yaw + 89.f, -200.f, -200.f );
+
+			if ( fast.m_z < 0.f && -fast.m_z <= max_down && ( !found || fast.m_z < descend_step.m_z ) ) {
+				descend_step  = fast;
+				descend_pitch = -89.f;
+				descend_fast  = true;
+				found         = true;
 			}
 
 			if ( found )
@@ -2459,18 +2477,22 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 		   replaces the drift, and the end jump comes from the floor press / the descend press after expiry */
 		// climb down from here sticks the whole way: floor + 1 (or the path end), the midpoint and the next step
 		const auto descend_path_ok = [ & ]( bool& down_floor, float& down_dist ) -> bool {
-			const float down_len = -descend_vz * static_cast< float >( cooldown_ticks + 2 ) * phys_dt_ride + 4.f;
+			// along the step: on a slant straight down runs into the ladder brush itself (fr_fast_descend_check H). vertical = straight down
+			const float step_len = descend_step.length( );
+			const bool along     = step_len > 1.f && descend_step.m_z < 0.f;
+			const c_vector dir   = along ? descend_step * ( 1.f / step_len ) : c_vector( 0.f, 0.f, -1.f );
+			const float down_len = ( along ? step_len : -descend_vz ) * static_cast< float >( cooldown_ticks + 2 ) * phys_dt_ride + 4.f;
 
 			trace_t down;
 			c_trace_filter down_flt( g_ctx.m_local );
-			ray_t down_ray( origin, c_vector( origin.m_x, origin.m_y, origin.m_z - down_len ), mins, maxs );
+			ray_t down_ray( origin, origin + dir * down_len, mins, maxs );
 			g_interfaces.m_engine_trace->trace_ray( down_ray, mask_playersolid, &down_flt, &down );
 
 			down_floor = down.m_fraction < 1.f && down.m_plane.m_normal.m_z >= 0.7f;
 			down_dist  = down_floor ? origin.m_z - down.m_end.m_z : FLT_MAX;
 			// 1u over a floor hit: a prop step skin fails the stick ON it, holds over it (de_train cars)
 			const c_vector down_end( down.m_end.m_x, down.m_end.m_y, down.m_end.m_z + ( down_floor ? 1.f : 0.f ) );
-			const c_vector down_mid( origin.m_x, origin.m_y, ( origin.m_z + down_end.m_z ) * 0.5f );
+			const c_vector down_mid = ( origin + down_end ) * 0.5f;
 
 			return !down.m_start_solid && ( down_floor || down.m_fraction >= 1.f ) && fireman_ride_sticks( down_end, mins, maxs, ladder_normal ) &&
 			       fireman_ride_sticks( down_mid, mins, maxs, ladder_normal ) && fireman_ride_next_sticks( origin, mins, maxs, descend_step, ladder_normal );
@@ -2598,7 +2620,7 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 		else
 			cmd->m_buttons |= in_jump;
 
-		if ( floor_launch || ( push_press && crouch_jump ) )
+		if ( floor_launch || push_press )
 			cmd->m_buttons |= press_duck;
 
 		const c_angle live_view = g_ctx.old_view_point;
@@ -2697,7 +2719,6 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			                    return left < 0.f || left > 96.f;
 		                    }( );
 
-		const bool crouch     = GET_VARIABLE( g_variables.m_fire_man_crouch_jump, bool );
 		const bool ducked_now = ( g_prediction.backup_data.m_flags & fl_ducking ) != 0;
 		const int jump_base   = cmd->m_buttons & ~( in_jump | in_duck );
 		/* this tick sends a predicted launch press (the chain's landing edge must not strip it) */
@@ -2710,20 +2731,18 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			cmd->m_buttons &= ~in_jump;
 			m_fireman_data.launch_pressed = false;
 		} else if ( !fling_tick && on_ground ) {
-			const int own_duck = crouch ? ( ducked_now ? 0 : in_duck ) : ( ducked_now ? in_duck : ( cmd->m_buttons & in_duck ) );
+			const int own_duck = ducked_now ? 0 : in_duck;
 
 			int press                 = jump_base | in_jump | own_duck;
 			const fireman_sim_t first = fireman_sim( cmd, press );
-			float apex                = fireman_launch_apex( first, crouch );
+			float apex                = fireman_launch_apex( first );
 
-			if ( crouch ) {
-				const int other        = jump_base | in_jump | ( own_duck ? 0 : in_duck );
-				const float other_apex = fireman_launch_apex( fireman_sim( cmd, other ), true );
+			const int other        = jump_base | in_jump | ( own_duck ? 0 : in_duck );
+			const float other_apex = fireman_launch_apex( fireman_sim( cmd, other ) );
 
-				if ( other_apex > apex ) {
-					apex  = other_apex;
-					press = other;
-				}
+			if ( other_apex > apex ) {
+				apex  = other_apex;
+				press = other;
 			}
 
 			if ( !first.valid || apex > -FLT_MAX || m_fireman_data.launch_refused >= 2 ) {
@@ -2757,12 +2776,12 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 					float best_apex = -FLT_MAX;
 					int best_press  = -1;
 
-					for ( int i = 0; i < ( crouch ? 2 : 1 ); ++i ) {
-						const float a = fireman_launch_apex( fireman_sim( cmd, now_opts[ i ] ), crouch );
+					for ( const int opt : now_opts ) {
+						const float a = fireman_launch_apex( fireman_sim( cmd, opt ) );
 
 						if ( a > best_apex ) {
 							best_apex  = a;
-							best_press = now_opts[ i ];
+							best_press = opt;
 						}
 					}
 
@@ -2776,13 +2795,12 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 						                   g_prediction.backup_data.m_velocity.length_2d( ), vz, ( int )ducked_now, best_apex - origin.m_z,
 						                   ( int )( ( best_press & in_duck ) != 0 ) );
 					} else {
-						const int rule_duck     = crouch || ducked_now ? in_duck : 0;
-						const int duck_opts[ 2 ] = { jump_base | rule_duck, jump_base | ( rule_duck ^ in_duck ) };
+						const int duck_opts[ 2 ] = { jump_base | in_duck, jump_base };
 						int best_duck            = -1;
 
 						for ( const int d : duck_opts ) {
-							for ( int i = 0; i < ( crouch ? 2 : 1 ); ++i ) {
-								const float a = fireman_launch_apex( fireman_sim( cmd, d, now_opts[ i ] ), crouch );
+							for ( const int opt : now_opts ) {
+								const float a = fireman_launch_apex( fireman_sim( cmd, d, opt ) );
 
 								if ( a > best_apex ) {
 									best_apex = a;
@@ -2802,7 +2820,7 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 					}
 				}
 
-				if ( !planned && ( crouch || ducked_now ) )
+				if ( !planned )
 					cmd->m_buttons |= in_duck;
 			}
 		}

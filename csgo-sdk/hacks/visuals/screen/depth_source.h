@@ -42,10 +42,11 @@ namespace n_depth_source
 	private:
 		bool pick_live_route( IDirect3DDevice9* device, const D3DSURFACE_DESC& description );
 
-		void resolve_resz( IDirect3DDevice9* device, IDirect3DSurface9* depth_surface );
+		// false = trick never ran ( z buffer not msaa / wrong size ), must not count toward the route check
+		bool resolve_resz( IDirect3DDevice9* device, IDirect3DSurface9* depth_surface );
 
 		bool nvapi_ready( );
-		void resolve_nvapi( IDirect3DDevice9* device, IDirect3DSurface9* depth_surface );
+		bool resolve_nvapi( IDirect3DDevice9* device, IDirect3DSurface9* depth_surface );
 
 		bool clear_sentinel( IDirect3DDevice9* device );
 
@@ -68,7 +69,8 @@ namespace n_depth_source
 
 		bool m_resz_supported = false;
 
-		bool m_amd = false;
+		// GetAdapterIdentifier of the device's adapter, not adapter 0 ( hybrid laptops )
+		unsigned long m_vendor = 0;
 
 		bool m_nvapi_checked             = false;
 		bool m_nvapi_available           = false;
@@ -87,6 +89,7 @@ namespace n_depth_source
 		verify_t m_verify   = verify_none;
 		int m_verify_frames = 0;
 		int m_resolves      = 0;
+		int m_attempts      = 0;
 
 		IDirect3DTexture9* m_probe_texture = nullptr;
 		IDirect3DSurface9* m_probe_surface = nullptr;

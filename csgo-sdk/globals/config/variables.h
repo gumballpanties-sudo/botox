@@ -1331,7 +1331,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_death_particles, false );
 		ADD_VARIABLE( int, m_death_particles_type, 0 );
 		ADD_VARIABLE( int, m_death_particles_soul_style, 0 );
-		ADD_VARIABLE( bool, m_death_particles_soul_stars, false );
+		ADD_VARIABLE( int, m_death_particles_soul_shape, 0 );
 		ADD_VARIABLE( c_color, m_death_particles_color, c_color( 140, 200, 255, 255 ) );
 		ADD_VARIABLE( int, m_death_particles_amount, 8 );
 		ADD_VARIABLE( float, m_death_particles_size, 1.f );
@@ -1433,7 +1433,6 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_fire_man_approach, true );
 		ADD_VARIABLE( bool, m_fire_man_drop_in, false );
 		ADD_VARIABLE( bool, m_fire_man_drop_in_lock, true );
-		ADD_VARIABLE( bool, m_fire_man_crouch_jump, true );
 		ADD_VARIABLE( bool, m_fire_man_side_only, false );
 		ADD_VARIABLE( key_bind_t, m_fire_man_side_only_key, key_bind_t( 0, 1 ) );
 		ADD_VARIABLE( float, m_fire_man_reach, 320.f );
@@ -1592,6 +1591,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_stamina_indicator_smooth_angle, 0.f );
 		ADD_VARIABLE( float, m_key_indicators_smooth_angle, 0.f );
 		ADD_VARIABLE( bool, m_key_indicators_smooth_random_angle, false );
+		ADD_VARIABLE( bool, m_velocity_indicator_smooth_random_angle, false );
 		ADD_VARIABLE( float, m_key_indicators_static_fade, 0.f );
 		ADD_VARIABLE( bool, m_velocity_indicator_shadow, true );
 		ADD_VARIABLE( float, m_velocity_indicator_shadow_blur, 0.f );

@@ -16,11 +16,17 @@ static const D3DFORMAT k_format_resz = static_cast< D3DFORMAT >( MAKEFOURCC( 'R'
 
 static constexpr unsigned long k_resz_code = 0x7fa05000;
 
+static constexpr unsigned long k_vendor_amd    = 0x1002;
+static constexpr unsigned long k_vendor_nvidia = 0x10de;
+
 /* written over our INTZ before a check. 0.25, not 0 or 1: a broken probe ( zeros / garbage ) reads
    "changed" and keeps the route, so the check can only ever drop a route that truly never wrote */
 static constexpr float k_sentinel = 0.25f;
 
 static constexpr int k_probe_size = 8;
+
+// resolves tried since the sentinel. a few skipped = check waits, all skipped = check runs, sees sentinel, drops route
+static constexpr int k_attempt_cap = 30;
 
 static const char* k_probe_shader = "sampler s0 : register( s0 );\n"
                                     "float4 main( float2 uv : TEXCOORD0 ) : COLOR { return tex2D( s0, uv ).rrrr; }\n";
@@ -80,10 +86,10 @@ bool n_depth_source::impl_t::nvapi_ready( )
 	return this->m_nvapi_available;
 }
 
-void n_depth_source::impl_t::resolve_nvapi( IDirect3DDevice9* device, IDirect3DSurface9* depth_surface )
+bool n_depth_source::impl_t::resolve_nvapi( IDirect3DDevice9* device, IDirect3DSurface9* depth_surface )
 {
 	if ( !device || !depth_surface || !this->m_own_depth || !g_nvapi_stretch_ex || !g_nvapi_register )
-		return;
+		return false;
 
 	if ( this->m_nvapi_registered_texture != this->m_own_depth ) {
 		if ( this->m_nvapi_registered_texture && g_nvapi_unregister )
@@ -108,7 +114,7 @@ void n_depth_source::impl_t::resolve_nvapi( IDirect3DDevice9* device, IDirect3DS
 	}
 
 	if ( !this->m_nvapi_registered_texture || !this->m_nvapi_registered_surface )
-		return;
+		return false;
 
 	const int status = g_nvapi_stretch_ex( device, depth_surface, nullptr, this->m_own_depth, nullptr, D3DTEXF_POINT );
 
@@ -119,6 +125,9 @@ void n_depth_source::impl_t::resolve_nvapi( IDirect3DDevice9* device, IDirect3DS
 
 		g_console.print( std::vformat( "depth source: nvapi resolve {:d}", std::make_format_args( status ) ).c_str( ) );
 	}
+
+	// a failing status still counts: the check should drop a route nvapi refuses
+	return true;
 }
 
 // RESZ resolves an MSAA z buffer only. amd ( amdxn32 ) faults later on a 1 sample or missing one
@@ -130,10 +139,10 @@ static bool resz_source_ok( IDirect3DSurface9* depth_surface, const unsigned int
 	       description.Width == width && description.Height == height;
 }
 
-void n_depth_source::impl_t::resolve_resz( IDirect3DDevice9* device, IDirect3DSurface9* depth_surface )
+bool n_depth_source::impl_t::resolve_resz( IDirect3DDevice9* device, IDirect3DSurface9* depth_surface )
 {
 	if ( !device || !this->m_own_depth || !resz_source_ok( depth_surface, this->m_width, this->m_height ) )
-		return;
+		return false;
 
 	// never rasterised, colour writes off
 	static const float dummy_vertex[ 3 ] = { 0.f, 0.f, 0.f };
@@ -157,6 +166,8 @@ void n_depth_source::impl_t::resolve_resz( IDirect3DDevice9* device, IDirect3DSu
 	device->SetRenderState( D3DRS_POINTSIZE, 0 );
 
 	device->SetTexture( 0, nullptr );
+
+	return true;
 }
 
 void n_depth_source::impl_t::release( )
@@ -259,11 +270,13 @@ void n_depth_source::impl_t::on_created_texture( IDirect3DDevice9* device, IDire
 		logged_vendor = true;
 
 		IDirect3D9* d3d = nullptr;
+		D3DDEVICE_CREATION_PARAMETERS parameters{ };
 
 		if ( SUCCEEDED( device->GetDirect3D( &d3d ) ) && d3d ) {
 			D3DADAPTER_IDENTIFIER9 identifier{ };
+			const unsigned int ordinal = SUCCEEDED( device->GetCreationParameters( &parameters ) ) ? parameters.AdapterOrdinal : D3DADAPTER_DEFAULT;
 
-			if ( SUCCEEDED( d3d->GetAdapterIdentifier( D3DADAPTER_DEFAULT, 0, &identifier ) ) ) {
+			if ( SUCCEEDED( d3d->GetAdapterIdentifier( ordinal, 0, &identifier ) ) ) {
 				const char* description    = identifier.Description;
 				const unsigned long vendor = identifier.VendorId;
 
@@ -300,19 +313,21 @@ bool n_depth_source::impl_t::ensure( IDirect3DDevice9* device, const D3DSURFACE_
 	D3DDEVICE_CREATION_PARAMETERS parameters{ };
 	D3DDISPLAYMODE mode{ };
 
-	if ( SUCCEEDED( device->GetDirect3D( &d3d ) ) && d3d && SUCCEEDED( device->GetCreationParameters( &parameters ) ) &&
-	     SUCCEEDED( device->GetDisplayMode( 0, &mode ) ) ) {
-		const bool resz = SUCCEEDED( d3d->CheckDeviceFormat( parameters.AdapterOrdinal, parameters.DeviceType, mode.Format,
-		                                                     D3DUSAGE_RENDERTARGET, D3DRTYPE_SURFACE, k_format_resz ) );
-		const bool intz = SUCCEEDED( d3d->CheckDeviceFormat( parameters.AdapterOrdinal, parameters.DeviceType, mode.Format,
-		                                                     D3DUSAGE_DEPTHSTENCIL, D3DRTYPE_TEXTURE, k_format_intz ) );
-
-		this->m_resz_supported = resz && intz;
-
+	// vendor read apart from the display mode: a failed GetDisplayMode must not cost nvidia its nvapi route
+	if ( SUCCEEDED( device->GetDirect3D( &d3d ) ) && d3d && SUCCEEDED( device->GetCreationParameters( &parameters ) ) ) {
 		D3DADAPTER_IDENTIFIER9 adapter{ };
-		this->m_amd = SUCCEEDED( d3d->GetAdapterIdentifier( parameters.AdapterOrdinal, 0, &adapter ) ) && adapter.VendorId == 0x1002;
+		this->m_vendor = SUCCEEDED( d3d->GetAdapterIdentifier( parameters.AdapterOrdinal, 0, &adapter ) ) ? adapter.VendorId : 0;
 
-		g_console.print( std::vformat( "depth source: resz {:d} intz {:d}", std::make_format_args( resz, intz ) ).c_str( ) );
+		if ( SUCCEEDED( device->GetDisplayMode( 0, &mode ) ) ) {
+			const bool resz = SUCCEEDED( d3d->CheckDeviceFormat( parameters.AdapterOrdinal, parameters.DeviceType, mode.Format,
+			                                                     D3DUSAGE_RENDERTARGET, D3DRTYPE_SURFACE, k_format_resz ) );
+			const bool intz = SUCCEEDED( d3d->CheckDeviceFormat( parameters.AdapterOrdinal, parameters.DeviceType, mode.Format,
+			                                                     D3DUSAGE_DEPTHSTENCIL, D3DRTYPE_TEXTURE, k_format_intz ) );
+
+			this->m_resz_supported = resz && intz;
+
+			g_console.print( std::vformat( "depth source: resz {:d} intz {:d}", std::make_format_args( resz, intz ) ).c_str( ) );
+		}
 	}
 
 	if ( d3d )
@@ -349,22 +364,26 @@ bool n_depth_source::impl_t::ensure( IDirect3DDevice9* device, const D3DSURFACE_
 		if ( this->m_resz_supported && !resz_source )
 			g_console.print( "depth source: resz skipped, z buffer not multisampled ( msaa off )" );
 
+		const bool amd = this->m_vendor == k_vendor_amd;
+
+		/* nvapi only on an nvidia device ( engine gates the same, hardwareconfig.cpp ). hybrid laptop running the game on the
+		   intel / amd igpu still loads + inits nvapi.dll fine, then StretchRectEx gets a foreign device */
 		if ( this->m_resz_supported && resz_source && usable( route_resz ) )
 			this->m_route = route_resz;
-		else if ( usable( route_nvapi ) && this->nvapi_ready( ) )
+		else if ( this->m_vendor == k_vendor_nvidia && usable( route_nvapi ) && this->nvapi_ready( ) )
 			this->m_route = route_nvapi;
 
 		/* amd: our INTZ as the live z buffer = viewmodel sinks into walls ( arm gone by view ) + fps loss ( INTZ depth test + sample,
 		   aras-p D3D9GPUHacks ). msaa on = RESZ off the engine's own z. "universal depth" still forces it */
-		const bool live_ok = forced || ( this->m_route == route_none && !this->m_amd );
+		const bool live_ok = forced || ( this->m_route == route_none && !amd );
 
-		if ( this->m_route == route_none && this->m_amd && !forced )
+		if ( this->m_route == route_none && amd && !forced )
 			g_console.print< n_console::log_level::WARNING >( "depth source: amd + msaa off = no depth route ( z swap breaks the viewmodel ), turn msaa on" );
 
 		if ( live_ok && usable( route_live ) && this->pick_live_route( device, description ) )
 			this->m_route = route_live;
 
-		botox_dbg_log( "depth source: route %s amd=%d msaa=%d forced=%d failed=%d", k_route_names[ this->m_route ], this->m_amd ? 1 : 0,
+		botox_dbg_log( "depth source: route %s vendor=%04lx msaa=%d forced=%d failed=%d", k_route_names[ this->m_route ], this->m_vendor,
 		               resz_source ? 1 : 0, forced ? 1 : 0, this->m_failed );
 	}
 
@@ -428,6 +447,7 @@ void n_depth_source::impl_t::on_present( IDirect3DDevice9* device )
 		this->m_verify        = this->clear_sentinel( device ) ? verify_wait : verify_skipped;
 		this->m_verify_frames = 0;
 		this->m_resolves      = 0;
+		this->m_attempts      = 0;
 	}
 
 	if ( this->m_route == route_live && !this->m_live && this->m_own_surface && this->m_auto_depth ) {
@@ -448,7 +468,7 @@ void n_depth_source::impl_t::on_present( IDirect3DDevice9* device )
 	if ( this->m_verify != verify_wait )
 		return;
 
-	const bool ready = this->m_route == route_live ? ++this->m_verify_frames >= 3 : this->m_resolves >= 2;
+	const bool ready = this->m_route == route_live ? ++this->m_verify_frames >= 3 : this->m_resolves >= 2 || this->m_attempts >= k_attempt_cap;
 
 	if ( ready )
 		this->verify( device );
@@ -755,7 +775,7 @@ const char* n_depth_source::impl_t::verify_name( ) const
 		if ( this->m_failed )
 			return "every route failed";
 
-		return this->m_amd ? "amd: turn msaa on" : "msaa on + no driver route";
+		return this->m_vendor == k_vendor_amd ? "amd: turn msaa on" : "msaa on + no driver route";
 	}
 }
 
@@ -788,14 +808,14 @@ void n_depth_source::impl_t::resolve( IDirect3DDevice9* device, IDirect3DSurface
 	this->m_resolved_frame = frame;
 
 	if ( this->m_own_depth ) {
-		if ( this->m_route == route_resz )
-			this->resolve_resz( device, bound_depth );
-		else if ( this->m_route == route_nvapi )
-			this->resolve_nvapi( device, bound_depth );
-		else
+		if ( this->m_route != route_resz && this->m_route != route_nvapi )
 			return;
 
-		++this->m_resolves;
+		++this->m_attempts;
+
+		if ( this->m_route == route_resz ? this->resolve_resz( device, bound_depth ) : this->resolve_nvapi( device, bound_depth ) )
+			++this->m_resolves;
+
 		return;
 	}
 

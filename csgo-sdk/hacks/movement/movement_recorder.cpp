@@ -1166,17 +1166,6 @@ static unsigned int accent_u32( float alpha = 1.f )
 	return ImGui::GetColorU32( ImVec4( c.x, c.y, c.z, alpha ) );
 }
 
-static void enqueue_rect( const c_vector_2d& min, const c_vector_2d& max, unsigned int col )
-{
-	rect_draw_object_t obj{ };
-	obj.m_min           = min;
-	obj.m_max           = max;
-	obj.m_color         = col;
-	obj.m_outline_color = col;
-	obj.m_filled        = true;
-	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_rect, std::make_any< rect_draw_object_t >( obj ) );
-}
-
 static void enqueue_dot( const c_vector_2d& c, float r, unsigned int fill, unsigned int outline )
 {
 	g_render.m_draw_data.emplace_back( e_draw_type::draw_type_filled_circle,
@@ -1365,43 +1354,71 @@ void n_movement_recorder::impl_t::render_route_preview( )
 	}
 }
 
-void n_movement_recorder::impl_t::render_indicator( )
+namespace
 {
-	if ( !GET_VARIABLE( g_variables.m_movement_rec_render, bool ) )
-		return;
+	constexpr float k_panel_band = 25.f;
 
-	const float dt     = ImGui::GetIO( ).DeltaTime;
-	const float target = ( m_recording || owns_cmd( ) ) ? 1.f : 0.f;
-	m_indicator_alpha  = std::clamp( m_indicator_alpha + ( target - m_indicator_alpha ) * ( 1.f - std::exp( -k_indicator_lerp_k * dt ) ), 0.f, 1.f );
-	if ( m_indicator_alpha <= 0.01f )
-		return;
+	/* same chrome as practice / point settings / route calc windows */
+	void panel_chrome( const char* title, const float alpha = 1.f )
+	{
+		auto* bold           = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ];
+		auto* window         = ImGui::GetCurrentWindow( );
+		auto* draw_list      = window->DrawList;
+		const ImVec2 pos     = window->Pos;
+		const ImVec2 size    = window->Size;
+		const float rounding = ImGui::GetStyle( ).WindowRounding;
 
-	ImFont* font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
-	if ( !font )
-		return;
+		ImGui::PushClipRect( pos, ImVec2( pos.x + size.x, pos.y + k_panel_band ), false );
+		draw_list->AddRectFilled( pos, ImVec2( pos.x + size.x, pos.y + k_panel_band ), ImColor( 25 / 255.f, 25 / 255.f, 25 / 255.f, alpha ), rounding,
+		                          ImDrawFlags_RoundCornersTop );
+		ImGui::PopClipRect( );
 
-	const std::string text = m_recording ? "rec " + std::to_string( m_recording_frames.size( ) )
-	                                     : std::to_string( m_play_idx ) + " / " + std::to_string( m_play_frames.size( ) );
+		RenderFadedGradientLine( draw_list, ImVec2( pos.x, pos.y + k_panel_band - 1.f ), ImVec2( size.x, 1.f ),
+		                         static_cast< ImColor >( ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ) ) );
 
-	const ImVec2 ts = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, text.c_str( ) );
-	const ImVec2 padding{ 7.f, 7.f };
-	const ImVec2 margin{ 4.f, 3.f };
-	const ImVec2 size{ ts.x + margin.x * 2.f, ts.y + margin.y * 2.f };
-	const ImVec2 display{ g_ctx.m_width, g_ctx.m_height };
+		if ( bold ) {
+			const ImVec2 ts = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.f, title );
+			draw_list->AddText( bold, bold->FontSize, ImVec2( pos.x + ( size.x - ts.x ) / 2.f, pos.y + ( k_panel_band - ts.y ) / 2.f ),
+			                    ImColor( 1.f, 1.f, 1.f, alpha ), title );
+		}
 
-	c_vector_2d pos{ };
-	switch ( GET_VARIABLE( g_variables.m_movement_rec_position, int ) ) {
-	default:
-	case 0: pos = { padding.x, padding.y }; break;
-	case 1: pos = { padding.x, display.y - size.y - padding.y }; break;
-	case 2: pos = { display.x - size.x - padding.x, display.y - size.y - padding.y }; break;
+		ImGui::PushClipRect( ImVec2( pos.x + 1.f, pos.y + 1.f ), ImVec2( pos.x + size.x - 1.f, pos.y + size.y - 1.f ), false );
+		draw_list->AddRect( ImVec2( pos.x + 1.f, pos.y + 1.f ), ImVec2( pos.x + size.x - 1.f, pos.y + size.y - 1.f ),
+		                    ImColor( 50 / 255.f, 50 / 255.f, 50 / 255.f, alpha ), rounding );
+		ImGui::PopClipRect( );
 	}
 
-	g_render.queue_stretch_block_begin( );
-	enqueue_rect( pos, c_vector_2d{ pos.m_x + size.x, pos.m_y + size.y }, ImGui::GetColorU32( ImVec4( 0.08f, 0.08f, 0.08f, m_indicator_alpha ) ) );
-	enqueue_rect( c_vector_2d{ pos.m_x, pos.m_y - 1.f }, c_vector_2d{ pos.m_x + size.x, pos.m_y }, accent_u32( m_indicator_alpha ) );
-	enqueue_text( font, c_vector_2d{ pos.m_x + margin.x, pos.m_y + margin.y }, text, ImGui::GetColorU32( ImVec4( 1.f, 1.f, 1.f, m_indicator_alpha ) ) );
-	g_render.queue_stretch_block_end( );
+	/* title band + one grey label / white value row ( route calc keys panel layout ) */
+	constexpr float k_panel_pad = 8.f;
+
+	ImVec2 row_panel_size( ImFont* font, const char* title, const char* label, const char* value )
+	{
+		ImFont* bold        = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ];
+		const float label_w = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, label ).x;
+		const float value_w = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, value ).x;
+		const float title_w = bold ? bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.f, title ).x : 0.f;
+		return ImVec2( std::max( label_w + 22.f + value_w + k_panel_pad * 2.f, title_w + 40.f ), k_panel_band + k_panel_pad + font->FontSize + 2.f );
+	}
+
+	void row_panel_body( ImFont* font, const char* title, const char* label, const char* value, const float alpha )
+	{
+		panel_chrome( title, alpha );
+
+		auto* window        = ImGui::GetCurrentWindow( );
+		const float value_w = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, value ).x;
+		const float row_y   = window->Pos.y + k_panel_band + 2.f;
+		window->DrawList->AddText( font, font->FontSize, ImVec2( window->Pos.x + k_panel_pad, row_y ), ImColor( 0.63f, 0.63f, 0.63f, alpha ), label );
+		window->DrawList->AddText( font, font->FontSize, ImVec2( window->Pos.x + window->Size.x - k_panel_pad - value_w, row_y ),
+		                           ImColor( 1.f, 1.f, 1.f, alpha ), value );
+	}
+
+	int panel_flags( )
+	{
+		int flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize;
+		if ( !g_ctx.m_is_window_focused )
+			flags |= ImGuiWindowFlags_NoMove;
+		return flags;
+	}
 }
 
 void n_movement_recorder::impl_t::render_clipper_box( )
@@ -1412,19 +1429,25 @@ void n_movement_recorder::impl_t::render_clipper_box( )
 	const float dt = g_interfaces.m_global_vars_base->m_interval_per_tick;
 
 	/* render thread: game thread grows these */
-	char buf[ 48 ]{ };
+	const char* label = nullptr;
+	char value[ 48 ]{ };
 	{
 		std::scoped_lock lock( m_clips_mutex );
-		if ( m_playing )
-			std::snprintf( buf, sizeof( buf ), "%.1f / %.1f", static_cast< float >( m_play_idx ) * dt, static_cast< float >( m_play_frames.size( ) ) * dt );
-		else if ( m_recording )
-			std::snprintf( buf, sizeof( buf ), "rec %.1f", static_cast< float >( m_recording_frames.size( ) ) * dt );
-		else if ( m_clip_active )
-			std::snprintf( buf, sizeof( buf ), "clip %.1f", static_cast< float >( m_clip_session.size( ) - std::min( m_clip_session.size( ), static_cast< size_t >( m_clip_still_ticks ) ) ) * dt );
-		else if ( !m_clip_history.empty( ) )
-			std::snprintf( buf, sizeof( buf ), "last %.1f%s", static_cast< float >( m_clip_history.front( ).frames.size( ) ) * dt,
-			               m_clip_history.front( ).saved_as.empty( ) ? "" : " saved" );
-		else
+		if ( m_playing ) {
+			label = "playback";
+			std::snprintf( value, sizeof( value ), "%.1f / %.1f s", static_cast< float >( m_play_idx ) * dt, static_cast< float >( m_play_frames.size( ) ) * dt );
+		} else if ( m_recording ) {
+			label = "recording";
+			std::snprintf( value, sizeof( value ), "%.1f s", static_cast< float >( m_recording_frames.size( ) ) * dt );
+		} else if ( m_clip_active ) {
+			label = "clipping";
+			std::snprintf( value, sizeof( value ), "%.1f s",
+			               static_cast< float >( m_clip_session.size( ) - std::min( m_clip_session.size( ), static_cast< size_t >( m_clip_still_ticks ) ) ) * dt );
+		} else if ( !m_clip_history.empty( ) ) {
+			label = "last clip";
+			std::snprintf( value, sizeof( value ), "%.1f s%s", static_cast< float >( m_clip_history.front( ).frames.size( ) ) * dt,
+			               m_clip_history.front( ).saved_as.empty( ) ? "" : "  saved" );
+		} else
 			return;
 	}
 
@@ -1432,24 +1455,60 @@ void n_movement_recorder::impl_t::render_clipper_box( )
 	if ( !font )
 		return;
 
-	ImGui::PushFont( font );
-	const float width = ImGui::CalcTextSize( buf ).x + 14.f;
 	ImGui::SetNextWindowPos( ImVec2( 24.f, 96.f ), ImGuiCond_FirstUseEver );
-	ImGui::SetNextWindowSize( ImVec2( width, 22.f ), ImGuiCond_Always );
-	ImGui::PushStyleColor( ImGuiCol_WindowBg, ImVec4( 0.04f, 0.04f, 0.04f, 1.f ) );
-	ImGui::PushStyleColor( ImGuiCol_Border, ImVec4( 0.f, 0.f, 0.f, 1.f ) );
-	ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 3.f );
-	ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 5.f, 4.f ) );
-	if ( ImGui::Begin( "##mr_clipper_box", nullptr,
-	                   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar ) ) {
-		const ImVec2 text_size = ImGui::CalcTextSize( buf );
-		ImGui::SetCursorPosX( ( ImGui::GetWindowSize( ).x - text_size.x ) * 0.5f );
-		ImGui::TextUnformatted( buf );
-	}
+	ImGui::SetNextWindowSize( row_panel_size( font, "recorder", label, value ), ImGuiCond_Always );
+	ImGui::Begin( "botox-recorder-clipper", nullptr, panel_flags( ) );
+	row_panel_body( font, "recorder", label, value, 1.f );
 	ImGui::End( );
-	ImGui::PopStyleVar( 2 );
-	ImGui::PopStyleColor( 2 );
-	ImGui::PopFont( );
+}
+
+void n_movement_recorder::impl_t::render_indicator( )
+{
+	if ( !GET_VARIABLE( g_variables.m_movement_rec_render, bool ) )
+		return;
+
+	/* render thread: game thread grows these */
+	const char* label = nullptr;
+	char value[ 48 ]{ };
+	{
+		std::scoped_lock lock( m_clips_mutex );
+		const float target = ( m_recording || owns_cmd( ) ) ? 1.f : 0.f;
+		m_indicator_alpha  = std::clamp( m_indicator_alpha + ( target - m_indicator_alpha ) * ( 1.f - std::exp( -k_indicator_lerp_k * ImGui::GetIO( ).DeltaTime ) ),
+		                                 0.f, 1.f );
+		if ( m_indicator_alpha <= 0.01f )
+			return;
+
+		if ( m_recording ) {
+			label = "recording";
+			std::snprintf( value, sizeof( value ), "%zu ticks", m_recording_frames.size( ) );
+		} else {
+			label = m_wish_to_start ? "going to start" : "playback";
+			std::snprintf( value, sizeof( value ), "%zu / %zu", m_play_idx, m_play_frames.size( ) );
+		}
+	}
+
+	ImFont* font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
+	if ( !font )
+		return;
+
+	constexpr float edge = 7.f;
+	const ImVec2 size    = row_panel_size( font, "recorder", label, value );
+	const ImVec2 display = ImGui::GetIO( ).DisplaySize;
+
+	ImVec2 pos{ edge, edge };
+	switch ( GET_VARIABLE( g_variables.m_movement_rec_position, int ) ) {
+	case 1: pos = { edge, display.y - size.y - edge }; break;
+	case 2: pos = { display.x - size.x - edge, display.y - size.y - edge }; break;
+	default: break;
+	}
+
+	ImGui::PushStyleVar( ImGuiStyleVar_Alpha, m_indicator_alpha );
+	ImGui::SetNextWindowPos( pos, ImGuiCond_Always );
+	ImGui::SetNextWindowSize( size, ImGuiCond_Always );
+	ImGui::Begin( "botox-recorder-timer", nullptr, panel_flags( ) | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs );
+	row_panel_body( font, "recorder", label, value, m_indicator_alpha );
+	ImGui::End( );
+	ImGui::PopStyleVar( );
 }
 
 void n_movement_recorder::impl_t::render_clip_editor( )
@@ -1476,33 +1535,24 @@ void n_movement_recorder::impl_t::render_clip_editor( )
 		return;
 	}
 
-	ImFont* font         = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
 	const ImVec2 display = ImGui::GetIO( ).DisplaySize;
-	ImGui::SetNextWindowPos( ImVec2( display.x - 330.f, 20.f ), ImGuiCond_FirstUseEver );
-	ImGui::SetNextWindowSize( ImVec2( 310.f, 165.f ), ImGuiCond_FirstUseEver );
-	ImGui::PushStyleColor( ImGuiCol_WindowBg, ImVec4( 0.04f, 0.04f, 0.04f, 1.f ) );
-	ImGui::PushStyleColor( ImGuiCol_TitleBg, ImVec4( 0.08f, 0.08f, 0.08f, 1.f ) );
-	ImGui::PushStyleColor( ImGuiCol_TitleBgActive, ImVec4( 0.08f, 0.08f, 0.08f, 1.f ) );
-	ImGui::PushStyleColor( ImGuiCol_TitleBgCollapsed, ImVec4( 0.08f, 0.08f, 0.08f, 1.f ) );
-	ImGui::PushStyleColor( ImGuiCol_FrameBg, ImVec4( 0.02f, 0.02f, 0.02f, 1.f ) );
-	ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.02f, 0.02f, 0.02f, 1.f ) );
-	ImGui::PushStyleColor( ImGuiCol_Border, ImVec4( 0.f, 0.f, 0.f, 1.f ) );
-	ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 3.f );
-	if ( font )
-		ImGui::PushFont( font );
-
-	if ( ImGui::Begin( "recorder clip", &m_editor_open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize ) ) {
-		ImGui::Text( "%zu ticks  %d tick", clip.frames.size( ), clip.tickrate );
-		ImGui::SetNextItemWidth( -1.f );
-		ImGui::InputText( "##mr_editor_name", m_editor_name, sizeof( m_editor_name ) );
+	const float tick     = static_cast< float >( std::max( clip.tickrate, 1 ) );
+	ImGui::SetNextWindowPos( ImVec2( display.x - 270.f, 20.f ), ImGuiCond_FirstUseEver );
+	ImGui::SetNextWindowSizeConstraints( ImVec2( 250.f, 0.f ), ImVec2( 250.f, FLT_MAX ) );
+	ImGui::Begin( "botox-recorder-editor", nullptr, panel_flags( ) | ImGuiWindowFlags_AlwaysAutoResize );
+	{
+		panel_chrome( "edit route" );
+		ImGui::SetCursorPosY( 30.f );
 
 		const int max_frame = static_cast< int >( clip.frames.size( ) ) - 1;
 		m_editor_trim_start = std::clamp( m_editor_trim_start, 0, max_frame );
 		m_editor_trim_end   = std::clamp( m_editor_trim_end, 0, max_frame );
-		ImGui::SetNextItemWidth( -1.f );
-		ImGui::SliderInt( "##mr_start_frame", &m_editor_trim_start, 0, max_frame, "start tick %d" );
-		ImGui::SetNextItemWidth( -1.f );
-		ImGui::SliderInt( "##mr_end_frame", &m_editor_trim_end, 0, max_frame, "end tick %d" );
+
+		ImGui::TextDisabled( "%zu ticks   %.1f s   %d tick", clip.frames.size( ), static_cast< float >( clip.frames.size( ) ) / tick, clip.tickrate );
+		ImGui::InputText( "name##mr_editor", m_editor_name, sizeof( m_editor_name ) );
+		ImGui::SliderInt( "start tick##mr_editor", &m_editor_trim_start, 0, max_frame, "%d" );
+		ImGui::SliderInt( "end tick##mr_editor", &m_editor_trim_end, 0, max_frame, "%d" );
+		ImGui::TextDisabled( "kept %.1f s", static_cast< float >( std::abs( m_editor_trim_end - m_editor_trim_start ) + 1 ) / tick );
 
 		if ( ImGui::Button( "apply", ImVec2( -1.f, 15.f ) ) )
 			apply_clip_editor( );
@@ -1510,10 +1560,6 @@ void n_movement_recorder::impl_t::render_clip_editor( )
 			m_editor_open = false;
 	}
 	ImGui::End( );
-	if ( font )
-		ImGui::PopFont( );
-	ImGui::PopStyleVar( );
-	ImGui::PopStyleColor( 7 );
 }
 
 void n_movement_recorder::impl_t::on_end_scene( )
@@ -1525,6 +1571,7 @@ void n_movement_recorder::impl_t::on_end_scene( )
 
 	render_clip_editor( );
 	render_clipper_box( );
+	render_indicator( );
 }
 
 void n_movement_recorder::impl_t::on_paint_traverse( )
@@ -1563,6 +1610,4 @@ void n_movement_recorder::impl_t::on_paint_traverse( )
 			enqueue_world_floor_disc( frames[ 0 ].position, k_start_radius * 0.45f, rgba( 0, 0, 0, 100 ), rgba( 255, 255, 255, 200 ), 64, 1.5f );
 		}
 	}
-
-	render_indicator( );
 }

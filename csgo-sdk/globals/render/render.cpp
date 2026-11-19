@@ -2,6 +2,7 @@
 #include "../../dependencies/avatar_data/avatar_data.h"
 #include "../../dependencies/imgui/helpers/fonts.h"
 #include "../../dependencies/fonts/spectator_fonts.h"
+#include "../../dependencies/fonts/primordial_roboto.h"
 #include "../fonts/fonts.h"
 
 #include "../../game/sdk/includes/includes.h"
@@ -831,6 +832,13 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 		fonts[ e_font_names::font_name_menu_tahoma_bd_9 ] = atlas->AddFontFromMemoryCompressedTTF(
 			tahoma_bold_compressed_data, tahoma_bold_compressed_size, 9.f, &lobotomy_v1_config, atlas->GetGlyphRangesCyrillic( ) );
 	}
+
+	/* primordial theme: its own embedded roboto pair, freetype antialiased ( create_font sets Monochrome only without
+	   FONTFLAG_ANTIALIAS ). px = guess, primordial sizes its fonts at runtime */
+	fonts[ e_font_names::font_name_primordial_roboto_13 ] =
+		add_donor_font( primordial_roboto_regular, sizeof( primordial_roboto_regular ), 13.f, 0 );
+	fonts[ e_font_names::font_name_primordial_roboto_medium_13 ] =
+		add_donor_font( primordial_roboto_medium, sizeof( primordial_roboto_medium ), 13.f, 0, false );
 
 	{
 		/* fpsoverlay minesweeper cell numbers: tahoma bold 19, digits 1-8 only */
@@ -2025,6 +2033,7 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& under, cons
 
 			style.Colors[ ImGuiCol_::ImGuiCol_Border ]       = ImVec4( 0 / 255.f, 0 / 255.f, 0 / 255.f, 0.f );
 			style.Colors[ ImGuiCol_::ImGuiCol_BorderShadow ] = ImVec4( 0 / 255.f, 0 / 255.f, 0 / 255.f, 0.f );
+			style.Colors[ ImGuiCol_::ImGuiCol_ScrollbarBg ] = ImVec4( 0 / 255.f, 0 / 255.f, 0 / 255.f, 0.f ); /* no track unless a theme sets it */
 		}( );
 
 		/* menu verdana pair now (latin only, ms), full set on the reload worker: building it here froze the first frame (boot screen) */

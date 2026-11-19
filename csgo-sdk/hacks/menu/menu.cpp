@@ -649,7 +649,26 @@ const menu_style_t k_menu_styles[ ] = {
 	{ "gamesense", IM_COL32( 20, 20, 20, 255 ), IM_COL32( 12, 12, 12, 255 ), IM_COL32( 23, 23, 23, 255 ), IM_COL32( 35, 35, 35, 255 ),
 	  IM_COL32( 10, 10, 10, 255 ), IM_COL32( 10, 10, 10, 255 ), IM_COL32( 23, 23, 23, 255 ), IM_COL32( 205, 205, 205, 255 ),
 	  IM_COL32( 120, 120, 120, 255 ), 0.f, 0.f, 0.f, e_font_names::font_name_verdana_11, e_font_names::font_name_verdana_bd_11, true },
+	/* primordial.bin menu: frame 41 r9 ( header + 1 px ring ), content 29, sidebar / tiles 34, widget 29 + 41 border r2,
+	   tooltip 29 + 41 r2, label 210, idle value 127 */
+	{ "primordial", IM_COL32( 29, 29, 29, 255 ), IM_COL32( 41, 41, 41, 255 ), IM_COL32( 34, 34, 34, 255 ), IM_COL32( 29, 29, 29, 255 ),
+	  IM_COL32( 41, 41, 41, 255 ), IM_COL32( 41, 41, 41, 255 ), IM_COL32( 29, 29, 29, 255 ), IM_COL32( 210, 210, 210, 255 ),
+	  IM_COL32( 127, 127, 127, 255 ), 9.f, 2.f, 2.f, e_font_names::font_name_primordial_roboto_13,
+	  e_font_names::font_name_primordial_roboto_medium_13, false, true },
 };
+
+/* primordial look, layout untouched: black 180 line 1 px outside the r9 frame, solid accent line under the band
+   ( its header line, over the faded one ) */
+static void primordial_frame( ImDrawList* list, const ImVec2& pos, const ImVec2& size, const float band_height )
+{
+	const ImVec2 max( pos.x + size.x, pos.y + size.y );
+	list->PushClipRect( ImVec2( pos.x - 1.f, pos.y - 1.f ), ImVec2( max.x + 1.f, max.y + 1.f ), false );
+	list->AddRect( ImVec2( pos.x - 1.f, pos.y - 1.f ), ImVec2( max.x + 1.f, max.y + 1.f ), IM_COL32( 0, 0, 0, 180 ),
+	               ImGui::GetStyle( ).WindowRounding + 1.f );
+	list->AddRectFilled( ImVec2( pos.x, pos.y + band_height - 1.f ), ImVec2( max.x, pos.y + band_height ),
+	                     ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ) );
+	list->PopClipRect( );
+}
 
 /* skeet look, layout untouched: 6 px frame outside the window ( 12 / 60 / 40 x3 / 60 ), 2 px bar over the band's top edge.
    bar = majorkahook g_color1..3 ( 37b1da -> cc46cd -> cce335 ), two halves; second row same rgb, half alpha */
@@ -699,6 +718,14 @@ static void menu_style_apply( ImGuiStyle& style, const menu_style_t& s )
 
 	g_render.m_menu_font_slots[ 0 ] = s.m_font;
 	g_render.m_menu_font_slots[ 1 ] = s.m_font_bold;
+
+	/* primordial scrollbar: track 34, thumb 41 / hover 61 ( held = accent, ScrollbarEx ), round ends */
+	if ( s.m_primordial ) {
+		set( ImGuiCol_ScrollbarBg, IM_COL32( 34, 34, 34, 255 ) );
+		set( ImGuiCol_ScrollbarGrab, IM_COL32( 41, 41, 41, 255 ) );
+		set( ImGuiCol_ScrollbarGrabHovered, IM_COL32( 61, 61, 61, 255 ) );
+		style.ScrollbarRounding = 9.f;
+	}
 }
 
 void n_menu::impl_t::on_end_scene( )
@@ -804,8 +831,11 @@ void n_menu::impl_t::on_end_scene( )
 		RenderFadedGradientLine( draw_list, ImVec2( position.x, position.y + size.y - bottom_band_height ), ImVec2( size.x, 1.f ),
 		                         ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ) );
 
-		if ( k_menu_styles[ ImClamp( GET_VARIABLE( g_variables.m_menu_style, int ), 0, k_menu_style_count - 1 ) ].m_gamesense )
+		const menu_style_t& menu_style = k_menu_styles[ ImClamp( GET_VARIABLE( g_variables.m_menu_style, int ), 0, k_menu_style_count - 1 ) ];
+		if ( menu_style.m_gamesense )
 			gamesense_frame( draw_list, position, size );
+		if ( menu_style.m_primordial )
+			primordial_frame( draw_list, position, size, background_height );
 
 		constexpr float tab_width   = 100.f;
 		constexpr float tab_height  = 24.f;

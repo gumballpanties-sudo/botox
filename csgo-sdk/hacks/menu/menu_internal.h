@@ -106,6 +106,7 @@ struct menu_style_t {
 	float m_window_rounding, m_frame_rounding, m_popup_rounding;
 	int m_font, m_font_bold;
 	bool m_gamesense; /* skeet chrome: layered border, gradient bar, icon tab strip */
+	bool m_primordial; /* primordial chrome: black 180 outer line, solid accent line, scrollbar colours */
 };
 
 extern const menu_style_t k_menu_styles[ ];

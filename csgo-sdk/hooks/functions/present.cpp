@@ -22,7 +22,8 @@ long __stdcall n_detoured_functions::present( IDirect3DDevice9* device, const RE
 
 	flash_probe_sample( device, 2 );
 
-	g_depth_source.on_present( device );
+	// route check draws + reads back in Present: a driver fault here took the game down unguarded
+	n_fx_compat::run( device, "depth check", [ & ] { g_depth_source.on_present( device ); } );
 
 	static int missed    = 0;
 	missed               = s_overlay_frame_seen ? 0 : ( missed < 3 ? missed + 1 : 3 );

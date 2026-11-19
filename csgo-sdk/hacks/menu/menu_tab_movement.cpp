@@ -880,8 +880,6 @@ void n_menu::impl_t::tab_movement( )
 						if ( GET_VARIABLE( g_variables.m_fire_man_drop_in, bool ) )
 							ImGui::Checkbox( "lock movement", &GET_VARIABLE( g_variables.m_fire_man_drop_in_lock, bool ) );
 
-						ImGui::Checkbox( "crouch jump", &GET_VARIABLE( g_variables.m_fire_man_crouch_jump, bool ) );
-
 						ImGui::Checkbox( "sides only", &GET_VARIABLE( g_variables.m_fire_man_side_only, bool ) );
 						if ( GET_VARIABLE( g_variables.m_fire_man_side_only, bool ) )
 							ImGui::Keybind( "sides only key", &GET_VARIABLE( g_variables.m_fire_man_side_only_key, key_bind_t ) );
@@ -1140,9 +1138,16 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::Combo( "comes from##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int ),
 							              k_smooth_origin_names );
 							/* kamibebra auto = fades in place, no direction */
-							if ( st == indicator_style_smooth || GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int ) != smooth_origin_auto )
-								ImGui::SliderFloat( "angle##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_smooth_angle, float ), -90.f, 90.f,
-								                    "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+							if ( st == indicator_style_smooth || GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int ) != smooth_origin_auto ) {
+								/* random = pre speed rolls its own angle in +-max each show */
+								ImGui::Checkbox( "random angle##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_smooth_random_angle, bool ) );
+								if ( GET_VARIABLE( g_variables.m_velocity_indicator_smooth_random_angle, bool ) )
+									ImGui::SliderFloat( "max angle##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_smooth_angle, float ), 0.f,
+									                    90.f, "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+								else
+									ImGui::SliderFloat( "angle##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_smooth_angle, float ), -90.f,
+									                    90.f, "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+							}
 						}
 
 						if ( GET_VARIABLE( g_variables.m_velocity_indicator_style, int ) == indicator_style_kamidere )

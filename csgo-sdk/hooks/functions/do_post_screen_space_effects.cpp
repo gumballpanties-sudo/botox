@@ -28,8 +28,6 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 	if ( g_rear_mirror.drawing( ) )
 		return;
 
-	original( ecx, edx, setup );
-
 	if ( setup ) {
 		kill_effects_world( setup->m_origin, setup->m_angles );
 		floor_level_world( );
@@ -38,9 +36,6 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 
 	// inject splash up: no screen pass (their first shader builds stall frames)
 	const bool passes = !boot_screen_active( );
-
-	if ( passes && n_players::esp_on( ) )
-		g_player_stencil.after_glow( );
 
 	PERF_ZONE( zone_screen_pass );
 
@@ -67,6 +62,13 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 
 		g_bloom.on_post_screen_space_effects( setup );
 	}
+
+	/* glow + stencil over every pass above ( no blur / bloom / warp on them ). passes restore the depth-stencil, so the
+	   engine glow still depth tests against the scene and writes the stencil refs player_stencil reads */
+	original( ecx, edx, setup );
+
+	if ( passes && n_players::esp_on( ) )
+		g_player_stencil.after_glow( );
 
 	// last: DoPostScreenSpaceEffects runs after DrawViewModels in csgo, glow + every pass above must be in the mirror
 	g_flip_world.on_post_screen_space_effects( setup );

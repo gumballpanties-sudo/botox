@@ -259,6 +259,8 @@ public:
 
 	/* DT_CSRagdoll: a dead player's body. only valid on a CCSRagdoll */
 	NETVAR_VARIABLE( unsigned int, get_ragdoll_player_handle, "CCSRagdoll->m_hPlayer" );
+	NETVAR_VARIABLE( c_vector, get_ragdoll_force, "CCSRagdoll->m_vecForce" );
+	NETVAR_VARIABLE( c_vector, get_ragdoll_velocity, "CCSRagdoll->m_vecRagdollVelocity" );
 	NETVAR_VARIABLE( unsigned int, get_ragdoll_handle, "CCSPlayer->m_hRagdoll" );
 
 	/* DT_BaseAnimating */
