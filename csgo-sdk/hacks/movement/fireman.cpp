@@ -983,7 +983,7 @@ static float fireman_launch_apex( const fireman_sim_t& s )
 	const float gravity = g_convars[ HASH_BT( "sv_gravity" ) ] ? std::max( g_convars[ HASH_BT( "sv_gravity" ) ]->get_float( ), 1.f ) : 800.f;
 	const float apex    = s.z + s.vz * s.vz / ( 2.f * gravity );
 
-	return apex + ( s.ducked ? 0.f : 9.f );
+	return apex - ( s.ducked ? 18.f : 0.f );
 }
 
 struct fireman_drop_target_t {
@@ -2368,7 +2368,6 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 		                      ( floor_detach || ( GET_VARIABLE( g_variables.m_fire_man_push_off, bool ) && push_room >= 1 ) ) && push_keeps_floor( );
 
 		bool floor_launch = false;
-		int press_duck    = in_duck;
 		float press_apex  = -FLT_MAX;
 
 		if ( ride_grounded && !push_press && !push_now && m_fireman_data.ride_released ) {
@@ -2380,16 +2379,7 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 				floor_launch = cooldown_done;
 			else {
 				press_apex   = fireman_launch_apex( plain );
-				press_duck   = 0;
 				floor_launch = press_apex > -FLT_MAX;
-
-				const float ducked_apex = fireman_launch_apex( fireman_sim( cmd, ride_base | in_jump | in_duck ) );
-
-				if ( ducked_apex > -FLT_MAX && ducked_apex >= press_apex ) {
-					press_apex   = ducked_apex;
-					press_duck   = in_duck;
-					floor_launch = true;
-				}
 			}
 		}
 
@@ -2604,8 +2594,7 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			                   g_prediction.backup_data.m_velocity.m_z, ride_drop, ladder_normal.m_z, g_prediction.backup_data.m_velocity.length_2d( ) );
 
 		if ( floor_launch )
-			botox_dbg_log( "[fr] floor press t=%d apex=%.1f duck=%d cd=%d", m_fireman_data.ride_ticks, press_apex - origin.m_z, ( int )( press_duck != 0 ),
-			                   cooldown_ticks - m_fireman_data.ride_ticks );
+			botox_dbg_log( "[fr] floor press t=%d apex=%.1f cd=%d", m_fireman_data.ride_ticks, press_apex - origin.m_z, cooldown_ticks - m_fireman_data.ride_ticks );
 
 		if ( m_fireman_data.ride_ticks < 2 || ( m_fireman_data.ride_ticks % 8 ) == 0 || hold_press || end_hang )
 			botox_dbg_log( "[fr] ride t=%d vz=%.0f h=%.0f drop=%.0f ground=%d/%d nz=%.2f nyaw=%.0f wait=%d stall=%d dead=%d push=%d room=%d", m_fireman_data.ride_ticks,
@@ -2619,9 +2608,6 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			cmd->m_buttons &= ~in_jump;
 		else
 			cmd->m_buttons |= in_jump;
-
-		if ( floor_launch || push_press )
-			cmd->m_buttons |= press_duck;
 
 		const c_angle live_view = g_ctx.old_view_point;
 
@@ -2731,19 +2717,11 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			cmd->m_buttons &= ~in_jump;
 			m_fireman_data.launch_pressed = false;
 		} else if ( !fling_tick && on_ground ) {
-			const int own_duck = ducked_now ? 0 : in_duck;
+			const int own_duck = ducked_now ? in_duck : ( cmd->m_buttons & in_duck );
 
-			int press                 = jump_base | in_jump | own_duck;
+			const int press           = jump_base | in_jump | own_duck;
 			const fireman_sim_t first = fireman_sim( cmd, press );
-			float apex                = fireman_launch_apex( first );
-
-			const int other        = jump_base | in_jump | ( own_duck ? 0 : in_duck );
-			const float other_apex = fireman_launch_apex( fireman_sim( cmd, other ) );
-
-			if ( other_apex > apex ) {
-				apex  = other_apex;
-				press = other;
-			}
+			const float apex          = fireman_launch_apex( first );
 
 			if ( !first.valid || apex > -FLT_MAX || m_fireman_data.launch_refused >= 2 ) {
 				cmd->m_buttons                = ( cmd->m_buttons & ~( in_jump | in_duck ) ) | press;
@@ -2771,41 +2749,30 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 				const float land_drop = owes_jump && !fling_tick && vz <= 0.f ? drop_to_floor( ) : -1.f;
 
 				if ( land_drop >= 0.f && land_drop <= -vz * fireman_phys_dt( ) * 2.f + 12.f ) {
-					const int now_opts[ 2 ] = { jump_base | in_jump, jump_base | in_jump | in_duck };
+					const int now_press = jump_base | in_jump;
 
-					float best_apex = -FLT_MAX;
-					int best_press  = -1;
+					float best_apex = fireman_launch_apex( fireman_sim( cmd, now_press ) );
 
-					for ( const int opt : now_opts ) {
-						const float a = fireman_launch_apex( fireman_sim( cmd, opt ) );
-
-						if ( a > best_apex ) {
-							best_apex  = a;
-							best_press = opt;
-						}
-					}
-
-					if ( best_press >= 0 ) {
-						cmd->m_buttons = ( cmd->m_buttons & ~( in_jump | in_duck ) ) | best_press;
+					if ( best_apex > -FLT_MAX ) {
+						cmd->m_buttons = ( cmd->m_buttons & ~( in_jump | in_duck ) ) | now_press;
 						planned        = true;
 						land_press     = true;
 						m_fireman_data.launch_pressed = true;
 
-						botox_dbg_log( "[fr] jb t=%d h=%.0f vz=%.0f ducked=%d apex=%.1f duck=%d", launch_window - m_fireman_data.launch_ticks,
-						                   g_prediction.backup_data.m_velocity.length_2d( ), vz, ( int )ducked_now, best_apex - origin.m_z,
-						                   ( int )( ( best_press & in_duck ) != 0 ) );
+						botox_dbg_log( "[fr] jb t=%d h=%.0f vz=%.0f ducked=%d apex=%.1f", launch_window - m_fireman_data.launch_ticks,
+						                   g_prediction.backup_data.m_velocity.length_2d( ), vz, ( int )ducked_now, best_apex - origin.m_z );
 					} else {
-						const int duck_opts[ 2 ] = { jump_base | in_duck, jump_base };
+						// jumpbug duck, not a crouch jump
+						const int rule_duck      = ducked_now ? in_duck : 0;
+						const int duck_opts[ 2 ] = { jump_base | rule_duck, jump_base | ( rule_duck ^ in_duck ) };
 						int best_duck            = -1;
 
 						for ( const int d : duck_opts ) {
-							for ( const int opt : now_opts ) {
-								const float a = fireman_launch_apex( fireman_sim( cmd, d, opt ) );
+							const float a = fireman_launch_apex( fireman_sim( cmd, d, now_press ) );
 
-								if ( a > best_apex ) {
-									best_apex = a;
-									best_duck = d;
-								}
+							if ( a > best_apex ) {
+								best_apex = a;
+								best_duck = d;
 							}
 						}
 
@@ -2820,7 +2787,7 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 					}
 				}
 
-				if ( !planned )
+				if ( !planned && ducked_now )
 					cmd->m_buttons |= in_duck;
 			}
 		}
