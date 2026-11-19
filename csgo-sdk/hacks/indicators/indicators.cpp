@@ -3095,11 +3095,18 @@ void n_indicators::impl_t::velocity_graph( const bool on_ground )
 	};
 	std::vector< graph_pt_t > pts;
 	pts.reserve( s_graph.size( ) );
-	const int count = static_cast< int >( s_graph.size( ) );
+	const int count  = static_cast< int >( s_graph.size( ) );
+	const int smooth = std::clamp( GET_VARIABLE( g_variables.m_velocity_graph_smooth, int ), 0, 64 );
+	std::vector< double > sum( count + 1, 0.0 );
+	for ( int i = 0; i < count; ++i )
+		sum[ i + 1 ] = sum[ i ] + s_graph[ i ].m_speed;
 	for ( int i = 0; i < count; ++i ) {
-		const float x = left + width - static_cast< float >( count - 1 - i ) * step;
-		const float y = base_y - std::min( s_graph[ i ].m_speed / top, 1.f ) * height;
-		pts.push_back( { ImVec2( x, y ), edge_alpha( x ), static_cast< int >( std::round( s_graph[ i ].m_speed ) ) } );
+		/* trailing mean: drawn points never shift while the graph scrolls */
+		const int lo      = std::max( i - smooth, 0 );
+		const float speed = static_cast< float >( ( sum[ i + 1 ] - sum[ lo ] ) / ( i + 1 - lo ) );
+		const float x     = left + width - static_cast< float >( count - 1 - i ) * step;
+		const float y     = base_y - std::min( speed / top, 1.f ) * height;
+		pts.push_back( { ImVec2( x, y ), edge_alpha( x ), static_cast< int >( std::round( speed ) ) } );
 	}
 
 	const ImVec4 line      = GET_VARIABLE( g_variables.m_velocity_graph_color, c_color ).get_vec4( );
@@ -3108,6 +3115,7 @@ void n_indicators::impl_t::velocity_graph( const bool on_ground )
 	const ImVec4 fill      = GET_VARIABLE( g_variables.m_velocity_graph_fill_color, c_color ).get_vec4( );
 	const bool gain_colors = GET_VARIABLE( g_variables.m_velocity_graph_gain_colors, bool );
 	const bool fill_on     = GET_VARIABLE( g_variables.m_velocity_graph_fill, bool );
+	const bool fill_height = GET_VARIABLE( g_variables.m_velocity_graph_fill_height, bool );
 	const float thickness  = std::max( GET_VARIABLE( g_variables.m_velocity_graph_thickness, float ), 0.5f );
 
 	g_render.m_draw_data.emplace_back(
@@ -3119,7 +3127,10 @@ void n_indicators::impl_t::velocity_graph( const bool on_ground )
 			};
 
 			if ( fill_on ) {
-				const ImVec2 uv = ImGui::GetFontTexUvWhitePixel( );
+				const ImVec2 uv  = ImGui::GetFontTexUvWhitePixel( );
+				const auto top_a = [ & ]( const graph_pt_t& p ) {
+					return fill_height ? p.m_a * std::clamp( ( base_y - p.m_at.y ) / height, 0.f, 1.f ) : p.m_a;
+				};
 				for ( std::size_t i = 1; i < pts.size( ); ++i ) {
 					const graph_pt_t& a = pts[ i - 1 ];
 					const graph_pt_t& b = pts[ i ];
@@ -3132,8 +3143,8 @@ void n_indicators::impl_t::velocity_graph( const bool on_ground )
 					dl->PrimWriteIdx( idx );
 					dl->PrimWriteIdx( static_cast< ImDrawIdx >( idx + 2 ) );
 					dl->PrimWriteIdx( static_cast< ImDrawIdx >( idx + 3 ) );
-					dl->PrimWriteVtx( a.m_at, uv, with_a( fill, a.m_a ) );
-					dl->PrimWriteVtx( b.m_at, uv, with_a( fill, b.m_a ) );
+					dl->PrimWriteVtx( a.m_at, uv, with_a( fill, top_a( a ) ) );
+					dl->PrimWriteVtx( b.m_at, uv, with_a( fill, top_a( b ) ) );
 					dl->PrimWriteVtx( ImVec2( b.m_at.x, base_y ), uv, with_a( fill, 0.f ) );
 					dl->PrimWriteVtx( ImVec2( a.m_at.x, base_y ), uv, with_a( fill, 0.f ) );
 				}
@@ -3160,7 +3171,7 @@ void n_indicators::impl_t::velocity_graph( const bool on_ground )
 	for ( int i = 0; i < count; ++i ) {
 		if ( !s_graph[ i ].m_take_off || pts[ i ].m_a <= 0.f )
 			continue;
-		const std::string label = std::format( "{:d}", pts[ i ].m_speed );
+		const std::string label = std::format( "{:d}", static_cast< int >( std::round( s_graph[ i ].m_speed ) ) );
 		const ImVec2 size       = font->CalcTextSizeA( fs, FLT_MAX, 0.f, label.c_str( ) );
 		ImVec4 c                = text;
 		c.w *= pts[ i ].m_a;

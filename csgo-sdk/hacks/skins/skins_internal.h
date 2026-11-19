@@ -388,6 +388,7 @@ inline int g_agent_applied_idx = 0;
 // last custom path checked by is_player_mdl ( file read, so once per path )
 inline std::string g_agent_custom_checked{ };
 inline bool g_agent_custom_ok = false;
+inline std::string g_agent_custom_arms{ }; // g_utilities.player_arms_mdl of the checked path
 inline int g_agent_log_left   = 64;
 
 /* no AGENT_ARMS precache table on purpose: precaching faction arms via the modelprecache
@@ -1013,7 +1014,49 @@ inline bool game_rules_up( )
 /* evolve's glove apply. unique on the final client.dll: CEconWearable::Equip (0x723170),
    C_CSPlayer::InvalidateViewModelArmConfig (0x3EF290, nulls cfg + drops arms on all 3 viewmodels),
    C_BaseViewModel::UpdateAllViewmodelAddons (0x215080, rebuilds arms from the equipped glove). glove null = no equip. */
-inline void rebuild_player_arms( c_base_entity* player, c_base_entity* glove, const char* why )
+inline unsigned char* invalidate_arms_site( )
+{
+	static unsigned char* const site = g_modules[ CLIENT_DLL ].find_pattern( "51 56 57 8B F9 33 F6 C7 87 ? ? ? ? 00 00 00 00 56 8B CF E8" );
+	return site;
+}
+
+/* C_CSPlayer::m_pViewmodelArmConfig = player + InvalidateViewModelArmConfig's mov [ edi + x ], 0 ( 0x9ad8 ).
+   UpdateAllViewmodelAddons only looks one up by body name while it is null */
+inline const void** arm_cfg_slot( c_base_entity* player )
+{
+	unsigned char* const site = invalidate_arms_site( );
+	return site && player ? reinterpret_cast< const void** >( reinterpret_cast< std::uintptr_t >( player ) + *reinterpret_cast< std::uint32_t* >( site + 9 ) )
+	                      : nullptr;
+}
+
+/* PlayerViewmodelArmConfig wearing a custom body's own arms. live layout ( client 0x10215236..0x102152cf ): +4 skintone string,
+   +8 glove, +0xc sleeve, +0x10 sleeve under an econ glove. every slot = the arms: the repeat add is evicted by the game ( 0x10215700 ).
+   process heap, never freed: the player can still point here after eject */
+struct custom_arm_cfg_t {
+	const char* m_substr;
+	const char* m_skintone;
+	const char* m_glove;
+	const char* m_sleeve;
+	const char* m_econ_sleeve;
+	char m_skin[ 2 ];
+	char m_path[ 128 ];
+};
+inline custom_arm_cfg_t* custom_arm_cfg( )
+{
+	static custom_arm_cfg_t* const cfg = [ ]( ) {
+		const auto out = static_cast< custom_arm_cfg_t* >( HeapAlloc( GetProcessHeap( ), HEAP_ZERO_MEMORY, sizeof( custom_arm_cfg_t ) ) );
+		if ( out ) {
+			out->m_skin[ 0 ] = '0';
+			out->m_substr    = &out->m_skin[ 1 ];
+			out->m_skintone  = out->m_skin;
+			out->m_glove = out->m_sleeve = out->m_econ_sleeve = out->m_path;
+		}
+		return out;
+	}( );
+	return cfg;
+}
+
+inline void rebuild_player_arms( c_base_entity* player, c_base_entity* glove, const char* why, const void* arm_cfg = nullptr )
 {
 	if ( !g_interfaces.m_engine_client->is_in_game( ) || !game_rules_up( ) ) {
 		botox_dbg_log( "GLV: arms %s skipped, game rules down", why );
@@ -1025,8 +1068,7 @@ inline void rebuild_player_arms( c_base_entity* player, c_base_entity* glove, co
 
 	static const auto equip = reinterpret_cast< equip_wearable_t >(
 		g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 EC 10 53 8B 5D 08 57 8B F9" ) );
-	static const auto invalidate_arms = reinterpret_cast< this_only_t >(
-		g_modules[ CLIENT_DLL ].find_pattern( "51 56 57 8B F9 33 F6 C7 87 ? ? ? ? 00 00 00 00 56 8B CF E8" ) );
+	static const auto invalidate_arms = reinterpret_cast< this_only_t >( invalidate_arms_site( ) );
 	static const auto update_addons = reinterpret_cast< this_only_t >(
 		g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 E4 F8 83 EC 2C 53 8B D9 56 57 8B 03 FF 90 F0 03 00 00 8B F8" ) );
 
@@ -1039,6 +1081,8 @@ inline void rebuild_player_arms( c_base_entity* player, c_base_entity* glove, co
 		equip( glove, player );
 	if ( invalidate_arms )
 		invalidate_arms( player );
+	if ( const auto slot = arm_cfg ? arm_cfg_slot( player ) : nullptr )
+		*slot = arm_cfg;
 	if ( viewmodel && update_addons )
 		update_addons( viewmodel );
 }

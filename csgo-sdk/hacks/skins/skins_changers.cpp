@@ -21,8 +21,29 @@ void n_skins::impl_t::agent_changer( )
 		g_agent_applied_idx = 0;
 	};
 
-	if ( !GET_VARIABLE( g_variables.m_agent_enable, bool ) ) {
+	/* custom body's own first person arms: our arm config in; off = null it, the game looks its own up again */
+	const auto custom_arms = [ & ]( const char* arms ) {
+		const auto cfg  = custom_arm_cfg( );
+		const auto slot = arm_cfg_slot( local );
+		if ( !cfg || !slot )
+			return;
+
+		if ( !arms ) {
+			if ( *slot == cfg )
+				rebuild_player_arms( local, nullptr, "custom arms off" );
+			return;
+		}
+		if ( *slot == cfg && std::strcmp( cfg->m_path, arms ) == 0 )
+			return;
+
+		std::snprintf( cfg->m_path, sizeof( cfg->m_path ), "%s", arms );
+		botox_dbg_log( "AGT: arms %s", arms );
+		rebuild_player_arms( local, nullptr, "custom arms", cfg );
+	};
+
+	if ( !GET_VARIABLE( g_variables.m_agent_enable, bool ) || g_ctx.m_eject_restoring ) {
 		restore_model( );
+		custom_arms( nullptr );
 
 		if ( prev_t && local->get_team( ) == team_tt ) {
 			prev_t = prev_ct = false;
@@ -167,15 +188,19 @@ void n_skins::impl_t::agent_changer( )
 		if ( custom != g_agent_custom_checked ) {
 			g_agent_custom_checked = custom;
 			g_agent_custom_ok      = g_utilities.is_player_mdl( custom );
-			botox_dbg_log( "AGT: custom %s body=%d", custom.c_str( ), g_agent_custom_ok ? 1 : 0 );
+			g_agent_custom_arms    = g_agent_custom_ok ? g_utilities.player_arms_mdl( custom ) : std::string( );
+			botox_dbg_log( "AGT: custom %s body=%d arms=%s", custom.c_str( ), g_agent_custom_ok ? 1 : 0,
+			               g_agent_custom_arms.empty( ) ? "-" : g_agent_custom_arms.c_str( ) );
 		}
 		return g_agent_custom_ok;
 	};
 
 	const auto apply = [ & ]( int sel, const std::string& custom, bool& prev ) {
-		const char* rel = !custom.empty( ) && custom_body( custom ) ? custom.c_str( )
-		                : sel > 0 && sel < AGENT_COUNT          ? AGENT_MODELS[ sel ]
-		                                                         : nullptr;
+		const bool own   = !custom.empty( ) && custom_body( custom );
+		const char* rel  = own                            ? custom.c_str( )
+		                 : sel > 0 && sel < AGENT_COUNT ? AGENT_MODELS[ sel ]
+		                                                : nullptr;
+		const char* arms = nullptr;
 		if ( rel ) {
 			const int idx   = resolve_idx( rel );
 			const int cur   = local->get_model_index( );
@@ -198,10 +223,15 @@ void n_skins::impl_t::agent_changer( )
 			if ( model_idx_valid( idx ) ) {
 				precache_faction_arms( rel );
 				arms_fallback( rel );
+
+				const std::string& own_arms = g_agent_custom_arms;
+				if ( own && !own_arms.empty( ) && own_arms.size( ) < sizeof( custom_arm_cfg_t::m_path ) && model_idx_valid( resolve_idx( own_arms.c_str( ) ) ) )
+					arms = own_arms.c_str( );
 			}
 		} else {
 			restore_model( );
 		}
+		custom_arms( arms );
 		if ( const bool comp = rel != nullptr; prev != comp ) {
 			prev             = comp;
 			m_forcing_update = true;

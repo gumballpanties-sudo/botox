@@ -118,6 +118,71 @@ bool n_utilities::impl_t::is_player_mdl( const std::string& rel )
 	return false;
 }
 
+std::string n_utilities::impl_t::player_arms_mdl( const std::string& rel )
+{
+	const std::string root = csgo_dir( );
+	if ( root.empty( ) || rel.size( ) < 5 )
+		return { };
+
+	const auto lower = []( std::string s ) {
+		std::transform( s.begin( ), s.end( ), s.begin( ), []( unsigned char c ) { return static_cast< char >( std::tolower( c ) ); } );
+		return s;
+	};
+	const auto armsy = [ & ]( const std::string& name ) { return name.find( "arm" ) != std::string::npos || name.find( "hand" ) != std::string::npos; };
+
+	const std::filesystem::path body = lower( rel );
+	const std::string stem           = body.stem( ).string( );
+	const std::filesystem::path dir  = body.parent_path( );
+
+	const auto list = [ & ]( const std::filesystem::path& in, bool any_name ) {
+		std::vector< std::filesystem::path > out;
+		std::error_code ec;
+		for ( auto it = std::filesystem::directory_iterator( std::filesystem::path( root ) / in, ec ); !ec && it != std::filesystem::directory_iterator( );
+		      it.increment( ec ) ) {
+			const std::string name = lower( it->path( ).filename( ).string( ) );
+			if ( it->is_regular_file( ec ) && std::filesystem::path( name ).extension( ) == ".mdl" && name != body.filename( ).string( ) &&
+			     ( any_name || armsy( name ) ) )
+				out.push_back( in / name );
+		}
+		std::sort( out.begin( ), out.end( ) );
+		return out;
+	};
+	// longest shared name start wins ( pneumaf2 -> pneumav2_arms, not poppi_arms )
+	const auto pick = [ & ]( const std::vector< std::filesystem::path >& files, bool lone_ok, std::size_t min_shared ) {
+		if ( lone_ok && files.size( ) == 1 )
+			return files[ 0 ].generic_string( );
+		std::string best{ };
+		std::size_t best_n = min_shared - 1;
+		for ( const auto& file : files ) {
+			const std::string s = file.stem( ).string( );
+			std::size_t n       = 0;
+			while ( n < s.size( ) && n < stem.size( ) && s[ n ] == stem[ n ] )
+				++n;
+			if ( n > best_n ) {
+				best   = file.generic_string( );
+				best_n = n;
+			}
+		}
+		return best;
+	};
+
+	if ( std::string arms = pick( list( dir, false ), true, 1 ); !arms.empty( ) )
+		return arms;
+
+	// omega/arms/arm_v1.mdl
+	std::error_code ec;
+	for ( auto it = std::filesystem::directory_iterator( std::filesystem::path( root ) / dir, ec ); !ec && it != std::filesystem::directory_iterator( );
+	      it.increment( ec ) ) {
+		const std::string name = lower( it->path( ).filename( ).string( ) );
+		if ( it->is_directory( ec ) && armsy( name ) )
+			if ( std::string arms = pick( list( dir / name, true ), true, 1 ); !arms.empty( ) )
+				return arms;
+	}
+
+	// azurlane/nohbox/ayanami_v2.mdl -> azurlane/ayanami_v2_arms.mdl
+	return pick( list( dir.parent_path( ), false ), false, 3 );
+}
+
 int n_utilities::impl_t::create_thread( unsigned long __stdcall function( void* ), void* parameter )
 {
 	std::thread( function, parameter ).detach( );

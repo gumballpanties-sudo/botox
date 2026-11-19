@@ -375,24 +375,12 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		cmd->m_buttons      = live_buttons;
 	};
 
-	/* how the move goes on the wire: silent angles, always. the pin view itself is the cmd view on every tick no bullet leaves = the
-	   proven bits exactly, your camera is the engine view ( silent_view keeps a forced view, fake_pov records the engine view ) so
-	   turning cannot break a pin; a bullet tick sends your real view with the move rotated in ( the shot goes where you aim ) and
-	   air_stuck_shot_proof re-proves it. "use movement fix" off = forced on bullet ticks too ( the shot view is then the pin view ).
-	   zero move: wishvel 0 = any view sims the same */
-	/* bullet = a GUN fires this tick ( shot_leaves is true for any non-gun: a knife swing needs no real view, 13:23 log "falls off
-	   when i swing my knife" ). mutable: a bullet tick with no proven rotated pin falls back to the forced pin and delays the shot */
-	const bool gun = [ & ] {
-		const auto active = g_interfaces.m_client_entity_list->get< c_base_entity >( g_ctx.m_local->get_active_weapon_handle( ) );
-		const auto data   = active ? g_interfaces.m_weapon_system->get_weapon_data( active->get_item_definition_index( ) ) : nullptr;
-		return data && data->is_gun( );
-	}( );
-	const bool bullet = ( live_buttons & ( in_attack | in_second_attack ) ) && gun && g_aimbot.shot_leaves( );
-	bool send_forced  = !bullet || !GET_VARIABLE( g_variables.m_movement_fix, bool );
+	/* wire = your live view + the pin move rotated in, every tick: the pin view never leaves, nobody sees you spin ( 11-19 user ).
+	   every sim below runs that same form. costs knife-edge pins that only hold in the pin frame */
 	const auto publish = [ & ]( const float yaw, const float move, const bool stuck, const float pitch, const bool exact, const float side = 0.0f ) {
 		s_last                    = { true, cmd->m_command_number, pitch, yaw, move, side };
 		s_proof                   = { stuck, exact, origin, live_velocity };
-		s_hold.freeze             = false; /* only the hold replay sites ( hold / shot held ) carry it over */
+		s_hold.freeze             = false; /* only the hold replay carries it over */
 		s_hold.valid              = stuck;
 		s_hold.vzpin              = false;
 		s_hold.pitch              = pitch;
@@ -401,13 +389,6 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		s_hold.side               = side;
 		cmd->m_view_point         = live_view;
 		stamp_rotate( live_view.m_y, yaw, move, side, cmd->m_forward_move, cmd->m_side_move );
-		g_air_stuck_view_forced = send_forced;
-		if ( g_air_stuck_view_forced ) {
-			cmd->m_view_point.m_x = pitch;
-			cmd->m_view_point.m_y = yaw;
-			cmd->m_forward_move   = move;
-			cmd->m_side_move      = side;
-		}
 		cmd->m_buttons            = live_buttons;
 		s_last.origin             = origin;
 		s_last.velocity           = live_velocity;
@@ -433,17 +414,13 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	const auto refused_cmd = [ & ]( const float yaw, const float move, const float pitch, const float side ) {
 		if ( !s_refuse_n )
 			return false;
-		if ( send_forced )
-			return as_refused( origin, live_velocity, pitch, yaw, move, side );
 		float f = 0.0f, s = 0.0f;
 		stamp_rotate( live_view.m_y, yaw, move, side, f, s );
 		return as_refused( origin, live_velocity, live_view.m_x, live_view.m_y, f, s );
 	};
-	/* unproven press, no exact bits to keep: published in the live frame = your view on the wire ( hidden from other players ) and
-	   s_last remembers exactly that wire for catch last / pinned resend. movement fix off = pin frame on purpose */
+	/* unproven press, no exact bits to keep: published in the live frame ( stamp yaw = live yaw ) so s_last remembers exactly that
+	   wire for catch last / pinned resend */
 	const auto press = [ & ]( const float yaw, const float fwd ) {
-		if ( !GET_VARIABLE( g_variables.m_movement_fix, bool ) )
-			return publish( yaw, fwd, false, live_view.m_x, false );
 		float f = 0.0f, s = 0.0f;
 		stamp_rotate( live_view.m_y, yaw, fwd, 0.0f, f, s );
 		publish( live_view.m_y, f, false, live_view.m_x, false, s );
@@ -460,24 +437,15 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		return !( g_ctx.m_local->get_flags( ) & fl_onground ) && g_ctx.m_local->get_move_type( ) == move_type_walk && g_ctx.m_local->get_velocity( ).m_z == pin_vz;
 	};
 	const bool start_vzpin = live_velocity.m_z == pin_vz && !vel_pinned( live_velocity );
-	/* one engine tick of ( yaw, fwd ) from the live START; true = still pinned at the same origin ( fixed point ).
-	   simmed in the SENT form: forced = the pin frame ( silent angles / movement fix off ), else your live view with the move rotated in.
-	   11-10 12:20 log: the pin-frame sim said the hold falls 88 ticks in a row while the engine kept the live-view cmd pinned */
-	bool send_fix       = !send_forced;
-	/* side: replays of a published cmd ( hold, catch last ) carry its side ( hidden / rescued holds live in the live frame, side != 0 ) */
-	const auto sim_pins = [ & ]( const float yaw, const float fwd, const float pitch, int& sims, const float side = 0.0f ) {
+	/* one engine tick of ( yaw, fwd ) from the live START in the SENT form ( live view + rotated move ); true = still pinned at the same
+	   origin ( fixed point ). 11-10 12:20 log: the pin-frame sim said the hold falls 88 ticks in a row while the engine kept the live-view
+	   cmd pinned. side: replays of a published cmd ( hold, catch last ) carry its side. pitch unused ( your view goes out ) */
+	const auto sim_pins = [ & ]( const float yaw, const float fwd, const float, int& sims, const float side = 0.0f ) {
 		g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 		apply_predicted_state( );
-		if ( send_fix ) {
-			cmd->m_view_point = live_view;
-			stamp_rotate( live_view.m_y, yaw, fwd, side, cmd->m_forward_move, cmd->m_side_move );
-		} else {
-			cmd->m_view_point.m_x = pitch;
-			cmd->m_view_point.m_y = yaw;
-			cmd->m_forward_move   = fwd;
-			cmd->m_side_move      = side;
-		}
-		cmd->m_buttons        = live_buttons;
+		cmd->m_view_point = live_view;
+		stamp_rotate( live_view.m_y, yaw, fwd, side, cmd->m_forward_move, cmd->m_side_move );
+		cmd->m_buttons    = live_buttons;
 		g_prediction.begin( g_ctx.m_local, cmd );
 		g_prediction.end( g_ctx.m_local );
 		++sims;
@@ -506,8 +474,6 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 	   live view ( +-6 ulp side, +-3 ulp fwd, magnitude +-j/16 ) finds the same pin again 394/399 times ( 12:37 log ). true = published,
 	   in the LIVE frame ( stamp yaw = live yaw ) so final_stamp / shot_proof pass the exact bits through */
 	const auto hold_rescue = [ & ]( const float yaw, const float fwd, const float side, int& sims ) {
-		if ( !send_fix )
-			return false;
 		float rot_f = 0.0f, rot_s = 0.0f;
 		stamp_rotate( live_view.m_y, yaw, fwd, side, rot_f, rot_s );
 		const auto ulp = [ ]( float x, int k ) {
@@ -564,7 +530,7 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		s_proof.valid = false;
 		s_hold.valid  = false;
 		++s_lock.ticks;
-		s_lock.moved += !g_air_stuck_view_forced && ( live_view.m_x != s_lock.view.m_x || live_view.m_y != s_lock.view.m_y );
+		s_lock.moved += live_view.m_x != s_lock.view.m_x || live_view.m_y != s_lock.view.m_y;
 		botox_dbg_log( "AS: lock copy t=%d why=%s", s_lock.ticks, why );
 	};
 	/* one tick from an arbitrary START ( the server's pinned origin ), velocity written with the abs-velocity cache dirtied */
@@ -575,15 +541,8 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 		g_ctx.m_local->get_velocity( ) = v;
 		if ( int& eflags = g_ctx.m_local->get_eflags( ); reinterpret_cast< std::uintptr_t >( &eflags ) != reinterpret_cast< std::uintptr_t >( g_ctx.m_local ) )
 			eflags |= 1 << 12;
-		if ( send_fix ) {
-			cmd->m_view_point = live_view;
-			stamp_rotate( live_view.m_y, yaw, fwd, 0.0f, cmd->m_forward_move, cmd->m_side_move );
-		} else {
-			cmd->m_view_point.m_x = live_view.m_x;
-			cmd->m_view_point.m_y = yaw;
-			cmd->m_forward_move   = fwd;
-			cmd->m_side_move      = 0.0f;
-		}
+		cmd->m_view_point = live_view;
+		stamp_rotate( live_view.m_y, yaw, fwd, 0.0f, cmd->m_forward_move, cmd->m_side_move );
 		cmd->m_buttons = live_buttons;
 		g_prediction.begin( g_ctx.m_local, cmd );
 		g_prediction.end( g_ctx.m_local );
@@ -666,27 +625,6 @@ void n_movement::impl_t::air_stuck( c_user_cmd* cmd )
 			botox_dbg_log( "AS: hold refused t=%d yaw=%.2f fwd=%.4f pitch=%.2f n=%d", s_hold.ticks, s_hold.yaw, s_hold.fwd, s_hold.pitch, s_refuse_n );
 		if ( !held && hold_rescue( s_hold.yaw, s_hold.fwd, s_hold.side, sims ) )
 			return;
-		/* bullet tick, nothing proven in your view: keep the forced pin ( proven frame ) and fire next tick instead ( 13:23 log: 46 rescues
-		   + 9 unproven shot proofs fell; a bullet one tick late is invisible, a lost stuck is not ) */
-		if ( !held && bullet && send_fix ) {
-			send_forced = true;
-			send_fix    = false;
-			const bool forced_held = !refused_cmd( s_hold.yaw, s_hold.fwd, s_hold.pitch, s_hold.side ) && sim_pins( s_hold.yaw, s_hold.fwd, s_hold.pitch, sims, s_hold.side );
-			restore( );
-			if ( forced_held ) {
-				++s_hold.ticks;
-				botox_dbg_log( "AS: shot held t=%d yaw=%.1f fwd=%.4f sims=%d", s_hold.ticks, s_hold.yaw, s_hold.fwd, sims );
-				const bool keep_freeze = s_hold.freeze;
-				publish( s_hold.yaw, s_hold.fwd, true, s_hold.pitch, true, s_hold.side );
-				s_hold.freeze = keep_freeze;
-				cmd->m_buttons &= ~( in_attack | in_second_attack );
-				g_air_stuck_stamp_buttons = cmd->m_buttons;
-				s_expect = { true, origin };
-				return;
-			}
-			send_forced = false;
-			send_fix    = true;
-		}
 		if ( held ) {
 			s_hold_win = 0;
 			if ( s_hold.ticks++ == 0 )
@@ -1204,45 +1142,15 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 	s_proof.valid    = false;
 	if ( !armed || !cmd || !g_air_stuck_stamp_valid || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) )
 		return;
-	/* the exact forced stamp is on the wire: hide it from other players = your view + the move rotated in, a fixed point at START as
-	   robust as the stamp, else the forced pin stays ( 11-17 user: "make it invisible to other players" ). movement fix off = forced on
-	   purpose; inexact stucks ( vz rides ) stay forced */
-	const bool forced_eq = cmd->m_view_point.m_x == g_air_stuck_stamp_pitch && cmd->m_view_point.m_y == g_air_stuck_stamp_yaw &&
-	                       cmd->m_forward_move == g_air_stuck_stamp_forward && cmd->m_side_move == g_air_stuck_stamp_side;
-	const bool hide           = forced_eq && g_air_stuck_view_forced && GET_VARIABLE( g_variables.m_movement_fix, bool ) && s_proof.exact;
-	const c_angle forced_view = cmd->m_view_point;
-	c_angle sent_view         = cmd->m_view_point;
-	/* a hidden cmd went out: remember the WIRE, not the pin frame. hold replays, the hold window, pinned resend, catch last and the
-	   refusal lookup all rebuild from these ( critic 11-17: a pin-frame memory resent cmds the server never got ) */
-	const auto remember_wire = [ & ]( const float f, const float s ) {
-		g_air_stuck_view_forced   = false;
-		s_hold.pitch = s_last.pitch = s_last.w_pitch = g_air_stuck_stamp_pitch = sent_view.m_x;
-		s_hold.yaw = s_last.yaw = s_last.w_yaw = g_air_stuck_stamp_yaw = sent_view.m_y;
-		s_hold.fwd = s_last.fwd = s_last.w_fwd = g_air_stuck_stamp_forward = f;
-		s_hold.side = s_last.side = s_last.w_side = g_air_stuck_stamp_side = s;
-		g_air_stuck_authored_view = sent_view;
-	};
-	if ( hide ) {
-		g_interfaces.m_engine_client->get_view_angles( sent_view );
-		sent_view.normalize( );
-		sent_view.clamp( );
-		sent_view.m_z = forced_view.m_z;
-		/* the forced cmd already is your view ( a hidden hold replayed, mouse still ): nothing to hide, nothing to sim */
-		if ( sent_view.m_x == forced_view.m_x && sent_view.m_y == forced_view.m_y ) {
-			g_air_stuck_view_forced = false;
-			return;
-		}
-	}
-	if ( !hide && forced_eq )
+	/* cmd == stamp bits ( live-frame publish, or your view == pin view ): the proof already is this cmd */
+	const bool stamp_eq = cmd->m_view_point.m_x == g_air_stuck_stamp_pitch && cmd->m_view_point.m_y == g_air_stuck_stamp_yaw &&
+	                      cmd->m_forward_move == g_air_stuck_stamp_forward && cmd->m_side_move == g_air_stuck_stamp_side;
+	if ( stamp_eq )
 		return;
 	/* zero-move pin: wishvel 0 in every view, the proof already covers this cmd */
-	if ( g_air_stuck_stamp_forward == 0.0f && g_air_stuck_stamp_side == 0.0f && cmd->m_forward_move == 0.0f && cmd->m_side_move == 0.0f ) {
-		if ( hide ) {
-			cmd->m_view_point = sent_view;
-			remember_wire( 0.0f, 0.0f );
-		}
+	if ( g_air_stuck_stamp_forward == 0.0f && g_air_stuck_stamp_side == 0.0f && cmd->m_forward_move == 0.0f && cmd->m_side_move == 0.0f )
 		return;
-	}
+	const c_angle sent_view = cmd->m_view_point;
 
 	c_base_entity* local    = g_ctx.m_local;
 	/* same leaf-list bounds as the real run ( see air_stuck ) */
@@ -1280,9 +1188,6 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 		++sims;
 		if ( !held( ) )
 			return false;
-		/* hiding: the stamp's own bar ( sim_pins: pinned at START ), never a pin that moved first */
-		if ( hide )
-			return same( local->get_abs_origin( ), s_proof.origin );
 		if ( same( local->get_abs_origin( ), s_proof.origin ) && same( local->get_velocity( ), s_proof.velocity ) )
 			return true;
 		for ( int t = 0; t < 2; ++t ) {
@@ -1378,9 +1283,8 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 		out_s = s;
 	};
 
-	if ( !hide )
-		attempt( sent_f, sent_s );
-	if ( hide || rot_f != sent_f || rot_s != sent_s )
+	attempt( sent_f, sent_s );
+	if ( rot_f != sent_f || rot_s != sent_s )
 		attempt( rot_f, rot_s );
 	for ( int k = 1; k <= 6; ++k ) {
 		attempt( rot_f, ulp( rot_s, k ) );
@@ -1399,18 +1303,15 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 	}
 	attempt( 0.0f, 0.0f );
 
-	/* nothing as robust as the stamp: the most robust pinned move beats the unproven sent one ( keep=0 ). hiding: the forced pin beats both */
-	if ( keep < 0 && best_rob >= 0 && !hide ) {
+	/* nothing as robust as the stamp: the most robust pinned move beats the unproven sent one ( keep=0 ) */
+	if ( keep < 0 && best_rob >= 0 ) {
 		keep  = 0;
 		out_f = best_f;
 		out_s = best_s;
 	}
-	const bool hidden = hide && keep >= 0;
-	if ( hidden )
-		remember_wire( out_f, out_s );
 
 	reset( );
-	cmd->m_view_point   = hide && !hidden ? forced_view : sent_view;
+	cmd->m_view_point   = sent_view;
 	cmd->m_forward_move = out_f;
 	cmd->m_side_move    = out_s;
 	g_prediction.begin( local, cmd, true );
@@ -1422,7 +1323,7 @@ void air_stuck_shot_proof( c_user_cmd* cmd )
 		return;
 	s_last_kept = kept;
 
-	botox_dbg_log( "AS: shot keep=%d hide=%d rob=%d/%d tries=%d sims=%d exact=%d fwd=%.4f/%.4f -> %.4f/%.4f view=%.2f/%.2f stamp=%.2f/%.2f av=%.2f/%.2f us=%lld",
-	               keep, ( int )hide, best_rob, need, tries, sims, ( int )s_proof.exact, sent_f, sent_s, out_f, out_s, cmd->m_view_point.m_x, cmd->m_view_point.m_y,
+	botox_dbg_log( "AS: shot keep=%d rob=%d/%d tries=%d sims=%d exact=%d fwd=%.4f/%.4f -> %.4f/%.4f view=%.2f/%.2f stamp=%.2f/%.2f av=%.2f/%.2f us=%lld",
+	               keep, best_rob, need, tries, sims, ( int )s_proof.exact, sent_f, sent_s, out_f, out_s, cmd->m_view_point.m_x, cmd->m_view_point.m_y,
 	               g_air_stuck_stamp_pitch, g_air_stuck_stamp_yaw, g_air_stuck_authored_view.m_x, g_air_stuck_authored_view.m_y, clock.used_us( ) );
 }

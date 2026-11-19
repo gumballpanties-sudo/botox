@@ -240,6 +240,7 @@ namespace n_misc
 		void draw_spectator_list_howeweware( );
 		void draw_spectator_list_gamesense( );
 		void draw_spectator_list_millionware_v1( );
+		void draw_spectator_list_hotwheels_v1( );
 
 	public:
 		/* gifs + gdi+ + eyes art, render thread only. textures_only = Reset hook (decoded gifs stay), full = unload */

@@ -1432,7 +1432,7 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 	// a frozen hull goes nowhere on air stuck's cmd either: the unfreeze takes it like a catch
 	if ( as_steers ) {
 		if ( caught_now || freed ) {
-			g_air_stuck_owns_cmd = g_air_stuck_authored_view_valid = g_air_stuck_stamp_valid = g_air_stuck_view_forced = false;
+			g_air_stuck_owns_cmd = g_air_stuck_authored_view_valid = g_air_stuck_stamp_valid = false;
 			++s_count[ wc_as_take ];
 		} else
 			*cmd = as_cmd;

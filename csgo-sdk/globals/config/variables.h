@@ -1683,6 +1683,7 @@ namespace n_variables
 		ADD_VARIABLE( int, m_velocity_graph_length, 200 );
 		ADD_VARIABLE( float, m_velocity_graph_max, 0.f );
 		ADD_VARIABLE( float, m_velocity_graph_thickness, 1.5f );
+		ADD_VARIABLE( int, m_velocity_graph_smooth, 0 );
 		ADD_VARIABLE( c_color, m_velocity_graph_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( bool, m_velocity_graph_gain_colors, false );
 		ADD_VARIABLE( c_color, m_velocity_graph_color_gain, c_color( 30, 255, 109, 255 ) );
@@ -1691,6 +1692,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_velocity_graph_fade, 0.2f );
 		ADD_VARIABLE( bool, m_velocity_graph_fill, false );
 		ADD_VARIABLE( c_color, m_velocity_graph_fill_color, c_color( 255, 255, 255, 40 ) );
+		ADD_VARIABLE( bool, m_velocity_graph_fill_height, false );
 		ADD_VARIABLE( bool, m_velocity_graph_jump_speeds, true );
 		ADD_VARIABLE( c_color, m_velocity_graph_text_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( float, m_velocity_graph_text_scale, 0.75f );
@@ -1909,6 +1911,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_watermark_gamesense_x, 0.f );
 		ADD_VARIABLE( float, m_watermark_gamesense_y, 0.f );
 		ADD_VARIABLE( bool, m_spectators_gamesense_bar, true );
+		ADD_VARIABLE( float, m_spectators_hotwheels_gap, 2.f );
 		ADD_VARIABLE( int, m_watermark_lumi_design, 0 );
 		ADD_VARIABLE( bool, m_watermark_lumi_animated_title, false );
 		ADD_VARIABLE( bool, m_watermark_lumi_no_border, false );

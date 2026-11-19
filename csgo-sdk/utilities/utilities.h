@@ -34,6 +34,9 @@ namespace n_utilities
 
 		// loose "models/player/x.mdl" is a whole player body: head_0 + pelvis rig, mesh skinned to a leg bone
 		bool is_player_mdl( const std::string& rel );
+
+		// a custom body's own first person arms shipped beside it ( x_arms / arms_x / xhands / arms/ ), "" if none
+		std::string player_arms_mdl( const std::string& rel );
 		template< typename T >
 		bool is_in( const T& v, std::initializer_list< T > lst )
 		{

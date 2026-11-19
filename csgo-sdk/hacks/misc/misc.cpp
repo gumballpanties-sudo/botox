@@ -2586,6 +2586,9 @@ void n_misc::impl_t::on_end_scene( )
 		case 33:
 			draw_spectator_list_millionware_v1( );
 			break;
+		case 34:
+			draw_spectator_list_hotwheels_v1( );
+			break;
 		default:
 			break;
 		}

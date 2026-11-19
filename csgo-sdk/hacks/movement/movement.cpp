@@ -74,7 +74,6 @@ c_angle g_air_stuck_authored_view{ };
 bool g_air_stuck_authored_view_valid = false;
 
 bool g_air_stuck_stamp_valid    = false;
-bool g_air_stuck_view_forced    = false;
 bool g_air_stuck_axis           = false;
 float g_air_stuck_stamp_yaw     = 0.0f;
 float g_air_stuck_stamp_forward = 0.0f;
@@ -366,7 +365,6 @@ void n_movement::impl_t::on_create_move_pre( )
 	g_air_stuck_authored_view_valid = false;
 	/* this-tick fact: stale would re-press a dead weld cmd */
 	g_air_stuck_stamp_valid = false;
-	g_air_stuck_view_forced = false;
 	g_air_stuck_axis        = false;
 
 	if ( g_ctx.m_cmd ) {

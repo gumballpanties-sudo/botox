@@ -6611,6 +6611,110 @@ void n_misc::impl_t::draw_spectator_list_millionware_v1( )
 	g_render.end_stretch_block( block );
 }
 
+/* hwsapeclist recreation: "SPECTATORS" header box, gap, rows box. bg 18 a230, 10 outer / 70 inner rect, 2 px accent top line,
+   11 px text with 4 dir black a220 outline, local watcher name = accent. out of game = 2 placeholder rows */
+void n_misc::impl_t::draw_spectator_list_hotwheels_v1( )
+{
+	const auto font = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ];
+
+	if ( !font )
+		return;
+
+	const bool in_game     = g_ctx.m_local && g_interfaces.m_engine_client->is_in_game( );
+	const bool show_target = GET_VARIABLE( g_variables.m_spectators_list_show_target, bool );
+	const bool always_show = GET_VARIABLE( g_variables.m_spectators_list_always_show, bool );
+
+	std::vector< spectator_entry_t > entries{ };
+
+	if ( in_game ) {
+		collect_spectators( entries, true );
+
+		const int local_index = g_ctx.m_local->get_index( );
+		std::erase_if( entries, [ & ]( const spectator_entry_t& entry ) {
+			return entry.m_index == local_index || ( !show_target && !entry.m_watching_local );
+		} );
+		std::sort( entries.begin( ), entries.end( ), []( const spectator_entry_t& a, const spectator_entry_t& b ) { return a.m_index < b.m_index; } );
+	} else if ( always_show ) {
+		entries.push_back( { "Player1 -> Player2" } );
+		entries.push_back( { "Player3 -> Player4" } );
+	}
+
+	if ( entries.empty( ) && !always_show )
+		return;
+
+	constexpr float size = 11.f, header_h = 20.f, row_h = 15.f, pad_x = 5.f, pad_y = 3.f;
+	constexpr auto title = "SPECTATORS", arrow = " -> ";
+
+	const auto text_w = [ & ]( const std::string& text ) { return font->CalcTextSizeA( size, FLT_MAX, 0.f, text.c_str( ) ).x; };
+
+	const bool avatars   = GET_VARIABLE( g_variables.m_spectators_avatar, bool );
+	const float avatar_w = avatars ? size + 3.f : 0.f;
+	const float gap      = GET_VARIABLE( g_variables.m_spectators_hotwheels_gap, float );
+
+	float widest = text_w( title ) + 16.f;
+	for ( const auto& entry : entries )
+		widest = ImMax( widest, avatar_w + text_w( show_target && !entry.m_target_name.empty( ) ? entry.m_name + arrow + entry.m_target_name : entry.m_name ) + 10.f );
+
+	const float box_w     = ImMax( 160.f, widest );
+	const float entries_h = entries.empty( ) ? 0.f : pad_y * 2.f + static_cast< float >( entries.size( ) ) * row_h;
+
+	drag_placed_panel( box_w, header_h + ( entries.empty( ) ? 0.f : gap + entries_h ) );
+
+	const float x = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_x, int ) );
+	const float y = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_y, int ) );
+
+	const auto draw_list = ImGui::GetBackgroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	const ImU32 accent = ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent );
+	constexpr ImU32 white = IM_COL32( 255, 255, 255, 255 );
+
+	const auto box = [ & ]( const float top, const float h ) {
+		draw_list->AddRectFilled( ImVec2( x, top ), ImVec2( x + box_w, top + h ), IM_COL32( 18, 18, 18, 230 ) );
+		draw_list->AddRect( ImVec2( x, top ), ImVec2( x + box_w, top + h ), IM_COL32( 10, 10, 10, 255 ) );
+		draw_list->AddRect( ImVec2( x + 1.f, top + 1.f ), ImVec2( x + box_w - 1.f, top + h - 1.f ), IM_COL32( 70, 70, 70, 255 ) );
+	};
+
+	const auto text = [ & ]( const ImVec2 pos, const ImU32 color, const char* str ) {
+		constexpr ImVec2 offsets[ 4 ] = { { -1.f, 0.f }, { 1.f, 0.f }, { 0.f, -1.f }, { 0.f, 1.f } };
+		for ( const auto& offset : offsets )
+			draw_list->AddText( font, size, ImVec2( pos.x + offset.x, pos.y + offset.y ), IM_COL32( 0, 0, 0, 220 ), str );
+		draw_list->AddText( font, size, pos, color, str );
+	};
+
+	box( y, header_h );
+	draw_list->AddLine( ImVec2( x, y ), ImVec2( x + box_w, y ), accent, 2.f );
+	text( ImVec2( x + ( box_w - text_w( title ) ) * 0.5f, y + ( header_h - size ) * 0.5f ), white, title );
+
+	if ( !entries.empty( ) ) {
+		const float ey = y + header_h + gap;
+		box( ey, entries_h );
+
+		for ( std::size_t i = 0; i < entries.size( ); ++i ) {
+			const auto& entry = entries[ i ];
+			const float row_y = ey + pad_y + static_cast< float >( i ) * row_h;
+			float cursor_x    = x + pad_x;
+
+			if ( avatars ) {
+				const ImVec2 min( cursor_x, row_y ), max( cursor_x + size, row_y + size );
+				if ( const auto texture = in_game ? spectator_avatar_texture( entry.m_index, entry.m_team, entry.m_fake_player ) : nullptr )
+					draw_list->AddImage( texture, min, max );
+				else
+					draw_list->AddRectFilled( min, max, IM_COL32( 36, 36, 36, 255 ) );
+
+				cursor_x += avatar_w;
+			}
+
+			text( ImVec2( cursor_x, row_y ), entry.m_watching_local ? accent : white, entry.m_name.c_str( ) );
+
+			if ( show_target && !entry.m_target_name.empty( ) )
+				text( ImVec2( cursor_x + text_w( entry.m_name ), row_y ), white, ( arrow + entry.m_target_name ).c_str( ) );
+		}
+	}
+
+	g_render.end_stretch_block( block );
+}
+
 /* lumiabeta FUN_1007b020. sf pro bold 13, box ( x, 10 ) to ( x + w, size + 22 ), x = screen - w - 5, w = text + 12 eased dt * 8
    ( snaps after a 1 s gap or a > 200 px jump ). fill ( 13 ) r4, black ring 1 px out, ( 50 ) ring on the edge. text ( x + 6, 16 ):
    brand in the title colour, then per part " | " ( 150 ) + user / time ( 150 ) or number ( white ) + unit ( 150 ) */

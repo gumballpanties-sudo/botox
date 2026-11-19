@@ -828,7 +828,6 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::Keybind( "air stuck key", &GET_VARIABLE( g_variables.m_air_stuck_key, key_bind_t ) );
 
 						ImGui::Checkbox( "fix air stucks", &GET_VARIABLE( g_variables.m_fix_air_stucks, bool ) );
-						ImGui::Checkbox( "use movement fix", &GET_VARIABLE( g_variables.m_movement_fix, bool ) );
 						ImGui::Checkbox( "screen message", &GET_VARIABLE( g_variables.m_air_stuck_display_screen, bool ) );
 						ImGui::SliderFloat( "extra reach", &GET_VARIABLE( g_variables.m_air_stuck_extra_reach, float ), 0.f, 32.f, "%.2f" );
 						ImGui::SliderFloat( "fan budget", &GET_VARIABLE( g_variables.m_air_stuck_budget, float ), 5.f, 90.f, "%.0f%%" );
@@ -1293,6 +1292,8 @@ void n_menu::impl_t::tab_movement( )
 					[ & ]( ) {
 						ImGui::ColorEdit4( "line color##velocity graph", &GET_VARIABLE( g_variables.m_velocity_graph_color, c_color ), color_picker_alpha_flags );
 						ImGui::SliderFloat( "thickness##velocity graph", &GET_VARIABLE( g_variables.m_velocity_graph_thickness, float ), 0.5f, 6.f, "%.1f" );
+						ImGui::SliderInt( "smoothing##velocity graph", &GET_VARIABLE( g_variables.m_velocity_graph_smooth, int ), 0, 32,
+						                  GET_VARIABLE( g_variables.m_velocity_graph_smooth, int ) <= 0 ? "off" : "%d ticks" );
 
 						ImGui::Checkbox( "gain colors##velocity graph", &GET_VARIABLE( g_variables.m_velocity_graph_gain_colors, bool ) );
 						if ( GET_VARIABLE( g_variables.m_velocity_graph_gain_colors, bool ) ) {
@@ -1304,9 +1305,11 @@ void n_menu::impl_t::tab_movement( )
 						}
 
 						ImGui::Checkbox( "fill##velocity graph", &GET_VARIABLE( g_variables.m_velocity_graph_fill, bool ) );
-						if ( GET_VARIABLE( g_variables.m_velocity_graph_fill, bool ) )
+						if ( GET_VARIABLE( g_variables.m_velocity_graph_fill, bool ) ) {
 							ImGui::ColorEdit4( "fill color##velocity graph", &GET_VARIABLE( g_variables.m_velocity_graph_fill_color, c_color ),
 							                   color_picker_alpha_flags );
+							ImGui::Checkbox( "height gradient##velocity graph", &GET_VARIABLE( g_variables.m_velocity_graph_fill_height, bool ) );
+						}
 
 						ImGui::Checkbox( "fade sides##velocity graph", &GET_VARIABLE( g_variables.m_velocity_graph_fade_sides, bool ) );
 						if ( GET_VARIABLE( g_variables.m_velocity_graph_fade_sides, bool ) )

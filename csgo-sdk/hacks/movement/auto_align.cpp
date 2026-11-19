@@ -270,6 +270,44 @@ namespace
 	bool s_pj_armed            = false;
 	float s_pj_top             = 0.f;
 
+	/* your hull walks through this player = engine move filter ( gamemovement.cpp CTraceFilterSkipTwoEntitiesAndCheckTeamMask +
+	   CCSGameRules::ShouldCollide ): noblock group, or teammate under mp_solid_teammates 0 / 2 ( 2: head on boots stays solid ) */
+	bool aa_player_passable( c_base_entity* local, c_base_entity* e )
+	{
+		const unsigned int handle = e->get_ref_ehandle( );
+		if ( ( handle >> 16 ) == ( 1u << 15 ) )
+			return false; /* static prop */
+		const int index = static_cast< int >( handle & 0xFFFF );
+		if ( index < 1 || index > 64 || g_interfaces.m_client_entity_list->get< c_base_entity >( index ) != e || !e->is_player( ) )
+			return false;
+		switch ( e->get_collision_group( ) ) {
+		case e_collision_group::collision_group_debris:
+		case e_collision_group::collision_group_debris_trigger:
+		case e_collision_group::collision_group_interactive_debris:
+		case e_collision_group::collision_group_in_vehicle:
+		case e_collision_group::collision_group_door_blocker:
+		case e_collision_group::collision_group_dissolving:
+		case e_collision_group::collision_group_pushaway:
+			return true;
+		default:
+			break;
+		}
+		const int solid = g_convars.int_or( HASH_BT( "mp_solid_teammates" ), 1 );
+		const int team  = local->get_team( );
+		if ( ( solid != 0 && solid != 2 ) || ( team != 2 && team != 3 ) || e->get_team( ) != team )
+			return false;
+		if ( solid == 0 || local->get_move_type( ) == e_move_types::move_type_ladder || e->get_move_type( ) == e_move_types::move_type_ladder )
+			return true;
+		const auto ca = local->get_collideable( );
+		const auto cb = e->get_collideable( );
+		if ( !ca || !cb )
+			return true;
+		const float za = local->get_abs_origin( ).m_z, zb = e->get_abs_origin( ).m_z;
+		return !( za + ca->get_obb_mins( ).m_z + 0.0001 > zb + cb->get_obb_maxs( ).m_z || zb + cb->get_obb_mins( ).m_z + 0.0001 > za + ca->get_obb_maxs( ).m_z );
+	}
+
+	bool aa_hits( c_base_entity* local, c_base_entity* e ) { return e && e != local && !aa_player_passable( local, e ); }
+
 	bool aa_pj_lip( const trace_t& wall, const c_vector& o, const c_vector& mins, const c_vector& maxs, float& gap, float& top, int& ticks )
 	{
 		const c_vector& n = wall.m_plane.m_normal;
@@ -300,7 +338,8 @@ namespace
 		};
 		ticks_to( -FLT_MAX ); /* fills z_lo: lowest feet in the window */
 		const c_vector down( 0.f, 0.f, std::min( z_lo - o.m_z, 0.f ) - k_pj_catch );
-		c_trace_filter flt( g_ctx.m_local );
+		c_base_entity* const local = g_ctx.m_local;
+		c_trace_filter flt( [ local ]( c_base_entity* e, int ) { return aa_hits( local, e ); } );
 		const auto sweep = [ & ]( float off, trace_t& t ) {
 			const c_vector p = o - n * ( gap - off );
 			ray_t r( p, p + down, mins, maxs );
@@ -376,7 +415,7 @@ namespace
 			apex = std::max( apex, s_pj_hist[ i ].m_z );
 		apex           = std::min( apex, o.m_z + 128.f );
 		const float g0 = gap_at( o );
-		c_trace_filter flt( local );
+		c_trace_filter flt( [ local ]( c_base_entity* e, int ) { return aa_hits( local, e ); } );
 		/* the landing column, apex down to just over the feet you landed with: only tops you fell past */
 		const auto sweep = [ & ]( float off, trace_t& t ) {
 			c_vector p = o - n * ( g0 - off );

@@ -24,7 +24,6 @@
 #include "../../hacks/web/websurface.h"
 #include "../../utilities/perf/perf_watch.h"
 
-extern bool g_air_stuck_view_forced;
 extern bool g_fireman_view_forced;
 
 void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, int stage )
@@ -179,9 +178,9 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 		}
 	}
 
-	/* air stuck / fireman forced view: local animstate ( OnRenderStart -> UpdateClientSideAnimations ) reads EyeAngles = pl.v_angle = that
+	/* fireman forced view: local animstate ( OnRenderStart -> UpdateClientSideAnimations ) reads EyeAngles = pl.v_angle = that
 	   cmd view, so the third person model spun to it. animate with the engine view, put the cmd view back after */
-	if ( stage == render_start && ( g_air_stuck_view_forced || g_fireman_view_forced ) && g_ctx.m_local->is_alive( ) ) {
+	if ( stage == render_start && g_fireman_view_forced && g_ctx.m_local->is_alive( ) ) {
 		c_angle& v_angle  = *g_ctx.m_local->get_view_angles( );
 		const c_angle cmd = v_angle;
 		c_angle engine    = { };
