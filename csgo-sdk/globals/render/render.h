@@ -355,6 +355,9 @@ namespace n_render
 
 		bool m_initialised = false, m_reload_fonts = true, m_reset_indicator_font = false;
 
+		/* config load / lua font write: reload only if the font request changed ( forced reload = m_reload_fonts ) */
+		bool m_reload_fonts_if_changed = false;
+
 		/* returns font if it still belongs to the live atlas, else the verdana fallback - never
 		   dereference a stored ImFont* without it, a rebuild frees the whole set */
 		ImFont* live_font( ImFont* font );

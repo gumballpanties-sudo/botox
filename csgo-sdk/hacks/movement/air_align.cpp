@@ -87,6 +87,28 @@ static bool aal_wall( points_check_t& p, c_base_entity* local, const bool debug 
 	return p.aa_state == 1;
 }
 
+/* how far the face sticks out toward you where one hull tick sweeps ( along sa..sb, feet z_lo .. head z_hi ): + = a lip past the face plane,
+   0 = the face, -1 = nothing. traced in from 0.5 off; a hull further off than a lip never touches it ( collisionutils d1 > 0 && d2 > 0 ).
+   axial faces only */
+static float aal_stick( const c_vector& n, const float d, const float sa, const float sb, const float z_lo, const float z_hi, c_trace_filter_tb_world_props& filter )
+{
+	constexpr float k_out = 0.5f;
+	const bool x_wall     = std::fabsf( n.m_x ) > 0.5f;
+	const float half = 0.5f * std::fabsf( sb - sa ) + 16.f, mid = 0.5f * ( sa + sb ), c_n = d + 16.f + k_out;
+	const c_vector mins( x_wall ? -16.f : -half, x_wall ? -half : -16.f, 0.f ), maxs( x_wall ? 16.f : half, x_wall ? half : 16.f, z_hi - z_lo );
+	const c_vector at( n.m_x * c_n - n.m_y * mid, n.m_y * c_n + n.m_x * mid, z_lo );
+	trace_t tr{ };
+	ray_t ray( at, at - n * ( k_out + 0.1f ), mins, maxs );
+	tb_trace( ray, mask_playersolid, &filter, &tr );
+	if ( tr.m_start_solid )
+		return k_out;
+	if ( tr.m_fraction >= 1.f )
+		return -1.f;
+	if ( tr.m_plane.m_normal.m_x * n.m_x + tr.m_plane.m_normal.m_y * n.m_y > 0.9999f )
+		return hull_plane_dist( tr, mins, maxs ) - d;
+	return tr.m_end.m_x * n.m_x + tr.m_end.m_y * n.m_y - 16.f - d - 0.03125f;
+}
+
 /* ticks before the one that crosses target: z += dt ( vz + pin ), vz += 2 pin ( Start / FinishGravity halves ). -1 = never on this arc */
 static int aal_ticks_to( float z, float vz, const float pin, const float ipt, const float target, const bool rising )
 {
@@ -243,6 +265,7 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 		c_vector n{ };
 		float d = 0.f, gap = 0.f, h = 0.f, v_old = 0.f, v = 0.f, along = 0.f, dist = FLT_MAX;
 		bool fall = false;
+		float lo = 0.f, at = -1.f;
 	} best;
 	const char* none = "radius";
 	float none_dist  = FLT_MAX;
@@ -307,13 +330,40 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 		   server's end-pos stuck box ( aa_slanted ) */
 		const bool axial  = !aa_slanted( n );
 		const float u     = es_ulp( std::fabsf( n.m_x ) > 0.5f ? org.m_x : org.m_y );
-		const float h     = !axial ? 0.05f : p.aa_kind == air_align_pj ? std::max( 2.f * u, 0.5f * n_route::k_creep_gap ) : std::max( 32.f * u, 5e-4f );
-		/* inside the standoff = auto align / tb parked you flush: a K here pulls back out on every tick they leave the cmd alone */
-		if ( gap < 0.5f * h )
+		float h           = !axial ? 0.05f : p.aa_kind == air_align_pj ? std::max( 2.f * u, 0.5f * n_route::k_creep_gap ) : std::max( 32.f * u, 5e-4f );
+		/* lips your last ticks fall past ( aal_stick ): a ps parks inside a lip narrower than the standoff ( log 11-20: 32 ulps fell past a
+		   3.7e-3 .. 3.9e-3 lip 5 / 5, air stuck caught it at 3.6e-3 ), a pj parks outside a lip over its own ( log 11-20: the -156 lip 4u over
+		   the -160 pj took 9 landings ). no lip at the target = the old standoff. ponytail: lips > 3 ticks over the crossing unchecked */
+		float lo = 0.f, up = -1.f, at = -1.f;
+		if ( axial && ( p.aa_kind == air_align_ps || p.aa_kind == air_align_pj ) ) {
+			c_trace_filter_tb_world_props filter( local );
+			const float s0 = -org.m_x * n.m_y + org.m_y * n.m_x, ds = ( -vel.m_x * n.m_y + vel.m_y * n.m_x ) * ipt;
+			float z = z0, vz = vz0;
+			for ( int k = 0; k <= kc; ++k ) {
+				const float v1 = vz + pin, z1 = z + ipt * v1, sa = s0 + ds * static_cast< float >( k );
+				if ( k >= kc - 3 )
+					up = std::max( up, aal_stick( n, p.aa_d, sa, sa + ds, std::max( z1, target + 1.f ), z + tall, filter ) );
+				if ( k == kc )
+					at = aal_stick( n, p.aa_d, sa, sa + ds, target - 1.f, target + 1.f, filter );
+				z  = z1;
+				vz = v1 + pin;
+			}
+			if ( at > 2.f * u ) {
+				lo = std::max( up, 0.f );
+				h  = p.aa_kind == air_align_pj ? lo + h : std::min( h, at - 2.f * u );
+				if ( h > at - 2.f * u || h < lo + u ) {
+					miss( "lip" );
+					continue;
+				}
+			}
+		}
+		/* inside the standoff = auto align / tb parked you flush: a K here pulls back out on every tick they leave the cmd alone. under an upper
+		   lip it must pull out */
+		if ( gap < 0.5f * h && lo <= 0.f )
 			return release( "flush" );
 		const float v_old = -( vel.m_x * n.m_x + vel.m_y * n.m_y );
 		float v           = 0.f;
-		char act          = edge_surf_guide( gap - h, gap, -h, v_old, vxy, kc, authority, turn, reach, mine, ipt, v );
+		char act          = edge_surf_guide( gap - h, gap, lo - h, v_old, vxy, kc, authority, turn, reach, mine, ipt, v );
 		/* far walls: D's turn in past edge surf's d2 cap leaves velocity near the normal, the turn back has no authority and S presses the rest
 		   off your speed ( twin: 250 -> 23 u/s ). capped there <= ~8 u/s lost; undershoot ( that cap can't get there by the crossing ) lifts it
 		   to the triangle peak that does, at most half your speed ( twin: aligned 54.6 -> 63.4 %, worst 15 u/s more in 3 / 2880 ) */
@@ -325,7 +375,7 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 			if ( v_old < cap )
 				v = cap - v_old;
 			else
-				act = edge_surf_guide( gap - h, gap, -h, v_old, vxy, kc, authority, 0.f, reach, mine, ipt, v );
+				act = edge_surf_guide( gap - h, gap, lo - h, v_old, vxy, kc, authority, 0.f, reach, mine, ipt, v );
 		}
 		/* edge surf's let_go: an approach we own never goes back closing faster than reaches the face by the crossing, nor while your keys
 		   could reach the face from here ( one tick of full air accel + its brake ) */
@@ -348,7 +398,7 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 			miss( "plan" );
 			continue;
 		}
-		best = { i, kc, act, n, p.aa_d, gap, h, v_old, v, along, mine ? -1.f : dist, fall };
+		best = { i, kc, act, n, p.aa_d, gap, h, v_old, v, along, mine ? -1.f : dist, fall, lo, at };
 	}
 	if ( best.i < 0 ) {
 		static unsigned long long s_none_next = 0ull;
@@ -408,7 +458,7 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 		return release( "land" );
 	if ( lip )
 		why = 'j';
-	else if ( ge < best.gap && ge < 0.5f * best.h ) {
+	else if ( ge < best.gap && ge < best.lo + 0.5f * ( best.h - best.lo ) ) {
 		out = press( 0.f );
 		why = 'v';
 	} else if ( keep )
@@ -433,9 +483,9 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 	if ( const unsigned long long now = GetTickCount64( ); debug && ( now >= s_next || best.act != s_last ) ) {
 		s_next = now + 250ull;
 		s_last = best.act;
-		botox_dbg_log( "AIRAL: act=%c why=%c kind=%d gap=%.4e h=%.1e close=%.3f v=%.3f kc=%d fall=%d stam=%.1f along=%.1f xy=%.1f vz=%.1f duck=%d crop=%.2f dz=%.1f gnd=%d n=%.3f %.3f pos=%.1f %.1f %.1f",
+		botox_dbg_log( "AIRAL: act=%c why=%c kind=%d gap=%.4e h=%.1e close=%.3f v=%.3f kc=%d fall=%d stam=%.1f along=%.1f xy=%.1f vz=%.1f duck=%d crop=%.2f dz=%.1f gnd=%d n=%.3f %.3f pos=%.1f %.1f %.1f lo=%.3e at=%.3e",
 		               best.act, why, pt.aa_kind, best.gap, best.h, best.v_old, best.v, best.kc, best.fall ? 1 : 0, stam0, best.along, vxy, vel.m_z,
-		               duck_cmd ? 1 : 0, crop, z0 - org.m_z, start_gnd ? 1 : 0, n.m_x, n.m_y, org.m_x, org.m_y, org.m_z );
+		               duck_cmd ? 1 : 0, crop, z0 - org.m_z, start_gnd ? 1 : 0, n.m_x, n.m_y, org.m_x, org.m_y, org.m_z, best.lo, best.at );
 	}
 }
 

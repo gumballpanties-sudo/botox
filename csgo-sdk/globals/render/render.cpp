@@ -302,7 +302,12 @@ namespace
 	struct font_request_t {
 		std::vector< bool > m_indicator_flags, m_esp_flags, m_net_graph_flags;
 		font_setting_t m_indicator, m_esp, m_net_graph;
+
+		bool operator==( const font_request_t& ) const = default;
 	};
+
+	/* request of the last started main build, {} after a failed one so the next ask retries */
+	font_request_t g_font_started{ };
 
 	font_request_t current_font_request( )
 	{
@@ -989,6 +994,7 @@ static void build_fonts_worker( const font_request_t request )
 void n_render::impl_t::install_fonts( font_set_t* set )
 {
 	if ( !set->m_atlas ) {
+		g_font_started           = { };
 		const std::string reason = g_ft_build_fail;
 		const unsigned free_mb   = largest_free_block_mb( );
 		g_console.print< n_console::log_level::WARNING >(
@@ -2084,6 +2090,7 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& under, cons
 			}
 			else {
 				this->m_uploading_fonts = nullptr;
+				g_font_started          = { };
 				g_console.print< n_console::log_level::WARNING >(
 					std::vformat( "font texture upload failed ({}) - gave up, kept the old fonts", std::make_format_args( why ) ).c_str( ) );
 				discard_font_set( set );
@@ -2096,6 +2103,11 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& under, cons
 	/* pending too: the worker parks its set BEFORE the flag drops, so a frame can miss the pickup above and still see the flag
 	   down here. starting then = second build while the parked one holds the pixel slot ( heap fallback, 31 mb, fails ) and
 	   its failed set replaces the good one. flag read FIRST: seen down = its set is already parked */
+	/* config load / lua font write: rebuild only when font vars moved. rebuild = ~100 mb passing VA, at ~3 gb private
+	   panorama's next 16 mb alloc died ( OOM 11-20, same config reloaded ) */
+	if ( std::exchange( this->m_reload_fonts_if_changed, false ) && !( current_font_request( ) == g_font_started ) )
+		this->m_reload_fonts = true;
+
 	const bool running = this->m_font_build_running.load( );
 	const bool pending = this->m_pending_fonts.load( ) != nullptr;
 
@@ -2116,7 +2128,8 @@ void n_render::impl_t::on_end_scene( const std::function< void( ) >& under, cons
 		ImGui::GetIO( ).Fonts->ClearTexData( );
 
 		botox_dbg_log( "FONT: reload start" );
-		std::thread( build_fonts_worker, current_font_request( ) ).detach( );
+		g_font_started = current_font_request( );
+		std::thread( build_fonts_worker, g_font_started ).detach( );
 	}
 
 	this->update_indicator_fonts( device );

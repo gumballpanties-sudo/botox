@@ -26,6 +26,9 @@ namespace n_depth_source
 
 		void skip_next_resolve( ) { this->m_skip_resolve = true; }
 
+		// render thread: z changed since the last copy ( gun drawn ), next resolve copies again
+		void invalidate_resolve( ) { this->m_resolved_frame = -1; }
+
 		bool live_route( ) const { return this->m_route == route_live; }
 
 		IDirect3DSurface9* map_depth_stencil( IDirect3DSurface9* surface ) const

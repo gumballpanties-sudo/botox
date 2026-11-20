@@ -1585,6 +1585,7 @@ void n_menu::impl_t::tab_visuals( )
 						                    ImGuiSliderFlags_AlwaysClamp );
 						ImGui::SliderFloat( "angle falloff##reflections", &GET_VARIABLE( g_variables.m_reflections_falloff, float ), 0.f, 1.f,
 						                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
+						ImGui::Checkbox( "include viewmodel##reflections", &GET_VARIABLE( g_variables.m_reflections_viewmodel, bool ) );
 
 						ImGui::Label( "performance" );
 
@@ -1625,6 +1626,7 @@ void n_menu::impl_t::tab_visuals( )
 						                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
 						ImGui::SliderFloat( "effect factor##emphasize", &GET_VARIABLE( g_variables.m_emphasize_effect_factor, float ), 0.f, 1.f,
 						                    "%.3f", ImGuiSliderFlags_AlwaysClamp );
+						ImGui::Checkbox( "include viewmodel##emphasize", &GET_VARIABLE( g_variables.m_emphasize_viewmodel, bool ) );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
@@ -1689,6 +1691,8 @@ void n_menu::impl_t::tab_visuals( )
 							                    "%.0f u", ImGuiSliderFlags_AlwaysClamp );
 							ImGui::SliderFloat( "ramp##channel shift", &GET_VARIABLE( g_variables.m_channel_shift_depth_ramp, float ), 1.f, 4000.f,
 							                    "%.0f u", ImGuiSliderFlags_AlwaysClamp );
+							// same pass as depth distort: one switch for both
+							ImGui::Checkbox( "include viewmodel##channel shift", &GET_VARIABLE( g_variables.m_depth_distort_viewmodel, bool ) );
 						}
 					},
 					ImVec2( 220.f, -1.f ) );
@@ -1854,6 +1858,7 @@ void n_menu::impl_t::tab_visuals( )
 							ImGui::Checkbox( "fade transition##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_fade, bool ) );
 							ImGui::Checkbox( "protect edges##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_protect, bool ) );
 						}
+						ImGui::Checkbox( "include viewmodel##depth distort", &GET_VARIABLE( g_variables.m_depth_distort_viewmodel, bool ) );
 					},
 					ImVec2( 230.f, -1.f ) );
 			}
@@ -1948,6 +1953,7 @@ void n_menu::impl_t::tab_visuals( )
 						                    ImGuiSliderFlags_AlwaysClamp );
 						ImGui::SliderFloat( "fog start##adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog_start, float ), 0.f, 1.f, "%.3f",
 						                    ImGuiSliderFlags_AlwaysClamp );
+						ImGui::Checkbox( "include viewmodel##adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog_viewmodel, bool ) );
 
 						ImGui::Label( "bloom" );
 						ImGui::SliderFloat( "threshold##adaptive fog", &GET_VARIABLE( g_variables.m_adaptive_fog_bloom_threshold, float ), 0.f, 50.f,

@@ -14,6 +14,10 @@ void __fastcall n_detoured_functions::draw_view_models( void* ecx, void* edx, c_
 
 	g_screen.on_draw_view_models( setup );
 
+	// csgo calls this again with the scope lens mask after engine post: passes already ran this frame
+	if ( !draw_scope_lens_mask )
+		n_detoured_functions::screen_passes( &setup, true );
+
 	g_viewmodel_fps.begin( setup );
 	original( ecx, edx, setup, draw_view_model, draw_scope_lens_mask );
 	g_viewmodel_fps.end( );

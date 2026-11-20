@@ -40,6 +40,12 @@ namespace {
 		return tr.m_fraction < 1.f && tr.m_plane.m_normal.m_z > 0.f && tr.m_plane.m_normal.m_z < 0.7f;
 	}
 
+	/* probes move at the live leaf list's speed ( begin reads m_bounds_max_speed for non-real cmds ) */
+	struct bounds_guard_t {
+		bounds_guard_t( ) { g_prediction.m_bounds_max_speed = g_prediction.m_real_max_speed; }
+		~bounds_guard_t( ) { g_prediction.m_bounds_max_speed = 0.f; }
+	};
+
 	/* z = hull resting on the standable floor within 32 u below, same frame as baseline's floor z */
 	bool floor_under( const c_vector& at, const bool ducked, float& z )
 	{
@@ -57,6 +63,7 @@ void n_edge_catch::impl_t::reset( const bool forget )
 	m_active = false;
 	m_hit    = 0;
 	m_fail   = false;
+	m_jb_out = false;
 	if ( forget )
 		m_yaw_valid = m_had_ground = m_dropped = false;
 }
@@ -264,6 +271,33 @@ bool n_edge_catch::impl_t::jb_drops( c_user_cmd* cmd, const int k, const float l
 	      i++ )
 		sim( cmd, i, tick_t{ }, m_buttons0 & ~in_duck );
 	return local->get_origin( ).m_z < land_z - k_step;
+}
+
+/* the plan's landing tick, this cmd as it goes out, from the exact START ( no plan drift ): crouch stays airborne, unduck + jump
+   next tick rises. same model as jb_works / jb_will_work */
+bool n_edge_catch::impl_t::live_jb( c_user_cmd* cmd )
+{
+	const auto local = g_ctx.m_local;
+	bounds_guard_t bounds_guard;
+	c_user_cmd probe = *cmd;
+	restore_start( );
+	if ( local->get_flags( ) & fl_ducking )
+		return false;
+	const int tick_base = local->get_tick_base( );
+	probe.m_buttons     = ( cmd->m_buttons | in_duck ) & ~in_jump;
+	g_prediction.begin( local, &probe, false, true );
+	g_prediction.end( local );
+	bool ok = !landed( );
+	if ( ok ) {
+		probe.m_buttons         = ( cmd->m_buttons & ~in_duck ) | in_jump;
+		local->get_tick_base( ) = tick_base + 1;
+		g_prediction.begin( local, &probe, false, true );
+		g_prediction.end( local );
+		ok = !landed( ) && local->get_velocity( ).m_z > 0.f;
+	}
+	local->get_tick_base( ) = tick_base;
+	restore_start( );
+	return ok;
 }
 
 /* strafe ticks [ 0, prefix ) at the perfect angle, your keys after. save = full chain, slot base + k + 1 = START of tick k + 1,
@@ -480,10 +514,7 @@ void n_edge_catch::impl_t::search( c_user_cmd* cmd )
 		}
 	}
 
-	struct bounds_guard_t {
-		bounds_guard_t( ) { g_prediction.m_bounds_max_speed = g_prediction.m_real_max_speed; }
-		~bounds_guard_t( ) { g_prediction.m_bounds_max_speed = 0.f; }
-	} bounds_guard;
+	bounds_guard_t bounds_guard;
 
 	const bool miss  = reach && baseline( cmd );
 	/* full search already failed on this lip: fewer ticks now, it can't land */
@@ -542,6 +573,10 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 	/* jump_bug's crouch stamp, used up once per cmd ( stale after a reconnect = never ). eb replay with a plan owns the buttons */
 	m_jb_stamp    = cmd && g_jb_duck_cmd == cmd->m_command_number && !g_edgebug.m_found;
 	g_jb_duck_cmd = -1;
+	/* witness: START after the jb plan's unduck tick. vz > 0 = jb fired, air + vz ~ -6 = edgebug, air 0 = plain landing */
+	if ( m_jb_out && local )
+		botox_dbg_log( "EC: jb out vz=%.2f air=%d\n", m_start_vel.m_z, ( m_start_flags & fl_onground ) ? 0 : 1 );
+	m_jb_out = false;
 	if ( !cmd || !local || !local->is_alive( ) || !GET_VARIABLE( g_variables.m_edge_catch, bool ) ||
 	     !g_input.check_input( &GET_VARIABLE( g_variables.m_edge_catch_key, key_bind_t ) ) ) {
 		reset( );
@@ -582,6 +617,7 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 			botox_dbg_log( "EC: jb last=%d gz=%.2f z=%.2f ducked=%d lip=%d\n", m_last, m_ground_z, clean.m_z, ( m_start_flags & fl_ducking ) ? 1 : 0,
 			               on_lip ? 1 : 0 );
 			reset( );
+			m_jb_out = true;
 			return;
 		} else if ( m_hit > m_last ) {
 			botox_dbg_log( "EC: missed spent=%d z=%.2f gz=%.2f\n", m_last, clean.m_z, m_ground_z );
@@ -625,9 +661,21 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 		cmd->m_buttons &= ~in_duck;
 	if ( m_plan[ m_hit ].duck )
 		cmd->m_buttons |= in_duck;
-	/* the jump bug's own landing duck, on the tick its prediction never saw land */
-	if ( m_jb_plan && m_hit == m_last && jb_bind( ) )
-		cmd->m_buttons = ( cmd->m_buttons | in_duck ) & ~in_jump;
+	/* the jump bug's landing duck, decided on this cmd from the exact START: a plan verdict carries up to 1 u of drift = crouch on
+	   a hair of lip = edgebug ( 11-20 ). landing tick ( plain fallback too ) or a tick the jump bug crouched ( you land early ):
+	   crouch iff the jb fires from where you really are, so no working jb is lost and no dead one crouches */
+	if ( ( m_hit == m_last || jb_duck ) && !m_plan[ m_hit ].duck && jb_bind( ) ) {
+		const bool jb      = live_jb( cmd );
+		const bool planned = m_hit == m_last && m_jb_plan;
+		if ( jb != planned )
+			botox_dbg_log( "EC: jb live=%d plan=%d at %d/%d\n", jb ? 1 : 0, planned ? 1 : 0, m_hit, m_last );
+		if ( jb ) {
+			m_last         = m_hit;
+			cmd->m_buttons = ( cmd->m_buttons | in_duck ) & ~in_jump;
+		}
+		if ( m_hit == m_last )
+			m_jb_plan = jb;
+	}
 	m_stripped += jb_duck && !( cmd->m_buttons & in_duck ) ? 1 : 0;
 	m_hit++;
 }

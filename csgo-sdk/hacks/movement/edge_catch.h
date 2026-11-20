@@ -29,6 +29,7 @@ namespace n_edge_catch
 		int chain( c_user_cmd* cmd, int prefix, bool neg, bool save, int base );
 		bool jb_works( c_user_cmd* cmd, int k, int from, int base );
 		bool jb_drops( c_user_cmd* cmd, int k, float land_z );
+		bool live_jb( c_user_cmd* cmd );
 		void apply( c_user_cmd* cmd, const tick_t& t, const c_angle& view ) const;
 		void sim( c_user_cmd* cmd, int index, const tick_t& t, int buttons );
 		bool out( ) const;
@@ -57,6 +58,7 @@ namespace n_edge_catch
 		bool m_jb_up      = false; /* jb verdict came from the upgrade bisect above a plain landing */
 		int m_stripped    = 0;     /* plan ticks the jump bug's crouch was taken off */
 		bool m_jb_stamp   = false; /* this cmd's duck = the jump bug's landing crouch */
+		bool m_jb_out     = false; /* jb plan ended last cmd: next post logs EC: jb out */
 		bool m_duck       = false;
 		bool m_brake      = false; /* plan ticks wish straight back ( overshoot ), one side */
 		bool m_fail       = false; /* last full search on this lip found nothing */

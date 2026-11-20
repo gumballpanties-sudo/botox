@@ -184,6 +184,8 @@ namespace n_detoured_functions
 	                                   bool wireframe );
 	int __fastcall send_datagram( c_net_channel* net_channel, int edx, bf_write* datagram );
 	void __fastcall draw_view_models( void* ecx, void* edx, c_view_setup& setup, bool draw_view_model, bool draw_scope_lens_mask );
+	/* body in do_post_screen_space_effects.cpp: world draws + depth passes, gun-free ones at DrawViewModels entry. main thread */
+	void screen_passes( c_view_setup* setup, bool before_viewmodel );
 	bool __fastcall is_hltv( void* ecx, void* edx );
 	bool __fastcall is_paused( void* ecx, void* edx );
 	bool __fastcall is_playing_demo( void* ecx, void* edx );

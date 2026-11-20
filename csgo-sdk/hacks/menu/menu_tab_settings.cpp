@@ -2467,7 +2467,7 @@ static void config_panel( const bool visuals, int& selected, char* file_buffer, 
 				else {
 					g_logger.print( std::vformat( "loaded {:s} {:s}", std::make_format_args( kind, selected_name ) ).c_str( ) );
 					if ( !visuals )
-						g_render.m_reload_fonts = true;
+						g_render.m_reload_fonts_if_changed = true;
 				}
 
 				popups.m_load = false;

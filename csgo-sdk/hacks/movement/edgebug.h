@@ -83,6 +83,9 @@ namespace n_edgebug
 		int m_found_tick = 0;
 		int m_prediction_ticks = 0;
 		bool m_ducked = false;
+		/* style + edge surf drive of the last post ( edge surf prediction forces style 0 ): mouse lock / auto crouch / eb indicator read these */
+		int m_style_now = 0;
+		bool m_es_now   = false;
 		c_vector m_viz_path[k_predicted_cmd_max + 1];
 		int m_viz_count = 0;
 		c_vector m_viz_pos{ };

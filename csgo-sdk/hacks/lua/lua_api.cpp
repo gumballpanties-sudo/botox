@@ -1619,7 +1619,7 @@ namespace
 			font_setting_t& font = variable.get< font_setting_t >( );
 			font.m_name          = luaL_checkstring( L, 2 );
 			font.m_size          = static_cast< int >( luaL_optinteger( L, 3, font.m_size ) );
-			g_render.m_reload_fonts = true;
+			g_render.m_reload_fonts_if_changed = true;
 			break;
 		}
 		case HASH_BT( "std::vector<bool>" ): {

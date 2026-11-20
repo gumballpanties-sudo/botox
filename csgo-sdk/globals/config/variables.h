@@ -1022,6 +1022,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_depth_distort_depth_ramp, 600.f );
 		ADD_VARIABLE( bool, m_depth_distort_protect, true );
 		ADD_VARIABLE( bool, m_depth_distort_fade, false );
+		ADD_VARIABLE( bool, m_depth_distort_viewmodel, false );
 		ADD_VARIABLE( bool, m_depth_of_field, false );
 		ADD_VARIABLE( bool, m_depth_of_field_auto_focus, true );
 		ADD_VARIABLE( float, m_depth_of_field_focus_x, 0.5f );
@@ -1059,6 +1060,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_reflections_scale, 1.f );
 		ADD_VARIABLE( int, m_reflections_quality, 2 );
 		ADD_VARIABLE( bool, m_reflections_smooth_normals, true );
+		ADD_VARIABLE( bool, m_reflections_viewmodel, false );
 
 		ADD_VARIABLE( bool, m_emphasize, false );
 		ADD_VARIABLE( float, m_emphasize_focus_depth, 0.f );
@@ -1071,6 +1073,7 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_emphasize_blend_color, c_color( 0, 0, 0, 255 ) );
 		ADD_VARIABLE( float, m_emphasize_blend_factor, 0.2f );
 		ADD_VARIABLE( float, m_emphasize_effect_factor, 1.f );
+		ADD_VARIABLE( bool, m_emphasize_viewmodel, false );
 
 		ADD_VARIABLE( bool, m_show_depth, false );
 		ADD_VARIABLE( int, m_show_depth_present_type, 0 );
@@ -1095,6 +1098,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_adaptive_fog_bloom_threshold, 10.25f );
 		ADD_VARIABLE( float, m_adaptive_fog_bloom_power, 10.f );
 		ADD_VARIABLE( float, m_adaptive_fog_bloom_width, 0.2f );
+		ADD_VARIABLE( bool, m_adaptive_fog_viewmodel, false );
 
 		ADD_VARIABLE( bool, m_ambient_occlusion, false );
 		ADD_VARIABLE( float, m_ambient_occlusion_radius, 40.f );
@@ -1415,6 +1419,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_edge_surf_visualize, false );
 		ADD_VARIABLE( c_color, m_edge_surf_visualize_color, c_color( 120, 230, 255, 255 ) );
 		ADD_VARIABLE( bool, m_edge_surf_flat_disp, true );
+		ADD_VARIABLE( bool, m_edge_surf_predict, true );
 		ADD_VARIABLE( bool, m_fix_air_stucks, false );
 
 		ADD_VARIABLE( bool, m_ladder_bug, false );

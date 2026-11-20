@@ -652,6 +652,8 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderFloat( "delta strafe##esurfdelta", &GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ), 0.f, 15.f, "%.2f" );
 						/* flat displacement ledges ( nuke parking curbs ), displacement terrain never */
 						ImGui::Checkbox( "flat displacement ledges##esurfdisp", &GET_VARIABLE( g_variables.m_edge_surf_flat_disp, bool ) );
+						/* ticks the ledge scan does not own: edgebug's sim search hunts a pin on anything the engine collides with ( static props, entities ) */
+						ImGui::Checkbox( "edgebug prediction##esurfpred", &GET_VARIABLE( g_variables.m_edge_surf_predict, bool ) );
 						ImGui::Checkbox( "visualize##esurfviz", &GET_VARIABLE( g_variables.m_edge_surf_visualize, bool ) );
 						ImGui::ColorEdit4( "visualize color##esurfvizcolor", &GET_VARIABLE( g_variables.m_edge_surf_visualize_color, c_color ),
 						                   color_picker_alpha_flags );

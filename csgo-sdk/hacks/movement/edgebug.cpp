@@ -11,6 +11,9 @@ bool ps_latched( );
 bool eb_cmd_taken( );
 bool edge_surf_armed( );
 bool edge_surf_eb_end( bool& lift );
+bool edge_surf_predict_armed( );
+extern bool g_edge_surf_active;
+extern int g_edge_surf_pin_cmd;
 extern void botox_dbg_log( const char* fmt, ... );
 
 namespace {
@@ -615,12 +618,22 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		m_ducked           = false;
 		m_steer_since_plan = 0.f;
 	};
-	if ( const int style = GET_VARIABLE( g_variables.m_edgebug_style, int ); style != 4 && m_lob.found ) {
+	const bool eb_key = GET_VARIABLE( g_variables.edge_bug, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) );
+	/* edge surf key alone: this style 0 search on the exact pin verdict. the sim collides with what its ledge scan skips ( props, entities ) */
+	const bool es_drive = !eb_key && edge_surf_predict_armed( );
+	const int style     = es_drive ? 0 : GET_VARIABLE( g_variables.m_edgebug_style, int );
+	/* a plan never outlives a style or eb <-> edge surf key switch: other styles skip its replay ( stale m_found = mouse lock + edge surf's
+	   yield forever ), an eb plan's end is no edge surf pin */
+	if ( ( style != m_style_now || es_drive != m_es_now ) && m_found )
+		drop_plan( "style" );
+	m_style_now = style;
+	m_es_now    = es_drive;
+	if ( style != 4 && m_lob.found ) {
 		m_lob.found  = false;
 		m_lob.ticks  = 0;
 		m_lob.ducked = false;
 	}
-	if ( const int style = GET_VARIABLE( g_variables.m_edgebug_style, int ); style != 0 ) {
+	if ( style != 0 ) {
 		if ( style == 4 ) {
 			if ( m_donor.eblength )
 				donor_reset( );
@@ -647,8 +660,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		hw_reset( );
 	if ( m_donor.eblength )
 		donor_reset( );
-	if ( !GET_VARIABLE( g_variables.edge_bug, bool ) ||
-	     !g_input.check_input( &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) ) ) {
+	if ( !eb_key && !es_drive ) {
 		drop_plan( "key" );
 		return;
 	}
@@ -702,7 +714,7 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 	/* to-edge IS the autostrafe switch, in both modes. */
 	const bool to_edge    = GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool );
 	const bool autostrafe = to_edge;
-	const bool esurf      = GET_VARIABLE( g_variables.m_edgebug_edge_surf, bool );
+	const bool esurf      = GET_VARIABLE( g_variables.m_edgebug_edge_surf, bool ) || es_drive;
 	/* 09-28: 6 normal, enhanced = old search amount slider default 4 */
 	int search_count = detection_mode == 1 ? 4 : 6;
 	/* 6 / 7 are the to-edge pair: needs eight variants. */
@@ -1555,6 +1567,12 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		start_movement_fix( cmd );
 		cmd->m_view_point = orig_viewangle;
 		end_movement_fix( cmd );
+		/* edge surf's plan: its indicator, and the bug cmd's pin reads "edgesurfed" next START ( movement.cpp es_phys ), not an edgebug */
+		if ( es_drive ) {
+			g_edge_surf_active = true;
+			if ( m_replay_hits == m_prediction_ticks )
+				g_edge_surf_pin_cmd = cmd->m_command_number;
+		}
 		m_replay_hits++;
 	}
 }
