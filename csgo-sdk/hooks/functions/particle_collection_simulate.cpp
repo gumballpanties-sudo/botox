@@ -77,10 +77,12 @@ static std::mutex                           g_smoke_fade_mutex;
 static std::unordered_map< void*, float >   g_smoke_faded;
 static std::atomic< bool >                  g_smoke_faded_any = false;
 
-void __fastcall n_detoured_functions::particle_collection_simulate( void* ecx, void* edx )
+/* Simulate( float dt ): this = ecx, dt = xmm1 ( prologue movaps xmm4, xmm1 ). x86 vectorcall fills xmm by float order,
+   so dummy xmm0 puts dt in xmm1. float work before original clobbers xmm1 unless dt is passed through */
+void __vectorcall n_detoured_functions::particle_collection_simulate( void* ecx, void* edx, float xmm0, float dt )
 {
-	static auto original = g_hooks.m_particle_collection_simulate.get_original< void( __fastcall* )( void* ) >( );
-	HOOK_SCOPE_OR_BAIL( original( ecx ) );
+	static auto original = g_hooks.m_particle_collection_simulate.get_original< void( __vectorcall* )( void*, void*, float, float ) >( );
+	HOOK_SCOPE_OR_BAIL( original( ecx, edx, xmm0, dt ) );
 
 	const bool want_precipitation = GET_VARIABLE( g_variables.m_custom_precipitation, bool );
 	const bool want_smoke         = GET_VARIABLE( g_variables.m_custom_smoke, bool );
@@ -96,7 +98,7 @@ void __fastcall n_detoured_functions::particle_collection_simulate( void* ecx, v
 	const bool track_fade = apply_fade || g_smoke_faded_any.load( );
 
 	if ( !want_precipitation && !want_smoke && !want_molotov && !want_blood && !want_footstep && !track_fade ) {
-		original( ecx );
+		original( ecx, edx, xmm0, dt );
 		return;
 	}
 
@@ -107,7 +109,7 @@ void __fastcall n_detoured_functions::particle_collection_simulate( void* ecx, v
 		root = root->m_parent;
 
 	if ( !root->m_def.m_obj || !root->m_def.m_obj->m_name.m_buffer ) {
-		original( ecx );
+		original( ecx, edx, xmm0, dt );
 		return;
 	}
 
@@ -126,7 +128,7 @@ void __fastcall n_detoured_functions::particle_collection_simulate( void* ecx, v
 			particle_collection->m_particle_attributes.scale_alpha( 1.f / held, particle_collection->m_active_particles );
 	}
 
-	original( ecx );
+	original( ecx, edx, xmm0, dt );
 
 	const auto tint_all = [ & ]( const c_color& color ) {
 		for ( auto iterator : std::views::iota( 0, particle_collection->m_active_particles ) )

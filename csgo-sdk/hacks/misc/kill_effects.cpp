@@ -2920,8 +2920,8 @@ namespace
 		}
 		hl2_dissolve_log( cur );
 
-		// target ecx, time xmm1
-		using dissolve_fn    = void*( __vectorcall* )( c_base_entity*, float );
+		// target ecx, time xmm1. x86 vectorcall fills xmm by float order: dummy float = xmm0
+		using dissolve_fn    = void*( __vectorcall* )( c_base_entity*, float, float );
 		static auto dissolve = reinterpret_cast< dissolve_fn >(
 			g_modules[ CLIENT_DLL ].find_pattern( "55 8B EC 83 EC 08 A1 ? ? ? ? 56 57 8B F9 F3 0F 11 4D FC 8B 08 68 33 0A 00 00" ) );
 
@@ -2932,7 +2932,7 @@ namespace
 			c_base_entity* ragdoll = victim ? melt_ragdoll( victim ) : nullptr;
 			if ( !ragdoll )
 				return false;
-			void* made = dissolve( ragdoll, cur );
+			void* made = dissolve( ragdoll, 0.f, cur );
 			botox_dbg_log( "DSV: start victim=%d rag=%d waited=%.2f made=%p cvar=%d", wait.m_victim, ragdoll->get_index( ), cur - wait.m_since, made,
 			               new_dissolve ? new_dissolve->get_int( ) : -1 );
 			g_dissolve_live.push_back( { victim->get_ragdoll_handle( ), cur } );

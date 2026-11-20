@@ -136,7 +136,7 @@ namespace n_detoured_functions
 	void __fastcall level_shutdown( void* thisptr );
 	void* __fastcall get_vcollide( void* ecx, void* edx, int model_index );
 	unsigned short __fastcall find_mdl( void* ecx, void* edx, const char* path );
-	void __fastcall particle_collection_simulate( void* ecx, void* edx );
+	void __vectorcall particle_collection_simulate( void* ecx, void* edx, float xmm0, float dt );
 	void __fastcall modify_eye_position( c_animation_state* anim_state, void* edx, c_vector& input_eye_pos );
 	void __fastcall override_mouse_input( void* thisptr, int edx, float* x, float* y );
 	void __fastcall override_view( void* ecx, void* edx, c_view_setup* setup );
