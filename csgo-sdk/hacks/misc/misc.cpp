@@ -2707,16 +2707,18 @@ void n_misc::impl_t::remove_smoke( )
 
 	set = true;
 
+	// mode 1 > 0%: particle alpha scaled in particle_collection_simulate
 	const bool wireframe = GET_VARIABLE( g_variables.m_remove_smoke_mode, int ) == 0;
+	const bool no_draw   = !wireframe && GET_VARIABLE( g_variables.m_remove_smoke_opacity, float ) <= 0.f;
 
 	for ( const auto name : vistasmoke_wireframe ) {
 		flag_material( name, material_var_wireframe, wireframe );
-		flag_material( name, material_var_no_draw, !wireframe );
+		flag_material( name, material_var_no_draw, no_draw );
 	}
 
 	for ( const auto name : vistasmoke_nodraw ) {
 		flag_material( name, material_var_wireframe, wireframe );
-		flag_material( name, material_var_no_draw, !wireframe );
+		flag_material( name, material_var_no_draw, no_draw );
 	}
 
 	if ( smoke_count_write ) {

@@ -1222,7 +1222,10 @@ void n_menu::impl_t::tab_visuals( )
 					"remove smoke settings",
 					[]( ) {
 						ImGui::Combo( "smoke##remove smoke mode", &GET_VARIABLE( g_variables.m_remove_smoke_mode, int ),
-					                  "wireframe\0disabled\0" );
+					                  "wireframe\0opacity\0" );
+						if ( GET_VARIABLE( g_variables.m_remove_smoke_mode, int ) == 1 )
+							ImGui::SliderFloat( "opacity##remove smoke", &GET_VARIABLE( g_variables.m_remove_smoke_opacity, float ), 0.f,
+						                        100.f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp );
 					},
 					ImVec2( 220.f, -1.f ) );
 			}

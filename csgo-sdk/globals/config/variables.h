@@ -850,6 +850,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_remove_ragdolls, false );
 		ADD_VARIABLE( bool, m_remove_smoke, false );
 		ADD_VARIABLE( int, m_remove_smoke_mode, 0 );
+		ADD_VARIABLE( float, m_remove_smoke_opacity, 0.f );
 		ADD_VARIABLE( bool, m_remove_flash, false );
 		ADD_VARIABLE( float, m_remove_flash_opacity, 0.f );
 		ADD_VARIABLE( bool, m_remove_visual_recoil, false );
