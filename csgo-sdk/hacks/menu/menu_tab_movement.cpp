@@ -213,6 +213,7 @@ static void points_page( )
 	if ( menu_group_begin( "points" ) ) {
 		ImGui::Checkbox( "render ps assist points", &GET_VARIABLE( g_variables.m_points_render_ps, bool ) );
 		ImGui::Checkbox( "render bounce assist points", &GET_VARIABLE( g_variables.m_points_render_bounce, bool ) );
+		ImGui::Checkbox( "render air align points", &GET_VARIABLE( g_variables.m_points_render_aa, bool ) );
 		ImGui::Checkbox( "render calculator points", &GET_VARIABLE( g_variables.m_points_render_calc, bool ) );
 		ImGui::Checkbox( "render finder points", &GET_VARIABLE( g_variables.m_points_render_finder, bool ) );
 		ImGui::SliderFloat( "points opacity", &GET_VARIABLE( g_variables.m_points_opacity, float ), 0.1f, 1.f, "%.1f", ImGuiSliderFlags_AlwaysClamp );
@@ -650,10 +651,6 @@ void n_menu::impl_t::tab_movement( )
 						ImGui::SliderFloat( "lead range##esurfrange", &GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f, "%.0f u" );
 						/* 0 = straight press into the wall, else air strafe toward it turning this many degrees a tick */
 						ImGui::SliderFloat( "delta strafe##esurfdelta", &GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ), 0.f, 15.f, "%.2f" );
-						/* flat displacement ledges ( nuke parking curbs ), displacement terrain never */
-						ImGui::Checkbox( "flat displacement ledges##esurfdisp", &GET_VARIABLE( g_variables.m_edge_surf_flat_disp, bool ) );
-						/* ticks the ledge scan does not own: edgebug's sim search hunts a pin on anything the engine collides with ( static props, entities ) */
-						ImGui::Checkbox( "edgebug prediction##esurfpred", &GET_VARIABLE( g_variables.m_edge_surf_predict, bool ) );
 						ImGui::Checkbox( "visualize##esurfviz", &GET_VARIABLE( g_variables.m_edge_surf_visualize, bool ) );
 						ImGui::ColorEdit4( "visualize color##esurfvizcolor", &GET_VARIABLE( g_variables.m_edge_surf_visualize_color, c_color ),
 						                   color_picker_alpha_flags );

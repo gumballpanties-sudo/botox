@@ -694,6 +694,7 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 	                                g_input.is_key_down( delete_key.m_key ) && !g_input.keys_blocked( );
 	const bool render_ps          = GET_VARIABLE( g_variables.m_points_render_ps, bool );
 	const bool render_bounce      = GET_VARIABLE( g_variables.m_points_render_bounce, bool );
+	const bool render_aa          = GET_VARIABLE( g_variables.m_points_render_aa, bool );
 	const float maxDrawDist       = std::max( GET_VARIABLE( g_variables.m_points_max_dist, float ), 1.f );
 	const bool radius_color       = GET_VARIABLE( g_variables.m_points_radius_color, bool );
 	const float opacity           = std::clamp( GET_VARIABLE( g_variables.m_points_opacity, float ), 0.f, 1.f );
@@ -823,11 +824,11 @@ void RenderPoints( std::vector< points_check_t >& points, const c_vector& player
 			point.open_settings = false;
 	}
 	if ( ( GET_VARIABLE( g_variables.m_bouncee_assist, bool ) || GET_VARIABLE( g_variables.m_pixel_jump_assist, bool ) || GET_VARIABLE( g_variables.m_air_align, bool ) ) &&
-	     render_bounce ) {
+	     ( render_bounce || render_aa ) ) {
 		for ( size_t i = 0; i < m_bounce_points_check.size( ); ++i ) {
 			points_check_t& point = m_bounce_points_check[ i ];
-			/* same stale-flag rule as the pixelsurf loop above */
-			if ( point.map != currentMap ) {
+			/* same stale-flag rule as the pixelsurf loop above; type 3 = own render toggle */
+			if ( point.map != currentMap || !( point.point_type == 3 ? render_aa : render_bounce ) ) {
 				point.open_settings = false;
 				continue;
 			}

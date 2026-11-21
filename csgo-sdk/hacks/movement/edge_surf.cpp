@@ -4,12 +4,15 @@
 #include "../prediction/prediction.h"
 #include "texturebug_common.h"
 #include "edgebug.h"
+#include "edge_surf_core.h"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
-using namespace n_tb;
+using n_es::es_guide;
+using n_es::es_guide_t;
 
 extern void botox_dbg_log( const char* fmt, ... );
 extern bool botox_is_ladder_trace( const trace_t& tr );
@@ -18,568 +21,13 @@ extern bool g_air_stuck_owns_cmd;
 
 float es_ulp( const float a )
 {
-	int ex = 0;
-	std::frexp( a, &ex );
-	return a != 0.f ? std::ldexp( 1.f, ex - 24 ) : 1e-7f;
+	return n_es::ulp( a );
 }
 
 float es_hull_gap( const c_vector& o, const c_vector& n, const float d, const c_vector& mins, const c_vector& maxs )
 {
 	return o.m_x * n.m_x + o.m_y * n.m_y + o.m_z * n.m_z - d + std::min( n.m_x * mins.m_x, n.m_x * maxs.m_x ) + std::min( n.m_y * mins.m_y, n.m_y * maxs.m_y ) +
 	       std::min( n.m_z * mins.m_z, n.m_z * maxs.m_z );
-}
-
-static c_vector es_scan_dir( const int i )
-{
-	const float a = deg2rad( static_cast< float >( i < 4 ? i * 90 : ( i - 4 ) * 90 + 45 ) );
-	return c_vector( std::cosf( a ), std::sinf( a ), 0.f );
-}
-/* 8 yaws + the way you fly: a narrow ledge ahead between two yaws */
-static int es_scan_dirs( const c_vector& vel, c_vector ( &d )[ 9 ] )
-{
-	for ( int i = 0; i < 8; ++i )
-		d[ i ] = es_scan_dir( i );
-	const float v = vel.length_2d( );
-	if ( v < 1.f )
-		return 8;
-	d[ 8 ] = c_vector( vel.m_x / v, vel.m_y / v, 0.f );
-	return 9;
-}
-
-/* the surface name, never dispFlags: only disp code writes those, a closer brush hit later in the same trace keeps them ( cmodel.cpp:1670 ) */
-static bool es_disp_hit( const trace_t& t )
-{
-	return t.surface.m_name && strstr( t.surface.m_name, "displacement" );
-}
-/* flat displacement ledges ( a flat top, an axial edge, a 2u+ drop beside ): terrain stays out ( slope / bumps fail the flat top, a soft rise
-   fails the floor rule ) */
-static bool es_flat_disp_on( )
-{
-	return GET_VARIABLE( g_variables.m_edge_surf_flat_disp, bool );
-}
-
-struct es_log_gate_t {
-	unsigned long long next = 0ull;
-	char last               = 0;
-	bool due( const char act, const bool every = false )
-	{
-		const unsigned long long now = GetTickCount64( );
-		if ( now < next && act == last && !every )
-			return false;
-		next = now + 250ull;
-		last = act;
-		return true;
-	}
-};
-
-static int g_edge_surf_latch_cmd = -1;
-int g_edge_surf_pin_cmd = -1;
-
-bool edge_surf_latched( const c_user_cmd* cmd )
-{
-	return cmd && g_edge_surf_latch_cmd >= 0 && g_edge_surf_latch_cmd == cmd->m_command_number - 1;
-}
-
-/* air_align.cpp: its key near a ps point on a ledge top = that pin is edge surf's ( set in movement pre before its yields ) */
-extern bool g_air_align_ledge;
-
-bool edge_surf_armed( )
-{
-	return GET_VARIABLE( g_variables.m_edge_surf, bool ) && !g_ctx.m_eject_restoring && g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) ||
-	       g_air_align_ledge;
-}
-
-/* edgebug "edgesurf on eb": eb key arms only the takeover at a feet pin + the latched chain after it, never a fresh guide */
-bool edge_surf_eb_armed( )
-{
-	return GET_VARIABLE( g_variables.m_edgebug_edge_surf, bool ) && GET_VARIABLE( g_variables.edge_bug, bool ) && GET_VARIABLE( g_variables.m_edgebug_style, int ) == 0 &&
-	       !g_ctx.m_eject_restoring && g_input.check_input( &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) );
-}
-
-/* edgebug.cpp: edge surf key ( eb key up ) runs eb's style 0 search on the exact pin verdict = pins on props / entities the scan never plans */
-bool edge_surf_predict_armed( )
-{
-	return GET_VARIABLE( g_variables.m_edge_surf_predict, bool ) && GET_VARIABLE( g_variables.m_edge_surf, bool ) && !g_ctx.m_eject_restoring &&
-	       g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) );
-}
-
-void edge_surf_skip( const c_user_cmd* cmd, const char* why )
-{
-	if ( edge_surf_latched( cmd ) && GET_VARIABLE( g_variables.m_debug_log, bool ) )
-		botox_dbg_log( "ESURF: feet skip why=%s cmd=%d", why, cmd->m_command_number );
-}
-
-/* later features may rewrite the cmd: one closing ulp over the top = standing on the ledge */
-static struct {
-	int cmd = -1, buttons = 0;
-	float yaw = 0.f, fwd = 0.f, side = 0.f;
-} s_es_sent;
-
-struct es_bad_t {
-	float top = 0.f, face = 0.f, f0 = 0.f;
-	int m = 0;
-	bool duck = false;
-};
-constexpr int k_es_bad = 16;
-static es_bad_t s_es_bad[ k_es_bad ]{ };
-static int s_es_bad_n = 0;
-static struct {
-	int cmd = -1, m = 0;
-	float top = 0.f, face = 0.f, f0 = 0.f;
-	bool duck = false;
-} s_es_pin_sent;
-
-static bool es_is_bad( const float top, const float face, const bool duck, const float f0, const int m )
-{
-	for ( int i = 0; i < std::min( s_es_bad_n, k_es_bad ); ++i ) {
-		const es_bad_t& b = s_es_bad[ i ];
-		if ( b.m == m && b.duck == duck && std::fabsf( b.top - top ) < 1e-3f && std::fabsf( b.face - face ) < 0.01f && std::fabsf( b.f0 - f0 ) < 2e-3f )
-			return true;
-	}
-	return false;
-}
-static void es_mark_bad( const float top, const float face, const bool duck, const float f0, const int m )
-{
-	if ( m > 0 && !es_is_bad( top, face, duck, f0, m ) )
-		s_es_bad[ s_es_bad_n++ % k_es_bad ] = { top, face, f0, m, duck };
-}
-/* ponytail: with ping START = our own prediction, a server-only refusal is not marked */
-static void es_real_check( const c_user_cmd* cmd, const bool on, const float dz, const float vz, const bool debug )
-{
-	if ( s_es_pin_sent.cmd < 0 || !cmd || s_es_pin_sent.cmd != cmd->m_command_number - 1 )
-		return;
-	if ( !on )
-		es_mark_bad( s_es_pin_sent.top, s_es_pin_sent.face, s_es_pin_sent.duck, s_es_pin_sent.f0, s_es_pin_sent.m );
-	if ( debug )
-		botox_dbg_log( "ESURF: feet real hit=%d m=%d f0=%.4f duck=%d top=%.3f face=%.3f dz=%.4f vz=%.2f bad=%d", on ? 1 : 0, s_es_pin_sent.m,
-		               s_es_pin_sent.f0, s_es_pin_sent.duck ? 1 : 0, s_es_pin_sent.top, s_es_pin_sent.face, dz, vz, std::min( s_es_bad_n, k_es_bad ) );
-	s_es_pin_sent.cmd = -1;
-}
-
-void edge_surf_final_stamp( c_user_cmd* cmd )
-{
-	constexpr int k_keys = in_forward | in_back | in_moveleft | in_moveright | in_duck;
-	if ( !cmd || s_es_sent.cmd != cmd->m_command_number )
-		return;
-	const auto wish = []( const float fwd, const float side, const float yaw ) {
-		const float a = deg2rad( yaw );
-		return std::pair{ fwd * std::cosf( a ) + side * std::sinf( a ), fwd * std::sinf( a ) - side * std::cosf( a ) };
-	};
-	const auto [ wx0, wy0 ] = wish( s_es_sent.fwd, s_es_sent.side, s_es_sent.yaw );
-	const auto [ wx1, wy1 ] = wish( cmd->m_forward_move, cmd->m_side_move, cmd->m_view_point.m_y );
-	const bool keys         = ( cmd->m_buttons & k_keys ) != ( s_es_sent.buttons & k_keys );
-	if ( !keys && std::fabsf( wx1 - wx0 ) + std::fabsf( wy1 - wy0 ) < 1e-4f )
-		return;
-	if ( GET_VARIABLE( g_variables.m_debug_log, bool ) )
-		botox_dbg_log( "ESURF: feet stomp cmd=%d wish %.5f,%.5f -> %.5f,%.5f keys %x -> %x yaw %.3f -> %.3f", cmd->m_command_number, wx0, wy0, wx1, wy1,
-		               s_es_sent.buttons & k_keys, cmd->m_buttons & k_keys, s_es_sent.yaw, cmd->m_view_point.m_y );
-	cmd->m_forward_move = s_es_sent.fwd;
-	cmd->m_side_move    = s_es_sent.side;
-	/* same view = exact bits ( a pin press is ulp sized ) */
-	if ( cmd->m_view_point.m_y != s_es_sent.yaw )
-		move_fix_to_yaw( s_es_sent.yaw, *cmd );
-	cmd->m_buttons = ( cmd->m_buttons & ~k_keys ) | ( s_es_sent.buttons & k_keys );
-}
-
-static bool edge_lead( i_trace_filter& filter, const c_vector& org, const c_vector& vel, const c_vector& mins, const c_vector& maxs,
-                       const float ipt, const float g, float& gap, c_vector& n, float& plane_d )
-{
-	const float range = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f );
-	const float vxy   = vel.length_2d( );
-	if ( vxy < 1.f )
-		return false;
-	const float horizon = std::min( range / vxy, ipt * static_cast< float >( n_tick::ticks( 32 ) ) );
-	constexpr int k_segments = 4;
-	const auto at = [ & ]( const float t ) { return c_vector( org.m_x + vel.m_x * t, org.m_y + vel.m_y * t, org.m_z + vel.m_z * t - 0.5f * g * t * t ); };
-	for ( int i = 0; i < k_segments; ++i ) {
-		const float t0 = horizon * static_cast< float >( i ) / k_segments, t1 = horizon * static_cast< float >( i + 1 ) / k_segments;
-		trace_t tr{ };
-		ray_t ray( at( t0 ), at( t1 ), mins, maxs );
-		tb_trace( ray, mask_playersolid, &filter, &tr );
-		if ( tr.m_start_solid || tr.m_fraction >= 1.f )
-			continue;
-		const c_vector& tn = tr.m_plane.m_normal;
-		if ( std::fabsf( tn.m_z ) > 0.05f || botox_is_ladder_trace( tr ) || es_disp_hit( tr ) )
-			return false;
-		c_base_entity* ent = tr.m_hit_entity;
-		if ( ent && ent->get_index( ) != 0 && !( ent->get_collideable( ) && ent->get_collideable( )->get_solid( ) == 1 ) )
-			return false;
-		plane_d = n_tb::hull_plane_dist( tr, mins, maxs );
-		gap     = es_hull_gap( org, tn, plane_d, mins, maxs );
-		n = tn;
-		return gap > 0.f;
-	}
-	return false;
-}
-
-struct edge_info_t {
-	bool ok = false;
-	float B = 0.f, T = 0.f;
-};
-static edge_info_t edge_find( i_trace_filter& filter, const c_vector& org, const c_vector& n, const float plane_d, const float z_hi, const float z_lo )
-{
-	edge_info_t e;
-	if ( z_hi <= z_lo + 1.f )
-		return e;
-	const float off  = org.m_x * n.m_x + org.m_y * n.m_y + org.m_z * n.m_z - plane_d + 0.5f;
-	const c_vector q = org - n * off;
-	const auto line  = [ & ]( const float a, const float b, trace_t& tr ) {
-		ray_t ray( c_vector( q.m_x, q.m_y, a ), c_vector( q.m_x, q.m_y, b ), c_vector( 0.f, 0.f, 0.f ), c_vector( 0.f, 0.f, 0.f ) );
-		tb_trace( ray, mask_playersolid, &filter, &tr );
-	};
-	trace_t t1{ };
-	line( z_hi, z_lo, t1 );
-	float top = z_hi;
-	if ( t1.m_start_solid ) {
-		if ( t1.m_all_solid || t1.m_fraction_left_solid <= 0.f || t1.m_fraction_left_solid >= 1.f )
-			return e;
-		e.B = z_hi - t1.m_fraction_left_solid * ( z_hi - z_lo );
-		trace_t up{ };
-		line( z_hi, z_hi + 256.f, up );
-		top = ( up.m_start_solid && !up.m_all_solid && up.m_fraction_left_solid > 0.f && up.m_fraction_left_solid < 1.f ) ? z_hi + up.m_fraction_left_solid * 256.f
-		                                                                                                                 : z_hi + 256.f;
-	} else {
-		if ( t1.m_fraction >= 1.f )
-			return e;
-		top = z_hi - t1.m_fraction * ( z_hi - z_lo );
-		trace_t t2{ };
-		line( top - 0.05f, z_lo, t2 );
-		if ( !t2.m_start_solid || t2.m_all_solid || t2.m_fraction_left_solid <= 0.f || t2.m_fraction_left_solid >= 1.f )
-			return e;
-		e.B = top - 0.05f - t2.m_fraction_left_solid * ( top - 0.05f - z_lo );
-	}
-	/* CM_ClipBoxToBrush leaves a brush DIST_EPSILON late */
-	e.B  = e.B + 0.03125f;
-	e.T  = top - 0.03125f;
-	e.ok = e.B > z_lo + 0.1f && e.T > e.B;
-	return e;
-}
-
-static bool edge_surf_feet( c_user_cmd* cmd, const c_user_cmd& in, c_base_entity* local, int frame, const c_vector& org, const c_vector& vel,
-                            const c_vector& mins, const c_vector& maxs, bool ducked0, float ipt, float pin, float grav, float k_acc, bool debug,
-                            bool eb_only, bool& pinned, bool& held );
-
-/* true = edge surf owns this cmd ( tb + head bounce skip it ), pinned = proven pin, held = nothing after tb may rewrite it */
-bool edge_surf_online( c_user_cmd* cmd, bool& pinned, bool& held )
-{
-	pinned = held = false;
-	constexpr float k_eps       = 0.03125f;
-	constexpr float k_touch     = k_eps * 1.3f;
-	constexpr float k_ratio     = 1.4f;
-	constexpr int k_ladder_cap  = 48;
-	constexpr float k_duck_crop = 0.34f;
-	constexpr float k_wish_max  = 450.f;
-	constexpr int k_move_keys   = in_forward | in_back | in_moveleft | in_moveright;
-	static const float k_keep[] = { 0.000001f, 0.0001f, 0.002f, 0.05f, 0.3f };
-
-	static int s_pick = -1, s_cmd = -1, s_run = 0;
-	static int s_park_margin = 0, s_park_cmd = -1;
-	static float s_park_from = 0.f, s_park_to = 0.f;
-	const auto drop = [ & ]( ) {
-		s_pick        = -1;
-		s_run         = 0;
-		s_park_margin = 0;
-		s_park_cmd    = -1;
-	};
-
-	if ( edge_surf_latched( cmd ) && GET_VARIABLE( g_variables.m_debug_log, bool ) )
-		botox_dbg_log( "ESURF: feet enter cmd=%d", cmd->m_command_number );
-	c_base_entity* const local = g_ctx.m_local;
-	g_edge_surf_active         = false;
-	const bool armed = cmd && local && local->is_alive( ) && local->get_collideable( ) && ( edge_surf_armed( ) || edge_surf_eb_armed( ) );
-	/* START must be the server's END, like texture bug */
-	g_prediction.sync_arm( n_prediction::impl_t::k_sync_es, armed );
-	if ( !armed || ( g_prediction.backup_data.m_flags & fl_onground ) || g_prediction.backup_data.m_move_type != e_move_types::move_type_walk ) {
-		edge_surf_skip( cmd, !armed ? "key" : ( g_prediction.backup_data.m_flags & fl_onground ) ? "ground" : "move" );
-		if ( armed )
-			es_real_check( cmd, false, 0.f, 0.f, GET_VARIABLE( g_variables.m_debug_log, bool ) );
-		s_es_pin_sent.cmd = -1;
-		g_edge_surf_latch_cmd = -1;
-		s_es_sent.cmd         = -1;
-		drop( );
-		return false;
-	}
-	/* eb key alone: only a fresh pin START ( an edgebug just ended, its plan spent ) or our latched chain, else no restore / scan */
-	const bool eb_only = !edge_surf_armed( );
-	static int s_pin_cmd = -1;
-	const bool pin_start = std::fabsf( g_prediction.backup_data.m_velocity.m_z - s_target_predict_z_vel ) < 1e-3f;
-	const bool fresh     = pin_start && s_pin_cmd != cmd->m_command_number - 1;
-	if ( pin_start )
-		s_pin_cmd = cmd->m_command_number;
-	if ( eb_only && !edge_surf_latched( cmd ) && ( !fresh || ( g_edgebug.m_found && !g_edgebug.replay_spent( ) ) ) ) {
-		drop( );
-		return false;
-	}
-
-	const int frame = g_interfaces.m_prediction->m_commands_predicted - 1;
-	tb_restore( frame );
-	const c_vector org   = local->get_origin( );
-	const c_vector vel   = local->get_velocity( );
-	const bool ducked0   = ( local->get_flags( ) & fl_ducking ) != 0;
-	const float friction = local->get_surface_friction( );
-	const c_vector mins  = local->get_collideable( )->get_obb_mins( );
-	const c_vector maxs  = local->get_collideable( )->get_obb_maxs( );
-	const float ipt      = g_interfaces.m_global_vars_base->m_interval_per_tick;
-	const float pin      = s_target_predict_z_vel;
-	const float grav     = -2.f * pin / ( ipt > 0.f ? ipt : 0.015625f );
-	static auto sv_airaccelerate = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
-	const float k_acc            = ( sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.f ) * ipt * friction;
-	const bool debug             = GET_VARIABLE( g_variables.m_debug_log, bool );
-	if ( vel.m_z + pin > 1e-3f || k_acc <= 0.f ) {
-		edge_surf_skip( cmd, "rise" );
-		drop( );
-		return false;
-	}
-	const c_user_cmd in = *cmd;
-	es_real_check( cmd, std::fabsf( org.m_z - ( s_es_pin_sent.top + k_eps ) ) < 0.01f && std::fabsf( vel.m_z - pin ) < 1e-3f,
-	               org.m_z - ( s_es_pin_sent.top + k_eps ), vel.m_z, debug );
-
-	/* a locked edgebug plan flies first: a tick we own makes it drop ( EB: drop why=taken ) */
-	if ( g_edgebug.m_found && std::fabsf( vel.m_z - pin ) >= 1e-3f ) {
-		edge_surf_skip( cmd, "eb" );
-		static int s_eb_cmd = -1;
-		if ( debug && s_eb_cmd != cmd->m_command_number - 1 )
-			botox_dbg_log( "ESURF: eb first cmd=%d vz=%.1f", cmd->m_command_number, vel.m_z );
-		s_eb_cmd = cmd->m_command_number;
-		drop( );
-		return false;
-	}
-
-	if ( g_air_stuck_owns_cmd )
-		edge_surf_skip( cmd, "as" );
-	if ( !g_air_stuck_owns_cmd && edge_surf_feet( cmd, in, local, frame, org, vel, mins, maxs, ducked0, ipt, pin, grav, k_acc, debug, eb_only, pinned, held ) )
-		return true;
-	if ( eb_only ) {
-		drop( );
-		return false;
-	}
-
-	const float reach = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.f, 32.f );
-	c_trace_filter_tb_world_props filter( local );
-	c_vector n{ };
-	float gap = FLT_MAX, plane_d = 0.f;
-	bool lead = false;
-	for ( int i = 0; i < 8; ++i ) {
-		trace_t tr{ };
-		ray_t ray( org, org + es_scan_dir( i ) * ( reach + 0.05f ), mins, maxs );
-		tb_trace( ray, mask_playersolid, &filter, &tr );
-		if ( tr.m_start_solid || tr.m_fraction >= 1.f || std::fabsf( tr.m_plane.m_normal.m_z ) > 0.05f || botox_is_ladder_trace( tr ) || es_disp_hit( tr ) )
-			continue;
-		const c_vector& tn = tr.m_plane.m_normal;
-		const float d      = n_tb::hull_plane_dist( tr, mins, maxs );
-		const float g      = es_hull_gap( org, tn, d, mins, maxs );
-		if ( g < gap ) {
-			gap     = g;
-			n       = tn;
-			plane_d = d;
-		}
-	}
-	if ( gap == FLT_MAX )
-		lead = edge_lead( filter, org, vel, mins, maxs, ipt, grav, gap, n, plane_d );
-	const float nxy = std::sqrt( n.m_x * n.m_x + n.m_y * n.m_y );
-	/* your keys / view never end the guide: key up does */
-	if ( gap == FLT_MAX || nxy < 0.5f ) {
-		drop( );
-		return false;
-	}
-	const float yaw_in = rad2deg( std::atan2f( -n.m_y, -n.m_x ) );
-
-	/* ulp read ON CONTACT: a lead starts up to the lead range off the wall */
-	const float ulp = es_ulp( std::max( std::fabsf( ( org.m_x - n.m_x * gap ) * n.m_x ), std::fabsf( ( org.m_y - n.m_y * gap ) * n.m_y ) ) );
-
-	const float head_now = org.m_z + maxs.m_z;
-	const edge_info_t edge = edge_find( filter, org, n, plane_d, head_now + 9.05f, org.m_z - 24.f );
-	const float period     = grav * ipt * ipt;
-	const auto crossing    = [ & ]( const float head_off, float& h_star, float& feet_at ) {
-		float z = org.m_z, vz = vel.m_z;
-		for ( int k = 0; k < 64; ++k ) {
-			const float vmid = vz - grav * 0.5f * ipt;
-			const float zn   = z + vmid * ipt;
-			if ( z + head_off > edge.B && zn + head_off <= edge.B ) {
-				h_star  = z + head_off - edge.B;
-				feet_at = z;
-				return k;
-			}
-			z  = zn;
-			vz = vmid - grav * 0.5f * ipt;
-			if ( z + head_off < edge.B )
-				break;
-		}
-		return -1;
-	};
-	float hc = 0.f, ho = 0.f, fc = org.m_z, fo = org.m_z;
-	const int kc = edge.ok ? crossing( maxs.m_z, hc, fc ) : -1;
-	const int ko = edge.ok ? crossing( 63.f, ho, fo ) : -1;
-	fo += ducked0 ? -9.f : 9.f;
-	const auto band = [ & ]( const int k, const float h, const float feet, float& lo, float& phi ) {
-		phi = k >= 0 ? std::fmod( h, period ) : -1.f;
-		const float u  = std::max( ulp, 1.9073486e-6f );
-		const float D  = std::max( edge.T - ( feet - ( h - phi ) ), 1.f );
-		const int kmax = static_cast< int >( 0.97f * ( k_eps - u ) * period / ( ( D + k_eps ) * u ) );
-		lo             = kmax >= 2 ? 1.03f * period / static_cast< float >( kmax ) : period;
-		return k >= 0 && phi >= lo && phi < period - 1e-4f;
-	};
-	float lo_c = 0.f, lo_o = 0.f, phi_c = -1.f, phi_o = -1.f;
-	const bool in_c = band( kc, hc, fc, lo_c, phi_c ), in_o = band( ko, ho, fo, lo_o, phi_o );
-	const auto in_band = [ & ]( const int duck ) { return duck == ( ducked0 ? 1 : 0 ) ? in_c : in_o; };
-	if ( s_cmd != cmd->m_command_number - 1 )
-		drop( );
-	s_cmd = cmd->m_command_number;
-	if ( s_pick < 0 || !in_band( s_pick ) )
-		s_pick = in_c ? ( ducked0 ? 1 : 0 ) : in_o ? ( ducked0 ? 0 : 1 ) : -1;
-
-	char act     = 'N';
-	float dx_hit = 0.f;
-	int sims     = 0;
-	const auto log = [ & ]( ) {
-		static es_log_gate_t s_gate;
-		if ( !debug || !s_gate.due( act ) )
-			return;
-		botox_dbg_log( "ESURF: %s act=%c gap=%.6f edge=%d B=%.3f T=%.3f head=%.3f k=%d/%d h=%.4f/%.4f phi=%.4f/%.4f lo=%.3f/%.3f period=%.4f band=%d/%d ulp=%.1e pick=%d run=%d dx=%.3e sims=%d mg=%d vz=%.1f xy=%.1f",
-		               lead ? "lead" : "touch", act, gap, edge.ok ? 1 : 0, edge.B, edge.T, head_now, kc, ko, hc, ho, phi_c, phi_o, lo_c, lo_o, period,
-		               in_c ? 1 : 0, in_o ? 1 : 0, ulp, s_pick, s_run, dx_hit, sims, s_park_margin, vel.m_z, vel.length_2d( ) );
-	};
-	if ( s_pick < 0 ) {
-		s_run = 0;
-		log( );
-		return false;
-	}
-	g_edge_surf_active = true;
-	const int stance   = s_pick;
-
-	struct end_t {
-		bool ok = false, ride = false, ground = false;
-		c_vector org{ }, vel{ };
-	};
-	const auto sim = [ & ]( c_user_cmd c ) {
-		end_t e;
-		if ( sims_left( ) <= 0 )
-			return e;
-		tb_restore( frame );
-		pred_simulate( &c );
-		++sims;
-		e.org    = local->get_origin( );
-		e.vel    = local->get_velocity( );
-		e.ground = ( local->get_flags( ) & fl_onground ) != 0;
-		e.ok     = local->get_move_type( ) == e_move_types::move_type_walk; /* a ladder latch is never ours */
-		/* START vz == -pin lands on the pin with no contact: falling STARTs only */
-		e.ride   = e.ok && !e.ground && std::fabsf( e.vel.m_z - pin ) < 1e-3f && e.vel.length_2d( ) >= 1.f && vel.m_z + pin < 0.f;
-		return e;
-	};
-	const auto with_duck = [ ]( c_user_cmd c, const int duck ) {
-		c.m_buttons = duck ? ( c.m_buttons | in_duck ) : ( c.m_buttons & ~in_duck );
-		return c;
-	};
-	const auto commit = [ & ]( const c_user_cmd& c ) {
-		cmd->m_forward_move = c.m_forward_move;
-		cmd->m_side_move    = c.m_side_move;
-		cmd->m_buttons      = c.m_buttons;
-	};
-	const float crop  = ( stance || ducked0 ) ? k_duck_crop : 1.f;
-	const float v_old = -( vel.m_x * n.m_x + vel.m_y * n.m_y ) / nxy;
-	/* AirAccelerate inverse: press that ends the tick closing at v_plane */
-	const auto press = [ & ]( const float v_plane ) {
-		const float v_t  = ( v_plane + ( vel.m_z + pin ) * n.m_z ) / nxy;
-		float w          = v_t >= v_old ? std::max( ( v_t - v_old ) / k_acc, v_t ) : -std::max( ( v_old - v_t ) / k_acc, -v_t );
-		w                = std::clamp( w / crop, -k_wish_max, k_wish_max );
-		c_user_cmd c     = with_duck( in, stance );
-		c.m_forward_move = std::fabsf( w );
-		c.m_side_move    = 0.f;
-		move_fix_to_yaw( w >= 0.f ? yaw_in : yaw_in + 180.f, c );
-		c.m_buttons &= ~k_move_keys;
-		return c;
-	};
-
-	if ( s_park_cmd >= 0 && cmd->m_command_number == s_park_cmd + 1 ) {
-		if ( s_park_from - gap < 0.5f * ( s_park_from - s_park_to ) || ( s_park_to < 0.5f * k_eps && gap > 0.9f * k_eps ) )
-			s_park_margin = s_park_margin ? s_park_margin * 2 : 2;
-		else
-			s_park_margin = 0;
-	}
-	s_park_cmd = -1;
-
-	if ( gap <= k_touch ) {
-		const float g  = std::max( gap, 1e-7f );
-		const float dz = std::fabsf( ( vel.m_z + pin ) * ipt ) + 1e-4f;
-		const float hi = std::max( ( k_eps - g ) * dz / ( ( ( stance || ducked0 ) ? 54.f : 72.f ) + k_eps ), g * 1.5f );
-		/* ponytail: no server shift comp ( texture bug's dn median ), add if ESURF shows holds lost with run=1 */
-		float run_dx[ k_ladder_cap ];
-		int run_n = 0, k = 0;
-		for ( float dx = g * 1.0005f + 1e-7f; dx <= hi && k < k_ladder_cap; dx = std::max( dx * k_ratio, dx + ulp ), ++k ) {
-			const end_t e = sim( press( dx / ipt ) );
-			if ( !e.ok && sims_left( ) <= 0 )
-				break;
-			if ( e.ok && e.ride )
-				run_dx[ run_n++ ] = dx;
-			else if ( run_n )
-				break;
-		}
-		if ( run_n ) {
-			dx_hit = run_dx[ run_n / 2 ];
-			commit( press( dx_hit / ipt ) );
-			pinned = held = true;
-			g_edge_surf_pin_cmd = cmd->m_command_number;
-			++s_run;
-			act = 'P';
-			log( );
-			return true;
-		}
-		s_run = 0;
-	}
-
-	const float delta = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ), 0.f, 5.f );
-	const float vxy   = vel.length_2d( );
-	/* closing speed must stay under one park tick's brake, else the wall eats it as a hard hit */
-	if ( delta > 0.f && vxy > 30.f && gap > std::max( v_old * nxy, 0.f ) * ipt * 2.f + 1.f &&
-	     v_old * nxy < k_acc * std::max( local->get_max_speed( ), 0.f ) * crop ) {
-		const float side = ( vel.m_y * n.m_x - vel.m_x * n.m_y ) >= 0.f ? 1.f : -1.f;
-		const float add  = std::min( vxy * std::tanf( deg2rad( delta ) ), 30.f );
-		c_user_cmd c     = with_duck( in, stance );
-		c.m_forward_move = std::min( std::max( add / k_acc, add ) / crop, k_wish_max );
-		c.m_side_move    = 0.f;
-		move_fix_to_yaw( rad2deg( std::atan2f( vel.m_y, vel.m_x ) ) + side * 90.f, c );
-		c.m_buttons &= ~k_move_keys;
-		if ( const end_t e = sim( c ); e.ok && !e.ground ) {
-			commit( c );
-			act = 'D';
-			log( );
-			return true;
-		}
-	}
-
-	/* never under 1 ulp: a sub-ulp end = the plane or a hard hit */
-	if ( s_park_margin <= 16 ) {
-		const float floor_gap = static_cast< float >( std::max( s_park_margin, 1 ) ) * ulp;
-		float last_end        = -1.f;
-		for ( const float keep : k_keep ) {
-			const float end = std::max( gap * keep, floor_gap );
-			if ( end >= gap )
-				break;
-			if ( end == last_end )
-				continue;
-			last_end           = end;
-			const c_user_cmd c = press( ( gap - end ) / ipt );
-			const end_t e      = sim( c );
-			if ( !e.ok || e.ground )
-				continue;
-			const float g1     = ( e.org.m_x - org.m_x ) * n.m_x + ( e.org.m_y - org.m_y ) * n.m_y + ( e.org.m_z - org.m_z ) * n.m_z + gap;
-			const bool touched = -( e.vel.m_x * n.m_x + e.vel.m_y * n.m_y ) <= 1e-3f;
-			if ( g1 > 0.f && g1 < gap && !touched && g1 >= floor_gap * 0.5f ) {
-				commit( c );
-				s_park_cmd  = cmd->m_command_number;
-				s_park_from = gap;
-				s_park_to   = g1;
-				act         = 'K';
-				log( );
-				return true;
-			}
-		}
-	}
-
-	const c_user_cmd mine = with_duck( in, stance );
-	commit( mine );
-	log( );
-	return mine.m_buttons != in.m_buttons || gap <= k_touch;
 }
 
 /* mv->m_flMaxSpeed = weapon speed ( kisak cs_player_shared.cpp:365 ) x stamina scale ( cs_gamemovement.cpp:283 ), never raw m_flMaxspeed */
@@ -598,1559 +46,285 @@ float es_max_speed( c_base_entity* local )
 	return speed;
 }
 
-/* cmodel.cpp IntersectRayWithBoxBrush float steps, volatile so the compiler never folds them */
-static float es_seen_box( const float top, const float off )
+static int g_edge_surf_latch_cmd = -1;
+int g_edge_surf_pin_cmd          = -1;
+
+bool edge_surf_latched( const c_user_cmd* cmd )
 {
-	volatile float z = top + 0.03125f;
-	volatile float c = z + off;
-	volatile float a = top - c;
-	a                = a + off;
-	a                = a + 0.03125f;
-	return -a;
+	return cmd && g_edge_surf_latch_cmd >= 0 && g_edge_surf_latch_cmd == cmd->m_command_number - 1;
 }
 
-struct es_face_t {
-	int ax     = 0;    /* wall axis, 2 = diagonal ( n, d ) */
-	float sg   = 1.f;  /* side of the face the hull is on */
-	float face = 0.f;  /* face coordinate on that axis */
-	float hw   = 16.f; /* hull half width */
-	float top  = 0.f;
-	c_vector n{ };     /* diagonal: engine plane normal ( z 0 ) + dist, hull xy extent */
-	float d  = 0.f;
-	float ex = 16.f;
-	bool prop = false; /* static prop / entity face ( vphysics, no ulp grid ): the engine sim plans its pins */
-};
-/* a prop top read off a vphysics hit is up to 1/32 out: pin checks allow that much */
-static float es_ztol( const es_face_t& f )
+/* air_align.cpp: its key near a ps point on a ledge top = that pin is edge surf's ( set in movement pre before its yields ) */
+extern bool g_air_align_ledge;
+
+bool edge_surf_armed( )
 {
-	return f.prop ? 0.05f : 0.01f;
-}
-static float es_snap32( const float x )
-{
-	const float s = std::round( x * 32.f ) / 32.f;
-	return std::fabsf( s - x ) < 2e-3f ? s : x;
+	return GET_VARIABLE( g_variables.m_edge_surf, bool ) && !g_ctx.m_eject_restoring && g_input.check_input( &GET_VARIABLE( g_variables.m_edge_surf_key, key_bind_t ) ) ||
+	       g_air_align_ledge;
 }
 
-static float es_gap_at( const es_face_t& f, const float x )
+/* edgebug "edgesurf on eb": the eb key arms only the takeover at an eb's pin END + the chain after it, never a fresh approach */
+bool edge_surf_eb_armed( )
 {
-	volatile float d = f.sg < 0.f ? f.face - x : x - f.face;
-	d                = d - f.hw;
-	return d;
-}
-/* diagonal = non-box brush: CM_ClipBoxToBrush plane distance, its float steps ( n.z 0: the z terms add exact zeros ) */
-static float es_diag_dist( const es_face_t& f, const float x, const float y )
-{
-	volatile float a = std::fabsf( f.n.m_x * f.ex );
-	a                = a + std::fabsf( f.n.m_y * f.ex );
-	volatile float d = f.d + a;
-	volatile float p = x * f.n.m_x;
-	p                = p + y * f.n.m_y;
-	volatile float r = p - d;
-	return r;
-}
-static float es_gap_to( const es_face_t& f, const c_vector& o )
-{
-	if ( f.ax == 2 )
-		return es_diag_dist( f, o.m_x, o.m_y );
-	return es_gap_at( f, f.ax ? o.m_y : o.m_x );
-}
-static bool es_same_face( const es_face_t& a, const es_face_t& b )
-{
-	if ( a.ax == 2 || b.ax == 2 )
-		return a.ax == b.ax && a.n.m_x == b.n.m_x && a.n.m_y == b.n.m_y && std::fabsf( a.d - b.d ) < 0.01f && std::fabsf( a.top - b.top ) < 1e-3f;
-	return a.ax == b.ax && a.sg == b.sg && std::fabsf( a.face - b.face ) < 0.01f && std::fabsf( a.top - b.top ) < 1e-3f;
-}
-/* the gap grid: a diagonal gap moves with both coordinates */
-static float es_face_ulp( const es_face_t& f, const c_vector& o )
-{
-	return f.ax == 2 ? std::max( es_ulp( o.m_x ), es_ulp( o.m_y ) ) : es_ulp( f.ax ? o.m_y : o.m_x );
-}
-/* diagonal: hull centre at gap g, along s ( along = o . ( -n.y, n.x ) ) */
-static c_vector es_diag_at( const es_face_t& c, const float g, const float s, const float z )
-{
-	const float r = c.d + c.hw + g;
-	return c_vector( c.n.m_x * r - c.n.m_y * s, c.n.m_y * r + c.n.m_x * s, z );
+	return GET_VARIABLE( g_variables.m_edgebug_edge_surf, bool ) && GET_VARIABLE( g_variables.edge_bug, bool ) && GET_VARIABLE( g_variables.m_edgebug_style, int ) == 0 &&
+	       !g_ctx.m_eject_restoring && g_input.check_input( &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) );
 }
 
-/* diagonal crossing tick in float, the engine's steps ( lab diag_probe / diag_syn: == engine on 17.8M candidates, 0 false yes ). o = START feet,
-   v = velocity after AirAccelerate ( START vz ). true = bump 1 hits the top ( +z ), bump 2's end stays off the face plane = vz reset, never
-   grounded. why a diagonal pins: per axis bump 2 lands rnd( a + ( 1 - f ) rho ) ulps off bump 1's end, a = rnd( f N ) - f N, rho = the
-   end's rounding: no 1 ulp grid on the plane, the along speed's low bits pick it ( f -> 1 = no room ) */
-static bool es_diag_pins( const es_face_t& f, const c_vector& o, const c_vector& v, const float off, const float pin, const float ipt )
+void edge_surf_skip( const c_user_cmd* cmd, const char* why )
 {
-	constexpr float k_eps = 0.03125f;
-	const float vm[ 3 ] = { v.m_x, v.m_y, v.m_z + pin };
-	const float ov[ 3 ] = { o.m_x, o.m_y, o.m_z };
-	float dl[ 3 ];
-	for ( int i = 0; i < 3; ++i ) {
-		volatile float s = ipt * vm[ i ];
-		volatile float e = ov[ i ] + s;
-		volatile float q = e - ov[ i ];
-		dl[ i ]          = q;
-	}
-	volatile float cz = o.m_z + off;
-	volatile float x2 = o.m_x + dl[ 0 ];
-	volatile float y2 = o.m_y + dl[ 1 ];
-	volatile float z2 = cz + dl[ 2 ];
-	const float d1f = es_diag_dist( f, o.m_x, o.m_y ), d2f = es_diag_dist( f, x2, y2 );
-	volatile float tz = f.top + off;
-	volatile float d1t = cz - tz;
-	volatile float d2t = z2 - tz;
-	if ( !( d1f > 0.f ) || d2f > 0.f || !( d1t > 0.f ) || d2t > 0.f )
-		return false;
-	volatile float ff = d1f - k_eps;
-	ff                = ff > 0.f ? ff : 0.f;
-	ff                = ff / ( d1f - d2f );
-	volatile float ft = d1t - k_eps;
-	ft                = ft > 0.f ? ft : 0.f;
-	ft                = ft / ( d1t - d2t );
-	if ( !( ft > ff ) || ft < 1e-4f )
-		return false;
-	volatile float tl = ipt * ft;
-	tl                = ipt - tl;
-	float e2[ 2 ];
-	for ( int i = 0; i < 2; ++i ) {
-		volatile float s = ft * dl[ i ];
-		volatile float e = ov[ i ] + s;
-		volatile float w = tl * vm[ i ];
-		volatile float r = e + w;
-		e2[ i ]          = r;
-	}
-	return es_diag_dist( f, e2[ 0 ], e2[ 1 ] ) > 0.f;
-}
-static bool es_diag_pins_robust( const es_face_t& f, const c_vector& o, const c_vector& v, const float off, const float pin, const float ipt )
-{
-	for ( int a = -1; a <= 1; ++a )
-		for ( int b = -1; b <= 1; ++b ) {
-			c_vector w = v;
-			if ( a )
-				w.m_x = std::nextafter( w.m_x, a > 0 ? FLT_MAX : -FLT_MAX );
-			if ( b )
-				w.m_y = std::nextafter( w.m_y, b > 0 ? FLT_MAX : -FLT_MAX );
-			if ( !es_diag_pins( f, o, w, off, pin, ipt ) )
-				return false;
-		}
-	return true;
-}
-/* one AirAccelerate from v0 to v ( xy ): wish dir = the change, v_t = speed along it after; the 30 wish cap only lands it when it is the
-   path taken. out: yaw + wish speed ( before the move crop ) */
-static bool es_press_to( const c_vector& v0, const c_vector& v, const float k_acc, float& yaw, float& wish, bool* cap = nullptr )
-{
-	const float dx = v.m_x - v0.m_x, dy = v.m_y - v0.m_y, dl = std::sqrt( dx * dx + dy * dy );
-	if ( !( dl > 0.f ) || k_acc <= 0.f )
-		return false;
-	const float ux = dx / dl, uy = dy / dl, v_t = v0.m_x * ux + v0.m_y * uy + dl;
-	wish = std::max( dl / k_acc, v_t );
-	if ( cap )
-		*cap = v_t > dl / k_acc;
-	/* at the accel / cap boundary float noise picks the path: the cap lands wish - v_t over ( lab: 3 ulps = a miss ) */
-	if ( ( wish == v_t && v_t > 30.f ) || std::fabsf( v_t - dl / k_acc ) < 1e-3f )
-		return false;
-	wish += FLT_EPSILON;
-	yaw = rad2deg( std::atan2f( uy, ux ) );
-	return true;
-}
-/* crossing velocities that pin from START o / v0 ( closing + a small along tweak, 1 ulp robust ), smallest tweak first. a press on the 30
-   cap path lands with the yaw's float quantum x your speed ( ~4 ulps ), the accel path x the change only: those go first, cap ones only
-   as a fallback ( lab diag_dll: +1..4 / 64 catches, 1 miss in ~380 ). found 44..61 / 64 flights, <= 0.14 u/s lost, worst 11.7k twin calls */
-static int es_diag_search( const es_face_t& f, const c_vector& o, const c_vector& v0, const float off, const float pin, const float ipt, const float u,
-                           const float k_acc, c_vector* out, const int max_out )
-{
-	constexpr int k_j = 48;
-	const float vn0 = v0.m_x * f.n.m_x + v0.m_y * f.n.m_y, gap = es_gap_to( f, o );
-	if ( !( gap > 0.f ) || gap > 0.03f || ipt <= 0.f || max_out <= 0 )
-		return 0;
-	int n_out = 0, n_cap = 0;
-	c_vector cap[ 4 ];
-	for ( int jj = 0; jj <= 2 * k_j && n_out < max_out; ++jj ) {
-		const int j   = ( jj + 1 ) / 2 * ( ( jj & 1 ) ? -1 : 1 );
-		const float a = 0.003f * static_cast< float >( j );
-		for ( int k = -8; k <= 112; ++k ) {
-			const float cl = ( gap + static_cast< float >( k ) * u / 32.f ) / ipt;
-			const c_vector v( v0.m_x - f.n.m_x * ( cl + vn0 ) - f.n.m_y * a, v0.m_y - f.n.m_y * ( cl + vn0 ) + f.n.m_x * a, v0.m_z );
-			float yaw = 0.f, wish = 0.f;
-			bool on_cap = false;
-			if ( !es_diag_pins( f, o, v, off, pin, ipt ) || !es_press_to( v0, v, k_acc, yaw, wish, &on_cap ) || !es_diag_pins_robust( f, o, v, off, pin, ipt ) )
-				continue;
-			if ( on_cap ) {
-				if ( n_cap < 4 )
-					cap[ n_cap++ ] = v;
-			} else
-				out[ n_out++ ] = v;
-			break;
-		}
-	}
-	for ( int i = 0; i < n_cap && n_out < max_out; ++i )
-		out[ n_out++ ] = cap[ i ];
-	return n_out;
+	if ( edge_surf_latched( cmd ) && GET_VARIABLE( g_variables.m_debug_log, bool ) )
+		botox_dbg_log( "ESURF: skip why=%s cmd=%d", why, cmd->m_command_number );
 }
 
-/* visualize: edge_surf_feet writes it ( create move ), edge_surf_render draws it ( paint traverse ), both on the game thread */
+/* later features may rewrite the cmd: one closing ulp over the top = standing on the ledge */
 static struct {
-	float time = -1.f;
-	int n      = 0;
-	es_face_t cand[ 9 ]{ };
-	float cand_s[ 9 ]{ };
-	bool pick = false, arrive_ok = false, pinned = false, own = false;
-	es_face_t f{ };
-	float s = 0.f;
-	c_vector arrive{ };
-	char act = 'N';
-} s_es_viz;
+	int cmd = -1, buttons = 0;
+	float yaw = 0.f, fwd = 0.f, side = 0.f;
+} s_es_sent;
 
-static bool es_crossing( const es_face_t& f, float z, float vz, const float off, const float pin, const float ipt, int& k, float& frac0,
-                         float* zc = nullptr, float* vzc = nullptr )
+void edge_surf_final_stamp( c_user_cmd* cmd )
 {
-	for ( k = 0; k < 256; ++k ) {
-		volatile float v1 = vz + pin;
-		volatile float dz = ipt * v1;
-		volatile float z1 = z + dz;
-		volatile float c  = z + off;
-		volatile float a  = f.top - c;
-		a                 = a + off;
-		if ( a >= 0.f )
-			return false;
-		volatile float dlt = z1 - z;
-		if ( !( dlt > a ) ) {
-			volatile float ae  = a + 0.03125f;
-			volatile float inv = 1.f / dlt;
-			volatile float t   = ae * inv;
-			frac0              = t;
-			if ( zc )
-				*zc = z;
-			if ( vzc )
-				*vzc = vz;
-			return t >= 1.05e-4f;
-		}
-		z  = z1;
-		vz = v1 + pin;
-	}
-	return false;
-}
-
-/* both bumps must round DOWN or the hull ends on the plane = grounded */
-static bool es_arrival_ok( const es_face_t& f, const int m, const float frac0, const float e, const float u, const float ipt )
-{
-	const float in    = -f.sg;
-	volatile float c0 = f.face + f.sg * f.hw;
-	volatile float c  = c0 - in * ( static_cast< float >( m ) * u );
-	volatile float v  = ( static_cast< float >( m ) - 0.5f ) * u * ( 1.f + e ) / ipt;
-	volatile float st = ipt * v;
-	volatile float e1 = c + in * st;
-	volatile float d  = e1 - c;
-	volatile float mv = d * frac0;
-	volatile float p1 = c + mv;
-	volatile float tl = ipt * frac0;
-	tl                = ipt - tl;
-	volatile float s2 = tl * v;
-	volatile float e2 = p1 + in * s2;
-	return es_gap_at( f, e1 ) <= 0.f && es_gap_at( f, p1 ) > 0.f && es_gap_at( f, e2 ) > 0.f;
-}
-static int es_pick_gap( const es_face_t& f, const float frac0, const float e, const float u, const float ipt, const int from = 1, const bool duck = false )
-{
-	/* diagonal / prop: park ~4e-3 off ( under the eps band = the face never leads ), the crossing tick picks its closing */
-	if ( f.ax == 2 || f.prop ) {
-		for ( int m = std::max( from, std::max( 1, static_cast< int >( 4e-3f / std::max( u, 1e-7f ) ) ) ); m <= 8192 && static_cast< float >( m ) * u < 0.015f; ++m )
-			if ( !es_is_bad( f.top, f.face, duck, frac0, m ) )
-				return m;
-		return 0;
-	}
-	for ( int m = std::max( from, 1 ); m <= 512 && static_cast< float >( m ) * u < 0.015f; ++m )
-		if ( !es_is_bad( f.top, f.face, duck, frac0, m ) && es_arrival_ok( f, m, frac0, e, u, ipt ) &&
-		     es_arrival_ok( f, m, frac0 * 0.99999f, e, u, ipt ) && es_arrival_ok( f, m, frac0 * 1.00001f, e, u, ipt ) )
-			return m;
-	return 0;
-}
-
-/* sv_air_max_wishspeed 30: a straight press never raises its own wish speed past it */
-static float es_stop_speed( const float r, const float a, const float dt )
-{
-	const float ar = std::fabsf( r ), k = std::floor( ( std::sqrt( 1.f + 8.f * ar / ( a * dt ) ) - 1.f ) * 0.5f );
-	return ( r >= 0.f ? 1.f : -1.f ) * ( ar / ( ( k + 1.f ) * dt ) + k * a * 0.5f );
-}
-static float es_profile_step( const float r, const float w, const float ap, const float a, const float dt )
-{
-	const float up = std::min( w + a, std::max( w, 30.f ) ), dn = std::max( w - a, std::min( w, -30.f ) );
-	return std::clamp( es_stop_speed( r, ap, dt ), dn, up );
-}
-static bool es_in_window( const float r, const float w, const float park, const float a, const float dt )
-{
-	return std::fabsf( r ) / dt <= park && std::fabsf( std::clamp( r / dt, -park, park ) - w ) <= a;
-}
-/* r_min = face plane: a plan that touches it puts the hull over the top = standing on the ledge */
-static int es_profile_ticks( float r, float w, const float ap, const float a, const float park, const float dt, const int n, const float r_min )
-{
-	for ( int t = 0; t <= n; ++t ) {
-		if ( es_in_window( r, w, park, a, dt ) )
-			return t;
-		w = es_profile_step( r, w, ap, a, dt );
-		r -= w * dt;
-		if ( r <= r_min )
-			return -1;
-	}
-	return -1;
-}
-
-/* own align: a run-in parks h over the arrival gap, brakes there, creeps in at h / dt. K straight onto the gap left the run-in's closing ( up to
-   25 u/s ) 1 ulp off the face for the next tick's brake ( 11-17 log: K 0.115 at 36.8 u/s -> next START on the plane = stood ). lab edge_real
-   ER_SLIP sweep picked h = max( 32 ulps, 5e-4 ), kc >= 3, drift 4 ticks early: 0 stood at |slip| <= 3e-3 where the old K stood 1049 */
-static float es_stage( const float err_m, const float u, const float v_old, const int kc, const float ipt )
-{
-	const float h     = std::max( 32.f * u, 5e-4f );
-	const bool creep  = err_m <= 1.5f * h && std::fabsf( v_old ) * ipt <= 0.5f * h;
-	return kc >= 3 && err_m > 0.5f * u && !creep ? h : 0.f;
-}
-
-/* above the top: err = distance left to the aim ( + = toward the face ), r_min = the face plane on that scale. K = one press lands K's window,
-   D = delta strafe turn ( v = closing change ), S = straight stop-in-time profile, F = nothing fits. pure: the scan ranks faces with it */
-struct es_guide_t {
-	char act = 'F';
-	float v  = 0.f;
-};
-static es_guide_t es_guide( const float err, const float gap, const float r_min, const float v_old, const float vxy, const int kc, const float authority,
-                            const float turn, const float reach, const bool owned, const bool staged, const float ipt )
-{
-	constexpr float k_park_speed = 25.f;
-	const float park    = std::min( k_park_speed, authority );
-	const float v_park  = std::clamp( err / ipt, -park, park );
-	const bool settles  = std::fabsf( v_park - v_old ) <= authority;
-	if ( std::fabsf( err ) / ipt <= park && settles )
-		return { 'K', v_park };
-	if ( turn > 0.f && vxy > 30.f ) {
-		const auto d_at = [ & ]( const float ww ) {
-			return std::min( std::min( vxy * std::tanf( deg2rad( turn ) ), 30.f ), authority ) * std::sqrt( std::max( vxy * vxy - ww * ww, 0.f ) ) / vxy;
-		};
-		const float d = d_at( v_old );
-		if ( d >= 1.f ) {
-			const float ae = std::fabsf( err );
-			const int k    = static_cast< int >( std::floor( ( std::sqrt( 1.f + 8.f * ae / ( d * ipt ) ) - 1.f ) * 0.5f ) );
-			const float vs = ( err >= 0.f ? 1.f : -1.f ) * ( ae / ( static_cast< float >( k + 1 ) * ipt ) + static_cast< float >( k ) * d * 0.5f );
-			const auto d_reaches = [ & ] {
-				float rr = err, ww = v_old;
-				for ( int t = 0; t < kc; ++t ) {
-					if ( es_in_window( rr, ww, park, authority, ipt ) )
-						return true;
-					ww = std::clamp( es_stop_speed( rr, d, ipt ), ww - d, ww + d );
-					rr -= ww * ipt;
-					if ( rr <= r_min )
-						return false;
-				}
-				return false;
-			};
-			constexpr float k_d2 = 60.f;
-			const float d2_cap   = std::min( k_d2, 0.24f * vxy );
-			const auto d2_target = [ & ]( const float rr, const float ww ) { return std::min( es_stop_speed( rr, 0.75f * authority, ipt ), std::max( ww, d2_cap ) ); };
-			const auto d2_reaches = [ & ] {
-				float rr = err, ww = v_old;
-				for ( int t = 0; t <= kc - 3 && rr > r_min; ++t ) {
-					if ( es_in_window( rr, ww, park, authority, ipt ) )
-						return true;
-					const float g = d2_target( rr, ww ), dd = d_at( ww );
-					ww            = g > ww + 0.5f * dd ? std::min( ww + dd, g ) : es_profile_step( rr, ww, 0.75f * authority, authority, ipt );
-					rr -= ww * ipt;
-				}
-				return false;
-			};
-			const bool d1 = static_cast< float >( k + 1 ) + std::fabsf( vs - v_old ) / d <= static_cast< float >( kc - 1 ) && d_reaches( );
-			const bool d2 = !d1 && err > 0.f && kc >= 3 && d2_target( err, v_old ) > v_old + 0.5f * d && d2_reaches( );
-			if ( d1 || d2 )
-				return { 'D', d1 ? std::clamp( vs, v_old - d, v_old + d ) - v_old : std::min( d2_target( err, v_old ) - v_old, d ) };
-		}
-	}
-	/* reach drift: staged = the slowest press that reaches the standoff 4 ticks before the crossing ( brake, creep, brake, correct ), else park speed */
-	const float k_drift = static_cast< float >( staged ? std::max( kc - 4, 1 ) : kc );
-	const float v_drift = staged ? std::clamp( err / ( k_drift * ipt ), -park, park ) : v_park;
-	if ( gap <= reach && std::fabsf( err ) / ( k_drift * ipt ) <= park && std::fabsf( v_drift - v_old ) <= authority )
-		return { 'K', v_drift };
-	if ( ( gap <= reach || owned || ( v_old > 0.f && v_old * ipt * static_cast< float >( kc ) >= err ) ) && kc >= 3 &&
-	     es_profile_ticks( err, v_old, 0.75f * authority, authority, park, ipt, kc - 3, r_min ) >= 0 )
-		return { 'S', es_profile_step( err, v_old, 0.75f * authority, authority, ipt ) };
-	return { };
-}
-
-static bool es_world_hit( const trace_t& t );
-/* movement collides with it: a world static prop, or an entity outside debris / pushaway ( COLLISION_GROUP_PLAYER_MOVEMENT passes those ) */
-static bool es_moves_hit( const trace_t& t )
-{
-	c_base_entity* const e = t.m_hit_entity;
-	if ( !e || e->get_index( ) == 0 )
-		return true;
-	const int g = e->get_collision_group( );
-	return g != e_collision_group::collision_group_debris && g != e_collision_group::collision_group_debris_trigger &&
-	       g != e_collision_group::collision_group_interactive_debris && g != e_collision_group::collision_group_pushaway;
-}
-static float es_along( const es_face_t& c, const c_vector& o )
-{
-	if ( c.ax == 2 )
-		return o.m_y * c.n.m_x - o.m_x * c.n.m_y;
-	return c.ax ? o.m_x : o.m_y;
-}
-/* diagonal top: the hull meets the face with one corner, the top must be under that corner ( 0.5 in ). no displacement edges */
-static bool es_diag_top_at( i_trace_filter& filter, const es_face_t& c, const float s, const float z_hi, const float z_lo, float& top )
-{
-	const c_vector ctr = es_diag_at( c, 0.f, s, z_hi );
-	const c_vector q( ctr.m_x - ( c.n.m_x > 0.f ? c.ex : -c.ex ) - c.n.m_x * 0.5f, ctr.m_y - ( c.n.m_y > 0.f ? c.ex : -c.ex ) - c.n.m_y * 0.5f, z_hi );
-	const c_vector bmin( -0.25f, -0.25f, 0.f ), bmax( 0.25f, 0.25f, 0.f );
-	trace_t tt{ };
-	ray_t strip( q, c_vector( q.m_x, q.m_y, z_lo ), bmin, bmax );
-	tb_trace( strip, mask_playersolid, &filter, &tt );
-	if ( tt.m_start_solid || tt.m_fraction >= 1.f || tt.m_plane.m_normal.m_z < 0.99999f || !es_world_hit( tt ) )
-		return false;
-	top = tt.m_plane.m_distance;
-	return true;
-}
-/* highest top 0.5u inside face c under the hull's span ( hw - in ) at along coordinate s: a narrow ledge off the hull centre counts */
-static bool es_top_at( i_trace_filter& filter, const es_face_t& c, const float s, const float z_hi, const float z_lo, const float in, float& top )
-{
-	if ( c.ax == 2 )
-		return es_diag_top_at( filter, c, s, z_hi, z_lo, top );
-	c_vector q( 0.f, 0.f, z_hi );
-	( c.ax ? q.m_y : q.m_x ) = c.face - c.sg * 0.5f;
-	( c.ax ? q.m_x : q.m_y ) = s;
-	const float w = std::max( c.hw - in, 0.f );
-	const c_vector bmin( c.ax ? -w : -0.25f, c.ax ? -0.25f : -w, 0.f ), bmax( c.ax ? w : 0.25f, c.ax ? 0.25f : w, 0.f ), zero( 0.f, 0.f, 0.f );
-	trace_t tt{ };
-	ray_t strip( q, c_vector( q.m_x, q.m_y, z_lo ), bmin, bmax );
-	tb_trace( strip, mask_playersolid, &filter, &tt );
-	/* static prop / entity top: hull_plane_dist undoes vphysics' DIST_EPSILON standoff ( SOLID_BSP entity = exact plane ), centre line when the
-	   strip starts solid or meets no flat top */
-	if ( c.prop ) {
-		const auto flat = [ & ] { return !tt.m_start_solid && tt.m_fraction < 1.f && tt.m_plane.m_normal.m_z >= 0.999f && !es_disp_hit( tt ); };
-		if ( flat( ) ) {
-			top = es_snap32( n_tb::hull_plane_dist( tt, bmin, bmax ) );
-			return true;
-		}
-		tt = trace_t{ };
-		ray_t line( q, c_vector( q.m_x, q.m_y, z_lo ), zero, zero );
-		tb_trace( line, mask_playersolid, &filter, &tt );
-		if ( !flat( ) )
-			return false;
-		top = es_snap32( n_tb::hull_plane_dist( tt, zero, zero ) );
-		return true;
-	}
-	const auto flat_world = [ & ] { return tt.m_fraction < 1.f && tt.m_plane.m_normal.m_z >= 0.999f && es_world_hit( tt ); };
-	/* a displacement in the strip = no ledge, unless it is a FLAT one and flat displacement ledges are on ( nuke's yellow parking curb = disp
-	   132, top -408, no brush under it: lab edge_real_map 63 / 64 one tick pins ). top = the centre line's triangle plane, the strip agrees */
-	if ( !tt.m_start_solid && tt.m_fraction < 1.f && es_disp_hit( tt ) ) {
-		if ( !es_flat_disp_on( ) || tt.m_plane.m_normal.m_z < 0.99999f )
-			return false;
-		const float z_strip = tt.m_end.m_z;
-		tt                  = trace_t{ };
-		ray_t line( q, c_vector( q.m_x, q.m_y, z_lo ), zero, zero );
-		tb_trace( line, mask_playersolid, &filter, &tt );
-		if ( tt.m_start_solid || tt.m_fraction >= 1.f || !es_disp_hit( tt ) || tt.m_plane.m_normal.m_z < 0.99999f || std::fabsf( tt.m_end.m_z - z_strip ) > 0.05f )
-			return false;
-		top = tt.m_plane.m_distance;
-		return true;
-	}
-	/* a wall part above z_hi ( start solid ), a prop / slope in the strip: the centre line decides */
-	if ( tt.m_start_solid || ( tt.m_fraction < 1.f && !flat_world( ) ) ) {
-		tt = trace_t{ };
-		ray_t line( q, c_vector( q.m_x, q.m_y, z_lo ), zero, zero );
-		tb_trace( line, mask_playersolid, &filter, &tt );
-	}
-	if ( tt.m_start_solid || !flat_world( ) )
-		return false;
-	top = tt.m_plane.m_distance;
-	return true;
-}
-/* this top under the hull ( 0.5u in ) on the crossing tick, else the ledge ends before you get there. along speed = now ( K / S press on
-   the wall axis only, a turn moves it a little: rechecked every tick ) */
-static bool es_under_at_cross( i_trace_filter& filter, const es_face_t& c, const c_vector& o, const c_vector& v, const float off, const float pin, const float ipt )
-{
-	int k    = 0;
-	float fr = 0.f, t = 0.f;
-	if ( !es_crossing( c, o.m_z, v.m_z, off, pin, ipt, k, fr ) )
-		return false;
-	if ( c.ax == 2 )
-		return es_top_at( filter, c, es_along( c, o ) + es_along( c, v ) * ( static_cast< float >( k ) + fr ) * ipt, o.m_z + 1.f, c.top - 1.f, 0.5f, t ) &&
-		       std::fabsf( t - c.top ) < 1e-3f;
-	const float s = es_along( c, o ) + ( c.ax ? v.m_x : v.m_y ) * ( static_cast< float >( k ) + fr ) * ipt;
-	return es_top_at( filter, c, s, o.m_z + 1.f, c.top - 1.f, 0.5f, t ) && std::fabsf( t - c.top ) < 1e-3f;
-}
-/* along coordinate of the hull on the crossing tick ( where it pins or lands ), s0 when it never crosses ( riding ) */
-static float es_arrive_s( const es_face_t& c, const c_vector& o, const float s0, const c_vector& v, const float off, const float pin, const float ipt )
-{
-	int k    = 0;
-	float fr = 0.f;
-	if ( c.ax == 2 )
-		return es_crossing( c, o.m_z, v.m_z, off, pin, ipt, k, fr ) ? es_along( c, o ) + es_along( c, v ) * ( static_cast< float >( k ) + fr ) * ipt : s0;
-	return es_crossing( c, o.m_z, v.m_z, off, pin, ipt, k, fr ) ? es_along( c, o ) + ( c.ax ? v.m_x : v.m_y ) * ( static_cast< float >( k ) + fr ) * ipt : s0;
-}
-/* the hull beside the face at the arrival height: CategorizePosition's 2u ground probe ( gamemovement.cpp:4171 ) hits a floor = a landing, never a surf
-   ( lab edge_real_map, mirage x -324 top -98: 1 of 64 left airborne ). a steep first hit tries the 4 quadrant boxes like the engine ( :4061 ).
-   0.1 out, not ulps: a box that close reads the ledge top itself */
-static bool es_floor_near( i_trace_filter& filter, const es_face_t& c, const float s )
-{
-	c_vector p( 0.f, 0.f, c.top + 0.03125f );
-	( c.ax ? p.m_y : p.m_x ) = c.face + c.sg * ( c.hw + 0.1f );
-	( c.ax ? p.m_x : p.m_y ) = s;
-	if ( c.ax == 2 )
-		p = es_diag_at( c, 0.1f, s, p.m_z );
-	const c_vector to( p.m_x, p.m_y, p.m_z - 2.f );
-	const auto ground = [ & ]( const c_vector& lo, const c_vector& hi, bool& steep ) {
-		trace_t t{ };
-		ray_t probe( p, to, lo, hi );
-		tb_trace( probe, mask_playersolid, &filter, &t );
-		steep = !t.m_start_solid && t.m_fraction < 1.f && t.m_plane.m_normal.m_z < 0.7f;
-		return t.m_start_solid || ( t.m_fraction < 1.f && t.m_plane.m_normal.m_z >= 0.7f );
+	constexpr int k_keys = in_forward | in_back | in_moveleft | in_moveright | in_duck;
+	if ( !cmd || s_es_sent.cmd != cmd->m_command_number )
+		return;
+	const auto wish = []( const float fwd, const float side, const float yaw ) {
+		const float a = deg2rad( yaw );
+		return std::pair{ fwd * std::cosf( a ) + side * std::sinf( a ), fwd * std::sinf( a ) - side * std::cosf( a ) };
 	};
-	const float w = c.hw;
-	bool steep    = false, q = false;
-	if ( ground( c_vector( -w, -w, 0.f ), c_vector( w, w, 0.f ), steep ) )
-		return true;
-	return steep && ( ground( c_vector( -w, -w, 0.f ), c_vector( 0.f, 0.f, 0.f ), q ) || ground( c_vector( 0.f, 0.f, 0.f ), c_vector( w, w, 0.f ), q ) ||
-	                  ground( c_vector( -w, 0.f, 0.f ), c_vector( 0.f, w, 0.f ), q ) || ground( c_vector( 0.f, -w, 0.f ), c_vector( w, 0.f, 0.f ), q ) );
-}
-/* feet scan candidate ( face c from a sweep that ended at `end`, curtain `band` deep ): sets c.top, -1 = no ledge. the sweep met the face
-   inside its band, so the top is never under it ( deeper = the floor beside a pillar ). rank: rides it 16 ( a running pin never loses its
-   face ), the owned face 8 ( kept until its own act R ), crosses over the ledge 4, a top that holds 1; ties go to the nearest.
-   at_end = the top came from the sweep's end, not beside you ( depends on the sweep ). edge_surf_eb_end ranks with it too */
-static int es_rank_face( i_trace_filter& filter, es_face_t& c, const c_vector& o, const c_vector& end, const c_vector& v, const float off, const float pin,
-                         const float ipt, const float band, const bool pinned, const es_face_t* own, bool& under, bool& at_end )
-{
-	at_end = false;
-	if ( !es_top_at( filter, c, es_along( c, o ), o.m_z + 1.f, o.m_z - band - 0.1f, 0.5f, c.top ) ) {
-		at_end = true;
-		if ( !es_top_at( filter, c, es_along( c, end ), o.m_z + 1.f, o.m_z - band - 0.1f, 0.5f, c.top ) )
-			return -1;
-	}
-	if ( o.m_z <= c.top || es_floor_near( filter, c, es_arrive_s( c, o, es_along( c, at_end ? end : o ), v, off, pin, ipt ) ) )
-		return -1;
-	under             = es_under_at_cross( filter, c, o, v, off, pin, ipt );
-	const bool riding = pinned && std::fabsf( o.m_z - ( c.top + 0.03125f ) ) < es_ztol( c );
-	/* a diagonal face is a non-box brush, a prop is vphysics: no box top to hold on */
-	if ( c.ax == 2 || c.prop )
-		return 16 * riding + 8 * ( own && es_same_face( c, *own ) ) + 4 * under;
-	return ( riding ? 16 : 0 ) + ( own && es_same_face( c, *own ) ? 8 : 0 ) + ( under ? 4 : 0 ) +
-	       ( es_seen_box( c.top, off ) / ( -2.f * pin * ipt ) >= 1.05e-4f ? 1 : 0 );
+	const auto [ wx0, wy0 ] = wish( s_es_sent.fwd, s_es_sent.side, s_es_sent.yaw );
+	const auto [ wx1, wy1 ] = wish( cmd->m_forward_move, cmd->m_side_move, cmd->m_view_point.m_y );
+	const bool keys         = ( cmd->m_buttons & k_keys ) != ( s_es_sent.buttons & k_keys );
+	if ( !keys && std::fabsf( wx1 - wx0 ) + std::fabsf( wy1 - wy0 ) < 1e-4f )
+		return;
+	if ( GET_VARIABLE( g_variables.m_debug_log, bool ) )
+		botox_dbg_log( "ESURF: stomp cmd=%d wish %.5f,%.5f -> %.5f,%.5f keys %x -> %x yaw %.3f -> %.3f", cmd->m_command_number, wx0, wy0, wx1, wy1,
+		               s_es_sent.buttons & k_keys, cmd->m_buttons & k_keys, s_es_sent.yaw, cmd->m_view_point.m_y );
+	cmd->m_forward_move = s_es_sent.fwd;
+	cmd->m_side_move    = s_es_sent.side;
+	/* same view = exact bits ( a pin press is ulp sized ) */
+	if ( cmd->m_view_point.m_y != s_es_sent.yaw )
+		n_tb::move_fix_to_yaw( s_es_sent.yaw, *cmd );
+	cmd->m_buttons = ( cmd->m_buttons & ~k_keys ) | ( s_es_sent.buttons & k_keys );
 }
 
-struct es_cand_t {
-	es_face_t c{ };
-	c_vector n{ };
-	float g    = FLT_MAX;
-	float s    = 0.f; /* along coordinate its top was read at */
-	int r      = -1;
-	bool under = false;
-};
-/* a face ranked from beside you ( rank does not depend on the sweep ): a ledge stops the next sweep meeting it, a rejected one is swept over */
-struct es_done_t {
-	es_face_t f{ };
-	int r = -1;
-};
-/* one scan direction, curtain dz deep. a hit that is no ledge ( slope, displacement, prop, a face with no top ) but sits under the feet:
-   the curtain ends 0.5 above it and sweeps again, 3 times at most ( a curb on uneven / displacement ground: lab scan_probe sweep, mirage
-   range 96 = 52 more ledges of 638 ). done / prop_d = feet's dedupe + prop log, null in the eb end twin */
-static bool es_sweep( i_trace_filter& filter, const c_vector& o, const c_vector& dir, const float range, const c_vector& mins, const c_vector& maxs, float dz,
-                      const c_vector& v, const float off, const float pin, const float ipt, const bool pinned, const es_face_t* own, es_done_t* done, int* n_done,
-                      float* prop_d, es_cand_t& out )
+namespace
 {
-	constexpr int k_done = 16;
-	for ( int pass = 0; pass < 4; ++pass ) {
-		trace_t tr{ };
-		ray_t ray( o, o + dir * range, c_vector( mins.m_x, mins.m_y, -dz ), c_vector( maxs.m_x, maxs.m_y, 0.f ) );
-		tb_trace( ray, mask_playersolid, &filter, &tr );
-		if ( tr.m_start_solid || tr.m_fraction >= 1.f )
-			return false;
-		const c_vector& tn = tr.m_plane.m_normal;
-		const bool wall    = std::fabsf( tn.m_z ) <= 1e-4f;
-		if ( prop_d && wall && !es_world_hit( tr ) && !es_disp_hit( tr ) )
-			*prop_d = std::min( *prop_d, tr.m_fraction * range );
-		es_face_t c{ };
-		c.ax = std::fabsf( tn.m_x ) > 0.9999f ? 0 : std::fabsf( tn.m_y ) > 0.9999f ? 1 : -1;
-		/* diagonal: a vertical world brush face off the axes ( exact z 0, the twin's plane maths ) */
-		if ( c.ax < 0 && wall && tn.m_z == 0.f && es_world_hit( tr ) && !tr.m_start_solid )
-			c.ax = 2;
-		/* a flat displacement's edge: the box meets its triangle extent ( AxisPlanesXYZ ), the top test below decides if it is flat */
-		const bool disp_edge = es_disp_hit( tr ) && es_flat_disp_on( ) && ( !tr.m_hit_entity || tr.m_hit_entity->get_index( ) == 0 );
-		/* a static prop / entity face ( nuke's yellow curbs = _autocombine_curbs ): axial within 1e-5 ( face solved at the hit's along coordinate ),
-		   never an entity your movement passes ( debris / pushaway ), the engine sim plans its pins */
-		const bool prop_face = c.ax >= 0 && c.ax < 2 && std::fabsf( c.ax ? tn.m_x : tn.m_y ) < 1e-5f && !es_world_hit( tr ) && !es_disp_hit( tr ) && es_moves_hit( tr );
-		if ( wall && c.ax >= 0 && ( es_world_hit( tr ) || disp_edge || prop_face ) && !botox_is_ladder_trace( tr ) ) {
-			c.prop = prop_face;
-			c.sg   = ( c.ax ? tn.m_y : tn.m_x ) > 0.f ? 1.f : -1.f;
-			c.face = tr.m_plane.m_distance * c.sg;
-			if ( disp_edge || prop_face ) {
-				/* disp hull hits carry a raw vertex coord as dist ( sign lost, nuke 1636 ), vphysics stops 1/32 short: rebuilt from the end,
-				   snapped to 1/32 when that close ( the end's float step is ~1 ulp off, the arrival plan counts ulps ) */
-				c.face = es_snap32( n_tb::hull_plane_dist( tr, c_vector( mins.m_x, mins.m_y, -dz ), c_vector( maxs.m_x, maxs.m_y, 0.f ) ) * c.sg );
-				/* prop a hair off axis: the plane at the hit's along coordinate, not d * sg ( n_along * along would move it ) */
-				if ( prop_face ) {
-					const float d = n_tb::hull_plane_dist( tr, c_vector( mins.m_x, mins.m_y, -dz ), c_vector( maxs.m_x, maxs.m_y, 0.f ) );
-					c.face        = es_snap32( ( d - ( c.ax ? tn.m_x * tr.m_end.m_x : tn.m_y * tr.m_end.m_y ) ) / ( c.ax ? tn.m_y : tn.m_x ) );
-				}
-			}
-			c.hw          = c.ax ? maxs.m_y : maxs.m_x;
-			if ( c.ax == 2 ) {
-				c.n    = c_vector( tn.m_x, tn.m_y, 0.f );
-				c.d    = tr.m_plane.m_distance;
-				c.ex   = maxs.m_x;
-				c.hw   = std::fabsf( tn.m_x * c.ex ) + std::fabsf( tn.m_y * c.ex );
-				c.sg   = tn.m_x;
-				c.face = c.d;
-			}
-			const float g        = es_gap_to( c, o );
-			const es_done_t* dup = done ? std::find_if( done, done + *n_done, [ & ]( const es_done_t& d ) {
-				return d.f.ax == c.ax && d.f.sg == c.sg && std::fabsf( d.f.face - c.face ) < 0.01f;
-			} )
-			                            : nullptr;
-			const bool seen = dup && dup != done + *n_done;
-			if ( g <= 0.f || ( seen && dup->r >= 0 ) )
-				return false;
-			if ( !seen ) {
-				bool under = false, at_end = false;
-				const int r = es_rank_face( filter, c, o, tr.m_end, v, off, pin, ipt, dz, pinned, own, under, at_end );
-				if ( done && !at_end && *n_done < k_done )
-					done[ ( *n_done )++ ] = { c, r };
-				if ( r >= 0 ) {
-					out = { c, tn, g, es_along( c, at_end ? tr.m_end : o ), r, under };
-					return true;
-				}
-			}
-		}
-		if ( pass == 3 )
-			return false;
-		/* 0.25u past the stop = inside what the sweep met; start solid = it rises past the feet ( a wall ). each pass lifts the bottom >= 0.5 */
-		const c_vector p = tr.m_end + dir * 0.25f;
-		trace_t up{ };
-		ray_t probe( p, c_vector( p.m_x, p.m_y, p.m_z - dz ), c_vector( mins.m_x, mins.m_y, 0.f ), c_vector( maxs.m_x, maxs.m_y, 0.f ) );
-		tb_trace( probe, mask_playersolid, &filter, &up );
-		const float next = up.m_fraction * dz - 0.5f;
-		if ( up.m_start_solid || up.m_fraction >= 1.f || next < 0.5f )
-			return false;
-		dz = next;
-	}
-	return false;
-}
+	n_es::v3 to3( const c_vector& v ) { return n_es::mk( v.m_x, v.m_y, v.m_z ); }
+	c_vector tov( const n_es::v3& v ) { return c_vector( v.x, v.y, v.z ); }
 
-/* ponytail: along-edge keys dropped while holding; axial world brushes + diagonal brushes + axial static props / entities ( engine planned ) */
-static bool edge_surf_feet( c_user_cmd* cmd, const c_user_cmd& in, c_base_entity* local, const int frame, const c_vector& org, const c_vector& vel,
-                            const c_vector& mins, const c_vector& maxs, const bool ducked0, const float ipt, const float pin, const float grav,
-                            const float k_acc, const bool debug, const bool eb_only, bool& pinned, bool& held )
-{
-	constexpr float k_eps          = 0.03125f;
-	constexpr float k_min_fraction = 1.05e-4f; /* gamemovement MINIMUM_MOVE_FRACTION 1e-4 + margin */
-	constexpr float k_duck_crop    = 0.34f;
-	constexpr float k_wish_max     = 450.f;
-	constexpr float k_park_speed   = 25.f;
-	constexpr int k_move_keys      = in_forward | in_back | in_moveleft | in_moveright;
-
-	static bool s_on = false, s_own = false, s_guard = false;
-	static int s_cmd = -1, s_run = 0;
-	static es_face_t s_face{ }, s_own_face{ }, s_guard_face{ };
-	/* act Q stood you up: your held duck stays off until the feet pass that top ( a re-duck = feet +9 + 2.0 duck speed a toggle ) */
-	static int s_up_cmd   = -1;
-	static float s_up_top = 0.f;
-	if ( s_up_cmd == cmd->m_command_number - 1 && org.m_z > s_up_top ) {
-		s_up_cmd = cmd->m_command_number;
-		cmd->m_buttons &= ~in_duck;
-	} else
-		s_up_cmd = -1;
-	static struct {
-		es_face_t f{ };
-		bool duck = false;
-		float f0 = -1.f, u = 0.f;
-		int ok = 0, cur = 0, first = 0, tries = 0;
-	} s_plan;
-	if ( s_cmd != cmd->m_command_number - 1 ) {
-		s_on    = false;
-		s_own   = false;
-		s_guard = false;
-		s_run   = 0;
-		if ( !s_plan.ok )
-			s_plan.f0 = -1.f;
-	}
-	s_cmd = cmd->m_command_number;
-	struct latch_out_t {
-		const bool& own;
-		const int cmd;
-		~latch_out_t( ) { g_edge_surf_latch_cmd = own ? cmd : -1; }
-	} const latch_out{ s_own, cmd->m_command_number };
-
-	const float period = grav * ipt * ipt;
-	const float off    = maxs.m_z * 0.5f;
-	const float t_h    = ipt * static_cast< float >( n_tick::ticks( 48 ) );
-	float drop_z       = std::clamp( -( vel.m_z + pin ) * t_h + 0.5f * grav * t_h * t_h, 4.f, 256.f );
-	/* top line keeps full depth: something under the hull above a latched top must not end the latch */
-	const float drop_full = drop_z;
-	const float reach = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.f, 32.f );
-	const float turn  = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ), 0.f, 15.f );
-	const float range = turn > 0.f ? std::max( std::clamp( GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f ), reach ) : reach + 0.05f;
-	c_trace_filter_tb_world_props filter( local );
-	/* curtain must end above what lies under the hull: a floor inside it = every sweep starts solid = blind */
+	/* the surface name, never dispFlags: only disp code writes those, a closer brush hit later in the same trace keeps them ( cmodel.cpp:1670 ) */
+	bool es_disp_hit( const trace_t& t )
 	{
-		trace_t dn{ };
-		ray_t down( org, c_vector( org.m_x, org.m_y, org.m_z - drop_z ), c_vector( mins.m_x, mins.m_y, 0.f ), c_vector( maxs.m_x, maxs.m_y, 0.f ) );
-		tb_trace( down, mask_playersolid, &filter, &dn );
-		if ( !dn.m_start_solid && dn.m_fraction < 1.f )
-			drop_z = std::max( dn.m_fraction * drop_z - 0.5f, 0.5f );
+		return t.surface.m_name && strstr( t.surface.m_name, "displacement" );
 	}
-	const bool pinned0 = std::fabsf( vel.m_z - pin ) < 1e-3f;
-	if ( pinned0 )
-		drop_z = std::min( drop_z, 2.f );
-	es_face_t f{ };
-	c_vector n{ };
-	float gap = FLT_MAX, frac = 0.f, best_tp = FLT_MAX;
-	int rank = -1;
-	bool f_under = false;
-	/* faces already ranked from beside you: another sweep meeting them gives the same answer */
-	es_done_t done[ 16 ]{ };
-	float f_s = 0.f;
-	int n_done = 0;
-	const bool viz = GET_VARIABLE( g_variables.m_edge_surf_visualize, bool );
-	if ( viz )
-		s_es_viz.n = 0;
-	/* a prop / brush entity face ( nuke curbs = static props ): vphysics pins only a fall that ENDS within 1/32 over its top, not plannable */
-	float prop_d = FLT_MAX;
-	/* delta strafe pick: the guide's own verdict per face ( arrival gap + K / D / S plan ), a face it can fly outranks one it cannot */
-	const float authority0 = k_acc * es_max_speed( local ) * ( ducked0 ? k_duck_crop : 1.f );
-	int n_fly = 0, n_cand = 0;
-	const auto flyable = [ & ]( const es_face_t& c, const c_vector& cn ) {
-		const float uc = es_face_ulp( c, org );
-		int kq          = 0;
-		float fq        = 0.f;
-		if ( uc < 1.9073486e-6f || !es_crossing( c, org.m_z, vel.m_z, off, pin, ipt, kq, fq ) || kq <= 0 )
-			return false;
-		const float fr = es_seen_box( c.top, off ) / period;
-		const int mq   = es_pick_gap( c, fq, ( fr >= k_min_fraction ? fr : std::min( fq * 0.5f, 2e-3f ) ) * 0.5f, uc, ipt, 1, ducked0 );
-		if ( !mq )
-			return false;
-		const float gq = es_gap_to( c, org ), vq = -( vel.m_x * cn.m_x + vel.m_y * cn.m_y ), e = gq - static_cast< float >( mq ) * uc;
-		const float sq = es_stage( e, uc, vq, kq, ipt );
-		return es_guide( e - sq, gq, -( static_cast< float >( mq ) * uc + sq ), vq, vel.length_2d( ), kq, authority0, turn, reach,
-		                 s_own && es_same_face( c, s_own_face ), sq > 0.f, ipt ).act != 'F';
-	};
-	c_vector dirs[ 9 ];
-	const int n_dirs = es_scan_dirs( vel, dirs );
-	for ( int i = 0; i < n_dirs; ++i ) {
-		es_cand_t h{ };
-		if ( !es_sweep( filter, org, dirs[ i ], range, mins, maxs, drop_z, vel, off, pin, ipt, pinned0, s_own ? &s_own_face : nullptr, done, &n_done, &prop_d, h ) )
-			continue;
-		const es_face_t& c = h.c;
-		const c_vector& tn = h.n;
-		const float g      = h.g;
-		const int r        = h.r;
-		const bool under   = h.under;
-		if ( viz && s_es_viz.n < 9 ) {
-			s_es_viz.cand[ s_es_viz.n ]   = c;
-			s_es_viz.cand_s[ s_es_viz.n++ ] = h.s;
-		}
-		/* flyable sits inside `under` ( 4 ): fly + hold 7 > fly 6 > hold 5 > under 4. a running pin ( 16 ) keeps its face */
-		const int rf = r + ( ( r & 4 ) && !( r & 16 ) && flyable( c, tn ) ? 2 : 0 );
-		++n_cand;
-		n_fly += rf != r;
-		/* danger: the hull reaches this face's plane before it crosses its top = on the ledge unless this face is braked first. the earliest
-		   one goes first, flyable or not ( critic 11-17: an inside corner picked the farther flyable face, the near one's closing ran on ) */
-		float t_p = FLT_MAX;
-		if ( ( r & 4 ) && !( r & 16 ) ) {
-			const float vc = -( vel.m_x * tn.m_x + vel.m_y * tn.m_y );
-			int kq         = 0;
-			float fq       = 0.f;
-			if ( vc > 0.f && es_crossing( c, org.m_z, vel.m_z, off, pin, ipt, kq, fq ) && g / vc < static_cast< float >( kq + 1 ) * ipt )
-				t_p = g / vc;
-		}
-		bool take = rf > rank || ( rf == rank && g < gap );
-		if ( rf < 16 && rank < 16 && ( t_p < FLT_MAX || best_tp < FLT_MAX ) )
-			take = t_p < best_tp;
-		if ( take ) {
-			rank    = rf;
-			best_tp = t_p;
-			gap     = g;
-			f       = c;
-			f_s     = h.s;
-			f_under = under;
-			frac    = es_seen_box( c.top, off ) / period;
-			n       = tn;
-		}
-	}
-	/* latch end: z = dropped beside it, p = hull past the face over the top with no top line ( landed ), e = ledge ended. a hull past the owned
-	   face over its top is kept ( gap < 0 ): the guide pulls it out before the crossing ( 11-17 log: K left it on the plane 29u over the top,
-	   kc 14, the sweeps cannot see a face from past it = hands off = stood ) */
-	char ended = 0;
-	if ( s_own && ( gap == FLT_MAX || !es_same_face( f, s_own_face ) ) ) {
-		es_face_t c   = s_own_face;
-		c.hw          = c.ax ? maxs.m_y : maxs.m_x;
-		if ( c.ax == 2 )
-			c.hw = s_own_face.hw;
-		const float g = es_gap_to( c, org );
-		float t       = 0.f;
-		const bool keep = g > -2.f * c.hw && org.m_z > c.top && es_top_at( filter, c, es_along( c, org ), org.m_z + 1.f, org.m_z - drop_full - 1.f, 0.5f, t ) &&
-		                  std::fabsf( t - c.top ) < 1e-3f && !es_floor_near( filter, c, es_arrive_s( c, org, es_along( c, org ), vel, off, pin, ipt ) );
-		if ( keep && ( gap == FLT_MAX || g <= 0.f ) ) {
-			f       = c;
-			f_s     = es_along( c, org );
-			gap     = g;
-			n       = c_vector( c.ax ? 0.f : c.sg, c.ax ? c.sg : 0.f, 0.f );
-			if ( c.ax == 2 )
-				n = c.n;
-			frac    = es_seen_box( c.top, off ) / period;
-			f_under = es_under_at_cross( filter, c, org, vel, off, pin, ipt );
-		} else if ( gap == FLT_MAX ) {
-			ended = org.m_z <= c.top ? 'z' : g <= 0.f ? 'p' : 'e';
-			s_own = false;
-		}
-	}
-	if ( f.ax == 2 || f.prop )
-		frac = 0.f;
-	const bool hold_ok = frac >= k_min_fraction;
-	if ( viz ) {
-		s_es_viz.time      = g_interfaces.m_global_vars_base->m_real_time;
-		s_es_viz.pick      = gap < FLT_MAX;
-		s_es_viz.f         = f;
-		s_es_viz.s         = f_s;
-		int k_a            = 0;
-		float fr_a         = 0.f;
-		s_es_viz.arrive_ok = s_es_viz.pick && es_crossing( f, org.m_z, vel.m_z, off, pin, ipt, k_a, fr_a );
-		if ( s_es_viz.arrive_ok ) {
-			const float s_a = es_along( f, org ) + ( f.ax ? vel.m_x : vel.m_y ) * ( static_cast< float >( k_a ) + fr_a ) * ipt;
-			s_es_viz.arrive = f.ax ? c_vector( s_a, f.face, f.top ) : c_vector( f.face, s_a, f.top );
-			if ( f.ax == 2 )
-				s_es_viz.arrive = es_diag_at( f, -f.hw, es_along( f, org ) + es_along( f, vel ) * ( static_cast< float >( k_a ) + fr_a ) * ipt, f.top );
-		}
+	/* movement collides with it: world, a static prop, or an entity outside debris / pushaway ( COLLISION_GROUP_PLAYER_MOVEMENT passes those ) */
+	bool es_moves_hit( const trace_t& t )
+	{
+		c_base_entity* const e = t.m_hit_entity;
+		if ( !e || e->get_index( ) == 0 )
+			return true;
+		const int g = e->get_collision_group( );
+		return g != e_collision_group::collision_group_debris && g != e_collision_group::collision_group_debris_trigger &&
+		       g != e_collision_group::collision_group_interactive_debris && g != e_collision_group::collision_group_pushaway;
 	}
 
-	char act = 'N', why = '-';
-	/* the tick's verdict on every way out, also the returns that skip log( ) */
-	struct viz_out_t {
-		const bool on;
-		const char& act;
-		const bool &pinned, &own;
-		~viz_out_t( )
+	/* n_es adapter: sims = the tb family's prediction ( restore / pred_simulate / snapshots ), traces = tb_trace with world + props */
+	struct es_world_t {
+		c_base_entity* local = nullptr;
+		int frame            = 0;
+		c_user_cmd base{ };
+		float dt = 0.015625f, pin = -6.25f, k_acc = 0.f, max_speed = 250.f;
+		float duck_speed = 0.f, last_duck = 0.f, now = 0.f, duck_gap = 0.4f;
+		bool debug = false;
+		int sims   = 0;
+		n_tb::c_trace_filter_tb_world_props filter;
+
+		explicit es_world_t( c_base_entity* l ) : local( l ), filter( l ) { }
+
+		n_es::st_t read( ) const
 		{
-			if ( on ) {
-				s_es_viz.act    = act;
-				s_es_viz.pinned = pinned;
-				s_es_viz.own    = own;
-			}
+			n_es::st_t s;
+			s.o          = to3( local->get_origin( ) );
+			s.v          = to3( local->get_velocity( ) );
+			const int fl = local->get_flags( );
+			s.ground     = ( fl & fl_onground ) != 0;
+			s.duck       = ( fl & fl_ducking ) != 0;
+			s.walk       = local->get_move_type( ) == e_move_types::move_type_walk;
+			return s;
 		}
-	} const viz_out{ viz, act, pinned, s_own };
-	int m = 0, kc = 0, sims = 0;
-	float f0 = 0.f, stage = 0.f;
-	const float v_old = gap < FLT_MAX ? -( vel.m_x * n.m_x + vel.m_y * n.m_y ) : 0.f;
-	const auto log = [ & ]( ) {
-		static es_log_gate_t s_gate;
-		if ( !debug || !s_gate.due( act, s_own ) )
-			return;
-		botox_dbg_log( "ESURF: feet act=%c why=%c top=%.5f face=%.3f gap=%.3e m=%d kc=%d f0=%.4f frac=%.2e hold=%d close=%.4e run=%d own=%d sims=%d vz=%.1f xy=%.1f duck=%d pos=%.1f %.1f stage=%.1e fly=%d/%d prop=%d",
-		               act, why, f.top, f.face, gap, m, kc, f0, frac, hold_ok ? 1 : 0, v_old, s_run, s_own ? 1 : 0, sims, vel.m_z, vel.length_2d( ),
-		               ducked0 ? 1 : 0, org.m_x, org.m_y, stage, n_fly, n_cand, f.prop ? 1 : 0 );
-	};
-	if ( ended ) {
-		act = 'L';
-		why = ended;
-		log( );
-	}
-	if ( gap == FLT_MAX ) {
-		if ( debug && pinned0 && g_edgebug.m_found )
-			botox_dbg_log( "ESURF: feet eb in lift=0 why=scan drop=%.2f range=%.2f z=%.3f xy=%.1f", drop_z, range, org.m_z, vel.length_2d( ) );
-		static es_log_gate_t s_prop_gate;
-		if ( debug && prop_d < FLT_MAX && s_prop_gate.due( 'p' ) )
-			botox_dbg_log( "ESURF: feet prop face, no ledge ( rotated / no flat top / under the feet ) dist=%.1f pos=%.1f %.1f %.1f", prop_d, org.m_x, org.m_y, org.m_z );
-		s_on    = false;
-		s_guard = false;
-		s_run   = 0;
-		return false;
-	}
-	if ( s_on && !es_same_face( f, s_face ) ) {
-		s_on  = false;
-		s_run = 0;
-	}
-	const float u = es_face_ulp( f, org );
-
-	const float yaw_in = rad2deg( std::atan2f( -n.m_y, -n.m_x ) );
-	const float crop   = ducked0 ? k_duck_crop : 1.f;
-	const auto hold_stance = [ & ]( c_user_cmd c ) {
-		c.m_buttons = ducked0 ? ( c.m_buttons | in_duck ) : ( c.m_buttons & ~in_duck );
-		c.m_buttons &= ~k_move_keys;
-		return c;
-	};
-	/* AirAccelerate inverse. VectorNormalize divides by len + FLT_EPSILON; cr = this cmd's move scale ( a duck press crops 0.34 even standing ) */
-	const auto press_v = [ & ]( const float v_0, const float v_t, const float cr ) {
-		float w = v_t >= v_0 ? std::max( ( v_t - v_0 ) / k_acc, v_t ) : -std::max( ( v_0 - v_t ) / k_acc, -v_t );
-		w += w >= 0.f ? FLT_EPSILON : -FLT_EPSILON;
-		w                = std::clamp( w / cr, -k_wish_max, k_wish_max );
-		c_user_cmd c     = hold_stance( in );
-		c.m_forward_move = std::fabsf( w );
-		c.m_side_move    = 0.f;
-		move_fix_to_yaw( w >= 0.f ? yaw_in : yaw_in + 180.f, c );
-		return c;
-	};
-	const auto press_cr = [ & ]( const float v_t, const float cr ) { return press_v( v_old, v_t, cr ); };
-	const auto press = [ & ]( const float v_t ) { return press_cr( v_t, crop ); };
-	/* diagonal crossing: one press onto the twin's velocity */
-	const auto press_xy = [ & ]( const c_vector& v_t, c_user_cmd& c ) {
-		float yaw = 0.f, wish = 0.f;
-		if ( !es_press_to( vel, v_t, k_acc, yaw, wish ) )
-			return false;
-		c                = hold_stance( in );
-		c.m_forward_move = std::min( wish / crop, k_wish_max );
-		c.m_side_move    = 0.f;
-		move_fix_to_yaw( yaw, c );
-		return true;
-	};
-	const auto commit = [ & ]( const c_user_cmd& c ) {
-		cmd->m_forward_move = c.m_forward_move;
-		cmd->m_side_move    = c.m_side_move;
-		cmd->m_buttons      = c.m_buttons;
-	};
-	/* prop ledge ( vphysics, no ulp grid ): the engine flies it, pin = airborne, vz = pin, feet on top + 1/32. kinds seen ( log 11-20 nuke curb ):
-	   over the top a little and out on the crossing ( feet act I -> P ), beside and moving OUT 15..43 u/s ( edgebug plans: END gap 1/32 ). a tick
-	   that ENDS over the top within 2u is grounded ( CategorizePosition ): the over move goes on the tick before the crossing only, the sim
-	   refuses the rest. a ground jump beside a curb has ONE fall phase ( 1.5u over the top on the crossing = never over ) */
-	const auto prop_pin_now = [ & ] {
-		const c_vector o = local->get_origin( ), v = local->get_velocity( );
-		return local->get_move_type( ) == e_move_types::move_type_walk && !( local->get_flags( ) & fl_onground ) && std::fabsf( v.m_z - pin ) < 1e-3f &&
-		       std::fabsf( o.m_z - ( f.top + k_eps ) ) < es_ztol( f );
-	};
-	/* nearest airborne miss of this tick's prop search ( log: how far each kind was ) */
-	struct {
-		float dv = FLT_MAX, vz = 0.f, dz = 0.f, g = 0.f, v = 0.f;
-	} p_near;
-	/* crossing tick from the state setup( ) makes ( gap g, closing w ): out of the top when over it, else hold / out / flush */
-	const auto prop_cross = [ & ]( const auto& setup, const float g, const float w, c_user_cmd& out ) {
-		const float v_in[ 6 ]         = { 0.f, -15.f, -30.f, g / ipt, ( g - 1e-5f ) / ipt, ( g + 1e-5f ) / ipt };
-		static const float v_out[ 4 ] = { -30.f, -20.f, -12.f, -6.f };
-		for ( int i = 0; i < ( g > 0.f ? 6 : 4 ) && sims_left( ) > 0; ++i ) {
-			const float v_t = g > 0.f ? v_in[ i ] : v_out[ i ];
-			c_user_cmd c    = press_v( w, v_t, crop );
-			setup( );
-			pred_simulate( &c );
+		n_es::st_t start( )
+		{
+			n_tb::tb_restore( frame );
+			return read( );
+		}
+		void reset( ) { n_tb::tb_restore( frame ); }
+		c_user_cmd cmd_of( const n_es::mv_t& m ) const
+		{
+			c_user_cmd c = base;
+			c.m_buttons &= ~( in_forward | in_back | in_moveleft | in_moveright | in_jump | in_duck );
+			if ( m.duck )
+				c.m_buttons |= in_duck;
+			c.m_forward_move = m.wish;
+			c.m_side_move    = 0.f;
+			if ( m.wish > 0.f )
+				n_tb::move_fix_to_yaw( m.yaw, c );
+			return c;
+		}
+		n_es::st_t sim( const n_es::mv_t& m )
+		{
+			c_user_cmd c = cmd_of( m );
+			n_tb::pred_simulate( &c );
 			++sims;
-			if ( prop_pin_now( ) ) {
-				out = c;
-				return true;
-			}
-			const c_vector o = local->get_origin( ), v = local->get_velocity( );
-			if ( !( local->get_flags( ) & fl_onground ) && std::fabsf( v.m_z - pin ) < p_near.dv )
-				p_near = { std::fabsf( v.m_z - pin ), v.m_z, o.m_z - ( f.top + k_eps ), es_gap_to( f, o ), v_t };
+			return read( );
 		}
-		return false;
-	};
-	/* the tick before the crossing ( gap g, closing w ): hold, or in over the top by e, then the crossing flown from that END ( snapshot slot 0,
-	   scratch like texture bug's lookahead ). out = this tick's cmd */
-	const auto prop_two = [ & ]( const auto& setup, const float g, const float w, c_user_cmd& out ) {
-		static const float k_over[ 5 ] = { 0.f, 0.05f, 0.1f, 0.2f, 0.3f };
-		for ( int i = 0; i < 5 && sims_left( ) > 10; ++i ) {
-			const c_user_cmd c1 = press_v( w, i ? ( g + k_over[ i ] ) / ipt : 0.f, crop );
-			const auto setup1   = [ & ] {
-				setup( );
-				c_user_cmd t = c1;
-				pred_simulate( &t );
-				++sims;
-			};
-			setup1( );
-			if ( local->get_move_type( ) != e_move_types::move_type_walk || ( local->get_flags( ) & fl_onground ) || local->get_velocity( ).m_z > 0.f )
-				continue;
-			const c_vector eo = local->get_origin( ), ev = local->get_velocity( );
-			const bool snap   = g_prediction.snapshot_save( 0 );
-			const auto from_end = [ & ] {
-				if ( !snap )
-					return setup1( );
-				tb_restore( frame );
-				g_prediction.snapshot_load( 0 );
-				s_pred_dirty = true;
-			};
-			c_user_cmd c2 = c1;
-			if ( prop_cross( from_end, es_gap_to( f, eo ), -( ev.m_x * n.m_x + ev.m_y * n.m_y ), c2 ) ) {
-				out = c1;
-				return true;
-			}
+		bool save( const int i ) { return g_prediction.snapshot_save( i ); }
+		void load( const int i )
+		{
+			n_tb::tb_restore( frame );
+			g_prediction.snapshot_load( i );
+			n_tb::s_pred_dirty = true;
 		}
-		return false;
-	};
-	/* delta strafe: wish square to the velocity moves the closing speed by dv, speed kept */
-	const auto turn_cmd = [ & ]( const float dv ) {
-		const float vxy = vel.length_2d( );
-		float px = -vel.m_y / vxy, py = vel.m_x / vxy, into = -( px * n.m_x + py * n.m_y );
-		if ( ( into < 0.f ) != ( dv < 0.f ) ) {
-			px   = -px;
-			py   = -py;
-			into = -into;
+		/* cs_gamerules.cpp g_CSViewVectors */
+		n_es::hull_t hull( const bool duck ) const { return { n_es::mk( -16.f, -16.f, 0.f ), n_es::mk( 16.f, 16.f, duck ? 54.f : 72.f ) }; }
+		bool trace( const n_es::v3& a, const n_es::v3& b, const n_es::v3& mins, const n_es::v3& maxs, n_es::hit_t& h )
+		{
+			trace_t tr{ };
+			ray_t ray( tov( a ), tov( b ), tov( mins ), tov( maxs ) );
+			n_tb::tb_trace( ray, mask_playersolid, &filter, &tr );
+			h.frac        = tr.m_fraction;
+			h.start_solid = tr.m_start_solid;
+			h.n           = to3( tr.m_plane.m_normal );
+			h.end         = to3( tr.m_end );
+			h.d           = n_tb::hull_plane_dist( tr, tov( mins ), tov( maxs ) );
+			h.disp        = es_disp_hit( tr );
+			h.ladder      = botox_is_ladder_trace( tr );
+			h.moves       = es_moves_hit( tr );
+			h.world       = !tr.m_hit_entity || tr.m_hit_entity->get_index( ) == 0;
+			return tr.m_fraction < 1.f;
 		}
-		const float add  = std::min( std::fabsf( dv ) / std::max( std::fabsf( into ), 1e-3f ), 30.f );
-		c_user_cmd c     = hold_stance( in );
-		c.m_forward_move = std::min( std::max( add / k_acc, add ) / crop, k_wish_max );
-		c.m_side_move    = 0.f;
-		move_fix_to_yaw( rad2deg( std::atan2f( py, px ) ), c );
-		return c;
+		int sims_left( ) const { return n_tb::sims_left( ); }
+		int used( ) const { return sims; }
+		/* owned ticks log every tick, hands off lines 4 a second */
+		void note( const char act, const char* line ) const
+		{
+			static unsigned long long s_next = 0ull;
+			static char s_last               = 0;
+			const unsigned long long t       = GetTickCount64( );
+			if ( act == 'Y' && act == s_last && t < s_next )
+				return;
+			s_next = t + 250ull;
+			s_last = act;
+			botox_dbg_log( "%s", line );
+		}
 	};
 
-	const auto own = [ & ]( const char a ) {
-		s_own              = true;
-		s_own_face         = f;
-		held               = true;
-		g_edge_surf_active = true;
-		act                = a;
-		s_es_sent          = { cmd->m_command_number, cmd->m_buttons, cmd->m_view_point.m_y, cmd->m_forward_move, cmd->m_side_move };
-		log( );
-		return true;
-	};
-	/* over the top one closing ulp lands you ON the ledge: an owned / in-reach approach, or one act Y handed back, never goes back to
-	   your keys there unchecked */
-	const auto let_go = [ & ]( const char miss ) {
-		act = miss;
-		if ( !( s_own || gap <= reach || ( s_guard && es_same_face( f, s_guard_face ) ) ) || org.m_z <= f.top ) {
-			log( );
-			return false;
-		}
-		/* prop, over its top ( act I's move, no pin found ): straight out, staying = landing. beside it: hands off, no H hold ( a brush's 1 ulp
-		   rule ): edgebug prediction gets the tick ( log 11-20: 80 H holds after failed plans, while eb plans pinned that curb 3 times ) */
-		if ( f.prop ) {
-			why = miss;
-			if ( gap <= 0.f ) {
-				commit( press( -30.f ) );
-				return own( 'H' );
-			}
-			act   = 'Y';
-			s_own = false;
-			log( );
-			return false;
-		}
-		int kh  = 0;
-		float fh = 0.f;
-		es_crossing( f, org.m_z, vel.m_z, off, pin, ipt, kh, fh );
-		const float v_ok = std::max( 0.f, ( gap - u ) / ( static_cast< float >( kh + 1 ) * ipt ) );
-		/* diagonal: closing 0 is not parked, the along move's rounding walks the plane distance ~1e-4 a tick ( lab diag_dll e2e: lift, no second
-		   plan, drifted -1.2e-4 = stood ): hold 2e-3 off, push out under it */
-		const float v_hold = f.ax == 2 ? std::min( v_ok, ( gap - 2e-3f ) / ( static_cast< float >( kh + 1 ) * ipt ) ) : v_ok;
-		const float max_spd = es_max_speed( local );
-		const float v_1     = std::max( v_old, 0.f ) + std::max( 30.f, std::min( k_acc * max_spd, 30.f + vel.length_2d( ) ) );
-		const float brake   = std::max( k_acc * max_spd * crop, 1.f );
-		/* no plan and your keys cannot reach the face this tick: yours again, owned or not ( the latch goes, the guard stays ) */
-		if ( v_old <= v_ok && gap > v_1 * ipt * ( 2.f + v_1 / ( 2.f * brake ) ) + 0.05f ) {
-			if ( s_own ) {
-				s_guard      = true;
-				s_guard_face = f;
-			}
-			s_own = false;
-			act   = 'Y';
-			why   = miss;
-			log( );
-			return false;
-		}
-		why = miss;
-		commit( press( std::min( v_old, v_hold ) ) );
-		return own( 'H' );
-	};
-
-	const bool own0 = s_own && es_same_face( f, s_own_face );
-	/* |coord| < 16: the gap grid ( ulp of 16 ) is coarser than the origin's */
-	if ( u < 1.9073486e-6f ) {
-		s_on  = false;
-		s_own = false;
-		s_run = 0;
-		if ( debug && pinned0 && g_edgebug.m_found )
-			botox_dbg_log( "ESURF: feet eb in lift=0 why=coord top=%.5f face=%.3f gap=%.3e", f.top, f.face, gap );
-		return false;
-	}
-
-	const bool riding = std::fabsf( org.m_z - ( f.top + k_eps ) ) < es_ztol( f ) && pinned0;
-	if ( !riding && pinned0 ) {
-		if ( s_own ) {
-			act = 'O';
-			log( );
-		}
-		if ( debug && g_edgebug.m_found )
-			botox_dbg_log( "ESURF: feet eb in lift=0 why=plane top=%.5f face=%.3f gap=%.3e dz=%.4f", f.top, f.face, gap, org.m_z - ( f.top + k_eps ) );
-		s_on  = false;
-		s_own = false;
-		s_run = 0;
-		return false;
-	}
-	/* eb key alone: another face = a fresh eb end or nothing; a latch left set = air stuck / wall climb yield to nothing */
-	if ( eb_only && !own0 ) {
-		s_own = false;
-		if ( !riding )
-			return false;
-	}
-	float zc = org.m_z, vzc = vel.m_z;
-	const bool cross = !riding && es_crossing( f, org.m_z, vel.m_z, off, pin, ipt, kc, f0, &zc, &vzc );
-	/* plain top: stay low in the arrival fraction, a big step leaves few arrival gaps */
-	const float base = hold_ok ? frac : std::min( f0 * 0.5f, 2e-3f );
-
-	if ( !riding && ( !cross || kc > 0 ) ) {
-		s_on  = false;
-		s_run = 0;
-		if ( !cross )
-			return let_go( 'B' );
-		/* ducked, no hold here = one pin: stand up early = pin, air duck lift, second pin ( or the standing hold, its centre crosses the
-		   power of two first ). unduck in air = feet -9, no move crop, never starts the 0.4 s re-duck timer ( only FinishDuck, cs_gamemovement.cpp:949 ).
-		   standing crosses sooner: a short ledge the ducked crossing overshoots may still be under it */
-		/* ponytail: no stand up on a prop ( its check flies the brush arrival ), add once prop pins show in a log */
-		if ( ducked0 && !hold_ok && !f.prop && kc >= 4 && sims_left( ) > 8 && org.m_z - f.top > 9.5f ) {
-			const int tick0 = local->get_tick_base( );
-			const float last_duck = local->get_last_duck_time( ), duck_speed = local->get_duck_speed( );
-			/* ponytail: the stand up brake aims at 1 ulp + standoff, the standing plan's gap ( mq ) is known only after this sim; aim at mq if a log shows
-			   stand ups that then pull out hard ( lab: 0 stood under +-3e-3 slip either way ) */
-			const float a_o = k_acc * es_max_speed( local ), park_o = std::min( k_park_speed, a_o ), e_o = gap - u - es_stage( gap - u, u, v_old, kc, ipt );
-			const float v_t = es_in_window( e_o, v_old, park_o, a_o, ipt ) ? std::clamp( e_o / ipt, -park_o, park_o ) : es_profile_step( e_o, v_old, 0.75f * a_o, a_o, ipt );
-			c_user_cmd q = press_cr( v_t, 1.f );
-			q.m_buttons &= ~in_duck;
-			tb_restore( frame );
-			pred_simulate( &q );
-			++sims;
-			const auto fl     = local->get_flags( );
-			const c_vector eo = local->get_origin( ), ev = local->get_velocity( );
-			const float oq = local->get_collideable( )->get_obb_maxs( ).m_z * 0.5f, fd = es_seen_box( f.top, oq ) / period;
-			const float wq = -( ev.m_x * n.m_x + ev.m_y * n.m_y ), gq = es_gap_to( f, eo );
-			int kq = 0, mq = 0;
-			float fq     = 0.f;
-			const bool stood_up = !( fl & fl_ducking ) && !( fl & fl_onground ) && local->get_move_type( ) == e_move_types::move_type_walk;
-			if ( stood_up && gq > 0.f && es_crossing( f, eo.m_z, ev.m_z, oq, pin, ipt, kq, fq ) && kq >= 3 )
-				mq = es_pick_gap( f, fq, ( fd >= k_min_fraction ? fd : std::min( fq * 0.5f, 2e-3f ) ) * 0.5f, u, ipt, 1, false );
-			/* the lift after the standing pin ( tick kq + 2 ) needs the duck back: 0.4 s since your last FinishDuck, duck speed left for this
-			   release + that press ( 2.0 each, < 1.5 strips it, cs_gamemovement.cpp:153-188 ). a top the standing hull holds needs no lift */
-			const bool lift_ok = duck_speed >= 5.5f && static_cast< float >( tick0 + kq + 2 ) * ipt >= last_duck + g_convars.float_or( HASH_BT( "sv_timebetweenducks" ), 0.4f );
-			bool ok = mq && ( lift_ok || fd >= k_min_fraction ) &&
-			          es_profile_ticks( gq - static_cast< float >( mq ) * u, wq, 0.75f * a_o, a_o, park_o, ipt, kq - 3, -static_cast< float >( mq ) * u ) >= 0 &&
-			          es_under_at_cross( filter, f, eo, ev, oq, pin, ipt );
-			/* a proven ducked pin is never traded for a paper plan: the standing arrival is flown from its crossing START first */
-			if ( ok && f.ax == 2 ) {
-				/* diagonal: the twin flies the standing crossing from its predicted START ( parked at mq ulps, closing 0 ) */
-				float zq = eo.m_z, vzq = ev.m_z, fk = 0.f;
-				int kk = 0;
-				es_crossing( f, eo.m_z, ev.m_z, oq, pin, ipt, kk, fk, &zq, &vzq );
-				const float vn = ev.m_x * n.m_x + ev.m_y * n.m_y;
-				const c_vector po = es_diag_at( f, static_cast< float >( mq ) * u, es_along( f, eo ) + es_along( f, ev ) * static_cast< float >( kk ) * ipt, zq );
-				const c_vector pv( ev.m_x - n.m_x * vn, ev.m_y - n.m_y * vn, vzq );
-				c_vector cand[ 1 ];
-				ok = es_diag_search( f, po, pv, oq, pin, ipt, u, k_acc, cand, 1 ) > 0;
-			} else if ( ok ) {
-				float zq = eo.m_z, vzq = ev.m_z, fk = 0.f;
-				int kk = 0;
-				es_crossing( f, eo.m_z, ev.m_z, oq, pin, ipt, kk, fk, &zq, &vzq );
-				c_vector po = eo, pv = ev;
-				( f.ax ? po.m_y : po.m_x ) = ( f.face + f.sg * f.hw ) + f.sg * ( static_cast< float >( mq ) * u );
-				po.m_z                     = zq;
-				( f.ax ? pv.m_y : pv.m_x ) = 0.f;
-				pv.m_z                     = vzq;
-				local->set_abs_origin( po );
-				local->get_origin( )   = po;
-				local->get_velocity( ) = pv;
-				if ( int& eflags = local->get_eflags( ); reinterpret_cast< std::uintptr_t >( &eflags ) != reinterpret_cast< std::uintptr_t >( local ) )
-					eflags |= 1 << 12;
-				const float base_q = fd >= k_min_fraction ? fd : std::min( fq * 0.5f, 2e-3f );
-				c_user_cmd c       = press_v( 0.f, ( static_cast< float >( mq ) - 0.5f ) * u * ( 1.f + 0.5f * base_q ) / ipt, 1.f );
-				c.m_buttons &= ~in_duck;
-				pred_simulate( &c );
-				++sims;
-				const c_vector ao = local->get_origin( ), av = local->get_velocity( );
-				ok = local->get_move_type( ) == e_move_types::move_type_walk && !( local->get_flags( ) & fl_onground ) && std::fabsf( av.m_z - pin ) < 1e-3f &&
-				     std::fabsf( ao.m_z - ( f.top + k_eps ) ) < 0.01f;
-			}
-			tb_restore( frame );
-			static es_log_gate_t s_stance_gate;
-			if ( debug && s_stance_gate.due( ok ? 'y' : 'n' ) )
-				botox_dbg_log( "ESURF: feet stand up ok=%d hold=%d kc=%d -> %d m=%d gap=%.3e close=%.3f -> gap=%.3e close=%.3f dz=%.3f", ok ? 1 : 0,
-				               fd >= k_min_fraction ? 1 : 0, kc, kq, mq, gap, v_old, gq, wq, eo.m_z - org.m_z );
-			if ( ok ) {
-				commit( q );
-				s_up_cmd = cmd->m_command_number;
-				s_up_top = f.top;
-				return own( 'Q' );
-			}
-		}
-		if ( !f_under )
-			return let_go( 'R' );
-		const auto plan_gap = [ & ] { return s_plan.ok ? s_plan.ok : s_plan.cur ? s_plan.cur : s_plan.first; };
-		if ( !( s_plan.f0 >= 0.f && es_same_face( s_plan.f, f ) && s_plan.duck == ducked0 && s_plan.u == u && std::fabsf( s_plan.f0 - f0 ) < 5e-5f ) ||
-		     es_is_bad( f.top, f.face, ducked0, f0, plan_gap( ) ) ) {
-			s_plan       = { };
-			s_plan.f     = f;
-			s_plan.duck  = ducked0;
-			s_plan.u     = u;
-			s_plan.f0    = f0;
-			s_plan.first = s_plan.cur = es_pick_gap( f, f0, base * 0.5f, u, ipt, 1, ducked0 );
-		}
-		/* diagonal: the crossing tick searches its own closing from the real START ( the parked gap only has to be small ). once an approach the
-		   twin flies the predicted START ( exact z, 3 along low-bit draws ): none pins = this face never does ( its plane distance rounds coarser
-		   than bump 2's shift, lab diag_syn 135 deg at -700 900: 3 / 64 even brute force ) = no guide */
-		if ( f.ax == 2 && !s_plan.ok && !s_plan.tries ) {
-			s_plan.tries      = 1;
-			const float vn    = vel.m_x * n.m_x + vel.m_y * n.m_y;
-			const float s_c   = es_along( f, org ) + es_along( f, vel ) * static_cast< float >( kc ) * ipt;
-			const c_vector pv( vel.m_x - n.m_x * vn, vel.m_y - n.m_y * vn, vzc );
-			c_vector cand[ 1 ];
-			for ( int i = 0; i < 3 && !s_plan.ok && s_plan.cur; ++i )
-				if ( es_diag_search( f, es_diag_at( f, static_cast< float >( s_plan.cur ) * u, s_c + 0.37f * static_cast< float >( i ), zc ), pv, off, pin, ipt, u, k_acc, cand, 1 ) )
-					s_plan.ok = s_plan.cur;
-			if ( !s_plan.ok )
-				s_plan.first = s_plan.cur = 0;
-			if ( debug )
-				botox_dbg_log( "ESURF: feet diag plan ok=%d m=%d f0=%.4f kc=%d n=%.6f %.6f d=%.3f", s_plan.ok ? 1 : 0, s_plan.ok, f0, kc, f.n.m_x, f.n.m_y, f.d );
-		}
-		/* prop: once an approach the engine flies the tick before the crossing + the crossing from the predicted START ( parked, closing 0 ):
-		   none pins = no guide ( act G ). kc 1 flies it live below */
-		if ( f.prop && !s_plan.ok && !s_plan.tries && s_plan.cur && ( kc < 2 || sims_left( ) > 40 ) ) {
-			s_plan.tries = 1;
-			bool ok      = kc < 2;
-			const int sims0 = sims;
-			if ( !ok ) {
-				const float vz1 = vzc - 2.f * pin;
-				c_vector o = org, v = vel;
-				( f.ax ? o.m_y : o.m_x ) = ( f.face + f.sg * f.hw ) + f.sg * ( static_cast< float >( s_plan.cur ) * u );
-				/* where along the face that tick happens: props are short ( a curb ends 75u on at 250 u/s, kc 20 ) */
-				( f.ax ? o.m_x : o.m_y ) += ( f.ax ? vel.m_x : vel.m_y ) * static_cast< float >( kc - 1 ) * ipt;
-				o.m_z                    = zc - ipt * ( vz1 + pin );
-				( f.ax ? v.m_y : v.m_x ) = 0.f;
-				v.m_z                    = vz1;
-				const auto setup = [ & ] {
-					tb_restore( frame );
-					local->set_abs_origin( o );
-					local->get_origin( )   = o;
-					local->get_velocity( ) = v;
-					if ( int& eflags = local->get_eflags( ); reinterpret_cast< std::uintptr_t >( &eflags ) != reinterpret_cast< std::uintptr_t >( local ) )
-						eflags |= 1 << 12;
-					/* a hand placed state must be restored even if no sim follows */
-					s_pred_dirty = true;
-				};
-				c_user_cmd c1 = in;
-				ok            = prop_two( setup, static_cast< float >( s_plan.cur ) * u, 0.f, c1 );
-				tb_restore( frame );
-			}
-			if ( ok )
-				s_plan.ok = s_plan.cur;
-			else
-				s_plan.first = s_plan.cur = 0;
-			if ( debug )
-				botox_dbg_log( "ESURF: feet prop plan ok=%d kc=%d m=%d top=%.4f face=%.4f sims=%d pos=%.1f %.1f hk=%.3f near vz=%.2f dz=%.3f gap=%.3f v=%.0f", ok ? 1 : 0, kc,
-				               s_plan.cur, f.top, f.face, sims - sims0, org.m_x, org.m_y, zc - f.top, p_near.vz, p_near.dz, p_near.g, p_near.v );
-		}
-		for ( int n = 0; n < 3 && !f.prop && !s_plan.ok && s_plan.cur && s_plan.tries < 24 && sims_left( ) > 8; ++n ) {
-			c_vector o = org, v = vel;
-			( f.ax ? o.m_y : o.m_x ) = ( f.face + f.sg * f.hw ) + f.sg * ( static_cast< float >( s_plan.cur ) * u );
-			o.m_z                    = zc;
-			( f.ax ? v.m_y : v.m_x ) = 0.f;
-			v.m_z                    = vzc;
-			tb_restore( frame );
-			local->set_abs_origin( o );
-			local->get_origin( )   = o;
-			/* SetupMove reads GetAbsVelocity: a velocity write needs EFL_DIRTY_ABSVELOCITY */
-			local->get_velocity( ) = v;
-			if ( int& eflags = local->get_eflags( ); reinterpret_cast< std::uintptr_t >( &eflags ) != reinterpret_cast< std::uintptr_t >( local ) )
-				eflags |= 1 << 12;
-			c_user_cmd c = press_v( 0.f, ( static_cast< float >( s_plan.cur ) - 0.5f ) * u * ( 1.f + 0.5f * base ) / ipt, crop );
-			pred_simulate( &c );
-			++sims;
-			const c_vector eo = local->get_origin( ), ev = local->get_velocity( );
-			const bool gnd    = ( local->get_flags( ) & fl_onground ) != 0;
-			const bool pins   = local->get_move_type( ) == e_move_types::move_type_walk && !gnd && std::fabsf( ev.m_z - pin ) < 1e-3f &&
-			                  std::fabsf( eo.m_z - ( f.top + k_eps ) ) < 0.01f;
-			tb_restore( frame );
-			if ( debug )
-				botox_dbg_log( "ESURF: feet plan m=%d pins=%d tries=%d first=%d f0=%.4f kc=%d end gap=%.3e dz=%.5f vz=%.2f gnd=%d bad=%d", s_plan.cur,
-				               pins ? 1 : 0, s_plan.tries, s_plan.first, f0, kc, es_gap_to( f, eo ), eo.m_z - ( f.top + k_eps ), ev.m_z, gnd ? 1 : 0,
-				               std::min( s_es_bad_n, k_es_bad ) );
-			if ( pins ) {
-				s_plan.ok = s_plan.cur;
-				break;
-			}
-			++s_plan.tries;
-			s_plan.cur = es_pick_gap( f, f0, base * 0.5f, u, ipt, s_plan.cur + 1, ducked0 );
-		}
-		/* prop, last tick before the crossing: the engine picks hold or in over the top ( act I ), else the guide below parks as usual. live, so
-		   before the gate's G ( its START is a guess ) */
-		if ( f.prop && kc == 1 ) {
-			c_user_cmd c1   = in;
-			const int sims0 = sims;
-			const bool ok   = prop_two( [ & ] { tb_restore( frame ); }, gap, v_old, c1 );
-			tb_restore( frame );
-			if ( debug )
-				botox_dbg_log( "ESURF: feet prop in ok=%d gap=%.4e close=%.3f h=%.3f vz=%.1f sims=%d near vz=%.2f dz=%.3f gap=%.3f v=%.0f", ok ? 1 : 0, gap, v_old,
-				               org.m_z - f.top, vel.m_z, sims - sims0, p_near.vz, p_near.dz, p_near.g, p_near.v );
-			if ( ok ) {
-				commit( c1 );
-				return own( 'I' );
-			}
-		}
-		m = plan_gap( );
-		if ( !m )
-			return let_go( 'G' );
-		const float err_m     = gap - static_cast< float >( m ) * u;
-		stage                 = es_stage( err_m, u, v_old, kc, ipt );
-		const float authority = k_acc * es_max_speed( local ) * crop;
-		const es_guide_t gd   = es_guide( err_m - stage, gap, -( static_cast< float >( m ) * u + stage ), v_old, vel.length_2d( ), kc, authority, turn, reach, s_own, stage > 0.f, ipt );
-		if ( gd.act == 'F' )
-			return let_go( 'F' );
-		c_user_cmd c = gd.act == 'D' ? turn_cmd( gd.v ) : press( gd.v );
-		/* flown in the engine first: closing in to past the arrival gap ( or the face plane ), or on the ground = brake here instead ( why=v ).
-		   a hull already past the plane over the top pulls out: never blocked */
-		if ( sims_left( ) > 0 ) {
-			tb_restore( frame );
-			pred_simulate( &c );
-			++sims;
-			const bool gnd = ( local->get_flags( ) & fl_onground ) != 0 || local->get_move_type( ) != e_move_types::move_type_walk;
-			const float ge = es_gap_to( f, local->get_origin( ) );
-			const c_vector ev = local->get_velocity( );
-			tb_restore( frame );
-			/* staged: past half the standoff faster than the creep = the closing staging exists to take off before the gap */
-			const bool over = stage > 0.f && ge < static_cast< float >( m ) * u + 0.5f * stage && -( ev.m_x * n.m_x + ev.m_y * n.m_y ) > stage / ipt;
-			if ( gnd || over || ( ge < gap && ( ge <= 0.f || ge < ( static_cast< float >( m ) - 0.5f ) * u ) ) ) {
-				c   = press( 0.f );
-				why = 'v';
-			}
-		}
-		/* diagonal, last tick before the crossing: the START this press makes ( engine sim ) must have a pin ( twin ), else an along tweak
-		   moves its low bits ( lab diag_dll e2e: caught 33..58 -> 55..59 / 64 flights, 0 stood ) */
-		if ( f.ax == 2 && kc == 1 && ( gd.act != 'D' || why == 'v' ) && sims_left( ) > 5 ) {
-			const auto start_pins = [ & ]( c_user_cmd q ) {
-				tb_restore( frame );
-				pred_simulate( &q );
-				++sims;
-				const c_vector so = local->get_origin( ), sv = local->get_velocity( );
-				const bool air    = !( local->get_flags( ) & fl_onground ) && local->get_move_type( ) == e_move_types::move_type_walk;
-				tb_restore( frame );
-				c_vector cand[ 1 ];
-				return air && es_diag_search( f, so, sv, off, pin, ipt, es_face_ulp( f, so ), k_acc, cand, 1 ) > 0;
-			};
-			if ( !start_pins( c ) ) {
-				const float v_aim = why == 'v' ? 0.f : gd.v;
-				static const float k_tweak[] = { 0.02f, -0.02f, 0.05f, -0.05f };
-				bool fixed = false;
-				for ( const float a : k_tweak ) {
-					const c_vector tv( vel.m_x - n.m_x * ( v_aim - v_old ) - n.m_y * a, vel.m_y - n.m_y * ( v_aim - v_old ) + n.m_x * a, vel.m_z );
-					c_user_cmd q = in;
-					if ( sims_left( ) <= 3 || !press_xy( tv, q ) )
-						continue;
-					if ( start_pins( q ) ) {
-						c     = q;
-						why   = 'a';
-						fixed = true;
-						break;
-					}
-				}
-				if ( debug )
-					botox_dbg_log( "ESURF: feet diag look fixed=%d gap=%.3e close=%.4e n=%.6f %.6f", fixed ? 1 : 0, gap, v_old, n.m_x, n.m_y );
-			}
-		}
-		commit( c );
-		return own( gd.act );
-	}
-	/* crossing this tick past the ledge's end: a refusal there says nothing about the gap */
-	if ( !riding && !f_under )
-		return let_go( 'R' );
-
-	/* ponytail: no air duck lift on a prop: the fall back's crossing step is < 2u at 64 tick, an over-the-top arrival ENDS grounded; allow it once a
-	   log shows prop pins with closing ~0 ( the beside kind ) */
-	if ( riding && f.prop && !s_on && !s_own ) {
-		if ( debug && g_edgebug.m_found )
-			botox_dbg_log( "ESURF: feet eb in lift=0 why=prop top=%.5f face=%.3f gap=%.3e close=%.3f", f.top, f.face, gap, v_old );
-		return false;
-	}
-	/* ponytail: lift goes out with the ducked brake; standing brake ticks first would take steeper edgebug exits */
-	if ( riding && !s_on && !s_own && !( hold_ok && std::fabsf( v_old ) < 0.01f ) ) {
-		bool lift = false;
-		if ( !ducked0 && v_old <= 1e-3f && sims_left( ) > 0 ) {
-			const float a  = k_acc * es_max_speed( local ) * k_duck_crop;
-			c_user_cmd hop = press_cr( 0.f, k_duck_crop );
-			hop.m_buttons |= in_duck;
-			tb_restore( frame );
-			pred_simulate( &hop );
-			++sims;
-			const auto fl     = local->get_flags( );
-			const c_vector eo = local->get_origin( ), ev = local->get_velocity( );
-			const float w = -( ev.m_x * n.m_x + ev.m_y * n.m_y ), ge = es_gap_to( f, eo );
-			const float oq = local->get_collideable( )->get_obb_maxs( ).m_z * 0.5f, fd = es_seen_box( f.top, oq ) / period;
-			int kq   = 0;
-			float fq = 0.f;
-			lift     = ( fl & fl_ducking ) && !( fl & fl_onground ) && eo.m_z > org.m_z + 8.f && w <= 1e-3f && a > 0.f &&
-			       es_crossing( f, eo.m_z, ev.m_z, oq, pin, ipt, kq, fq ) && kq >= 3 &&
-			       es_profile_ticks( ge - u, w, 0.75f * a, a, std::min( k_park_speed, a ), ipt, kq - 3, -u ) >= 0 &&
-			       es_pick_gap( f, fq, ( fd >= k_min_fraction ? fd : std::min( fq * 0.5f, 2e-3f ) ) * 0.5f, u, ipt, 1, true ) != 0;
-			tb_restore( frame );
-			if ( debug )
-				botox_dbg_log( "ESURF: feet eb in lift=%d top=%.5f face=%.3f gap=%.3e close=%.3f -> gap=%.3e close=%.3f dz=%.3f kc=%d xy=%.1f", lift ? 1 : 0, f.top,
-				               f.face, gap, v_old, ge, w, eo.m_z - org.m_z, kq, vel.length_2d( ) );
-			if ( lift ) {
-				commit( hop );
-				why = 'b';
-				return own( 'U' );
-			}
-		} else if ( debug )
-			botox_dbg_log( "ESURF: feet eb in lift=0 why=%s top=%.5f face=%.3f gap=%.3e close=%.3f", ducked0 ? "duck" : v_old > 1e-3f ? "closing" : "sims", f.top,
-			               f.face, gap, v_old );
-		if ( !hold_ok )
-			return false;
-	}
-
-	if ( riding && !hold_ok ) {
-		c_user_cmd c = press( 0.f );
-		act          = 'E';
-		if ( !ducked0 && !f.prop && sims_left( ) > 0 ) {
-			/* a duck press crops this cmd's move 0.34: brake via press_cr or the fall back drifts onto the ledge */
-			c_user_cmd up = press_cr( 0.f, k_duck_crop );
-			up.m_buttons |= in_duck;
-			tb_restore( frame );
-			pred_simulate( &up );
-			++sims;
-			const auto fl    = local->get_flags( );
-			const c_vector v = local->get_velocity( );
-			if ( ( fl & fl_ducking ) && !( fl & fl_onground ) && local->get_origin( ).m_z > org.m_z + 8.f && std::fabsf( v.m_x * n.m_x + v.m_y * n.m_y ) < 1e-3f ) {
-				c   = up;
-				act = 'U';
-				/* ducked by us now: the stand up hold ends */
-				s_up_cmd = -1;
-			}
-		}
-		/* closing 0 at 1 ulp may freeze ( TryPlayerMove stuck check, gamemovement.cpp:3352 ): step out an ulp until the sim falls, why=f */
-		if ( act == 'E' ) {
-			c = press( -u / ipt );
-			for ( int j = 0; j <= 3 && sims_left( ) > 0; ++j ) {
-				c = press( -static_cast< float >( j ) * u / ipt );
-				tb_restore( frame );
-				pred_simulate( &c );
-				++sims;
-				const bool gnd = ( local->get_flags( ) & fl_onground ) != 0;
-				if ( local->get_move_type( ) == e_move_types::move_type_walk && !gnd && local->get_origin( ).m_z < org.m_z - 1e-3f )
-					break;
-				if ( !gnd )
-					why = 'f';
-			}
-			tb_restore( frame );
-		}
-		commit( c );
-		s_on  = false;
-		s_run = 0;
-		return own( act );
-	}
-
-	m = std::max( static_cast< int >( std::lround( gap / u ) ), 1 );
-	struct end_t {
-		bool ok = false, ride = false, gnd = false;
-		float close = 0.f, gap = 0.f, dz = 0.f, vz = 0.f;
-	};
-	const auto sim = [ & ]( c_user_cmd c ) {
-		end_t e;
-		if ( sims_left( ) <= 0 )
-			return e;
-		tb_restore( frame );
-		pred_simulate( &c );
-		++sims;
-		const c_vector o = local->get_origin( ), v = local->get_velocity( );
-		e.ok    = local->get_move_type( ) == e_move_types::move_type_walk;
-		e.gnd   = ( local->get_flags( ) & fl_onground ) != 0;
-		e.ride  = e.ok && !e.gnd && std::fabsf( v.m_z - pin ) < 1e-3f && std::fabsf( o.m_z - ( f.top + k_eps ) ) < es_ztol( f );
-		e.close = -( v.m_x * n.m_x + v.m_y * n.m_y );
-		e.gap   = es_gap_to( f, o );
-		e.dz    = o.m_z - ( f.top + k_eps );
-		e.vz    = v.m_z;
-		return e;
-	};
-	const c_user_cmd idle = [ & ] {
-		c_user_cmd c     = hold_stance( in );
-		c.m_forward_move = c.m_side_move = 0.f;
-		return c;
-	}( );
-	c_user_cmd best = idle;
-	bool got        = false;
-	if ( sims_left( ) <= 0 )
-		got = riding && s_on;
-	else if ( riding && sim( idle ).ride )
-		got = true;
-	act = 'C';
-	/* diagonal crossing: the twin picks closing + along tweak from the real START, the engine sim proves it */
-	if ( !got && f.ax == 2 && !riding ) {
-		c_vector cand[ 3 ];
-		const int nc = es_diag_search( f, org, vel, off, pin, ipt, u, k_acc, cand, 3 );
-		for ( int i = 0; i < nc && !got; ++i ) {
-			c_user_cmd c = in;
-			if ( !press_xy( cand[ i ], c ) )
-				continue;
-			const end_t r = sim( c );
-			const c_vector ev = local->get_velocity( );
-			if ( debug )
-				botox_dbg_log( "ESURF: feet diag sim %d/%d want %.9g %.9g got %.9g %.9g close=%.4e gap=%.3e dz=%.5f gnd=%d ride=%d | start gap=%.9g h=%.5f vz=%.3f n=%.6f %.6f",
-				               i, nc, cand[ i ].m_x, cand[ i ].m_y, ev.m_x, ev.m_y, r.close, r.gap, r.dz, r.gnd ? 1 : 0, r.ride ? 1 : 0, gap, org.m_z - f.top, vel.m_z,
-				               f.n.m_x, f.n.m_y );
-			if ( r.ride ) {
-				best = c;
-				got  = true;
-				act  = 'P';
-			}
-		}
-		if ( debug && !nc )
-			botox_dbg_log( "ESURF: feet diag none start gap=%.9g h=%.5f vz=%.3f f0=%.4f u=%.2e n=%.6f %.6f", gap, org.m_z - f.top, vel.m_z, f0, u, f.n.m_x, f.n.m_y );
-	}
-	/* prop crossing: the engine picks out of the top ( after act I ) or hold / flush */
-	if ( !got && f.prop && !riding ) {
-		c_user_cmd c    = in;
-		const int sims0 = sims;
-		if ( prop_cross( [ & ] { tb_restore( frame ); }, gap, v_old, c ) ) {
-			best = c;
-			got  = true;
-			act  = 'P';
-		}
-		if ( debug )
-			botox_dbg_log( "ESURF: feet prop cross ok=%d gap=%.4e close=%.3f h=%.3f vz=%.1f sims=%d near vz=%.2f dz=%.3f gap=%.3f v=%.0f", got ? 1 : 0, gap, v_old,
-			               org.m_z - f.top, vel.m_z, sims - sims0, p_near.vz, p_near.dz, p_near.g, p_near.v );
-	}
-	if ( !got && f.ax != 2 && !f.prop && static_cast< float >( m ) * u < 0.015f ) {
-		static const float k_e[] = { 0.5f, 0.25f, 0.75f, 0.1f, 0.9f };
-		for ( const float e : k_e ) {
-			const float want = ( static_cast< float >( m ) - 0.5f ) * u * ( 1.f + e * base ) / ipt;
-			float ask        = want;
-			for ( int pass = 0; pass < 2 && !got; ++pass ) {
-				const c_user_cmd c = press( ask );
-				const end_t r      = sim( c );
-				if ( debug )
-					botox_dbg_log( "ESURF: feet sim m=%d e=%.2f pass=%d ask=%.9g end close=%.9g gap=%.3e dz=%.5f vz=%.3f gnd=%d ride=%d | start gap=%.9g h=%.6f vz=%.4f v0=%.3e f0=%.5f | cmd fwd=%.9g side=%.9g yaw=%.4f pitch=%.3f btn=%x duck=%d kacc=%.5f max=%.1f",
-					               m, e, pass, ask, r.close, r.gap, r.dz, r.vz, r.gnd ? 1 : 0, r.ride ? 1 : 0, gap, org.m_z - f.top, vel.m_z, v_old, f0,
-					               c.m_forward_move, c.m_side_move, c.m_view_point.m_y, c.m_view_point.m_x, c.m_buttons, ducked0 ? 1 : 0, k_acc,
-					               local->get_max_speed( ) );
-				if ( r.ride ) {
-					best = c;
-					got  = true;
-					act  = 'P';
-					break;
-				}
-				if ( !r.ok || !( r.close > 0.f ) || std::fabsf( r.close - want ) > 0.5f * want || r.close == want )
-					break;
-				ask += want - r.close;
-			}
-			if ( got || sims_left( ) <= 0 )
-				break;
-		}
-	}
-	if ( !got ) {
-		const char miss = s_on ? 'X' : 'M';
-		/* refused at the crossing: next approach parks on another gap */
-		if ( !riding && !f.prop && static_cast< float >( m ) * u < 0.015f )
-			es_mark_bad( f.top, f.face, ducked0, f0, m );
-		s_on            = false;
-		s_run           = 0;
-		/* the head search under us reads the START state, not a failed sim's end */
-		tb_restore( frame );
-		return let_go( miss );
-	}
-	commit( best );
-	pinned = true;
-	held   = true;
-	s_on   = true;
-	g_edge_surf_pin_cmd = cmd->m_command_number;
-	s_face = f;
-	++s_run;
-	/* bad marks are brush gaps ( m ulps ): a prop has none */
-	if ( !riding && !f.prop )
-		s_es_pin_sent = { cmd->m_command_number, m, f.top, f.face, f0, ducked0 };
-	return own( act );
+	n_es::mem_t s_mem{ };
+	float s_viz_time  = -1.f;
+	bool s_viz_pinned = false;
 }
 
-static bool es_world_hit( const trace_t& t )
+/* true = edge surf owns this cmd ( tb + head bounce skip it ), pinned = a proven pin, held = nothing after tb may rewrite it */
+bool edge_surf_online( c_user_cmd* cmd, bool& pinned, bool& held )
 {
-	if ( t.m_hit_entity && t.m_hit_entity->get_index( ) != 0 )
+	pinned = held = false;
+	c_base_entity* const local = g_ctx.m_local;
+	g_edge_surf_active         = false;
+	const bool key   = edge_surf_armed( );
+	const bool armed = cmd && local && local->is_alive( ) && local->get_collideable( ) && ( key || edge_surf_eb_armed( ) );
+	/* START must be the server's END, like texture bug */
+	g_prediction.sync_arm( n_prediction::impl_t::k_sync_es, armed );
+	const auto off = [ & ]( const char* why ) {
+		edge_surf_skip( cmd, why );
+		g_edge_surf_latch_cmd = -1;
+		s_es_sent.cmd         = -1;
+		s_mem.own             = false;
 		return false;
-	return t.m_hitbox == 0 && !es_disp_hit( t );
+	};
+	const auto& start = g_prediction.backup_data;
+	if ( !armed || ( start.m_flags & fl_onground ) ) {
+		n_es::new_fall( s_mem );
+		return off( !armed ? "key" : "ground" );
+	}
+	if ( start.m_move_type != e_move_types::move_type_walk )
+		return off( "move" );
+	/* act Q stood you up: your held duck stays off until the feet pass that top ( a re-duck = feet +9 + 2.0 duck speed a toggle ), only while we own it */
+	if ( s_mem.up_cmd == cmd->m_command_number - 1 && start.m_origin.m_z > s_mem.up_top && edge_surf_latched( cmd ) ) {
+		s_mem.up_cmd = cmd->m_command_number;
+		cmd->m_buttons &= ~in_duck;
+	}
+	const bool debug   = GET_VARIABLE( g_variables.m_debug_log, bool );
+	const float pin    = g_prediction.get_engine_target_predict_z_velocity( );
+	const bool pin_now = std::fabsf( start.m_velocity.m_z - pin ) < 1e-3f;
+	/* eb key alone: a fresh pin START ( an edgebug just ended, its plan spent ) or our chain, nothing else */
+	static int s_pin_cmd = -1;
+	const bool fresh     = pin_now && s_pin_cmd != cmd->m_command_number - 1;
+	if ( pin_now )
+		s_pin_cmd = cmd->m_command_number;
+	if ( !key && !edge_surf_latched( cmd ) && ( !fresh || ( g_edgebug.m_found && !g_edgebug.replay_spent( ) ) ) )
+		return off( "eb" );
+	/* a locked edgebug plan flies first: a tick we own makes it drop ( EB: drop why=taken ) */
+	if ( g_edgebug.m_found && !pin_now ) {
+		static int s_eb_cmd = -1;
+		if ( debug && s_eb_cmd != cmd->m_command_number - 1 )
+			botox_dbg_log( "ESURF: eb first cmd=%d vz=%.1f", cmd->m_command_number, start.m_velocity.m_z );
+		s_eb_cmd = cmd->m_command_number;
+		return off( "eb" );
+	}
+	if ( g_air_stuck_owns_cmd )
+		return off( "as" );
+
+	static auto sv_airaccelerate = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
+	es_world_t w( local );
+	w.frame = g_interfaces.m_prediction->m_commands_predicted - 1;
+	/* friction / duck timer / stamina off the START, not this cmd's own END ( texture bug runs after the prediction ) */
+	w.reset( );
+	w.base       = *cmd;
+	w.dt         = g_interfaces.m_global_vars_base->m_interval_per_tick;
+	w.pin        = pin;
+	w.k_acc      = ( sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.f ) * w.dt * local->get_surface_friction( );
+	w.max_speed  = es_max_speed( local );
+	w.duck_speed = local->get_duck_speed( );
+	w.last_duck  = local->get_last_duck_time( );
+	w.now        = static_cast< float >( local->get_tick_base( ) ) * w.dt;
+	w.duck_gap   = g_convars.float_or( HASH_BT( "sv_timebetweenducks" ), 0.4f );
+	w.debug      = debug;
+	if ( w.dt <= 0.f || w.k_acc <= 0.f )
+		return off( "dt" );
+	n_es::in_t in;
+	in.range    = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f );
+	in.reach    = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.f, 32.f );
+	in.turn     = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ), 0.f, 15.f );
+	in.takeover = !key;
+	const n_es::out_t r = n_es::tick( w, s_mem, cmd->m_command_number, in );
+	w.reset( );
+	s_viz_time   = g_interfaces.m_global_vars_base->m_real_time;
+	s_viz_pinned = r.pin;
+	if ( !r.own ) {
+		g_edge_surf_latch_cmd = -1;
+		s_es_sent.cmd         = -1;
+		return false;
+	}
+	const c_user_cmd c  = w.cmd_of( r.mv );
+	cmd->m_forward_move = c.m_forward_move;
+	cmd->m_side_move    = c.m_side_move;
+	cmd->m_buttons      = c.m_buttons;
+	pinned              = r.pin;
+	held                = true;
+	g_edge_surf_active  = true;
+	if ( r.pin )
+		g_edge_surf_pin_cmd = cmd->m_command_number;
+	g_edge_surf_latch_cmd = s_mem.own ? cmd->m_command_number : -1;
+	s_es_sent             = { cmd->m_command_number, cmd->m_buttons, cmd->m_view_point.m_y, cmd->m_forward_move, cmd->m_side_move };
+	return true;
 }
 
-/* edgebug.cpp search sim END: true = feet pin at an edge top ( vz = -g dt / 2, airborne ); lift = edge_surf_feet's takeover scan sees it
-   standing on an axial world ledge, not closing, exit under 0.046 s of ducked brake ( lab ER_EB sweep: 0 false lifts, 64 + 128, weapon 150..250 ) */
+/* edgebug.cpp search sim END: true = an exact feet pin ( vz = -g dt / 2, airborne ). lift = standing beside a ledge face whose top it rides, drifting
+   off it slower than 0.046 s of ducked brake ( lab ER_EB sweep: 0 false lifts, 64 + 128, weapon 150..250 ): edge surf's air duck takes it from there */
 bool edge_surf_eb_end( bool& lift )
 {
 	lift                       = false;
 	c_base_entity* const local = g_ctx.m_local;
-	auto* const col            = local ? local->get_collideable( ) : nullptr;
-	if ( !col || !g_interfaces.m_global_vars_base )
+	if ( !local || !local->get_collideable( ) || !g_interfaces.m_global_vars_base )
 		return false;
 	const c_vector o = local->get_origin( ), v = local->get_velocity( );
 	const float pin  = g_prediction.get_engine_target_predict_z_velocity( );
@@ -2158,60 +332,42 @@ bool edge_surf_eb_end( bool& lift )
 		return false;
 	if ( local->get_flags( ) & fl_ducking )
 		return true;
-	const c_vector lo = col->get_obb_mins( ), hi = col->get_obb_maxs( );
-	const float dt    = g_interfaces.m_global_vars_base->m_interval_per_tick;
-	const float t_h   = dt * static_cast< float >( n_tick::ticks( 48 ) );
-	const float depth = std::clamp( -2.f * pin * t_h - pin / dt * t_h * t_h, 4.f, 256.f );
-	const float reach = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.f, 32.f );
-	float scan        = reach + 0.05f;
-	if ( GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ) > 0.f )
-		scan = std::max( std::clamp( GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f ), reach );
-	c_trace_filter_tb_world_props filter( local );
-	float curtain = depth;
-	{
-		trace_t fl{ };
-		ray_t floor_ray( o, c_vector( o.m_x, o.m_y, o.m_z - depth ), c_vector( lo.m_x, lo.m_y, 0.f ), c_vector( hi.m_x, hi.m_y, 0.f ) );
-		tb_trace( floor_ray, mask_playersolid, &filter, &fl );
-		if ( !fl.m_start_solid && fl.m_fraction < 1.f )
-			curtain = std::max( fl.m_fraction * depth - 0.5f, 0.5f );
-	}
-	curtain = std::min( curtain, 2.f );
-	es_face_t best{ };
-	c_vector bn{ };
-	float best_gap = FLT_MAX;
-	int best_rank  = -1;
-	c_vector dirs[ 9 ];
-	const int n_dirs = es_scan_dirs( v, dirs );
-	for ( int i = 0; i < n_dirs; ++i ) {
-		/* feet's own sweep + pick ( strip top, rides first ): the lift verdict must be about the face the takeover sees */
-		es_cand_t h{ };
-		if ( !es_sweep( filter, o, dirs[ i ], scan, lo, hi, curtain, v, hi.m_z * 0.5f, pin, dt, true, nullptr, nullptr, nullptr, nullptr, h ) || h.r < best_rank ||
-		     ( h.r == best_rank && h.g >= best_gap ) )
-			continue;
-		best      = h.c;
-		best_gap  = h.g;
-		best_rank = h.r;
-		bn        = h.n;
-	}
-	if ( best_gap == FLT_MAX || best.prop || std::fabsf( o.m_z - ( best.top + 0.03125f ) ) >= es_ztol( best ) || es_ulp( best.ax ? o.m_y : o.m_x ) < 1.9e-6f )
+	es_world_t w( local );
+	w.dt  = g_interfaces.m_global_vars_base->m_interval_per_tick;
+	w.pin = pin;
+	n_es::st_t s;
+	s.o    = to3( o );
+	s.v    = to3( v );
+	s.walk = true;
+	const n_es::hull_t h = w.hull( false );
+	n_es::edge_t c[ n_es::k_cand ];
+	const int nc = n_es::scan( w, s, h, 2.05f, true, c, n_es::k_cand );
+	int best     = -1;
+	float bg     = FLT_MAX;
+	for ( int i = 0; i < nc; ++i )
+		if ( const float g = n_es::gap( c[ i ], s.o, h ); std::fabsf( o.m_z - ( c[ i ].top + n_es::k_eps ) ) < n_es::k_ztol && g < bg ) {
+			bg   = g;
+			best = i;
+		}
+	/* a prop: the lift's 9u fall back steps under 2u, its over the top pin needs more */
+	if ( best < 0 || c[ best ].prop )
 		return true;
 	static auto sv_airaccelerate = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
-	const float away  = v.m_x * bn.m_x + v.m_y * bn.m_y;
-	const float brake = ( sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.f ) * local->get_surface_friction( ) * es_max_speed( local ) * 0.34f;
+	const float away  = -n_es::closing( c[ best ], s.v );
+	const float brake = ( sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.f ) * local->get_surface_friction( ) * es_max_speed( local ) * n_es::k_duck_crop;
 	lift              = away >= -1e-3f && away <= 0.046f * brake;
 	return true;
 }
 
-/* visualize: every ledge the scan found ( dim ), the pick ( your color while edge surf owns the cmd, green on a pin, grey once it let go ),
-   its wall under it, the arrival point on the crossing tick, the act. the hull's span along the edge, not the ledge's real length */
+/* visualize: every ledge the scan found ( dim ), the pick ( your color while edge surf owns the cmd, green on a pin, grey once it let go ), the arrival
+   point on the crossing tick, the act. a 32u stretch of the edge under the hull, not the ledge's real length */
 void edge_surf_render( )
 {
-	/* no edge surf checkbox gate: edgebug's "edgesurf on eb" runs it too, a picture only exists while it scans */
 	if ( !GET_VARIABLE( g_variables.m_edge_surf_visualize, bool ) || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) || !g_interfaces.m_global_vars_base ||
 	     !g_interfaces.m_engine_client->is_in_game( ) )
 		return;
-	const float age = g_interfaces.m_global_vars_base->m_real_time - s_es_viz.time;
-	if ( s_es_viz.time < 0.f || age < 0.f || age > 0.15f )
+	const float age = g_interfaces.m_global_vars_base->m_real_time - s_viz_time;
+	if ( s_viz_time < 0.f || age < 0.f || age > 0.15f )
 		return;
 	const c_color& col = GET_VARIABLE( g_variables.m_edge_surf_visualize_color, c_color );
 	const auto line    = [ ]( const c_vector& a, const c_vector& b, const unsigned int c, const float w ) {
@@ -2219,40 +375,34 @@ void edge_surf_render( )
 		if ( g_render.world_to_screen( a, sa ) && g_render.world_to_screen( b, sb ) )
 			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_line, std::make_any< line_draw_object_t >( line_draw_object_t{ sa, sb, c, w } ) );
 	};
-	const auto edge = [ & ]( const es_face_t& c, const float s, const unsigned int color, const float w ) {
-		if ( c.ax == 2 ) {
-			/* diagonal: the hull's corner on the edge, 16u along it */
-			const c_vector k = es_diag_at( c, -c.hw, s - ( c.n.m_x > 0.f ? -c.ex : c.ex ) * c.n.m_y + ( c.n.m_y > 0.f ? -c.ex : c.ex ) * c.n.m_x, c.top );
-			const c_vector t( -c.n.m_y * 8.f, c.n.m_x * 8.f, 0.f );
-			line( k - t, k + t, color, w );
-			line( k - t, c_vector( k.m_x - t.m_x, k.m_y - t.m_y, c.top - 8.f ), color, 1.f );
-			line( k + t, c_vector( k.m_x + t.m_x, k.m_y + t.m_y, c.top - 8.f ), color, 1.f );
-			return;
-		}
-		const auto at = [ & ]( const float a, const float z ) { return c.ax ? c_vector( a, c.face, z ) : c_vector( c.face, a, z ); };
-		line( at( s - c.hw, c.top ), at( s + c.hw, c.top ), color, w );
-		line( at( s - c.hw, c.top ), at( s - c.hw, c.top - 8.f ), color, 1.f );
-		line( at( s + c.hw, c.top ), at( s + c.hw, c.top - 8.f ), color, 1.f );
+	const c_vector org = g_ctx.m_local->get_origin( );
+	const auto at      = [ & ]( const n_es::edge_t& e, const float s, const float z ) {
+		return c_vector( e.n.x * e.d - e.n.y * s, e.n.y * e.d + e.n.x * s, z );
 	};
-	for ( int i = 0; i < s_es_viz.n; ++i )
-		if ( !s_es_viz.pick || !es_same_face( s_es_viz.cand[ i ], s_es_viz.f ) )
-			edge( s_es_viz.cand[ i ], s_es_viz.cand_s[ i ], col.get_u32( 0.35f ), 1.f );
-	if ( !s_es_viz.pick )
+	const auto edge = [ & ]( const n_es::edge_t& e, const float s, const unsigned int color, const float w ) {
+		line( at( e, s - 16.f, e.top ), at( e, s + 16.f, e.top ), color, w );
+		line( at( e, s - 16.f, e.top ), at( e, s - 16.f, e.top - 8.f ), color, 1.f );
+		line( at( e, s + 16.f, e.top ), at( e, s + 16.f, e.top - 8.f ), color, 1.f );
+	};
+	const n_es::v3 o3 = to3( org );
+	for ( int i = 0; i < s_mem.n_cand; ++i )
+		if ( !s_mem.pick_ok || !n_es::same( s_mem.cand[ i ], s_mem.pick ) )
+			edge( s_mem.cand[ i ], n_es::along( s_mem.cand[ i ], o3 ), col.get_u32( 0.35f ), 1.f );
+	if ( !s_mem.pick_ok )
 		return;
-	const unsigned int pick = s_es_viz.pinned ? c_color( 90, 255, 120, 255 ).get_u32( ) : s_es_viz.own ? col.get_u32( ) : c_color( 160, 160, 160, 200 ).get_u32( );
-	edge( s_es_viz.f, s_es_viz.s, pick, 2.f );
-	if ( c_vector_2d sp; s_es_viz.arrive_ok && g_render.world_to_screen( s_es_viz.arrive, sp ) )
+	const n_es::edge_t& f   = s_mem.pick;
+	const bool own          = s_mem.act != 'N' && s_mem.act != 'Y';
+	const unsigned int pick = s_viz_pinned ? c_color( 90, 255, 120, 255 ).get_u32( ) : own ? col.get_u32( ) : c_color( 160, 160, 160, 200 ).get_u32( );
+	const float s           = s_mem.arrive_ok ? n_es::along( f, s_mem.arrive ) : n_es::along( f, o3 );
+	edge( f, s, pick, 2.f );
+	if ( c_vector_2d sp; s_mem.arrive_ok && g_render.world_to_screen( at( f, s, f.top ), sp ) )
 		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_filled_circle, std::make_any< filled_circle_draw_object_t >( filled_circle_draw_object_t( sp, 3.f, pick, 12 ) ) );
 	auto* const font = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
-	const es_face_t& f = s_es_viz.f;
-	const c_vector mid = f.ax == 2 ? es_diag_at( f, -f.hw, s_es_viz.s, f.top + 6.f )
-	                     : f.ax   ? c_vector( s_es_viz.s, f.face, f.top + 6.f )
-	                              : c_vector( f.face, s_es_viz.s, f.top + 6.f );
 	c_vector_2d sm;
-	if ( !font || !g_render.world_to_screen( mid, sm ) )
+	if ( !font || !g_render.world_to_screen( at( f, s, f.top + 6.f ), sm ) )
 		return;
 	char buf[ 32 ];
-	std::snprintf( buf, sizeof( buf ), "esurf %c%s", s_es_viz.act, s_es_viz.pinned ? " pin" : "" );
+	std::snprintf( buf, sizeof( buf ), "esurf %c%s", s_mem.act, s_viz_pinned ? " pin" : "" );
 	text_draw_object_t text;
 	text.m_font       = font;
 	text.m_position   = c_vector_2d( sm.m_x - font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, buf ).x * 0.5f, sm.m_y - font->FontSize );

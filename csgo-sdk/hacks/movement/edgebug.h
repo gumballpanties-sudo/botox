@@ -83,9 +83,8 @@ namespace n_edgebug
 		int m_found_tick = 0;
 		int m_prediction_ticks = 0;
 		bool m_ducked = false;
-		/* style + edge surf drive of the last post ( edge surf prediction forces style 0 ): mouse lock / auto crouch / eb indicator read these */
+		/* style of the last post: mouse lock / auto crouch read it */
 		int m_style_now = 0;
-		bool m_es_now   = false;
 		c_vector m_viz_path[k_predicted_cmd_max + 1];
 		int m_viz_count = 0;
 		c_vector m_viz_pos{ };
@@ -146,7 +145,7 @@ namespace n_edgebug
 			predicted_cmd_t cmds[k_predicted_cmd_max];
 			int ticks = 0, variant = 0, fam = 0;
 			bool duck = false; /* FL_DUCKING on the sim's bug tick */
-			bool lift = false; /* edgesurf on eb: edge_surf_feet can take its end */
+			bool lift = false; /* edgesurf on eb: edge surf can carry on from its end */
 			float bend = 0.f;
 			c_vector end_pos{ };
 		};

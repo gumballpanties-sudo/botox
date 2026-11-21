@@ -1253,6 +1253,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_pixel_surf_assist_render, false );
 		ADD_VARIABLE( bool, m_points_render_ps, true );
 		ADD_VARIABLE( bool, m_points_render_bounce, true );
+		ADD_VARIABLE( bool, m_points_render_aa, true );
 		ADD_VARIABLE( bool, m_points_render_calc, true );
 		ADD_VARIABLE( bool, m_points_render_finder, true );
 		ADD_VARIABLE( float, m_points_opacity, 1.f );
@@ -1418,8 +1419,6 @@ namespace n_variables
 		ADD_VARIABLE( float, m_edge_surf_delta_strafe, 0.f );
 		ADD_VARIABLE( bool, m_edge_surf_visualize, false );
 		ADD_VARIABLE( c_color, m_edge_surf_visualize_color, c_color( 120, 230, 255, 255 ) );
-		ADD_VARIABLE( bool, m_edge_surf_flat_disp, true );
-		ADD_VARIABLE( bool, m_edge_surf_predict, true );
 		ADD_VARIABLE( bool, m_fix_air_stucks, false );
 
 		ADD_VARIABLE( bool, m_ladder_bug, false );

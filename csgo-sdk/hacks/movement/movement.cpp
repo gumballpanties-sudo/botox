@@ -956,8 +956,7 @@ n_movement::impl_t::trick_states_t n_movement::impl_t::get_trick_states( )
 
 	const bool on_ground = ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) != 0;
 
-	/* an edge surf prediction plan lights esurf, not eb */
-	states.m_edge_bug_queued = g_edgebug.m_found && !g_edgebug.m_es_now;
+	states.m_edge_bug_queued = g_edgebug.m_found;
 	states.m_edge_bug_tick   = states.m_edge_bug_queued ? g_edgebug.m_found_tick : 0;
 
 	states.m_texture_bug_now = g_texturebug.m_hit || g_texturebug.m_hs_hit || g_texturebug.m_hb_hit;
@@ -4815,7 +4814,7 @@ void n_movement::impl_t::run_detections( )
 		static float cand_vz = 0.f;
 		static int cand_tick = 0;
 
-		/* an edge surf pin ( its feet mode or its edgebug prediction plan ) prints "edgesurfed" below, never an edgebug too */
+		/* an edge surf pin prints "edgesurfed" below, never an edgebug too */
 		const bool tb = states.m_texture_bug_now || m_pixelsurf_data.m_start_pin_kind == 2 ||
 		                ( g_ctx.m_cmd && g_edge_surf_pin_cmd >= 0 && g_edge_surf_pin_cmd == g_ctx.m_cmd->m_command_number - 1 );
 		const bool ps = m_pixelsurf_data.m_ps_hold;

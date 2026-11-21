@@ -370,6 +370,7 @@
     <ClInclude Include="hacks\movement\wall_climb.h" />
     <ClInclude Include="hacks\movement\edge_skip.h" />
     <ClInclude Include="hacks\movement\edge_catch.h" />
+    <ClInclude Include="hacks\movement\edge_surf_core.h" />
     <ClInclude Include="globals\math\math.h" />
     <ClInclude Include="game\sdk\enums\e_move_types.h" />
     <ClInclude Include="hacks\lagcomp\lagcomp.h" />

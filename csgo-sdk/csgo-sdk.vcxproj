@@ -510,6 +510,7 @@
     <ClInclude Include="hacks\movement\wall_climb.h" />
     <ClInclude Include="hacks\movement\edge_skip.h" />
     <ClInclude Include="hacks\movement\edge_catch.h" />
+    <ClInclude Include="hacks\movement\edge_surf_core.h" />
     <ClInclude Include="hacks\movement\edgebug.h" />
     <ClInclude Include="hacks\movement\tick_scale.h" />
     <ClInclude Include="hacks\movement\assist_predict.h" />
