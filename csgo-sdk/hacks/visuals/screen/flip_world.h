@@ -48,8 +48,6 @@ namespace n_flip_world
 		void restore( slot_t& slot );
 
 		void execute( view_rect_t rect );
-		bool build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description );
-		void release_targets( );
 
 		slot_t m_engine{ };
 		slot_t m_client{ };
@@ -62,11 +60,7 @@ namespace n_flip_world
 
 		int m_hand_own = -1;
 
-		IDirect3DTexture9* m_texture       = nullptr;
-		IDirect3DSurface9* m_surface       = nullptr;
-		IDirect3DSurface9* m_resolve       = nullptr;
-		IDirect3DPixelShader9* m_shader    = nullptr;
-		D3DSURFACE_DESC m_description{ };
+		IDirect3DPixelShader9* m_shader = nullptr;
 		std::atomic< bool > m_failed{ false };
 	};
 }

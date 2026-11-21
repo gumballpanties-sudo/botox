@@ -209,21 +209,6 @@ void n_bloom::impl_t::release_targets( )
 		this->m_sizes[ level ][ 1 ] = 0;
 	}
 
-	if ( this->m_resolve_surface ) {
-		this->m_resolve_surface->Release( );
-		this->m_resolve_surface = nullptr;
-	}
-
-	if ( this->m_frame_surface ) {
-		this->m_frame_surface->Release( );
-		this->m_frame_surface = nullptr;
-	}
-
-	if ( this->m_frame_texture ) {
-		this->m_frame_texture->Release( );
-		this->m_frame_texture = nullptr;
-	}
-
 	this->m_width        = 0;
 	this->m_height       = 0;
 	this->m_format       = D3DFMT_UNKNOWN;
@@ -253,27 +238,12 @@ bool n_bloom::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DESC& de
 	const int width  = static_cast< int >( description.Width );
 	const int height = static_cast< int >( description.Height );
 
-	if ( this->m_frame_texture && this->m_width == width && this->m_height == height && this->m_format == description.Format &&
+	// adapt is made last: set = every target built
+	if ( this->m_adapt_texture && this->m_width == width && this->m_height == height && this->m_format == description.Format &&
 	     this->m_multi_sample == description.MultiSampleType )
 		return true;
 
 	this->release_targets( );
-
-	if ( FAILED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, description.Format, D3DPOOL_DEFAULT,
-	                                    &this->m_frame_texture, nullptr ) ) ||
-	     FAILED( this->m_frame_texture->GetSurfaceLevel( 0, &this->m_frame_surface ) ) ) {
-		g_console.print< n_console::log_level::WARNING >( "bloom: frame copy creation failed" );
-		this->release_targets( );
-		return false;
-	}
-
-	if ( description.MultiSampleType != D3DMULTISAMPLE_NONE &&
-	     FAILED( device->CreateRenderTarget( description.Width, description.Height, description.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
-	                                         &this->m_resolve_surface, nullptr ) ) ) {
-		g_console.print< n_console::log_level::WARNING >( "bloom: msaa resolve target creation failed" );
-		this->release_targets( );
-		return false;
-	}
 
 	for ( int level = 0; level < k_levels; ++level ) {
 		const int shift = level < 1 ? 1 : level;
@@ -370,7 +340,7 @@ void n_bloom::impl_t::execute( const frame_t frame )
 	const n_gpu_timer::scope_t gpu_timer( device, n_gpu_timer::pass_bloom );
 
 	if ( !GET_VARIABLE( g_variables.m_bloom, bool ) || this->m_compile_failed || this->m_format_failed ) {
-		if ( this->m_frame_texture )
+		if ( this->m_adapt_texture )
 			this->release_targets( );
 
 		this->m_active = false;
@@ -420,9 +390,11 @@ void n_bloom::impl_t::execute( const frame_t frame )
 
 	static bool logged_blit = false;
 
-	const long blit_result = n_frame_copy::copy( device, target, this->m_resolve_surface, this->m_frame_surface );
+	HRESULT blit_result = E_FAIL;
 
-	if ( FAILED( blit_result ) ) {
+	IDirect3DTexture9* frame_copy = n_frame_copy::grab( device, target, description, &blit_result );
+
+	if ( !frame_copy ) {
 		if ( !logged_blit ) {
 			logged_blit = true;
 
@@ -567,7 +539,7 @@ void n_bloom::impl_t::execute( const frame_t frame )
 
 		device->SetPixelShaderConstantF( 1, constant_1, 1 );
 		device->SetPixelShader( prepass );
-		device->SetTexture( 0, this->m_frame_texture );
+		device->SetTexture( 0, frame_copy );
 
 		draw_level( this->m_surfaces[ 0 ], this->m_sizes[ 0 ][ 0 ], this->m_sizes[ 0 ][ 1 ], this->m_width, this->m_height );
 	}
@@ -628,7 +600,7 @@ void n_bloom::impl_t::execute( const frame_t frame )
 		device->SetPixelShaderConstantF( 1, constant_1, 1 );
 		device->SetPixelShader( combine );
 		device->SetTexture( 0, this->m_textures[ 1 ] );
-		device->SetTexture( 1, this->m_frame_texture );
+		device->SetTexture( 1, frame_copy );
 		device->SetTexture( 2, this->m_adapt_texture );
 
 		device->SetRenderState( D3DRS_COLORWRITEENABLE, D3DCOLORWRITEENABLE_RED | D3DCOLORWRITEENABLE_GREEN | D3DCOLORWRITEENABLE_BLUE );

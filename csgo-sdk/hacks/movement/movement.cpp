@@ -3270,9 +3270,13 @@ void n_movement::impl_t::AutoStrafe( c_user_cmd* cmd )
 	const float vel_yaw = rad2deg( std::atan2f( velocity.m_y, velocity.m_x ) );
 	const float error   = std::remainderf( target - vel_yaw, 360.f );
 
-	static float last_side = 1.f;
+	/* lumi FUN_1011ced0: full theta at target every tick = max gain while the target moves ( partial turns cost up to 50 u/s );
+	   centred partial turn only while the target holds still ( straightness ) */
+	static float last_side = 1.f, last_target = 0.f;
+	const bool still = std::fabsf( std::remainderf( target - last_target, 360.f ) ) < 1e-4f;
+	last_target      = target;
 	float side = error > 0.f ? 1.f : -1.f, phi = theta;
-	if ( std::fabsf( error ) < max_turn ) {
+	if ( still && std::fabsf( error ) < max_turn ) {
 		const float want = error - last_side * max_turn * 0.5f;
 		side             = want > 0.f ? 1.f : -1.f;
 
@@ -3292,9 +3296,9 @@ void n_movement::impl_t::AutoStrafe( c_user_cmd* cmd )
 	cmd->m_forward_move = std::cosf( rel ) * move;
 	cmd->m_side_move    = -std::sinf( rel ) * move;
 
-	botox_dbg_log( "AS: v=%.1f th=%.2f phi=%.2f max_turn=%.2f err=%.2f ws=%.1f acc=%.2f fric=%.2f tgt=%.1f vel=%.1f turn=%d gnd=%d duck=%d", speed, theta, phi,
-	               max_turn, error, ws, accel, g_ctx.m_local->get_surface_friction( ), target, vel_yaw, side > 0.f ? 1 : -1, ( flags & fl_onground ) ? 1 : 0,
-	               ( cmd->m_buttons & in_duck ) ? 1 : 0 );
+	botox_dbg_log( "AS: v=%.1f th=%.2f phi=%.2f max_turn=%.2f err=%.2f ws=%.1f acc=%.2f fric=%.2f tgt=%.1f vel=%.1f turn=%d still=%d gnd=%d duck=%d", speed, theta,
+	               phi, max_turn, error, ws, accel, g_ctx.m_local->get_surface_friction( ), target, vel_yaw, side > 0.f ? 1 : -1, still ? 1 : 0,
+	               ( flags & fl_onground ) ? 1 : 0, ( cmd->m_buttons & in_duck ) ? 1 : 0 );
 }
 namespace {
 	struct {

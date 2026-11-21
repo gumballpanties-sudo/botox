@@ -1,6 +1,7 @@
 #include "flip_world.h"
 #include "../../../game/sdk/includes/includes.h"
 #include "../../../globals/includes/includes.h"
+#include "frame_copy.h"
 #include "fx_compat.h"
 #include "render_queue.h"
 #include "stream_guard.h"
@@ -197,54 +198,8 @@ void n_flip_world::impl_t::restore( slot_t& slot )
 	slot.m_held = false;
 }
 
-bool n_flip_world::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description )
-{
-	if ( this->m_texture && this->m_description.Width == description.Width && this->m_description.Height == description.Height &&
-	     this->m_description.Format == description.Format && this->m_description.MultiSampleType == description.MultiSampleType )
-		return true;
-
-	this->release_targets( );
-
-	if ( FAILED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, description.Format, D3DPOOL_DEFAULT,
-	                                    &this->m_texture, nullptr ) ) ||
-	     FAILED( this->m_texture->GetSurfaceLevel( 0, &this->m_surface ) ) ||
-	     ( description.MultiSampleType != D3DMULTISAMPLE_NONE &&
-	       FAILED( device->CreateRenderTarget( description.Width, description.Height, description.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
-	                                           &this->m_resolve, nullptr ) ) ) ) {
-		botox_dbg_log( "FLIP: target %ux%u fmt %d msaa %d creation FAILED, flip off", description.Width, description.Height,
-		               static_cast< int >( description.Format ), static_cast< int >( description.MultiSampleType ) );
-		this->release_targets( );
-		return false;
-	}
-
-	this->m_description = description;
-	return true;
-}
-
-void n_flip_world::impl_t::release_targets( )
-{
-	if ( this->m_resolve ) {
-		this->m_resolve->Release( );
-		this->m_resolve = nullptr;
-	}
-
-	if ( this->m_surface ) {
-		this->m_surface->Release( );
-		this->m_surface = nullptr;
-	}
-
-	if ( this->m_texture ) {
-		this->m_texture->Release( );
-		this->m_texture = nullptr;
-	}
-
-	this->m_description = { };
-}
-
 void n_flip_world::impl_t::on_device_lost( )
 {
-	this->release_targets( );
-
 	if ( this->m_shader ) {
 		this->m_shader->Release( );
 		this->m_shader = nullptr;
@@ -301,22 +256,14 @@ void n_flip_world::impl_t::execute( const view_rect_t rect )
 		return;
 	}
 
-	if ( !this->build( device, description ) ) {
+	HRESULT blit                  = E_FAIL;
+	IDirect3DTexture9* frame_copy = n_frame_copy::grab( device, target, description, &blit );
+
+	// flip off, never a mirrored hud / input over an unmirrored world
+	if ( !frame_copy ) {
+		botox_dbg_log( "FLIP: frame copy %ux%u fmt %d msaa %d FAILED %#lx, flip off", description.Width, description.Height,
+		               static_cast< int >( description.Format ), static_cast< int >( description.MultiSampleType ), static_cast< unsigned long >( blit ) );
 		this->m_failed.store( true );
-		target->Release( );
-		return;
-	}
-
-	HRESULT blit = device->StretchRect( target, nullptr, this->m_resolve ? this->m_resolve : this->m_surface, nullptr, D3DTEXF_NONE );
-	if ( SUCCEEDED( blit ) && this->m_resolve )
-		blit = device->StretchRect( this->m_resolve, nullptr, this->m_surface, nullptr, D3DTEXF_NONE );
-
-	if ( FAILED( blit ) ) {
-		static bool logged = false;
-		if ( !logged ) {
-			logged = true;
-			botox_dbg_log( "FLIP: frame copy failed %#lx", static_cast< unsigned long >( blit ) );
-		}
 		target->Release( );
 		return;
 	}
@@ -374,7 +321,7 @@ void n_flip_world::impl_t::execute( const view_rect_t rect )
 	device->SetVertexDeclaration( nullptr );
 	device->SetFVF( D3DFVF_XYZRHW | D3DFVF_TEX1 );
 	device->SetPixelShader( this->m_shader );
-	device->SetTexture( 0, this->m_texture );
+	device->SetTexture( 0, frame_copy );
 
 	struct vertex_t {
 		float m_x, m_y, m_z, m_rhw, m_u, m_v;

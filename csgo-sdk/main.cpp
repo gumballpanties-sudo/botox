@@ -9,6 +9,7 @@
 #include "hacks/visuals/screen/render_queue.h"
 #include "hacks/web/webview2host.h"
 #include "utilities/perf/perf_watch.h"
+#include "utilities/memory/va_ballast.h"
 
 #include <atomic>
 #include <cstdarg> // crash witness line builder
@@ -182,6 +183,8 @@ static void crash_append_address_space( )
 	}
 	crash_append( " va: free=%llu mb largest_free=%llu mb private=%llu mb reserved=%llu mb mapped=%llu mb image=%llu mb", free_total >> 20,
 	              largest >> 20, priv >> 20, reserved >> 20, mapped >> 20, image >> 20 );
+	/* ballast 0/3 = rescues ran out, 3/3 = the ask never reached the NtAllocateVirtualMemory detour ( or no hook ) */
+	crash_append( " ballast=%d/%d rescues=%ld", n_va_ballast::left( ), n_va_ballast::k_chunks, n_va_ballast::g_rescues.load( ) );
 }
 
 static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
@@ -524,6 +527,7 @@ static unsigned long __stdcall on_attach( void* instance )
 		g_console.on_release( );
 		botox_dbg_log_close( );
 		crash_witness_remove( );
+		n_va_ballast::release( ); // no hooks were made
 
 		// same rule as the normal path below: never come back into a module we just unmapped
 		LI_FN( FreeLibraryAndExitThread )( static_cast< HMODULE >( instance ), 0 );
@@ -602,6 +606,9 @@ static unsigned long __stdcall on_attach( void* instance )
 	// convars back, hooks off, in-flight detours drained, buffers + materials freed
 	g_hooks.on_release( );
 
+	/* NtAllocateVirtualMemory detour is off: give the address space back, a re-inject reserves its own */
+	n_va_ballast::release( );
+
 	g_input.on_release( );
 
 	boot_crumb( "released, freeing module" );
@@ -652,6 +659,9 @@ int __stdcall DllMain( void* instance, unsigned long reason_for_call, void* rese
 
 		crash_witness_install( instance );
 
+		/* first, while the big holes are still there */
+		n_va_ballast::reserve( );
+
 		boot_crumb( "spawning init thread" );
 
 		/* RAW CreateThread: a std::thread wrapper runs OUR code after the body returns, and this thread ends in
@@ -660,6 +670,7 @@ int __stdcall DllMain( void* instance, unsigned long reason_for_call, void* rese
 
 		if ( !init_thread ) {
 			crash_witness_remove( );
+			n_va_ballast::release( );
 			return FALSE;
 		}
 

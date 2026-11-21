@@ -31,7 +31,8 @@ enum ImGuiFreeTypeBuilderFlags {
 	ImGuiFreeTypeBuilderFlags_Monochrome  = 1 << 7, // Disable anti-aliasing. Combine this with MonoHinting for best results!
 	ImGuiFreeTypeBuilderFlags_LoadColor   = 1 << 8, // Enable FreeType color-layered glyphs
 	ImGuiFreeTypeBuilderFlags_Bitmap      = 1 << 9, // Enable FreeType bitmap glyphs
-	ImGuiFreeTypeBuilderFlags_Stroke      = 1 << 10 // botox: glyph = its 1px outer stroke (FT_Stroker), advance unchanged. outline twin font
+	ImGuiFreeTypeBuilderFlags_Stroke      = 1 << 10, // botox: glyph = its 1px outer stroke (FT_Stroker), advance unchanged. outline twin font
+	ImGuiFreeTypeBuilderFlags_File        = 1 << 11  // botox: FontData = ansi path ( must outlive the atlas ), FontDataSize = file size. read from disk in pages, never whole
 };
 
 namespace ImGuiFreeType
@@ -50,6 +51,9 @@ namespace ImGuiFreeType
 	// botox: ImFontAtlasFlags_BotoxPixelSlot pixels ( imgui_px_slot.h ). GiveBackPixels = true when it was the slot ( never IM_FREE it )
 	IMGUI_API bool GiveBackPixels( void* pixels );
 	IMGUI_API void ReleasePixelSlot( );
+
+	// botox: FT_Face over the ImGuiFreeTypeBuilderFlags_File page stream ( FT_New_Face maps the whole file ). 0 = ok, FT_Done_Face closes it
+	IMGUI_API int OpenFileFace( void* ft_library, const char* path, long face_index, void** face );
 
 	// Obsolete names (will be removed soon)
 	// Prefer using '#define IMGUI_ENABLE_FREETYPE'

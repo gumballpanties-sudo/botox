@@ -66,11 +66,6 @@ namespace n_reflections
 
 		IDirect3DPixelShader9* m_shaders[ shader_max ]{ };
 
-		IDirect3DTexture9* m_frame_texture = nullptr;
-		IDirect3DSurface9* m_frame_surface = nullptr;
-
-		IDirect3DSurface9* m_resolve_surface = nullptr;
-
 		IDirect3DTexture9* m_normal_texture[ 2 ]{ };
 		IDirect3DSurface9* m_normal_surface[ 2 ]{ };
 

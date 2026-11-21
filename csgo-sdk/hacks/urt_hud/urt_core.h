@@ -139,7 +139,7 @@ namespace n_urt
 		ImDrawList* m_list = nullptr;
 		float m_sx = 1.f, m_sy = 1.f; // cgs.screenXScale / screenYScale
 		float m_color[ 4 ]{ 1.f, 1.f, 1.f, 1.f };
-		std::vector< std::vector< std::uint8_t > >* m_files = nullptr;
+		std::vector< std::uint8_t > ( *m_read )( int image ) = nullptr; // cached file, read when its texture is made, never held
 		std::vector< texture_t >* m_textures = nullptr;
 		int m_blend = 0; // blend the list is currently in
 	};
@@ -165,14 +165,14 @@ namespace n_urt
 
 	inline IDirect3DTexture9* texture( int image )
 	{
-		if ( image < 0 || !g_draw.m_files || !g_draw.m_textures || image >= static_cast< int >( g_draw.m_files->size( ) ) )
+		if ( image < 0 || !g_draw.m_read || !g_draw.m_textures || image >= static_cast< int >( std::size( k_images ) ) )
 			return nullptr;
-		if ( g_draw.m_textures->size( ) != g_draw.m_files->size( ) )
-			g_draw.m_textures->resize( g_draw.m_files->size( ) );
+		if ( g_draw.m_textures->size( ) != std::size( k_images ) )
+			g_draw.m_textures->resize( std::size( k_images ) );
 		texture_t& t = ( *g_draw.m_textures )[ image ];
 		if ( !t.m_tried ) {
 			t.m_tried = true;
-			const auto& f = ( *g_draw.m_files )[ image ];
+			const std::vector< std::uint8_t > f = g_draw.m_read( image );
 			IDirect3DDevice9* const device = g_interfaces.m_direct_device;
 			const std::string_view path    = k_images[ image ].m_path;
 			if ( path.size( ) > 4 && path.substr( path.size( ) - 4 ) == ".tga" ) {

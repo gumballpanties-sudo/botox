@@ -145,16 +145,11 @@ void n_depth_view::impl_t::release( )
 		}
 	};
 
-	drop( this->m_resolve_surface );
-	drop( this->m_frame_surface );
-	drop( this->m_frame_texture );
 	drop( this->m_shader );
 	drop( this->m_fog_shader );
 
-	this->m_width        = 0;
-	this->m_height       = 0;
-	this->m_format       = D3DFMT_UNKNOWN;
-	this->m_multi_sample = D3DMULTISAMPLE_NONE;
+	this->m_width  = 0;
+	this->m_height = 0;
 }
 
 void n_depth_view::impl_t::on_device_lost( )
@@ -206,47 +201,6 @@ IDirect3DPixelShader9* n_depth_view::impl_t::ensure_shader( IDirect3DDevice9* de
 	g_console.print( fog ? "adaptive fog: shader built" : "depth view: shader built" );
 
 	return shader;
-}
-
-bool n_depth_view::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description )
-{
-	const int width  = static_cast< int >( description.Width );
-	const int height = static_cast< int >( description.Height );
-
-	if ( this->m_frame_texture && this->m_width == width && this->m_height == height && this->m_format == description.Format &&
-	     this->m_multi_sample == description.MultiSampleType )
-		return true;
-
-	const auto drop = []( auto& resource ) {
-		if ( resource ) {
-			resource->Release( );
-			resource = nullptr;
-		}
-	};
-
-	drop( this->m_resolve_surface );
-	drop( this->m_frame_surface );
-	drop( this->m_frame_texture );
-
-	if ( FAILED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, description.Format, D3DPOOL_DEFAULT,
-	                                    &this->m_frame_texture, nullptr ) ) ||
-	     FAILED( this->m_frame_texture->GetSurfaceLevel( 0, &this->m_frame_surface ) ) ||
-	     ( description.MultiSampleType != D3DMULTISAMPLE_NONE &&
-	       FAILED( device->CreateRenderTarget( description.Width, description.Height, description.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
-	                                           &this->m_resolve_surface, nullptr ) ) ) ) {
-		g_console.print< n_console::log_level::WARNING >( "depth view: frame copy creation failed" );
-		drop( this->m_resolve_surface );
-		drop( this->m_frame_surface );
-		drop( this->m_frame_texture );
-		return false;
-	}
-
-	this->m_width        = width;
-	this->m_height       = height;
-	this->m_format       = description.Format;
-	this->m_multi_sample = description.MultiSampleType;
-
-	return true;
 }
 
 void n_depth_view::impl_t::on_post_screen_space_effects( c_view_setup* setup )
@@ -321,12 +275,14 @@ void n_depth_view::impl_t::execute( const frame_t frame )
 
 	D3DSURFACE_DESC description{ };
 
-	if ( FAILED( target->GetDesc( &description ) ) || !this->build( device, description ) ) {
+	if ( FAILED( target->GetDesc( &description ) ) ) {
 		target->Release( );
 		return;
 	}
 
 	this->m_active = true;
+	this->m_width  = static_cast< int >( description.Width );
+	this->m_height = static_cast< int >( description.Height );
 
 	IDirect3DPixelShader9* shader = this->ensure_shader( device, frame.m_fog );
 	IDirect3DTexture9* depth      = g_depth_source.ensure( device, description ) ? g_depth_source.texture( ) : nullptr;
@@ -340,9 +296,9 @@ void n_depth_view::impl_t::execute( const frame_t frame )
 		return;
 	}
 
-	const long blit_result = n_frame_copy::copy( device, target, this->m_resolve_surface, this->m_frame_surface );
+	IDirect3DTexture9* frame_copy = n_frame_copy::grab( device, target, description );
 
-	if ( FAILED( blit_result ) ) {
+	if ( !frame_copy ) {
 		target->Release( );
 		return;
 	}
@@ -488,7 +444,7 @@ void n_depth_view::impl_t::execute( const frame_t frame )
 	}
 
 	device->SetTexture( 0, depth );
-	device->SetTexture( 1, this->m_frame_texture );
+	device->SetTexture( 1, frame_copy );
 	device->SetRenderTarget( 0, target );
 	device->SetViewport( &viewport );
 	device->SetPixelShader( shader );

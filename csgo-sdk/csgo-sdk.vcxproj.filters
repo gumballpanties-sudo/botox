@@ -141,6 +141,7 @@
     <ClCompile Include="hacks\auto_wall\auto_wall.cpp" />
     <ClCompile Include="globals\media_player\media_player.cpp" />
     <ClCompile Include="hooks\functions\alloc_key_values_memory.cpp" />
+    <ClCompile Include="hooks\functions\nt_allocate_virtual_memory.cpp" />
     <ClCompile Include="hooks\functions\create_move_proxy.cpp" />
     <ClCompile Include="hooks\functions\draw_model_execute.cpp" />
     <ClCompile Include="hooks\functions\build_transformations.cpp" />

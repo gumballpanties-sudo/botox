@@ -399,12 +399,6 @@ void n_true_motion_blur::impl_t::release( )
 	release_target( this->m_tile_row_texture, this->m_tile_row_surface );
 	release_target( this->m_info_texture, this->m_info_surface );
 	release_target( this->m_blur_texture, this->m_blur_surface );
-	release_target( this->m_stage_texture, this->m_stage_surface );
-
-	if ( this->m_resolve_surface ) {
-		this->m_resolve_surface->Release( );
-		this->m_resolve_surface = nullptr;
-	}
 
 	for ( IDirect3DPixelShader9*& shader : this->m_shaders ) {
 		if ( shader ) {
@@ -490,34 +484,72 @@ IDirect3DPixelShader9* n_true_motion_blur::impl_t::ensure_shader( IDirect3DDevic
 	return this->m_shaders[ which ];
 }
 
-bool n_true_motion_blur::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description )
+bool n_true_motion_blur::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description, const bool history )
 {
 	const int width  = static_cast< int >( description.Width );
 	const int height = static_cast< int >( description.Height );
 
-	if ( this->m_stage_texture && this->m_width == width && this->m_height == height && this->m_format == description.Format &&
-	     this->m_multi_sample == description.MultiSampleType )
-		return true;
+	// neighbour is made last: set = velocity targets built
+	if ( !this->m_neighbour_texture || this->m_width != width || this->m_height != height || this->m_format != description.Format ||
+	     this->m_multi_sample != description.MultiSampleType ) {
+		IDirect3DPixelShader9* kept[ shader_max ]{ };
 
-	IDirect3DPixelShader9* kept[ shader_max ]{ };
+		for ( int i = 0; i < shader_max; ++i ) {
+			kept[ i ]            = this->m_shaders[ i ];
+			this->m_shaders[ i ] = nullptr;
+		}
 
-	for ( int i = 0; i < shader_max; ++i ) {
-		kept[ i ]            = this->m_shaders[ i ];
-		this->m_shaders[ i ] = nullptr;
-	}
-
-	this->release( );
-
-	for ( int i = 0; i < shader_max; ++i )
-		this->m_shaders[ i ] = kept[ i ];
-
-	if ( FAILED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, description.Format, D3DPOOL_DEFAULT,
-	                                    &this->m_stage_texture, nullptr ) ) ||
-	     FAILED( this->m_stage_texture->GetSurfaceLevel( 0, &this->m_stage_surface ) ) ) {
-		g_console.print< n_console::log_level::WARNING >( "true motion blur: stage target creation failed" );
 		this->release( );
-		return false;
+
+		for ( int i = 0; i < shader_max; ++i )
+			this->m_shaders[ i ] = kept[ i ];
+
+		const int tile = std::max( 8, height / 20 );
+
+		const unsigned int tile_width  = static_cast< unsigned int >( ( width + tile - 1 ) / tile );
+		const unsigned int tile_height = static_cast< unsigned int >( ( height + tile - 1 ) / tile );
+
+		if ( !create_vector_target( device, description.Width, description.Height, this->m_info_texture, this->m_info_surface ) ||
+		     !create_vector_target( device, tile_width, description.Height, this->m_tile_row_texture, this->m_tile_row_surface ) ||
+		     !create_vector_target( device, tile_width, tile_height, this->m_tile_texture, this->m_tile_surface ) ||
+		     !create_vector_target( device, tile_width, tile_height, this->m_neighbour_texture, this->m_neighbour_surface ) ) {
+			g_console.print< n_console::log_level::WARNING >( "true motion blur: no floating point render target — velocity buffer unavailable" );
+			this->release( );
+			this->m_compile_failed = true;
+			return false;
+		}
+
+		this->m_width         = width;
+		this->m_height        = height;
+		this->m_tile_size     = tile;
+		this->m_tile_width    = static_cast< int >( tile_width );
+		this->m_tile_height   = static_cast< int >( tile_height );
+		this->m_format        = description.Format;
+		this->m_multi_sample  = description.MultiSampleType;
+		this->m_history_index = 0;
+		this->m_history_empty = true;
+
+		const int samples = static_cast< int >( description.MultiSampleType );
+
+		g_console.print(
+			std::vformat( "true motion blur: built {:d}x{:d} msaa {:d} tile {:d}", std::make_format_args( width, height, samples, tile ) ).c_str( ) );
 	}
+
+	// object trail off ( default ): no history frames, no gather target. ~20 bytes a pixel back
+	if ( !history ) {
+		for ( int i = 0; i < 2; ++i )
+			release_target( this->m_history_texture[ i ], this->m_history_surface[ i ] );
+
+		release_target( this->m_blur_texture, this->m_blur_surface );
+
+		this->m_history_index = 0;
+		this->m_history_empty = true;
+
+		return true;
+	}
+
+	if ( this->m_history_texture[ 1 ] )
+		return true;
 
 	if ( FAILED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
 	                                    &this->m_blur_texture, nullptr ) ) ||
@@ -542,45 +574,13 @@ bool n_true_motion_blur::impl_t::build( IDirect3DDevice9* device, const D3DSURFA
 			this->release( );
 			return false;
 		}
+
+		// fresh default pool memory is undefined, accumulate reads it at weight 0: NaN * 0 would stick in the trail
+		device->ColorFill( this->m_history_surface[ i ], nullptr, D3DCOLOR_ARGB( 0, 0, 0, 0 ) );
 	}
 
-	const int tile = std::max( 8, height / 20 );
-
-	const unsigned int tile_width  = static_cast< unsigned int >( ( width + tile - 1 ) / tile );
-	const unsigned int tile_height = static_cast< unsigned int >( ( height + tile - 1 ) / tile );
-
-	if ( !create_vector_target( device, description.Width, description.Height, this->m_info_texture, this->m_info_surface ) ||
-	     !create_vector_target( device, tile_width, description.Height, this->m_tile_row_texture, this->m_tile_row_surface ) ||
-	     !create_vector_target( device, tile_width, tile_height, this->m_tile_texture, this->m_tile_surface ) ||
-	     !create_vector_target( device, tile_width, tile_height, this->m_neighbour_texture, this->m_neighbour_surface ) ) {
-		g_console.print< n_console::log_level::WARNING >( "true motion blur: no floating point render target — velocity buffer unavailable" );
-		this->release( );
-		this->m_compile_failed = true;
-		return false;
-	}
-
-	if ( description.MultiSampleType != D3DMULTISAMPLE_NONE &&
-	     FAILED( device->CreateRenderTarget( description.Width, description.Height, description.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
-	                                         &this->m_resolve_surface, nullptr ) ) ) {
-		g_console.print< n_console::log_level::WARNING >( "true motion blur: msaa resolve target creation failed" );
-		this->release( );
-		return false;
-	}
-
-	this->m_width         = width;
-	this->m_height        = height;
-	this->m_tile_size     = tile;
-	this->m_tile_width    = static_cast< int >( tile_width );
-	this->m_tile_height   = static_cast< int >( tile_height );
-	this->m_format        = description.Format;
-	this->m_multi_sample  = description.MultiSampleType;
 	this->m_history_index = 0;
 	this->m_history_empty = true;
-
-	const int samples = static_cast< int >( description.MultiSampleType );
-
-	g_console.print(
-		std::vformat( "true motion blur: built {:d}x{:d} msaa {:d} tile {:d}", std::make_format_args( width, height, samples, tile ) ).c_str( ) );
 
 	return true;
 }
@@ -1548,7 +1548,7 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 	const n_gpu_timer::scope_t gpu_timer( device, n_gpu_timer::pass_motion_blur );
 
 	if ( !GET_VARIABLE( g_variables.m_true_motion_blur, bool ) || this->m_compile_failed ) {
-		if ( this->m_stage_texture )
+		if ( this->m_info_texture )
 			this->release( );
 
 		this->m_active = false;
@@ -1567,7 +1567,13 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 		return;
 	}
 
-	if ( !this->build( device, description ) ) {
+	const bool keep_history = frame.m_blend > 0.01f || frame.m_viewmodel_blend > 0.01f;
+
+	// config, not the blend: blend dips under 0.01 on a long frame, history would be freed + rebuilt
+	const bool trail_on = GET_VARIABLE( g_variables.m_true_motion_blur_object, float ) > 0.f &&
+	                      GET_VARIABLE( g_variables.m_true_motion_blur_shutter, float ) > 0.f;
+
+	if ( !this->build( device, description, trail_on || keep_history ) ) {
 		target->Release( );
 		return;
 	}
@@ -1583,8 +1589,6 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 	const bool blur_camera = frame.m_valid && ( frame.m_exposure > 0.f || blur_gun_velocity );
 	const bool blur_object = frame.m_valid && frame.m_blend > 0.01f && !this->m_history_empty;
 	const bool blur_gun    = frame.m_valid && frame.m_viewmodel_blend > 0.01f && !this->m_history_empty;
-
-	const bool keep_history = frame.m_blend > 0.01f || frame.m_viewmodel_blend > 0.01f;
 
 	if ( !keep_history )
 		this->m_history_empty = true;
@@ -1637,9 +1641,11 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 		return;
 	}
 
-	const long blit_result = n_frame_copy::copy( device, target, this->m_resolve_surface, this->m_stage_surface );
+	HRESULT blit_result = E_FAIL;
 
-	if ( FAILED( blit_result ) ) {
+	IDirect3DTexture9* frame_copy = n_frame_copy::grab( device, target, description, &blit_result );
+
+	if ( !frame_copy ) {
 		static bool logged_blit = false;
 
 		if ( !logged_blit ) {
@@ -1935,7 +1941,7 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 		n_fx_compat::draw_up( device, D3DPT_TRIANGLESTRIP, 2, quad, sizeof( vertex_t ) );
 	};
 
-	IDirect3DTexture9* current = this->m_stage_texture;
+	IDirect3DTexture9* current = frame_copy;
 
 	if ( blur_camera ) {
 		device->SetTexture( 0, depth );
@@ -1954,7 +1960,7 @@ void n_true_motion_blur::impl_t::execute( const frame_t frame )
 		device->SetSamplerState( 0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR );
 		device->SetSamplerState( 0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR );
 
-		device->SetTexture( 0, this->m_stage_texture );
+		device->SetTexture( 0, frame_copy );
 		device->SetTexture( 1, this->m_info_texture );
 		device->SetTexture( 2, this->m_neighbour_texture );
 

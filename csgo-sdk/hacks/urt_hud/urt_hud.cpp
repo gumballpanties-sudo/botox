@@ -44,7 +44,8 @@ namespace
 
 	std::atomic< int > s_load_state{ 0 }; // 0 idle, 1 loading, 2 ready, 3 failed
 	int s_missing = 0;
-	std::vector< std::vector< std::uint8_t > > s_files{ }; // per k_images, immutable once state 2
+	std::vector< std::vector< std::uint8_t > > s_sounds{ }; // per k_images, a wav read at its first play ( s_sound_lock ), kept: PlaySound reads it async
+	std::mutex s_sound_lock{ };
 	std::vector< texture_t > s_textures{ };
 
 	std::string cache_path( const char* rel )
@@ -56,9 +57,30 @@ namespace
 
 	bool read_bytes( const std::string& path, std::vector< std::uint8_t >& out )
 	{
-		std::ifstream file( path, std::ios::binary );
-		out.assign( std::istreambuf_iterator< char >( file ), std::istreambuf_iterator< char >( ) );
+		std::ifstream file( path, std::ios::binary | std::ios::ate );
+		const std::streamoff size = file ? static_cast< std::streamoff >( file.tellg( ) ) : -1;
+		out.clear( );
+		if ( size <= 0 || size > ( 64 << 20 ) )
+			return false;
+		/* render / game thread hooks: no room = no file, never a throw */
+		try {
+			out.resize( static_cast< size_t >( size ) );
+		}
+		catch ( const std::bad_alloc& ) {
+			return false;
+		}
+		file.seekg( 0 );
+		if ( !file.read( reinterpret_cast< char* >( out.data( ) ), size ) )
+			out.clear( );
 		return !out.empty( );
+	}
+
+	/* images are read when their texture is made ( urt_core.h ), never all at once */
+	std::vector< std::uint8_t > read_image( int i )
+	{
+		std::vector< std::uint8_t > out{ };
+		read_bytes( cache_path( k_images[ i ].m_path ), out );
+		return out;
 	}
 
 	void load_worker( )
@@ -78,11 +100,11 @@ namespace
 		for ( std::thread& t : pool )
 			t.join( );
 
-		std::vector< std::vector< std::uint8_t > > files( std::size( k_images ) );
 		int missing = 0;
 		for ( size_t i = 0; i < std::size( k_images ); ++i ) {
 			const std::string path = cache_path( k_images[ i ].m_path );
-			if ( !read_bytes( path, files[ i ] ) ) {
+			std::error_code ec{ };
+			if ( std::filesystem::file_size( path, ec ) == 0 || ec ) {
 				DeleteFileA( path.c_str( ) );
 				++missing;
 			}
@@ -94,7 +116,10 @@ namespace
 		if ( missing == static_cast< int >( std::size( k_images ) ) )
 			s_load_state = 3;
 		else {
-			s_files      = std::move( files );
+			{
+				std::lock_guard< std::mutex > lock( s_sound_lock );
+				s_sounds.assign( std::size( k_images ), { } );
+			}
 			s_load_state = 2;
 		}
 		--g_url_image_downloads;
@@ -113,8 +138,15 @@ namespace
 	void play( std::string_view wav )
 	{
 		const int i = image_index( wav );
-		if ( s_load_state == 2 && i >= 0 && !s_files[ i ].empty( ) )
-			PlaySoundA( reinterpret_cast< LPCSTR >( s_files[ i ].data( ) ), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT );
+		if ( s_load_state != 2 || i < 0 )
+			return;
+		std::lock_guard< std::mutex > lock( s_sound_lock );
+		if ( static_cast< size_t >( i ) >= s_sounds.size( ) )
+			return;
+		if ( s_sounds[ i ].empty( ) )
+			read_bytes( cache_path( k_images[ i ].m_path ), s_sounds[ i ] );
+		if ( !s_sounds[ i ].empty( ) )
+			PlaySoundA( reinterpret_cast< LPCSTR >( s_sounds[ i ].data( ) ), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT );
 	}
 
 	/* ---- cvars: render thread owns them, the game thread reads the few it needs through atomics ---- */
@@ -1852,7 +1884,7 @@ void n_urt_hud::impl_t::on_end_scene( )
 	g_draw.m_list     = ImGui::GetBackgroundDrawList( );
 	g_draw.m_sx       = ( right - left ) / 640.f;
 	g_draw.m_sy       = static_cast< float >( h ) / 480.f;
-	g_draw.m_files    = &s_files;
+	g_draw.m_read     = read_image;
 	g_draw.m_textures = &s_textures;
 	g_draw.m_blend    = 0;
 	set_color( nullptr );

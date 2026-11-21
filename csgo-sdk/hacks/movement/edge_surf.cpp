@@ -117,16 +117,31 @@ namespace
 	{
 		return t.surface.m_name && strstr( t.surface.m_name, "displacement" );
 	}
-	/* movement collides with it: world, a static prop, or an entity outside debris / pushaway ( COLLISION_GROUP_PLAYER_MOVEMENT passes those ) */
-	bool es_moves_hit( const trace_t& t )
+	/* movement collides with it: world, a static prop, or an entity outside debris / pushaway / weapon ( COLLISION_GROUP_PLAYER_MOVEMENT passes those,
+	   cs_gamerules.cpp:15118 "Don't stand on COLLISION_GROUP_WEAPONs" ) */
+	bool es_moves_ent( c_base_entity* const e )
 	{
-		c_base_entity* const e = t.m_hit_entity;
 		if ( !e || e->get_index( ) == 0 )
 			return true;
 		const int g = e->get_collision_group( );
 		return g != e_collision_group::collision_group_debris && g != e_collision_group::collision_group_debris_trigger &&
-		       g != e_collision_group::collision_group_interactive_debris && g != e_collision_group::collision_group_pushaway;
+		       g != e_collision_group::collision_group_interactive_debris && g != e_collision_group::collision_group_pushaway &&
+		       g != e_collision_group::collision_group_weapon;
 	}
+
+	/* tb's world + props filter minus what player movement passes ( weapons, debris, pushaway ): a dropped gun is no ledge, top or floor */
+	struct es_filter_t : n_tb::c_trace_filter_tb_world_props {
+		using c_trace_filter_tb_world_props::c_trace_filter_tb_world_props;
+		bool should_hit_entity( c_base_entity* entity, int mask ) override
+		{
+			if ( !c_trace_filter_tb_world_props::should_hit_entity( entity, mask ) )
+				return false;
+			/* a static prop handle has no entity behind it */
+			if ( ( entity->get_ref_ehandle( ) >> 16 ) == ( 1u << 15 ) )
+				return true;
+			return es_moves_ent( entity );
+		}
+	};
 
 	/* n_es adapter: sims = the tb family's prediction ( restore / pred_simulate / snapshots ), traces = tb_trace with world + props */
 	struct es_world_t {
@@ -137,7 +152,7 @@ namespace
 		float duck_speed = 0.f, last_duck = 0.f, now = 0.f, duck_gap = 0.4f;
 		bool debug = false;
 		int sims   = 0;
-		n_tb::c_trace_filter_tb_world_props filter;
+		es_filter_t filter;
 
 		explicit es_world_t( c_base_entity* l ) : local( l ), filter( l ) { }
 
@@ -184,6 +199,27 @@ namespace
 			g_prediction.snapshot_load( i );
 			n_tb::s_pred_dirty = true;
 		}
+		/* each prop / entity a sweep met, once per 10 s: names a prop= face ( sprop = the bsp static prop index, tools/wc_engine/bsp_props_box.py ) */
+		static void note_obj( c_base_entity* const he, const bool ent, const int solid, const int hitbox )
+		{
+			static int s_seen[ 32 ]{ };
+			static int s_n                   = 0;
+			static unsigned long long s_reset = 0ull;
+			if ( const unsigned long long t = GetTickCount64( ); t >= s_reset ) {
+				s_n     = 0;
+				s_reset = t + 10000ull;
+			}
+			const int code = ent ? he->get_index( ) : -hitbox;
+			if ( std::find( s_seen, s_seen + std::min( s_n, 32 ), code ) != s_seen + std::min( s_n, 32 ) )
+				return;
+			s_seen[ s_n++ % 32 ] = code;
+			if ( !ent ) {
+				botox_dbg_log( "ESURF: obj sprop=%d", hitbox - 1 );
+				return;
+			}
+			const auto* const cc = static_cast< c_client_networkable* >( he )->get_client_class( );
+			botox_dbg_log( "ESURF: obj ent=%d %s solid=%d group=%d", code, cc && cc->m_network_name ? cc->m_network_name : "?", solid, he->get_collision_group( ) );
+		}
 		/* cs_gamerules.cpp g_CSViewVectors */
 		n_es::hull_t hull( const bool duck ) const { return { n_es::mk( -16.f, -16.f, 0.f ), n_es::mk( 16.f, 16.f, duck ? 54.f : 72.f ) }; }
 		bool trace( const n_es::v3& a, const n_es::v3& b, const n_es::v3& mins, const n_es::v3& maxs, n_es::hit_t& h )
@@ -198,8 +234,16 @@ namespace
 			h.d           = n_tb::hull_plane_dist( tr, tov( mins ), tov( maxs ) );
 			h.disp        = es_disp_hit( tr );
 			h.ladder      = botox_is_ladder_trace( tr );
-			h.moves       = es_moves_hit( tr );
-			h.world       = !tr.m_hit_entity || tr.m_hit_entity->get_index( ) == 0;
+			h.moves       = es_moves_ent( tr.m_hit_entity );
+			/* world = box rules: a world brush or a brush entity ( SOLID_BSP, CM_TransformedBoxTrace ). vp = vphysics: a static prop ( reads as the world
+			   entity with hitbox = prop index + 1, kisak enginetrace.cpp:1321 ) or SOLID_VPHYSICS. an entity bbox / obb = neither */
+			c_base_entity* const he = tr.m_hit_entity;
+			const bool ent          = he && he->get_index( ) != 0;
+			const int solid         = ent && he->get_collideable( ) ? he->get_collideable( )->get_solid( ) : 0;
+			h.world                 = tr.m_hitbox == 0 && ( !ent || solid == 1 /* SOLID_BSP */ );
+			h.vp                    = ( !ent && tr.m_hitbox != 0 ) || solid == 6 /* SOLID_VPHYSICS */;
+			if ( debug && tr.m_fraction < 1.f && !h.world )
+				note_obj( he, ent, solid, tr.m_hitbox );
 			return tr.m_fraction < 1.f;
 		}
 		int sims_left( ) const { return n_tb::sims_left( ); }
@@ -349,8 +393,8 @@ bool edge_surf_eb_end( bool& lift )
 			bg   = g;
 			best = i;
 		}
-	/* a prop: the lift's 9u fall back steps under 2u, its over the top pin needs more */
-	if ( best < 0 || c[ best ].prop )
+	/* only vphysics: the lift's 9u fall back steps under 2u, its over the top pin needs more */
+	if ( best < 0 || n_es::vphys( c[ best ] ) )
 		return true;
 	static auto sv_airaccelerate = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
 	const float away  = -n_es::closing( c[ best ], s.v );

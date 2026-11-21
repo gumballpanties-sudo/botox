@@ -97,6 +97,91 @@ static unsigned char* ImFontAtlasAllocAlpha8( ImFontAtlas* atlas, size_t size )
 	return px;
 }
 
+/* botox ImGuiFreeTypeBuilderFlags_File: freetype reads the file through a few small pages, a cjk .ttc is never one 13-19 mb block */
+static const int k_font_file_pages = 4;
+static const unsigned long k_font_file_page = 16 * 1024;
+
+struct ImFontFileStream {
+	FT_StreamRec Rec; // first: freetype hands this pointer back
+	HANDLE File;
+	unsigned long PageAt[ k_font_file_pages ], PageLen[ k_font_file_pages ];
+	int Next;
+	unsigned char Page[ k_font_file_pages ][ k_font_file_page ];
+};
+
+static bool ImFontFileRead( HANDLE file, unsigned long at, unsigned char* dst, unsigned long count )
+{
+	OVERLAPPED at_offset = { };
+	at_offset.Offset     = at;
+	DWORD got            = 0;
+	return ReadFile( file, dst, count, &got, &at_offset ) && got == count;
+}
+
+static unsigned long ImFontFileStreamIo( FT_Stream stream, unsigned long offset, unsigned char* buffer, unsigned long count )
+{
+	ImFontFileStream* const s = ( ImFontFileStream* )stream;
+	if ( count == 0 )
+		return offset > stream->size; // seek, 0 = ok
+	if ( offset >= stream->size )
+		return 0;
+	count = ImMin( count, stream->size - offset );
+
+	const unsigned long page = k_font_file_page;
+	if ( count >= page )
+		return ImFontFileRead( s->File, offset, buffer, count ) ? count : 0;
+
+	unsigned long done = 0;
+	while ( done < count ) {
+		const unsigned long at = offset + done;
+		int p                  = 0;
+		while ( p < k_font_file_pages && !( at >= s->PageAt[ p ] && at - s->PageAt[ p ] < s->PageLen[ p ] ) )
+			p++;
+		if ( p == k_font_file_pages ) {
+			p       = s->Next;
+			s->Next = ( s->Next + 1 ) % k_font_file_pages;
+			const unsigned long base = at - at % page, len = ImMin( page, stream->size - base );
+			s->PageLen[ p ] = 0;
+			if ( !ImFontFileRead( s->File, base, s->Page[ p ], len ) )
+				return done;
+			s->PageAt[ p ]  = base;
+			s->PageLen[ p ] = len;
+		}
+		const unsigned long n = ImMin( count - done, s->PageAt[ p ] + s->PageLen[ p ] - at );
+		memcpy( buffer + done, s->Page[ p ] + ( at - s->PageAt[ p ] ), n );
+		done += n;
+	}
+	return done;
+}
+
+static void ImFontFileStreamClose( FT_Stream stream )
+{
+	ImFontFileStream* const s = ( ImFontFileStream* )stream;
+	CloseHandle( s->File );
+	IM_FREE( s );
+}
+
+/* freetype owns it from FT_Open_Face on: closed by FT_Done_Face, or by FT_Open_Face itself on failure */
+static FT_Stream ImFontFileStreamOpen( const char* path )
+{
+	const HANDLE file = CreateFileA( path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
+	if ( file == INVALID_HANDLE_VALUE )
+		return NULL;
+	LARGE_INTEGER size = { };
+	ImFontFileStream* const s = GetFileSizeEx( file, &size ) && size.QuadPart > 0 && size.QuadPart < 0x7fffffff
+	                                ? ( ImFontFileStream* )IM_ALLOC( sizeof( ImFontFileStream ) )
+	                                : NULL;
+	if ( !s ) {
+		CloseHandle( file );
+		return NULL;
+	}
+	memset( s, 0, offsetof( ImFontFileStream, Page ) );
+	s->File      = file;
+	s->Rec.size  = ( unsigned long )size.QuadPart;
+	s->Rec.read  = ImFontFileStreamIo;
+	s->Rec.close = ImFontFileStreamClose;
+	return &s->Rec;
+}
+
 //-------------------------------------------------------------------------
 // Code
 //-------------------------------------------------------------------------
@@ -188,7 +273,11 @@ namespace
 
 	bool FreeTypeFont::InitFont( FT_Library ft_library, const ImFontConfig& cfg, unsigned int extra_font_builder_flags )
 	{
-		FT_Error error = FT_New_Memory_Face( ft_library, ( uint8_t* )cfg.FontData, ( uint32_t )cfg.FontDataSize, ( uint32_t )cfg.FontNo, &Face );
+		FT_Error error;
+		if ( cfg.FontBuilderFlags & ImGuiFreeTypeBuilderFlags_File )
+			error = ImGuiFreeType::OpenFileFace( ft_library, ( const char* )cfg.FontData, ( long )cfg.FontNo, ( void** )&Face );
+		else
+			error = FT_New_Memory_Face( ft_library, ( uint8_t* )cfg.FontData, ( uint32_t )cfg.FontDataSize, ( uint32_t )cfg.FontNo, &Face );
 		g_ft_face_error = error;
 		g_ft_face_step  = "new_face";
 		if ( error != 0 )
@@ -453,6 +542,7 @@ namespace
 struct ImFontBuildSrcGlyphFT {
 	GlyphInfo Info;
 	uint32_t Codepoint;
+	bool Rendered;             // botox: has a pack rect ( rects are made after every face closed )
 	unsigned char* BitmapData; // Point within one of the dst_tmp_bitmap_buffers[] array ( botox: a8 unless the atlas loads colour )
 
 	ImFontBuildSrcGlyphFT( )
@@ -502,11 +592,10 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 	memset( ( void* )src_tmp_array.Data, 0, ( size_t )src_tmp_array.size_in_bytes( ) );
 	memset( ( void* )dst_tmp_array.Data, 0, ( size_t )dst_tmp_array.size_in_bytes( ) );
 
-	// 1. Initialize font loading structure, check font data validity
+	// 1. Initialize font loading structure ( botox: faces open one at a time in 2-4 )
 	for ( int src_i = 0; src_i < atlas->ConfigData.Size; src_i++ ) {
 		ImFontBuildSrcDataFT& src_tmp = src_tmp_array[ src_i ];
 		ImFontConfig& cfg             = atlas->ConfigData[ src_i ];
-		FreeTypeFont& font_face       = src_tmp.Font;
 		IM_ASSERT( cfg.DstFont && ( !cfg.DstFont->IsLoaded( ) || cfg.DstFont->ContainerAtlas == atlas ) );
 
 		// Find index from cfg.DstFont (we allow the user to set cfg.DstFont. Also it makes casual debugging nicer than when storing indices)
@@ -520,14 +609,6 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 			return false;
 		}
 
-		// Load font
-		if ( !font_face.InitFont( ft_library, cfg, extra_flags ) ) {
-			ImFormatString( g_ft_build_fail, sizeof( g_ft_build_fail ), "src %d/%d: %s error 0x%x, data %p size %d no %d px %.0f merge %d",
-			                src_i, atlas->ConfigData.Size, g_ft_face_step, ( unsigned )g_ft_face_error, cfg.FontData, cfg.FontDataSize,
-			                cfg.FontNo, cfg.SizePixels, cfg.MergeMode ? 1 : 0 );
-			return false;
-		}
-
 		// Measure highest codepoints
 		src_load_color |= ( cfg.FontBuilderFlags & ImGuiFreeTypeBuilderFlags_LoadColor ) != 0;
 		ImFontBuildDstDataFT& dst_tmp = dst_tmp_array[ src_tmp.DstIndex ];
@@ -538,12 +619,34 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 		dst_tmp.GlyphsHighest = ImMax( dst_tmp.GlyphsHighest, src_tmp.GlyphsHighest );
 	}
 
-	// 2. For every requested codepoint, check for their presence in the font data, and handle redundancy or overlaps between source fonts to avoid
-	// unused glyphs.
+	// 2. - 4. botox: per source, in order: open its face, find its codepoints ( an earlier source keeps an overlap ), render them, close it.
+	// one face ( one font file ) open at a time
+	const int BITMAP_BUFFERS_CHUNK_SIZE = 256 * 1024;
+	int buf_bitmap_current_used_bytes   = 0;
+	ImVector< unsigned char* > buf_bitmap_buffers;
+	buf_bitmap_buffers.push_back( ( unsigned char* )IM_ALLOC( BITMAP_BUFFERS_CHUNK_SIZE ) );
+
 	int total_glyphs_count = 0;
+	int total_surface      = 0;
+	const int padding      = atlas->TexGlyphPadding;
 	for ( int src_i = 0; src_i < src_tmp_array.Size; src_i++ ) {
 		ImFontBuildSrcDataFT& src_tmp = src_tmp_array[ src_i ];
 		ImFontBuildDstDataFT& dst_tmp = dst_tmp_array[ src_tmp.DstIndex ];
+		ImFontConfig& cfg             = atlas->ConfigData[ src_i ];
+
+		if ( !src_tmp.Font.InitFont( ft_library, cfg, extra_flags ) ) {
+			ImFormatString( g_ft_build_fail, sizeof( g_ft_build_fail ), "src %d/%d: %s error 0x%x, data %p size %d no %d px %.0f merge %d",
+			                src_i, atlas->ConfigData.Size, g_ft_face_step, ( unsigned )g_ft_face_error, cfg.FontData, cfg.FontDataSize,
+			                cfg.FontNo, cfg.SizePixels, cfg.MergeMode ? 1 : 0 );
+			for ( int buf_i = 0; buf_i < buf_bitmap_buffers.Size; buf_i++ )
+				IM_FREE( buf_bitmap_buffers[ buf_i ] );
+			for ( int dst_i = 0; dst_i < dst_tmp_array.Size; dst_i++ )
+				dst_tmp_array[ dst_i ].GlyphsSet.Clear( );
+			src_tmp_array.clear_destruct( );
+			return false;
+		}
+
+		// 2. For every requested codepoint, check for their presence in the font data, and handle redundancy or overlaps between source fonts
 		src_tmp.GlyphsSet.Create( src_tmp.GlyphsHighest + 1 );
 		if ( dst_tmp.GlyphsSet.Storage.empty( ) )
 			dst_tmp.GlyphsSet.Create( dst_tmp.GlyphsHighest + 1 );
@@ -564,12 +667,8 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 				dst_tmp.GlyphsSet.SetBit( codepoint );
 				total_glyphs_count++;
 			}
-	}
 
-	// 3. Unpack our bit map into a flat list (we now have all the Unicode points that we know are requested _and_ available _and_ not overlapping
-	// another)
-	for ( int src_i = 0; src_i < src_tmp_array.Size; src_i++ ) {
-		ImFontBuildSrcDataFT& src_tmp = src_tmp_array[ src_i ];
+		// 3. Unpack our bit map into a flat list
 		src_tmp.GlyphsList.reserve( src_tmp.GlyphsCount );
 
 		IM_ASSERT( sizeof( src_tmp.GlyphsSet.Storage.Data[ 0 ] ) == sizeof( ImU32 ) );
@@ -581,52 +680,17 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 					if ( entries_32 & ( ( ImU32 )1 << bit_n ) ) {
 						ImFontBuildSrcGlyphFT src_glyph;
 						src_glyph.Codepoint = ( ImWchar )( ( ( it - it_begin ) << 5 ) + bit_n );
-						// src_glyph.GlyphIndex = 0; // FIXME-OPT: We had this info in the previous step and lost it..
 						src_tmp.GlyphsList.push_back( src_glyph );
 					}
 		src_tmp.GlyphsSet.Clear( );
 		IM_ASSERT( src_tmp.GlyphsList.Size == src_tmp.GlyphsCount );
-	}
-	for ( int dst_i = 0; dst_i < dst_tmp_array.Size; dst_i++ )
-		dst_tmp_array[ dst_i ].GlyphsSet.Clear( );
-	dst_tmp_array.clear( );
 
-	// Allocate packing character data and flag packed characters buffer as non-packed (x0=y0=x1=y1=0)
-	// (We technically don't need to zero-clear buf_rects, but let's do it for the sake of sanity)
-	ImVector< stbrp_rect > buf_rects;
-	buf_rects.resize( total_glyphs_count );
-	memset( buf_rects.Data, 0, ( size_t )buf_rects.size_in_bytes( ) );
-
-	// Allocate temporary rasterization data buffers.
-	// We could not find a way to retrieve accurate glyph size without rendering them.
-	// (e.g. slot->metrics->width not always matching bitmap->width, especially considering the Oblique transform)
-	// We allocate in chunks of 256 KB to not waste too much extra memory ahead. Hopefully users of FreeType won't mind the temporary allocations.
-	const int BITMAP_BUFFERS_CHUNK_SIZE = 256 * 1024;
-	int buf_bitmap_current_used_bytes   = 0;
-	ImVector< unsigned char* > buf_bitmap_buffers;
-	buf_bitmap_buffers.push_back( ( unsigned char* )IM_ALLOC( BITMAP_BUFFERS_CHUNK_SIZE ) );
-
-	// 4. Gather glyphs sizes so we can pack them in our virtual canvas.
-	// 8. Render/rasterize font characters into the texture
-	int total_surface   = 0;
-	int buf_rects_out_n = 0;
-	for ( int src_i = 0; src_i < src_tmp_array.Size; src_i++ ) {
-		ImFontBuildSrcDataFT& src_tmp = src_tmp_array[ src_i ];
-		ImFontConfig& cfg             = atlas->ConfigData[ src_i ];
-		if ( src_tmp.GlyphsCount == 0 )
-			continue;
-
-		src_tmp.Rects = &buf_rects[ buf_rects_out_n ];
-		buf_rects_out_n += src_tmp.GlyphsCount;
-
-		// Compute multiply table if requested
+		// 4. Render glyphs into 256 KB temporary chunks, keep their sizes for packing
 		const bool multiply_enabled = ( cfg.RasterizerMultiply != 1.0f );
 		unsigned char multiply_table[ 256 ];
 		if ( multiply_enabled )
 			ImFontAtlasBuildMultiplyCalcLookupTable( multiply_table, cfg.RasterizerMultiply );
 
-		// Gather the sizes of all rectangles we will need to pack
-		const int padding = atlas->TexGlyphPadding;
 		for ( int glyph_i = 0; glyph_i < src_tmp.GlyphsList.Size; glyph_i++ ) {
 			ImFontBuildSrcGlyphFT& src_glyph = src_tmp.GlyphsList[ glyph_i ];
 
@@ -653,10 +717,33 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 			buf_bitmap_current_used_bytes += bitmap_size_in_bytes;
 			src_tmp.Font.BlitGlyph( ft_bitmap, src_glyph.BitmapData, src_glyph.Info.Width, multiply_enabled ? multiply_table : NULL, !src_load_color );
 
-			src_tmp.Rects[ glyph_i ].w = ( stbrp_coord )( src_glyph.Info.Width + padding );
-			src_tmp.Rects[ glyph_i ].h = ( stbrp_coord )( src_glyph.Info.Height + padding );
-			total_surface += src_tmp.Rects[ glyph_i ].w * src_tmp.Rects[ glyph_i ].h;
+			src_glyph.Rendered = true;
+			total_surface += ( stbrp_coord )( src_glyph.Info.Width + padding ) * ( stbrp_coord )( src_glyph.Info.Height + padding );
 		}
+
+		src_tmp.Font.CloseFont( );
+	}
+	for ( int dst_i = 0; dst_i < dst_tmp_array.Size; dst_i++ )
+		dst_tmp_array[ dst_i ].GlyphsSet.Clear( );
+	dst_tmp_array.clear( );
+
+	// Allocate packing character data and flag packed characters buffer as non-packed (x0=y0=x1=y1=0)
+	ImVector< stbrp_rect > buf_rects;
+	buf_rects.resize( total_glyphs_count );
+	memset( buf_rects.Data, 0, ( size_t )buf_rects.size_in_bytes( ) );
+	int buf_rects_out_n = 0;
+	for ( int src_i = 0; src_i < src_tmp_array.Size; src_i++ ) {
+		ImFontBuildSrcDataFT& src_tmp = src_tmp_array[ src_i ];
+		if ( src_tmp.GlyphsCount == 0 )
+			continue;
+
+		src_tmp.Rects = &buf_rects[ buf_rects_out_n ];
+		buf_rects_out_n += src_tmp.GlyphsCount;
+		for ( int glyph_i = 0; glyph_i < src_tmp.GlyphsList.Size; glyph_i++ )
+			if ( const ImFontBuildSrcGlyphFT& src_glyph = src_tmp.GlyphsList[ glyph_i ]; src_glyph.Rendered ) {
+				src_tmp.Rects[ glyph_i ].w = ( stbrp_coord )( src_glyph.Info.Width + padding );
+				src_tmp.Rects[ glyph_i ].h = ( stbrp_coord )( src_glyph.Info.Height + padding );
+			}
 	}
 
 	// We need a width for the skyline algorithm, any width!
@@ -756,7 +843,14 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 		if ( multiply_enabled )
 			ImFontAtlasBuildMultiplyCalcLookupTable( multiply_table, cfg.RasterizerMultiply );
 
-		const int padding = atlas->TexGlyphPadding;
+		/* faces were closed after step 4: a re-render opens this one again. gone meanwhile = fail, a glyphless font crashes BuildLookupTable */
+		const bool face_open = rerender && src_tmp.Font.InitFont( ft_library, cfg, extra_flags );
+		if ( rerender && !face_open ) {
+			ImFormatString( g_ft_build_fail, sizeof( g_ft_build_fail ), "src %d/%d: re-render %s error 0x%x", src_i, atlas->ConfigData.Size,
+			                g_ft_face_step, ( unsigned )g_ft_face_error );
+			src_tmp_array.clear_destruct( );
+			return false;
+		}
 		for ( int glyph_i = 0; glyph_i < src_tmp.GlyphsCount; glyph_i++ ) {
 			ImFontBuildSrcGlyphFT& src_glyph = src_tmp.GlyphsList[ glyph_i ];
 			stbrp_rect& pack_rect            = src_tmp.Rects[ glyph_i ];
@@ -770,8 +864,9 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 				continue;
 
 			GlyphInfo& info = src_glyph.Info;
-			IM_ASSERT( info.Width + padding <= pack_rect.w );
-			IM_ASSERT( info.Height + padding <= pack_rect.h );
+			/* re-render reads the file again: one changed on disk meanwhile must not blit past its rect ( asserts are off in release ) */
+			if ( info.Width + padding > pack_rect.w || info.Height + padding > pack_rect.h )
+				continue;
 			const int tx = pack_rect.x + padding;
 			const int ty = pack_rect.y + padding;
 
@@ -810,6 +905,8 @@ bool ImFontAtlasBuildWithFreeTypeEx( FT_Library ft_library, ImFontAtlas* atlas, 
 						blit_dst[ x ] = blit_src[ x ];
 			}
 		}
+		if ( face_open )
+			src_tmp.Font.CloseFont( );
 
 		src_tmp.Rects = NULL;
 	}
@@ -894,6 +991,14 @@ const ImFontBuilderIO* ImGuiFreeType::GetBuilderForFreeType( )
 bool ImGuiFreeType::GiveBackPixels( void* pixels ) { return n_px_slot::give_back( pixels ); }
 
 void ImGuiFreeType::ReleasePixelSlot( ) { n_px_slot::release( ); }
+
+int ImGuiFreeType::OpenFileFace( void* ft_library, const char* path, long face_index, void** face )
+{
+	FT_Open_Args args = { };
+	args.flags        = FT_OPEN_STREAM;
+	args.stream       = ImFontFileStreamOpen( path );
+	return args.stream ? FT_Open_Face( ( FT_Library )ft_library, &args, face_index, ( FT_Face* )face ) : FT_Err_Cannot_Open_Resource;
+}
 
 void ImGuiFreeType::SetAllocatorFunctions( void* ( *alloc_func )( size_t sz, void* user_data ), void ( *free_func )( void* ptr, void* user_data ),
                                            void* user_data )

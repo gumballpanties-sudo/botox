@@ -28,7 +28,6 @@ namespace n_depth_view
 		// render thread when queued, calling thread when not
 		void execute( frame_t frame );
 
-		bool build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description );
 		void release( );
 
 		IDirect3DPixelShader9* ensure_shader( IDirect3DDevice9* device, bool fog );
@@ -36,15 +35,8 @@ namespace n_depth_view
 		IDirect3DPixelShader9* m_shader     = nullptr;
 		IDirect3DPixelShader9* m_fog_shader = nullptr;
 
-		IDirect3DTexture9* m_frame_texture = nullptr;
-		IDirect3DSurface9* m_frame_surface = nullptr;
-
-		IDirect3DSurface9* m_resolve_surface = nullptr;
-
-		int m_width                        = 0;
-		int m_height                       = 0;
-		D3DFORMAT m_format                 = D3DFMT_UNKNOWN;
-		D3DMULTISAMPLE_TYPE m_multi_sample = D3DMULTISAMPLE_NONE;
+		int m_width  = 0;
+		int m_height = 0;
 
 		// card refused ps_3_0: never retried
 		bool m_compile_failed     = false;

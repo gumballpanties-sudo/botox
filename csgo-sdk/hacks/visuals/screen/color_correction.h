@@ -18,8 +18,6 @@ namespace n_color_correction
 		void on_device_lost( );
 
 	private:
-		bool build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description );
-
 		void release_targets( );
 		void release( );
 
@@ -50,15 +48,11 @@ namespace n_color_correction
 
 		bool m_shader_failed[ grade_shader_max ]{ };
 
+		// n_frame_copy's shared copy, not owned: valid until the next grab ( the web restore right after this pass )
 		IDirect3DTexture9* m_input_texture = nullptr;
-		IDirect3DSurface9* m_input_surface = nullptr;
 
-		IDirect3DSurface9* m_resolve_surface = nullptr;
-
-		int m_width                        = 0;
-		int m_height                       = 0;
-		D3DFORMAT m_format                 = D3DFMT_UNKNOWN;
-		D3DMULTISAMPLE_TYPE m_multi_sample = D3DMULTISAMPLE_NONE;
+		int m_width  = 0;
+		int m_height = 0;
 
 		/* 256x1 curves table on s1 ( master then r / g / b ), rebaked only when a curve changes.
 		   false = never built: a fresh default pool texture holds garbage */

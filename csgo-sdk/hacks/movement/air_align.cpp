@@ -109,6 +109,18 @@ static float aal_stick( const c_vector& n, const float d, const float sa, const 
 	return tr.m_end.m_x * n.m_x + tr.m_end.m_y * n.m_y - 16.f - d - 0.03125f;
 }
 
+/* air authority per tick: CategorizePosition sets m_surfaceFriction 1, 0.25 while airborne at 0 < vz <= 140 ( vz after the start half, wc_engine
+   move.cpp GM:4585 ). tick j's START vz - pin = what tick j - 1 categorized. the weakest from this tick ( f = START friction ) to the deadline */
+static float aal_fric_min( float f, float vz, const float pin, const int kc )
+{
+	for ( int j = 0; j < kc && f > 0.25f; ++j ) {
+		vz += 2.f * pin;
+		if ( vz - pin > 0.f && vz - pin <= 140.f )
+			f = 0.25f;
+	}
+	return f;
+}
+
 /* ticks before the one that crosses target: z += dt ( vz + pin ), vz += 2 pin ( Start / FinishGravity halves ). -1 = never on this arc */
 static int aal_ticks_to( float z, float vz, const float pin, const float ipt, const float target, const bool rising )
 {
@@ -215,7 +227,8 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 	const float ipt     = g_interfaces.m_global_vars_base->m_interval_per_tick;
 	const float pin     = g_prediction.get_engine_target_predict_z_velocity( );
 	static auto sv_airaccelerate = g_interfaces.m_convar->find_var( "sv_airaccelerate" );
-	const float k_acc            = ( sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.f ) * ipt * local->get_surface_friction( );
+	const float fric0            = local->get_surface_friction( );
+	const float k_acc            = ( sv_airaccelerate ? sv_airaccelerate->get_float( ) : 12.f ) * ipt * fric0;
 	if ( ipt <= 0.f || k_acc <= 0.f )
 		return release( "rate" );
 	const bool start_gnd = ( g_prediction.backup_data.m_flags & fl_onground ) != 0;
@@ -265,7 +278,7 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 		c_vector n{ };
 		float d = 0.f, gap = 0.f, h = 0.f, v_old = 0.f, v = 0.f, along = 0.f, dist = FLT_MAX;
 		bool fall = false;
-		float lo = 0.f, at = -1.f;
+		float lo = 0.f, at = -1.f, fm = 1.f;
 	} best;
 	const char* none = "radius";
 	float none_dist  = FLT_MAX;
@@ -363,7 +376,11 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 			return release( "flush" );
 		const float v_old = -( vel.m_x * n.m_x + vel.m_y * n.m_y );
 		float v           = 0.f;
-		char act          = edge_surf_guide( gap - h, gap, lo - h, v_old, vxy, kc, authority, turn, reach, mine, ipt, v );
+		/* the guide flies one authority to the deadline: the weakest tick's ( apex window ). twin with air friction: START friction = 150 plane
+		   hits ( bhop chain 264 ), weakest = 0 ( 14 ). this tick's own press / turn / H keep the real START authority */
+		const float fm    = aal_fric_min( fric0, vz0, pin, kc );
+		const float plan  = authority * fm / fric0;
+		char act          = edge_surf_guide( gap - h, gap, lo - h, v_old, vxy, kc, plan, turn, reach, mine, ipt, v );
 		/* far walls: D's turn in past edge surf's d2 cap leaves velocity near the normal, the turn back has no authority and S presses the rest
 		   off your speed ( twin: 250 -> 23 u/s ). capped there <= ~8 u/s lost; undershoot ( that cap can't get there by the crossing ) lifts it
 		   to the triangle peak that does, at most half your speed ( twin: aligned 54.6 -> 63.4 %, worst 15 u/s more in 3 / 2880 ) */
@@ -375,7 +392,7 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 			if ( v_old < cap )
 				v = cap - v_old;
 			else
-				act = edge_surf_guide( gap - h, gap, lo - h, v_old, vxy, kc, authority, 0.f, reach, mine, ipt, v );
+				act = edge_surf_guide( gap - h, gap, lo - h, v_old, vxy, kc, plan, 0.f, reach, mine, ipt, v );
 		}
 		/* edge surf's let_go: an approach we own never goes back closing faster than reaches the face by the crossing, nor while your keys
 		   could reach the face from here ( one tick of full air accel + its brake ) */
@@ -386,9 +403,10 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 			v   = std::min( v_old, v_ok );
 		}
 		/* undershoot: no park fits before the crossing but the capped closing still gets there one tick after it = turn in anyway ( U ), the
-		   guide / H take it once a plan or the face comes in reach */
+		   guide / H take it once a plan or the face comes in reach. U turns at full air accel ( 30 u/s ), your delta strafe angle only sizes D
+		   ( user 11-21 "fire if you undershoot": twin +11 aligned, 0 hits, same speed lost ) */
 		if ( const float v_u = ( gap - h ) / ( static_cast< float >( kc + 2 ) * ipt ); act == 'F' && turn > 0.f && vxy > 30.f && v_u <= cap && v_old < v_u ) {
-			const float d = std::min( std::min( vxy * std::tanf( deg2rad( turn ) ), 30.f ), authority ) * std::sqrt( std::max( vxy * vxy - v_old * v_old, 0.f ) ) / vxy;
+			const float d = std::min( 30.f, authority ) * std::sqrt( std::max( vxy * vxy - v_old * v_old, 0.f ) ) / vxy;
 			if ( d >= 1.f ) {
 				act = 'U';
 				v   = std::min( d, v_u - v_old );
@@ -398,7 +416,7 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 			miss( "plan" );
 			continue;
 		}
-		best = { i, kc, act, n, p.aa_d, gap, h, v_old, v, along, mine ? -1.f : dist, fall, lo, at };
+		best = { i, kc, act, n, p.aa_d, gap, h, v_old, v, along, mine ? -1.f : dist, fall, lo, at, fm };
 	}
 	if ( best.i < 0 ) {
 		static unsigned long long s_none_next = 0ull;
@@ -483,9 +501,9 @@ void n_movement::impl_t::air_align( c_user_cmd* cmd )
 	if ( const unsigned long long now = GetTickCount64( ); debug && ( now >= s_next || best.act != s_last ) ) {
 		s_next = now + 250ull;
 		s_last = best.act;
-		botox_dbg_log( "AIRAL: act=%c why=%c kind=%d gap=%.4e h=%.1e close=%.3f v=%.3f kc=%d fall=%d stam=%.1f along=%.1f xy=%.1f vz=%.1f duck=%d crop=%.2f dz=%.1f gnd=%d n=%.3f %.3f pos=%.1f %.1f %.1f lo=%.3e at=%.3e",
+		botox_dbg_log( "AIRAL: act=%c why=%c kind=%d gap=%.4e h=%.1e close=%.3f v=%.3f kc=%d fall=%d stam=%.1f along=%.1f xy=%.1f vz=%.1f duck=%d crop=%.2f fm=%.2f dz=%.1f gnd=%d n=%.3f %.3f pos=%.1f %.1f %.1f lo=%.3e at=%.3e",
 		               best.act, why, pt.aa_kind, best.gap, best.h, best.v_old, best.v, best.kc, best.fall ? 1 : 0, stam0, best.along, vxy, vel.m_z,
-		               duck_cmd ? 1 : 0, crop, z0 - org.m_z, start_gnd ? 1 : 0, n.m_x, n.m_y, org.m_x, org.m_y, org.m_z, best.lo, best.at );
+		               duck_cmd ? 1 : 0, crop, best.fm, z0 - org.m_z, start_gnd ? 1 : 0, n.m_x, n.m_y, org.m_x, org.m_y, org.m_z, best.lo, best.at );
 	}
 }
 

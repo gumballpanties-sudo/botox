@@ -243,7 +243,6 @@ float4 main( PS_INPUT i ) : COLOR
 	struct frame_t {
 		IDirect3DTexture9* m_texture = nullptr;
 		IDirect3DSurface9* m_surface = nullptr;
-		IDirect3DSurface9* m_resolve = nullptr; // msaa hop, frame_copy falls back to it
 		D3DSURFACE_DESC m_desc{ };
 		unsigned int m_used = 0U;
 	};
@@ -255,7 +254,7 @@ float4 main( PS_INPUT i ) : COLOR
 
 	void release_frame( frame_t& frame )
 	{
-		for ( IUnknown* held : std::initializer_list< IUnknown* >{ frame.m_resolve, frame.m_surface, frame.m_texture } )
+		for ( IUnknown* held : std::initializer_list< IUnknown* >{ frame.m_surface, frame.m_texture } )
 			if ( held )
 				held->Release( );
 
@@ -291,9 +290,7 @@ float4 main( PS_INPUT i ) : COLOR
 				release_frame( *frame );
 
 				if ( FAILED( device->CreateTexture( desc.Width, desc.Height, 1, D3DUSAGE_RENDERTARGET, desc.Format, D3DPOOL_DEFAULT, &frame->m_texture, nullptr ) ) ||
-				     FAILED( frame->m_texture->GetSurfaceLevel( 0, &frame->m_surface ) ) ||
-				     ( desc.MultiSampleType != D3DMULTISAMPLE_NONE &&
-				       FAILED( device->CreateRenderTarget( desc.Width, desc.Height, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &frame->m_resolve, nullptr ) ) ) ) {
+				     FAILED( frame->m_texture->GetSurfaceLevel( 0, &frame->m_surface ) ) ) {
 					botox_dbg_log( "GLASS: copy %ux%u fmt %d msaa %d creation FAILED, glass off", desc.Width, desc.Height, static_cast< int >( desc.Format ),
 					               static_cast< int >( desc.MultiSampleType ) );
 					release_frame( *frame );
@@ -303,7 +300,7 @@ float4 main( PS_INPUT i ) : COLOR
 			}
 
 			if ( frame ) {
-				if ( const HRESULT copied = n_frame_copy::copy( device, target, frame->m_resolve, frame->m_surface ); FAILED( copied ) ) {
+				if ( const HRESULT copied = n_frame_copy::copy( device, target, desc, frame->m_surface ); FAILED( copied ) ) {
 					botox_dbg_log( "GLASS: copy FAILED %#lx fmt %d msaa %d, glass off", static_cast< unsigned long >( copied ), static_cast< int >( desc.Format ),
 					               static_cast< int >( desc.MultiSampleType ) );
 					frame = nullptr;

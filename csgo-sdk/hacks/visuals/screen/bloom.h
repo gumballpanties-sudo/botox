@@ -43,11 +43,6 @@ namespace n_bloom
 
 		bool m_shader_failed[ shader_max ]{ };
 
-		IDirect3DTexture9* m_frame_texture = nullptr;
-		IDirect3DSurface9* m_frame_surface = nullptr;
-
-		IDirect3DSurface9* m_resolve_surface = nullptr;
-
 		IDirect3DTexture9* m_textures[ k_levels ]{ };
 		IDirect3DSurface9* m_surfaces[ k_levels ]{ };
 

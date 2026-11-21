@@ -86,7 +86,8 @@ namespace n_true_motion_blur
 		// the drawing half. render thread when queued, the calling thread when not.
 		void execute( frame_t frame );
 
-		bool build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description );
+		// history = object trail on: the two history frames + gather target exist only then
+		bool build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description, bool history );
 		void release( );
 
 		enum e_shader { shader_info, shader_tile_h, shader_tile_v, shader_neighbour, shader_gather, shader_accumulate, shader_copy, shader_max };
@@ -94,11 +95,6 @@ namespace n_true_motion_blur
 		IDirect3DPixelShader9* ensure_shader( IDirect3DDevice9* device, e_shader which );
 
 		IDirect3DPixelShader9* m_shaders[ shader_max ]{ };
-
-		IDirect3DTexture9* m_stage_texture = nullptr;
-		IDirect3DSurface9* m_stage_surface = nullptr;
-
-		IDirect3DSurface9* m_resolve_surface = nullptr;
 
 		IDirect3DTexture9* m_info_texture = nullptr;
 		IDirect3DSurface9* m_info_surface = nullptr;

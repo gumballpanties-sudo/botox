@@ -91,6 +91,7 @@ namespace n_hooks
 
 		c_detour_hook m_tier0_warning{ };
 		c_detour_hook m_random_int{ };
+		c_detour_hook m_nt_allocate_virtual_memory{ }; /* address space rescue, utilities/memory/va_ballast.h */
 
 		/* libpango-1.0-0.dll: capture panorama's PangoFontMap for the live hud font ( hacks/misc/hud_font ) */
 		c_detour_hook m_pango_list_families{ };
@@ -213,6 +214,7 @@ namespace n_detoured_functions
 
 	void __cdecl tier0_warning( const char* format, ... );
 	int __cdecl random_int( int min, int max );
+	long __stdcall nt_allocate_virtual_memory( void* process, void** base, ULONG_PTR zero_bits, SIZE_T* size, unsigned long type, unsigned long protect );
 
 	void __cdecl pango_font_map_list_families( void* fontmap, void*** families, int* n_families );
 	void __cdecl pango_layout_set_font_description( void* layout, const void* desc );

@@ -18,16 +18,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <thread>
-#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
-#include "korean_common_ranges.h"
 
 extern char g_ft_build_fail[ 160 ];
 extern char g_font_tex_fail[ 160 ];
@@ -77,7 +74,6 @@ struct indicator_font_set_t {
 	float m_scales[ 4 ]{ };
 	ImFont* m_fonts[ 4 ]{ };
 	ImFont* m_outline[ 4 ]{ };
-	std::vector< unsigned char > m_data{ };
 	float m_build_ms = 0.f;
 };
 
@@ -234,50 +230,28 @@ namespace
 		0,
 	};
 
-	/* build worker only (one at a time) */
-	std::unordered_map< std::string, std::vector< unsigned char > > g_font_files{ };
+	/* FontData of every disk font: never erased, configs ( dpi bakes copy them ) point at these. build workers only, one at a time */
+	std::unordered_set< std::string > g_font_paths{ };
 
-	const std::vector< unsigned char >& font_file( const std::string& path )
+	/* freetype reads the file in 16 kb pages while the atlas builds ( ImGuiFreeTypeBuilderFlags_File ): a cjk .ttc is never one
+	   13-19 mb block, the hole a 16 mb tier0 / panorama alloc needs ( OOM 11-20 at a font reload ). unreadable = skipped */
+	ImFont* add_system_font( ImFontAtlas* atlas, const std::string& path, const float size, ImFontConfig config, const ImWchar* ranges = nullptr )
 	{
-		const auto [ it, inserted ] = g_font_files.try_emplace( path );
+		const HANDLE file = CreateFileA( path.c_str( ), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr );
+		if ( file == INVALID_HANDLE_VALUE )
+			return nullptr;
 
-		if ( inserted ) {
-			std::ifstream file( path, std::ios::binary | std::ios::ate );
-			const std::streamoff size = file ? static_cast< std::streamoff >( file.tellg( ) ) : 0;
-
-			if ( size > 0 ) {
-				/* cjk .ttc = 10-20 mb, a fragmented 32 bit process has no such block = bad_alloc ( 11-18 config load abort ). file skipped,
-				   its glyphs draw '?'; out of the cache so a later rebuild tries again */
-				try {
-					it->second.resize( static_cast< std::size_t >( size ) );
-				}
-				catch ( const std::bad_alloc& ) {
-					botox_dbg_log( "FONT: no room for '%s' %.1f mb ( largest free %u mb ), skipped", path.c_str( ),
-					               static_cast< double >( size ) / ( 1024.0 * 1024.0 ), largest_free_block_mb( ) );
-					g_font_files.erase( it );
-					static const std::vector< unsigned char > s_none{ };
-					return s_none;
-				}
-				file.seekg( 0 );
-
-				if ( !file.read( reinterpret_cast< char* >( it->second.data( ) ), size ) )
-					it->second.clear( );
-			}
-		}
-
-		return it->second;
-	}
-
-	ImFont* add_system_font( ImFontAtlas* atlas, const char* path, const float size, ImFontConfig config, const ImWchar* ranges = nullptr )
-	{
-		const std::vector< unsigned char >& bytes = font_file( path );
-
-		if ( bytes.empty( ) )
+		LARGE_INTEGER bytes{ };
+		const bool readable = GetFileSizeEx( file, &bytes ) && bytes.QuadPart > 0 && bytes.QuadPart < 0x7fffffff;
+		CloseHandle( file );
+		if ( !readable )
 			return nullptr;
 
 		config.FontDataOwnedByAtlas = false;
+		config.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_File;
 
-		return atlas->AddFontFromMemoryTTF( const_cast< unsigned char* >( bytes.data( ) ), static_cast< int >( bytes.size( ) ), size, &config, ranges );
+		return atlas->AddFontFromMemoryTTF( const_cast< char* >( g_font_paths.insert( path ).first->c_str( ) ), static_cast< int >( bytes.QuadPart ), size,
+		                                    &config, ranges );
 	}
 
 	bool merge_font( ImFontAtlas* atlas, const char* const* candidate_paths, const float size, const unsigned int builder_flags,
@@ -428,7 +402,7 @@ static float widest_digit_em( const std::string& path )
 
 	float em     = 0.f;
 	FT_Face face = nullptr;
-	if ( !FT_New_Face( library, path.c_str( ), 0, &face ) ) {
+	if ( !ImGuiFreeType::OpenFileFace( library, path.c_str( ), 0, reinterpret_cast< void** >( &face ) ) ) {
 		if ( face->units_per_EM )
 			for ( char c = '0'; c <= '9'; ++c )
 				if ( !FT_Load_Char( face, c, FT_LOAD_NO_SCALE ) )
@@ -546,13 +520,6 @@ static void merge_extended_glyphs( ImFontAtlas* atlas, const float size, const u
 		const char* candidates[] = { ms_yahei.c_str( ), simsun.c_str( ), nullptr };
 
 		merge_font( atlas, candidates,size, builder_flags, atlas->GetGlyphRangesChineseSimplifiedCommon( ) );
-	}
-
-	{
-		const std::string malgun = system_font_path( "malgun.ttf" ), gulim = system_font_path( "gulim.ttc" );
-		const char* candidates[] = { malgun.c_str( ), gulim.c_str( ), nullptr };
-
-		merge_font( atlas, candidates,size, builder_flags, k_korean_common_ranges );
 	}
 
 	{
@@ -889,9 +856,8 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 		ImFontConfig font_config = { };
 		add_font_flags( font_flags, font_config, font_path, static_cast< float >( font_setting.m_size ) );
 
-		ImFont* const font = ( font_setting.m_size > 0 && std::filesystem::exists( font_path ) )
-		                          ? atlas->AddFontFromFileTTF( font_path.c_str( ), static_cast< float >( font_setting.m_size ), &font_config )
-		                          : nullptr;
+		ImFont* const font =
+			font_setting.m_size > 0 ? add_system_font( atlas, font_path, static_cast< float >( font_setting.m_size ), font_config ) : nullptr;
 
 		/* fallback = a stock font other text shares: no looks on it */
 		if ( font ) {
@@ -902,7 +868,7 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 			/* after the merges (they join the last added font): stroked twin for outlines, base latin only */
 			ImFontConfig outline_config = font_config;
 			outline_config.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_Stroke;
-			set.m_custom_outline[ slot ] = atlas->AddFontFromFileTTF( font_path.c_str( ), static_cast< float >( font_setting.m_size ), &outline_config );
+			set.m_custom_outline[ slot ] = add_system_font( atlas, font_path, static_cast< float >( font_setting.m_size ), outline_config );
 		}
 		else
 			set.m_custom_fonts[ slot ] = fallback_font;
@@ -919,21 +885,7 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 	                                                                          : fonts[ e_font_names::font_name_verdana_11 ],
 	                    e_glyph_tier::glyph_tier_basic );
 
-	const bool built = ImGuiFreeType::BuildFontAtlas( atlas, 0x0 );
-
-	/* full tier fallback files (cjk .ttc, ~50 mb) are read by the build only: drop their bytes. the dpi twin bake reads
-	   base + latin / symbol merges only (build_dpi_fonts), a nulled entry is never touched again */
-	for ( ImFontConfig& config : atlas->ConfigData )
-		if ( config.MergeMode && config.GlyphRanges != k_latin_ext_ranges && config.GlyphRanges != k_symbol_ranges ) {
-			config.FontData     = nullptr;
-			config.FontDataSize = 0;
-		}
-
-	std::erase_if( g_font_files, [ & ]( const auto& entry ) {
-		return std::ranges::none_of( atlas->ConfigData, [ & ]( const ImFontConfig& config ) { return config.FontData == entry.second.data( ); } );
-	} );
-
-	return built;
+	return ImGuiFreeType::BuildFontAtlas( atlas, 0x0 );
 }
 
 /* std::thread entry is noexcept: a throw out of a bake = std::terminate = abort, game dead ( 11-18 ). caught = failed bake */
@@ -1076,33 +1028,21 @@ static bool build_indicator_fonts( indicator_font_set_t& set, const indicator_fo
 
 	const std::string path = request.m_name.empty( ) ? std::string( ) : g_fonts.find_path( request.m_name );
 
-	if ( !request.m_name.empty( ) ) {
-		std::ifstream file( path, std::ios::binary | std::ios::ate );
-		const std::streamoff size = file ? static_cast< std::streamoff >( file.tellg( ) ) : 0;
-		if ( size <= 0 )
-			return false;
-
-		set.m_data.resize( static_cast< std::size_t >( size ) );
-		file.seekg( 0 );
-		if ( !file.read( reinterpret_cast< char* >( set.m_data.data( ) ), size ) )
-			return false;
-	}
-
 	for ( int i = 0; i < set.m_count; ++i ) {
 		const float size = std::max( request.m_base_size * set.m_scales[ i ], 1.f );
 
-		if ( set.m_data.empty( ) ) {
+		if ( path.empty( ) ) {
 			set.m_fonts[ i ] = atlas->AddFontFromMemoryCompressedTTF( verdana_bold_compressed_data, verdana_bold_compressed_size, size );
 			continue;
 		}
 
 		ImFontConfig config = { };
 		add_font_flags( request.m_flags, config, path, size );
-		config.FontDataOwnedByAtlas = false;
-		set.m_fonts[ i ] = atlas->AddFontFromMemoryTTF( set.m_data.data( ), static_cast< int >( set.m_data.size( ) ), size, &config );
+		if ( !( set.m_fonts[ i ] = add_system_font( atlas, path, size, config ) ) )
+			return false;
 
 		config.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_Stroke;
-		set.m_outline[ i ] = atlas->AddFontFromMemoryTTF( set.m_data.data( ), static_cast< int >( set.m_data.size( ) ), size, &config );
+		set.m_outline[ i ] = add_system_font( atlas, path, size, config );
 	}
 
 	return ImGuiFreeType::BuildFontAtlas( atlas, 0x0 );

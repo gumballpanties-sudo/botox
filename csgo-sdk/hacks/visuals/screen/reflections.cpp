@@ -199,10 +199,6 @@ void n_reflections::impl_t::release_targets( )
 		}
 	};
 
-	drop( this->m_resolve_surface );
-	drop( this->m_frame_surface );
-	drop( this->m_frame_texture );
-
 	for ( int i = 0; i < 2; ++i ) {
 		drop( this->m_normal_surface[ i ] );
 		drop( this->m_normal_texture[ i ] );
@@ -259,8 +255,14 @@ bool read_game_file( const char* path, std::vector< unsigned char >& out, const 
 
 	if ( ok ) {
 		g_virtual.call< void >( file_system, 4, handle, static_cast< int >( offset ), SEEK_SET );
-		out.resize( length );
-		ok = g_virtual.call< int >( file_system, 0, out.data( ), static_cast< int >( length ), handle ) == static_cast< int >( length );
+		/* no block that big ( fragmented 32 bit, map load ): no cubemap, not a throw through the game */
+		try {
+			out.resize( length );
+		}
+		catch ( const std::bad_alloc& ) {
+			ok = false;
+		}
+		ok = ok && g_virtual.call< int >( file_system, 0, out.data( ), static_cast< int >( length ), handle ) == static_cast< int >( length );
 	}
 
 	g_virtual.call< void >( file_system, 3, handle );
@@ -673,7 +675,8 @@ bool n_reflections::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DE
 	const int trace_width  = std::max( static_cast< int >( width * scale + 0.5f ), 16 );
 	const int trace_height = std::max( static_cast< int >( height * scale + 0.5f ), 16 );
 
-	if ( this->m_frame_texture && this->m_width == width && this->m_height == height && this->m_format == description.Format &&
+	// reflection [ 1 ] is made last: set = every target built
+	if ( this->m_reflection_texture[ 1 ] && this->m_width == width && this->m_height == height && this->m_format == description.Format &&
 	     this->m_multi_sample == description.MultiSampleType && this->m_trace_width == trace_width && this->m_trace_height == trace_height )
 		return true;
 
@@ -684,16 +687,6 @@ bool n_reflections::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DE
 		this->release_targets( );
 		return false;
 	};
-
-	if ( FAILED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, description.Format, D3DPOOL_DEFAULT,
-	                                    &this->m_frame_texture, nullptr ) ) ||
-	     FAILED( this->m_frame_texture->GetSurfaceLevel( 0, &this->m_frame_surface ) ) )
-		return fail( "reflections: frame copy creation failed" );
-
-	if ( description.MultiSampleType != D3DMULTISAMPLE_NONE &&
-	     FAILED( device->CreateRenderTarget( description.Width, description.Height, description.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
-	                                         &this->m_resolve_surface, nullptr ) ) )
-		return fail( "reflections: msaa resolve target creation failed" );
 
 	for ( int i = 0; i < 2; ++i ) {
 		if ( FAILED( device->CreateTexture( trace_width, trace_height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A16B16G16R16F, D3DPOOL_DEFAULT,
@@ -772,7 +765,7 @@ void n_reflections::impl_t::execute( const frame_t frame )
 	const n_gpu_timer::scope_t gpu_timer( device, n_gpu_timer::pass_reflections );
 
 	if ( !GET_VARIABLE( g_variables.m_reflections, bool ) || this->m_compile_failed ) {
-		if ( this->m_frame_texture )
+		if ( this->m_normal_texture[ 0 ] )
 			this->release_targets( );
 
 		this->release_cubes( );
@@ -830,9 +823,11 @@ void n_reflections::impl_t::execute( const frame_t frame )
 
 	static bool logged_blit = false;
 
-	const long blit_result = n_frame_copy::copy( device, target, this->m_resolve_surface, this->m_frame_surface );
+	HRESULT blit_result = E_FAIL;
 
-	if ( FAILED( blit_result ) ) {
+	IDirect3DTexture9* frame_copy = n_frame_copy::grab( device, target, description, &blit_result );
+
+	if ( !frame_copy ) {
 		if ( !logged_blit ) {
 			logged_blit = true;
 
@@ -1000,7 +995,7 @@ void n_reflections::impl_t::execute( const frame_t frame )
 	device->SetTexture( 5, cube_old ? cube_old : cube_new );
 
 	device->SetTexture( 0, depth );
-	device->SetTexture( 2, this->m_frame_texture );
+	device->SetTexture( 2, frame_copy );
 
 	pass( shaders[ shader_normals ], this->m_normal_surface[ 0 ], nullptr );
 

@@ -28,6 +28,7 @@
 #include "../hacks/visuals/screen/depth_view.h"
 #include "../hacks/visuals/screen/depth_warp.h"
 #include "../hacks/visuals/screen/flip_world.h"
+#include "../hacks/visuals/screen/frame_copy.h"
 #include "../hacks/visuals/screen/mc_clouds.h"
 #include "../hacks/visuals/screen/player_stencil.h"
 #include "../hacks/visuals/screen/reflections.h"
@@ -46,6 +47,7 @@
 #include "../hacks/visuals/grenade/grenade_live.h"
 #include "../hacks/web/websurface.h"
 #include "../utilities/memory/relative.h"
+#include "../utilities/memory/va_ballast.h"
 #include "../utilities/memory/virtual.h"
 
 #include <vector>
@@ -89,6 +91,12 @@ bool n_hooks::impl_t::on_attach( )
 		g_console.print< n_console::log_level::WARNING >( "failed to initialise minhook" );
 		return false;
 	}
+
+	/* no ballast held = nothing to hand back, no hook */
+	if ( n_va_ballast::left( ) > 0 )
+		initialise_hook( m_nt_allocate_virtual_memory,
+		                 reinterpret_cast< void* >( GetProcAddress( GetModuleHandleA( "ntdll.dll" ), "NtAllocateVirtualMemory" ) ),
+		                 &n_detoured_functions::nt_allocate_virtual_memory, "ntdll::NtAllocateVirtualMemory()" );
 
 	initialise_hook( m_tier0_warning, g_modules[ TIER0_DLL ].find_export( HASH_BT( "Warning" ) ), &n_detoured_functions::tier0_warning,
 	                 "tier0::Warning()" );
@@ -374,6 +382,7 @@ void n_hooks::impl_t::release_render_resources( )
 	g_glass_chams.on_device_lost( );
 	g_flip_world.on_device_lost( );
 	g_mc_clouds.on_device_lost( );
+	n_frame_copy::release( );
 	n_gpu_timer::on_device_lost( );
 	n_fx_compat::on_device_lost( );
 

@@ -43,14 +43,18 @@ namespace n_es
 	struct hit_t {
 		float frac = 1.f, d = 0.f; /* d = hull_plane_dist: the face plane in world space */
 		v3 n{ }, end{ };
-		bool start_solid = false, moves = true, ladder = false, disp = false, world = true;
+		/* world = box rules ( brush, brush entity ), vp = vphysics only ( static prop, SOLID_VPHYSICS ), neither = an entity box ( bbox / obb ): unknown */
+		bool start_solid = false, moves = true, ladder = false, disp = false, world = true, vp = false;
 	};
-	/* ledge: vertical face n . xy = d ( n out toward the hull, z 0 ), its top, along = xy . ( -n.y, n.x ). prop = not world ( vphysics / entity ) */
+	/* ledge: vertical face n . xy = d ( n out toward the hull, z 0 ), its top, along = xy . ( -n.y, n.x ). prop = a vphysics / entity hit read it,
+	   brush = a world brush hit read it. both = a prop flush with a brush ( nuke trim in clip ): which one a sweep meets first is a float tie */
 	struct edge_t {
 		v3 n{ };
 		float d = 0.f, top = 0.f;
-		bool prop = false;
+		bool prop = false, brush = false;
 	};
+	/* only vphysics: over the top pins only ( a beside hull whose move ends under the top misses it ), no lift, no stand up, no hold beside */
+	inline bool vphys( const edge_t& e ) { return e.prop && !e.brush; }
 
 	inline float ulp( const float a )
 	{
@@ -66,9 +70,23 @@ namespace n_es
 	}
 	inline float closing( const edge_t& e, const v3& v ) { return -( v.x * e.n.x + v.y * e.n.y ); }
 	inline float along( const edge_t& e, const v3& p ) { return p.y * e.n.x - p.x * e.n.y; }
+	/* a vphysics read stops 0..1/32 short of its plane ( hull_plane_dist assumes 1/32: nuke curb d 1080 / 1079.9689 ): one ledge */
 	inline bool same( const edge_t& a, const edge_t& b )
 	{
-		return a.n.x * b.n.x + a.n.y * b.n.y > 0.99999f && fabsf( a.d - b.d ) < 0.01f && fabsf( a.top - b.top ) < 1e-3f;
+		return a.n.x * b.n.x + a.n.y * b.n.y > 0.99999f && fabsf( a.d - b.d ) < 0.04f && fabsf( a.top - b.top ) < 0.04f;
+	}
+	/* one ledge read twice: a brush read is exact, else the outer vphysics read ( every read sits at or under the real plane ) */
+	inline void absorb( edge_t& o, const edge_t& e )
+	{
+		if ( e.brush && !o.brush ) {
+			o.d   = e.d;
+			o.top = e.top;
+		} else if ( !o.brush && !e.brush ) {
+			o.d   = std::max( o.d, e.d );
+			o.top = std::max( o.top, e.top );
+		}
+		o.prop  = o.prop || e.prop;
+		o.brush = o.brush || e.brush;
 	}
 	/* the gap's float grid: the coordinates the face normal reads, never under the hull half width's */
 	inline float face_ulp( const edge_t& e, const v3& o )
@@ -145,8 +163,9 @@ namespace n_es
 		char act = 'F';
 		float v  = 0.f;
 	};
+	/* pull = undershoot: a press profile that gets there in time fires at any gap ( else only inside reach / owned / your speed reaches the face ) */
 	static es_guide_t es_guide( const float err, const float gap, const float r_min, const float v_old, const float vxy, const int kc, const float authority,
-	                            const float turn, const float reach, const bool owned, const bool staged, const float ipt )
+	                            const float turn, const float reach, const bool owned, const bool staged, const float ipt, const bool pull = false )
 	{
 		constexpr float k_park_speed = 25.f;
 		const float park    = std::min( k_park_speed, authority );
@@ -200,7 +219,7 @@ namespace n_es
 		const float v_drift = staged ? std::clamp( err / ( k_drift * ipt ), -park, park ) : v_park;
 		if ( gap <= reach && std::fabs( err ) / ( k_drift * ipt ) <= park && std::fabs( v_drift - v_old ) <= authority )
 			return { 'K', v_drift };
-		if ( ( gap <= reach || owned || ( v_old > 0.f && v_old * ipt * static_cast< float >( kc ) >= err ) ) && kc >= 3 &&
+		if ( ( pull || gap <= reach || owned || ( v_old > 0.f && v_old * ipt * static_cast< float >( kc ) >= err ) ) && kc >= 3 &&
 		     es_profile_ticks( err, v_old, 0.75f * authority, authority, park, ipt, kc - 3, r_min ) >= 0 )
 			return { 'S', es_profile_step( err, v_old, 0.75f * authority, authority, ipt ) };
 		return { };
@@ -381,18 +400,21 @@ namespace n_es
 	bool arrive( W& w, const edge_t& e, const hull_t& h, const st_t& s, const float off, const float u, const float f0x, mv_t& p1, mv_t& p2 )
 	{
 		const float g = gap( e, s.o, h ), c0 = closing( e, s.v );
-		float gts[ 12 ];
+		float gts[ 16 ];
 		const bool axial = fabsf( e.n.x ) > 0.9999f || fabsf( e.n.y ) > 0.9999f;
 		int ng           = 0;
-		/* a prop pins over the top then out: those first, two beside draws after */
+		/* a prop pins over the top then out: those first. the box beside gaps where a brush read it, else two beside draws */
 		if ( e.prop )
-			for ( const float o : { -0.12f, -0.05f, -0.25f, -0.4f, 2.f * u, 4e-3f } )
+			for ( const float o : { -0.12f, -0.05f, -0.25f, -0.4f } )
 				gts[ ng++ ] = o;
-		else {
-			ng = arrival_gaps( f0x, u, axial, gts );
+		if ( e.brush )
+			ng += arrival_gaps( f0x, u, axial, gts + ng );
+		else
+			for ( const float o : { 2.f * u, 4e-3f } )
+				gts[ ng++ ] = o;
+		if ( !e.prop )
 			for ( const float o : { -0.12f, -0.05f, -0.25f } )
 				gts[ ng++ ] = o;
-		}
 		for ( int i = 0; i < ng; ++i ) {
 			const float gt = gts[ i ];
 			if ( gt > 0.f && gt >= 0.9f * k_eps )
@@ -472,6 +494,44 @@ namespace n_es
 		                  ground( mk( x0, 0.f, 0.f ), mk( 0.f, y1, 0.f ), q ) || ground( mk( 0.f, y0, 0.f ), mk( x1, 0.f, 0.f ), q ) );
 	}
 
+	/* the face the hull meets at the arrival p: a flat hull swept in from 2u out, 1/8 under the top ( thin lips ). a plane read off one brush runs on
+	   past its end ( nuke -224: brushes 854 / 1192 0.16 deg apart, seam on 854's axial bevel: the arrival met 1192, every gap off 854's plane, all
+	   pin=0 ). 1 = out differs: another plane with this top is the one there, or the same plane read the other kind ( a prop flush with a brush ).
+	   -1 = no face there: the ledge ends before the arrival ( nuke curb 2960 ends x -569, hull at -600, a joist's top under it read as its top ) */
+	template < class W >
+	int face_at( W& w, const edge_t& f, const hull_t& h, const v3& p, edge_t& out )
+	{
+		const float ext = std::min( f.n.x * h.mins.x, f.n.x * h.maxs.x ) + std::min( f.n.y * h.mins.y, f.n.y * h.maxs.y );
+		const float s = along( f, p ), r0 = f.d - ext + 2.f, r1 = f.d - ext - 1.f, z = f.top - 0.125f;
+		hit_t t;
+		w.trace( mk( f.n.x * r0 - f.n.y * s, f.n.y * r0 + f.n.x * s, z ), mk( f.n.x * r1 - f.n.y * s, f.n.y * r1 + f.n.x * s, z ), mk( h.mins.x, h.mins.y, 0.f ),
+		         mk( h.maxs.x, h.maxs.y, 0.f ), t );
+		if ( !t.start_solid && t.frac >= 1.f )
+			return -1;
+		if ( t.start_solid || fabsf( t.n.z ) > 1e-4f || !t.moves || t.ladder || t.disp )
+			return 0;
+		const float l = sqrtf( t.n.x * t.n.x + t.n.y * t.n.y );
+		edge_t e;
+		e.n = mk( t.n.x / l, t.n.y / l, 0.f );
+		/* near parallel only ( 5 deg ): a corner's turned face ( nuke 1192 21 deg ) is no plane for the hull reaching past its end ( lab: 7 stood ) */
+		if ( e.n.x * f.n.x + e.n.y * f.n.y < 0.9962f )
+			return 0;
+		e.d     = ( t.d - t.n.z * f.top ) / l;
+		e.top   = f.top;
+		e.prop  = !t.world;
+		e.brush = !t.vp;
+		if ( same( e, f ) ) {
+			out = f;
+			absorb( out, e );
+			return out.prop != f.prop || out.brush != f.brush || out.d != f.d || out.top != f.top ? 1 : 0;
+		}
+		if ( !top_at( w, e, h, t.end, f.top + 1.f, f.top - 1.f, e.top ) || fabsf( e.top - f.top ) >= k_ztol )
+			return 0;
+		e.d = ( t.d - t.n.z * e.top ) / l;
+		out = e;
+		return 1;
+	}
+
 	/* ledges under the feet within range: 8 yaws + the way you fly, a hull curtain from the feet down the fall. the curtain ends above what lies
 	   under the hull ( a floor inside it = every sweep starts solid = blind ). a hit that is no ledge is swept over: the curtain lifts 0.5 above it */
 	template < class W >
@@ -480,12 +540,10 @@ namespace n_es
 		const float gz  = -2.f * w.pin / w.dt;
 		constexpr float k_t = 0.75f;
 		float dz = std::clamp( -( s.v.z + w.pin ) * k_t + 0.5f * gz * k_t * k_t, 4.f, 256.f );
-		{
-			hit_t f;
-			w.trace( s.o, mk( s.o.x, s.o.y, s.o.z - dz ), mk( h.mins.x, h.mins.y, 0.f ), mk( h.maxs.x, h.maxs.y, 0.f ), f );
-			if ( !f.start_solid && f.frac < 1.f )
-				dz = std::max( f.frac * dz - 0.5f, 0.5f );
-		}
+		hit_t f;
+		w.trace( s.o, mk( s.o.x, s.o.y, s.o.z - dz ), mk( h.mins.x, h.mins.y, 0.f ), mk( h.maxs.x, h.maxs.y, 0.f ), f );
+		if ( !f.start_solid && f.frac < 1.f )
+			dz = std::max( f.frac * dz - 0.5f, 0.5f );
 		if ( riding )
 			dz = std::min( dz, 2.f );
 		v3 dirs[ 9 ];
@@ -497,6 +555,47 @@ namespace n_es
 		if ( const float vxy = sqrtf( s.v.x * s.v.x + s.v.y * s.v.y ); vxy >= 1.f )
 			dirs[ nd++ ] = mk( s.v.x / vxy, s.v.y / vxy, 0.f );
 		int n = 0;
+		/* a vertical face hit: its ledge ( top under the hull, no floor 2u beside it ) joins the list. true = a ledge */
+		const auto face = [ & ]( const hit_t& t, const float z_lo ) {
+			/* a displacement's vertical hit = its triangle box side, no wall ( nuke disp 441: x 1560 top -368 mound, every arrival pin=0 ). a disp top
+			   over a brush face still counts: the face hit is the brush */
+			if ( fabsf( t.n.z ) > 1e-4f || !t.moves || t.ladder || t.disp )
+				return false;
+			const float l = sqrtf( t.n.x * t.n.x + t.n.y * t.n.y );
+			edge_t e;
+			e.n = mk( t.n.x / l, t.n.y / l, 0.f );
+			e.d = t.d / l;
+			/* an entity box ( neither ) reads both: every arrival kind is flown, the sims pick */
+			e.prop  = !t.world;
+			e.brush = !t.vp;
+			bool ok = top_at( w, e, h, s.o, s.o.z + 1.f, z_lo, e.top ) || top_at( w, e, h, t.end, s.o.z + 1.f, z_lo, e.top );
+			if ( ok ) {
+				/* a face a hair off vertical ( vphysics ): its plane at the top's height. a floor 2u beside the top = nothing to eb off ( displacement
+				   triangle box sides on terrain ): never a candidate, no guide, no hold */
+				e.d = ( t.d - t.n.z * e.top ) / l;
+				ok  = e.top < s.o.z && !floor_near( w, e, h, along( e, s.o ) );
+			}
+			if ( !ok )
+				return false;
+			edge_t* const o = std::find_if( out, out + n, [ & ]( const edge_t& x ) { return same( x, e ); } );
+			if ( o == out + n )
+				out[ n++ ] = e;
+			else
+				absorb( *o, e );
+			return true;
+		};
+		/* the top under the hull ( you would land on it ): the curtain ends above it = blind to its own faces. sweep in from outside, 1u under that
+		   top, toward the feet: the faces hit are edges you can still leave over ( log 11-21: off the curb at 125 u/s, found beside = too late ) */
+		if ( !riding && !f.start_solid && f.frac < 1.f && f.n.z >= 0.7f ) {
+			const float zp = f.end.z - 1.f;
+			for ( int i = 0; i < nd && n < max_out; ++i ) {
+				hit_t t;
+				w.trace( mk( s.o.x + dirs[ i ].x * range, s.o.y + dirs[ i ].y * range, zp ), mk( s.o.x, s.o.y, zp ), mk( h.mins.x, h.mins.y, 0.f ),
+				         mk( h.maxs.x, h.maxs.y, 0.f ), t );
+				if ( !t.start_solid && t.frac < 1.f && t.n.x * dirs[ i ].x + t.n.y * dirs[ i ].y > 0.5f )
+					face( t, zp - 0.5f );
+			}
+		}
 		for ( int i = 0; i < nd && n < max_out; ++i ) {
 			float bz = dz;
 			for ( int pass = 0; pass < 4; ++pass ) {
@@ -504,25 +603,8 @@ namespace n_es
 				w.trace( s.o, mk( s.o.x + dirs[ i ].x * range, s.o.y + dirs[ i ].y * range, s.o.z ), mk( h.mins.x, h.mins.y, -bz ), mk( h.maxs.x, h.maxs.y, 0.f ), t );
 				if ( t.start_solid || t.frac >= 1.f )
 					break;
-				if ( fabsf( t.n.z ) <= 1e-4f && t.moves && !t.ladder ) {
-					const float l = sqrtf( t.n.x * t.n.x + t.n.y * t.n.y );
-					edge_t e;
-					e.n    = mk( t.n.x / l, t.n.y / l, 0.f );
-					e.d    = t.d / l;
-					e.prop = !t.world;
-					bool ok = top_at( w, e, h, s.o, s.o.z + 1.f, s.o.z - bz - 0.1f, e.top ) || top_at( w, e, h, t.end, s.o.z + 1.f, s.o.z - bz - 0.1f, e.top );
-					if ( ok ) {
-						/* a face a hair off vertical ( vphysics ): its plane at the top's height. a floor 2u beside the top = nothing to eb off ( displacement
-						   triangle box sides on terrain ): never a candidate, no guide, no hold */
-						e.d = ( t.d - t.n.z * e.top ) / l;
-						ok  = e.top < s.o.z && !floor_near( w, e, h, along( e, s.o ) );
-					}
-					if ( ok ) {
-						if ( std::none_of( out, out + n, [ & ]( const edge_t& o ) { return same( o, e ); } ) )
-							out[ n++ ] = e;
-						break;
-					}
-				}
+				if ( face( t, s.o.z - bz - 0.1f ) )
+					break;
 				if ( pass == 3 )
 					break;
 				const v3 p = mk( t.end.x + dirs[ i ].x * 0.25f, t.end.y + dirs[ i ].y * 0.25f, t.end.z );
@@ -564,6 +646,9 @@ namespace n_es
 		/* an owned approach handed back ( Y ): its let go rules still hold it this fall */
 		edge_t guard{ };
 		bool guard_ok = false;
+		/* every ledge read this fall: a prop / brush read sticks, the exact brush plane wins */
+		edge_t seen[ 8 ]{ };
+		int n_seen = 0;
 		edge_t cand[ k_cand ]{ };
 		int n_cand = 0;
 		bool pick_ok = false, arrive_ok = false;
@@ -592,6 +677,7 @@ namespace n_es
 	inline void new_fall( mem_t& m )
 	{
 		m.n_bad    = 0;
+		m.n_seen   = 0;
 		m.guard_ok = false;
 		m.own      = false;
 	}
@@ -623,9 +709,40 @@ namespace n_es
 		const float off = h.maxs.z * 0.5f;
 		edge_t c[ k_cand + 1 ];
 		int nc = scan( w, s, h, riding0 ? 2.05f : std::max( in.range, in.reach ), riding0, c, k_cand );
-		/* the owned face once the sweeps cannot see it ( the hull over its top ) */
-		if ( own0 && s.o.z > face0.top && std::none_of( c, c + nc, [ & ]( const edge_t& e ) { return same( e, face0 ); } ) )
-			c[ nc++ ] = face0;
+		/* each ledge as the hull meets it on its crossing tick ( along your travel: presses only move the closing ). raw = as read: an owned plan,
+		   a guard or a miss count swapped onto the real plane still finds it */
+		edge_t raw[ k_cand + 1 ];
+		bool gone[ k_cand + 1 ]{ };
+		const auto reread = [ & ]( const int i ) {
+			raw[ i ]  = c[ i ];
+			int k     = -1;
+			float f0  = 0.f;
+			edge_t e;
+			if ( riding0 || !crossing( c[ i ].top, s.o.z, s.v.z, off, w.pin, w.dt, k, f0 ) )
+				return;
+			const float ta = ( static_cast< float >( k ) + f0 ) * w.dt;
+			const int fa   = face_at( w, c[ i ], h, mk( s.o.x + s.v.x * ta, s.o.y + s.v.y * ta, s.o.z ), e );
+			if ( fa > 0 )
+				c[ i ] = e;
+			gone[ i ] = fa < 0;
+		};
+		for ( int i = 0; i < nc; ++i )
+			reread( i );
+		/* the owned face once the sweeps cannot see it ( the hull over its top ), checked against the re-read planes ( no twin ), then re-read too */
+		if ( own0 && s.o.z > face0.top && std::none_of( c, c + nc, [ & ]( const edge_t& e ) { return same( e, face0 ); } ) ) {
+			c[ nc ] = face0;
+			reread( nc++ );
+		}
+		for ( int i = 0; i < nc; ++i ) {
+			edge_t* const sn = m.seen + std::min( m.n_seen, 8 );
+			edge_t* const o  = std::find_if( m.seen, sn, [ & ]( const edge_t& x ) { return same( x, c[ i ] ); } );
+			if ( o == sn )
+				m.seen[ m.n_seen++ % 8 ] = c[ i ];
+			else {
+				absorb( *o, c[ i ] );
+				c[ i ] = *o;
+			}
+		}
 		for ( int i = 0; i < nc && m.n_cand < k_cand; ++i )
 			m.cand[ m.n_cand++ ] = c[ i ];
 
@@ -633,22 +750,24 @@ namespace n_es
 		const float auth = w.k_acc * w.max_speed * ( s.duck ? k_duck_crop : 1.f );
 		struct ev_t {
 			int k = -1, score = -1;
-			float f0 = 0.f, g = 0.f, cl = 0.f, u = 0.f, hs = 0.f, v = 0.f, danger = FLT_MAX, qv = 0.f, hk = 0.f;
+			float f0 = 0.f, g = 0.f, cl = 0.f, u = 0.f, hs = 0.f, v = 0.f, danger = FLT_MAX, qv = 0.f, hk = 0.f, loss = 0.f;
 			bool riding = false, mine = false, fly = false, upq = false, flip = false;
 			char act = 'F', qact = 'F';
 		};
 		const hull_t hst = w.hull( false );
 		const float a_st = w.k_acc * w.max_speed;
-		int best = -1;
-		ev_t be{ };
+		ev_t ev[ k_cand + 1 ];
+		bool ok[ k_cand + 1 ]{ };
 		for ( int i = 0; i < nc; ++i ) {
 			const edge_t& f = c[ i ];
-			ev_t e;
+			ev_t& e         = ev[ i ];
 			e.g      = gap( f, s.o, h );
 			e.cl     = closing( f, s.v );
 			e.u      = face_ulp( f, s.o );
 			e.hs     = standoff( e.u );
-			e.mine   = own0 && same( f, face0 );
+			e.mine   = own0 && ( same( f, face0 ) || same( raw[ i ], face0 ) );
+			/* speed this surf costs: presses only move the closing, the pin keeps the along speed */
+			e.loss   = vxy - fabsf( s.v.y * f.n.x - s.v.x * f.n.y );
 			e.riding = riding0 && fabsf( s.o.z - ( f.top + k_eps ) ) < k_ztol;
 			float zc = 0.f;
 			if ( !e.riding && !crossing( f.top, s.o.z, s.v.z, off, w.pin, w.dt, e.k, e.f0, &zc ) )
@@ -661,11 +780,17 @@ namespace n_es
 				const float ta = ( static_cast< float >( e.k ) + e.f0 ) * w.dt;
 				const v3 pc    = mk( s.o.x + s.v.x * ta, s.o.y + s.v.y * ta, s.o.z );
 				float t2       = 0.f;
-				const bool under = top_at( w, f, h, pc, s.o.z + 1.f, f.top - 1.f, t2 ) && fabsf( t2 - f.top ) < k_ztol && !floor_near( w, f, h, along( f, pc ) );
+				const bool top_ok = top_at( w, f, h, pc, s.o.z + 1.f, f.top - 1.f, t2 ) && fabsf( t2 - f.top ) < k_ztol && !floor_near( w, f, h, along( f, pc ) );
+				const bool under  = !gone[ i ] && top_ok;
 				if ( e.k >= 2 ) {
-					const es_guide_t gd = es_guide( e.g - e.hs, e.g, -e.hs, e.cl, vxy, e.k, auth, in.turn, in.reach, e.mine, true, w.dt );
-					e.act               = gd.act;
-					e.v                 = gd.v;
+					/* over the top: the same plan mirrored ( aim = the standoff outside, no face on that side ), it brakes your run out while you are
+					   still over the top. the press check keeps those ticks 2u+ up */
+					es_guide_t gd = e.g > 0.f ? es_guide( e.g - e.hs, e.g, -e.hs, e.cl, vxy, e.k, auth, in.turn, in.reach, e.mine, true, w.dt, true )
+					                          : es_guide( e.hs - e.g, 0.f, -1e9f, -e.cl, vxy, e.k, auth, in.turn, in.reach, e.mine, true, w.dt, true );
+					if ( e.g <= 0.f )
+						gd.v = -gd.v;
+					e.act = gd.act;
+					e.v   = gd.v;
 				} else
 					e.act = e.g <= std::max( e.cl, 30.f ) * static_cast< float >( e.k + 1 ) * w.dt + 1e-3f ? 'K' : 'F';
 				/* ducked: stand up early ( air unduck = feet -9, no crop, never starts the re-duck timer ) = a standing pin, the air duck lift, a
@@ -673,42 +798,69 @@ namespace n_es
 				   FinishDuck, duck speed for this release + that press */
 				int ks   = -1;
 				float fs = 0.f;
-				if ( !f.prop && s.duck && e.k >= 4 && s.o.z - f.top > 9.5f && w.duck_speed >= 5.5f &&
+				if ( !vphys( f ) && s.duck && e.k >= 4 && s.o.z - f.top > 9.5f && w.duck_speed >= 5.5f &&
 				     crossing( f.top, s.o.z - 9.f, s.v.z, hst.maxs.z * 0.5f, w.pin, w.dt, ks, fs ) && ks >= 3 && fs >= k_min_frac &&
 				     w.now + static_cast< float >( ks + 2 ) * w.dt >= w.last_duck + w.duck_gap ) {
 					const es_guide_t gq = es_guide( e.g - e.hs, e.g, -e.hs, e.cl, vxy, ks, a_st, in.turn, in.reach, e.mine, true, w.dt );
-					e.upq               = gq.act != 'F';
-					e.qact              = gq.act;
-					e.qv                = gq.v;
+					/* the standing arrival comes earlier along: its own top + face ( the ducked one may be past the ledge's end ) */
+					const float tq      = ( static_cast< float >( ks ) + fs ) * w.dt;
+					const v3 pq         = mk( s.o.x + s.v.x * tq, s.o.y + s.v.y * tq, s.o.z );
+					float t3            = 0.f;
+					edge_t fq;
+					e.upq  = gq.act != 'F' && top_at( w, f, hst, pq, s.o.z + 1.f, f.top - 1.f, t3 ) && fabsf( t3 - f.top ) < k_ztol &&
+					        !floor_near( w, f, hst, along( f, pq ) ) && face_at( w, f, hst, pq, fq ) >= 0;
+					e.qact = gq.act;
+					e.qv   = gq.v;
 				}
+				/* the ledge ends before you get there: no owned bonus either ( a working plan elsewhere wins ) */
+				if ( gone[ i ] && !e.upq )
+					e.mine = false;
 				/* a prop pins over the top then out ( vphysics, log 11-20 ): the crossing must START 2u+ over the top, else CategorizePosition grounds the
-				   tick before. a ground jump beside a curb always crosses at the same height: an air duck / unduck ( feet +9 / -9 ) moves that phase */
-				if ( f.prop && e.k >= 3 && e.hk <= 2.05f ) {
+				   tick before. a ground jump beside a curb always crosses at the same height: an air duck / unduck ( feet +9 / -9 ) moves that phase.
+				   a brush read too with a box phase: no flip ( the box beside pin needs this stance ) */
+				if ( f.prop && !( f.brush && e.f0 >= k_min_frac ) && e.k >= 3 && e.hk <= 2.05f ) {
 					const hull_t hf = w.hull( !s.duck );
 					int kf          = -1;
 					float ff = 0.f, zf = 0.f;
 					e.flip = crossing( f.top, s.o.z + ( s.duck ? -9.f : 9.f ), s.v.z, hf.maxs.z * 0.5f, w.pin, w.dt, kf, ff, &zf ) && kf >= 2 && zf - f.top > 2.05f;
 				}
-				/* a box crossing whose feet start inside the top's 1/32 band hits it at fraction 0 ( MINIMUM_MOVE_FRACTION ): no arrival pin */
-				const bool phase = f.prop ? e.hk > 2.05f || e.flip : e.f0 >= k_min_frac;
+				/* a box crossing whose feet start inside the top's 1/32 band hits it at fraction 0 ( MINIMUM_MOVE_FRACTION ): no arrival pin. read both
+				   ways: either kind may pin, the sims pick */
+				const bool phase = ( f.brush && e.f0 >= k_min_frac ) || ( f.prop && ( e.hk > 2.05f || e.flip ) );
 				const bad_t* b   = bad_of( m, f, s.duck );
-				e.fly            = under && ( ( e.act != 'F' && phase ) || e.upq ) && ( !b || b->fails < 2 || e.mine );
+				if ( !b )
+					b = bad_of( m, raw[ i ], s.duck );
+				e.fly            = ( ( under && e.act != 'F' && phase ) || e.upq ) && ( !b || b->fails < 2 || e.mine );
 				e.score        = ( e.mine ? 8 : 0 ) + ( e.fly ? 4 : 0 );
-				if ( e.cl > 0.f && e.g / e.cl < static_cast< float >( e.k + 1 ) * w.dt )
+				if ( e.g > 0.f && e.cl > 0.f && e.g / e.cl < static_cast< float >( e.k + 1 ) * w.dt )
 					e.danger = e.g / e.cl;
 			}
-			const bool better = best < 0 || e.score > be.score ||
-			                    ( e.score == be.score && ( e.danger < be.danger || ( e.danger == be.danger && ( e.k < be.k || ( e.k == be.k && e.g < be.g ) ) ) ) );
-			if ( better ) {
+			ok[ i ] = true;
+		}
+		/* owned / flyable, then the ledge you land on unless braked ( beside closing ), then the least speed lost: within 2 u/s of the class's
+		   least = a tie ( one band, no chain ), then the nearest. a top you are over ( you land on it first ) and a ride stay in the band: k decides */
+		int best = -1;
+		for ( int i = 0; i < nc; ++i )
+			if ( ok[ i ] && ( best < 0 || ev[ i ].score > ev[ best ].score || ( ev[ i ].score == ev[ best ].score && ev[ i ].danger < ev[ best ].danger ) ) )
 				best = i;
-				be   = e;
-			}
+		if ( best >= 0 ) {
+			const int top_cls = best;
+			const auto cls    = [ & ]( const int i ) { return ok[ i ] && ev[ i ].score == ev[ top_cls ].score && ev[ i ].danger == ev[ top_cls ].danger; };
+			float lmin        = FLT_MAX;
+			for ( int i = 0; i < nc; ++i )
+				if ( cls( i ) )
+					lmin = std::min( lmin, ev[ i ].loss );
+			best = -1;
+			for ( int i = 0; i < nc; ++i )
+				if ( cls( i ) && ( ev[ i ].loss <= lmin + 2.f || ev[ i ].riding || ev[ i ].g <= 0.f ) &&
+				     ( best < 0 || ev[ i ].k < ev[ best ].k || ( ev[ i ].k == ev[ best ].k && ev[ i ].g < ev[ best ].g ) ) )
+					best = i;
 		}
 		/* a pinned START on no ledge top here = another trick's ride ( texture bug / pixel surf ): never ours */
-		if ( best < 0 || ( riding0 && !be.riding ) )
+		if ( best < 0 || ( riding0 && !ev[ best ].riding ) )
 			return r;
 		const edge_t f = c[ best ];
-		const ev_t& e  = be;
+		const ev_t& e  = ev[ best ];
 		m.pick         = f;
 		m.pick_ok      = true;
 		if ( !e.riding ) {
@@ -721,10 +873,11 @@ namespace n_es
 		const auto log = [ & ]( const char act ) {
 			if ( !w.debug )
 				return;
-			char buf[ 320 ];
+			char buf[ 384 ];
 			snprintf( buf, sizeof( buf ),
-			          "ESURF: act=%c why=%c top=%.4f n=%.4f %.4f d=%.4f gap=%.3e kc=%d f0=%.4f close=%.4f sims=%d vz=%.2f xy=%.1f duck=%d own=%d pos=%.2f %.2f %.3f", act,
-			          why, f.top, f.n.x, f.n.y, f.d, e.g, e.k, e.f0, e.cl, w.used( ) - sims0, s.v.z, vxy, s.duck ? 1 : 0, m.own ? 1 : 0, s.o.x, s.o.y, s.o.z );
+			          "ESURF: act=%c why=%c top=%.4f n=%.4f %.4f d=%.4f prop=%d hk=%.2f gap=%.3e kc=%d f0=%.4f close=%.4f sims=%d vz=%.2f xy=%.1f duck=%d own=%d pos=%.2f %.2f %.3f loss=%.1f n_c=%d",
+			          act, why, f.top, f.n.x, f.n.y, f.d, f.prop ? ( f.brush ? 2 : 1 ) : 0, e.hk, e.g, e.k, e.f0, e.cl, w.used( ) - sims0, s.v.z, vxy, s.duck ? 1 : 0, m.own ? 1 : 0, s.o.x, s.o.y,
+			          s.o.z, e.loss, nc );
 			w.note( act, buf );
 		};
 		const auto own = [ & ]( const char act, const mv_t& mv, const bool pin ) {
@@ -744,7 +897,7 @@ namespace n_es
 		};
 		/* no plan: hands off, unless an owned / in reach approach could still close onto the ledge ( over the top: out, beside: the closing that
 		   never reaches the face before the crossing, held while your keys could get there: a press adds 30 u/s, more when turning your speed into it ) */
-		const bool guarded = m.guard_ok && same( f, m.guard );
+		const bool guarded = m.guard_ok && ( same( f, m.guard ) || same( raw[ best ], m.guard ) );
 		const auto hands_off = [ & ]( ) {
 			if ( e.mine ) {
 				m.guard    = f;
@@ -756,12 +909,13 @@ namespace n_es
 		};
 		const auto let_go = [ & ]( const char w_ ) {
 			why = w_;
-			if ( !( e.mine || guarded || e.g <= in.reach ) || e.riding || s.o.z <= f.top )
+			/* in reach = beside: a ledge you are over with no plan was never ours, you land on it */
+			if ( !( e.mine || guarded || ( e.g > 0.f && e.g <= in.reach ) ) || e.riding || s.o.z <= f.top )
 				return hands_off( );
 			/* over the top: out, flown ( a slow fall lands before it leaves = try the full brake ) */
 			if ( e.g <= 0.f ) {
-				mv_t out = press( w, f, e.cl, -30.f, s.duck );
-				for ( const float c : { -30.f, e.cl - auth } ) {
+				mv_t out = press( w, f, e.cl, std::min( -30.f, e.cl ), s.duck );
+				for ( const float c : { std::min( -30.f, e.cl ), e.cl - auth } ) {
 					out = press( w, f, e.cl, c, s.duck );
 					if ( w.sims_left( ) <= 0 )
 						break;
@@ -772,7 +926,7 @@ namespace n_es
 				return own( 'H', out, false );
 			}
 			/* beside a prop: hands off, its pins are edgebug shaped ( log 11-20: H holds there blocked the eb plans that pinned the curb ) */
-			if ( f.prop )
+			if ( vphys( f ) )
 				return hands_off( );
 			/* diagonal: closing 0 is not parked, the along rounding walks the plane distance ~1e-4 a tick: hold 2e-3 off */
 			const bool axial  = fabsf( f.n.x ) > 0.9999f || fabsf( f.n.y ) > 0.9999f;
@@ -790,7 +944,7 @@ namespace n_es
 				return own( 'C', mv, true );
 			/* standing: an air duck lifts the feet 9 ( FinishDuck ), the fall back is a second arrival. the sim says if the engine lets the duck in.
 			   never on a prop: the 9u fall back steps < 2u, its over the top pin needs more */
-			if ( !s.duck && !f.prop && w.sims_left( ) > 0 ) {
+			if ( !s.duck && !vphys( f ) && w.sims_left( ) > 0 ) {
 				const mv_t up = press( w, f, e.cl, 0.f, true );
 				w.reset( );
 				const st_t e1   = w.sim( up );
@@ -827,6 +981,11 @@ namespace n_es
 			own( 'E', dm, false );
 			m.own = false;
 			return r;
+		}
+		/* no face where the hull gets there ( and no earlier standing arrival ): nothing to hold off from either */
+		if ( gone[ best ] && !e.upq ) {
+			why = 'e';
+			return hands_off( );
 		}
 		if ( !e.fly && !e.mine )
 			return let_go( 'n' );
@@ -894,12 +1053,15 @@ namespace n_es
 		if ( e.act == 'F' )
 			return let_go( 'g' );
 		mv_t mv = e.act == 'D' ? turn( w, f, s.v, e.v, s.duck ) : press( w, f, e.cl, e.v, s.duck );
-		/* every guide press flown once: it must END beside the face, above the top, never through half the standoff faster than a creep */
+		/* every guide press flown once: it must END beside the face, above the top, never through half the standoff faster than a creep. from over
+		   the top it may END still over it 2u+ up ( closer = CategorizePosition lands you ) */
 		const auto ok_end = [ & ]( const st_t& q ) {
 			if ( !q.walk || q.ground )
 				return false;
 			const float gq = gap( f, q.o, h );
-			return gq > 0.f && q.o.z > f.top + k_eps && ( gq >= 0.5f * e.hs || closing( f, q.v ) * w.dt <= 0.5f * e.hs );
+			if ( gq <= 0.f )
+				return e.g <= 0.f && q.o.z > f.top + 2.05f;
+			return q.o.z > f.top + k_eps && ( gq >= 0.5f * e.hs || closing( f, q.v ) * w.dt <= 0.5f * e.hs );
 		};
 		if ( w.sims_left( ) <= 0 )
 			return let_go( 's' );

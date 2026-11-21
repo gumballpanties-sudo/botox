@@ -38,10 +38,8 @@ namespace n_depth_of_field
 		IDirect3DPixelShader9* m_shaders[ 13 ]{ };
 
 		bool m_shader_failed[ 13 ]{ };
-		// frame into stage texture ( back buffer format, so StretchRect accepts it ), then one pass packs colour +
-		// signed coc into alpha, so the gather does one fetch per tap and never touches depth again.
-		IDirect3DTexture9* m_stage_texture  = nullptr;
-		IDirect3DSurface9* m_stage_surface  = nullptr;
+		// frame into n_frame_copy's shared copy, then one pass packs colour + signed coc into alpha,
+		// so the gather does one fetch per tap and never touches depth again.
 		IDirect3DTexture9* m_colour_texture = nullptr;
 		IDirect3DSurface9* m_colour_surface = nullptr;
 
@@ -74,8 +72,6 @@ namespace n_depth_of_field
 
 		int m_coc_width  = 0;
 		int m_coc_height = 0;
-
-		IDirect3DSurface9* m_resolve_surface = nullptr;
 
 		int m_selftest_state = 0;
 

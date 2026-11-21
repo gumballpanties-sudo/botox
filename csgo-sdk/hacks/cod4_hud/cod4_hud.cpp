@@ -123,7 +123,6 @@ namespace
 
 	std::atomic< int > s_load_state{ 0 }; // 0 idle, 1 loading, 2 ready, 3 failed
 	int s_missing = 0; // images that failed to fetch / decode, written by the worker before state 2 / 3
-	std::vector< n_cod4_iwd::image_t > s_images{ }; // per k_materials, written by the worker before state 2
 	std::vector< texture_t > s_textures{ };
 
 	struct overview_t {
@@ -140,9 +139,35 @@ namespace
 
 	bool read_bytes( const std::string& path, std::vector< std::uint8_t >& out )
 	{
-		std::ifstream file( path, std::ios::binary );
-		out.assign( std::istreambuf_iterator< char >( file ), std::istreambuf_iterator< char >( ) );
+		std::ifstream file( path, std::ios::binary | std::ios::ate );
+		const std::streamoff size = file ? static_cast< std::streamoff >( file.tellg( ) ) : -1;
+		out.clear( );
+		if ( size <= 0 || size > ( 64 << 20 ) )
+			return false;
+		out.resize( static_cast< size_t >( size ) );
+		file.seekg( 0 );
+		if ( !file.read( reinterpret_cast< char* >( out.data( ) ), size ) )
+			out.clear( );
 		return !out.empty( );
+	}
+
+	/* decoded when its texture is made, freed right after: all of them = 10.7 mb held for good ( scope overlay alone 4 mb ) */
+	bool load_image( const material_t& m, n_cod4_iwd::image_t& out )
+	{
+		if ( m.m_image[ 0 ] == '$' ) {
+			out.m_w = out.m_h = 1;
+			out.m_bgra        = { 255, 255, 255, 255 };
+			return true;
+		}
+		/* render thread ( first draw, after every Reset ): no room = no image, never a throw through EndScene */
+		try {
+			std::vector< std::uint8_t > file{ };
+			return read_bytes( k_cache_dir + n_cod4_iwd::lower( m.m_image ) + ".iwi", file ) && n_cod4_iwd::decode_iwi( file, out );
+		}
+		catch ( const std::bad_alloc& ) {
+			out = { };
+			return false;
+		}
 	}
 
 	void load_worker( )
@@ -173,20 +198,15 @@ namespace
 		for ( std::thread& t : pool )
 			t.join( );
 
-		std::vector< n_cod4_iwd::image_t > images( std::size( k_materials ) );
 		int missing = 0, wanted = 0;
 		for ( size_t i = 0; i < std::size( k_materials ); ++i ) {
 			const material_t& m = k_materials[ i ];
-			if ( m.m_image[ 0 ] == '$' ) {
-				images[ i ].m_w = images[ i ].m_h = 1;
-				images[ i ].m_bgra = { 255, 255, 255, 255 };
+			if ( m.m_image[ 0 ] == '$' )
 				continue;
-			}
 			++wanted;
-			const std::string path = k_cache_dir + n_cod4_iwd::lower( m.m_image ) + ".iwi";
-			std::vector< std::uint8_t > file{ };
-			if ( !read_bytes( path, file ) || !n_cod4_iwd::decode_iwi( file, images[ i ] ) ) {
-				DeleteFileA( path.c_str( ) ); // bad cache = fetched again on retry
+			n_cod4_iwd::image_t check{ };
+			if ( !load_image( m, check ) ) {
+				DeleteFileA( ( k_cache_dir + n_cod4_iwd::lower( m.m_image ) + ".iwi" ).c_str( ) ); // bad cache = fetched again on retry
 				++missing;
 			}
 		}
@@ -199,10 +219,8 @@ namespace
 			g_console.print( "COD4: no hud images (offline?), retry under visuals > cod4 hud" );
 			s_load_state = 3;
 		}
-		else {
-			s_images     = std::move( images );
+		else
 			s_load_state = 2;
-		}
 		--g_url_image_downloads;
 	}
 
@@ -239,9 +257,11 @@ namespace
 			s_textures.resize( std::size( k_materials ) );
 		texture_t& t = s_textures[ material ];
 		if ( !t.m_tried ) {
-			t.m_tried   = true;
-			t.m_texture = make_texture( s_images[ material ] );
-			t.m_w = s_images[ material ].m_w, t.m_h = s_images[ material ].m_h;
+			t.m_tried = true;
+			n_cod4_iwd::image_t image{ };
+			load_image( k_materials[ material ], image );
+			t.m_texture = make_texture( image );
+			t.m_w = image.m_w, t.m_h = image.m_h;
 		}
 		return t.m_texture ? &t : nullptr;
 	}

@@ -279,11 +279,6 @@ void n_depth_of_field::impl_t::release( )
 		this->m_probe_texture = nullptr;
 	}
 
-	if ( this->m_resolve_surface ) {
-		this->m_resolve_surface->Release( );
-		this->m_resolve_surface = nullptr;
-	}
-
 	if ( this->m_prepare_shader ) {
 		this->m_prepare_shader->Release( );
 		this->m_prepare_shader = nullptr;
@@ -334,16 +329,6 @@ void n_depth_of_field::impl_t::release( )
 	if ( this->m_blur_texture ) {
 		this->m_blur_texture->Release( );
 		this->m_blur_texture = nullptr;
-	}
-
-	if ( this->m_stage_surface ) {
-		this->m_stage_surface->Release( );
-		this->m_stage_surface = nullptr;
-	}
-
-	if ( this->m_stage_texture ) {
-		this->m_stage_texture->Release( );
-		this->m_stage_texture = nullptr;
 	}
 
 	if ( this->m_colour_surface ) {
@@ -672,14 +657,6 @@ bool n_depth_of_field::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE
 
 	this->release( );
 
-	if ( FAILED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, description.Format, D3DPOOL_DEFAULT,
-	                                    &this->m_stage_texture, nullptr ) ) ||
-	     FAILED( this->m_stage_texture->GetSurfaceLevel( 0, &this->m_stage_surface ) ) ) {
-		g_console.print< n_console::log_level::WARNING >( "depth of field: stage target creation failed" );
-		this->release( );
-		return false;
-	}
-
 	if ( FAILED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT,
 	                                    &this->m_colour_texture, nullptr ) ) ||
 	     FAILED( this->m_colour_texture->GetSurfaceLevel( 0, &this->m_colour_surface ) ) ) {
@@ -736,14 +713,6 @@ bool n_depth_of_field::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE
 
 	this->m_coc_width  = static_cast< int >( coc_width );
 	this->m_coc_height = static_cast< int >( coc_height );
-
-	if ( description.MultiSampleType != D3DMULTISAMPLE_NONE &&
-	     FAILED( device->CreateRenderTarget( description.Width, description.Height, description.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
-	                                         &this->m_resolve_surface, nullptr ) ) ) {
-		g_console.print< n_console::log_level::WARNING >( "depth of field: msaa resolve target creation failed" );
-		this->release( );
-		return false;
-	}
 
 	this->m_selftest_state = 0;
 
@@ -907,9 +876,11 @@ void n_depth_of_field::impl_t::execute( const frame_t frame )
 
 	static bool logged_blit = false;
 
-	const long blit_result = n_frame_copy::copy( device, target, this->m_resolve_surface, this->m_stage_surface );
+	HRESULT blit_result = E_FAIL;
 
-	if ( FAILED( blit_result ) ) {
+	IDirect3DTexture9* frame_copy = n_frame_copy::grab( device, target, description, &blit_result );
+
+	if ( !frame_copy ) {
 		if ( !logged_blit ) {
 			logged_blit = true;
 
@@ -1133,7 +1104,7 @@ void n_depth_of_field::impl_t::execute( const frame_t frame )
 
 	device->SetRenderState( D3DRS_COLORWRITEENABLE, 0x0f );
 	device->SetRenderTarget( 0, this->m_colour_surface );
-	device->SetTexture( 0, this->m_stage_texture );
+	device->SetTexture( 0, frame_copy );
 	device->SetPixelShader( prepare );
 	n_fx_compat::draw_up( device, D3DPT_TRIANGLESTRIP, 2, quad, sizeof( vertex_t ) );
 

@@ -14,11 +14,13 @@
 #include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/visuals/players/players.h"
 #include "../../hacks/visuals/screen/color_correction.h"
+#include "../../hacks/visuals/screen/frame_copy.h"
 #include "../../hacks/visuals/screen/fx_compat.h"
 #include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../../hacks/visuals/screen/reflections.h"
 #include "../../hacks/visuals/screen/resolution_spoof.h"
 #include "../../hacks/web/websurface.h"
+#include "../../utilities/memory/va_ballast.h"
 #include "../../utilities/perf/perf_watch.h"
 #include "../hooks.h"
 #include "flash_probe.h"
@@ -139,6 +141,9 @@ long n_detoured_functions::overlay_end_scene( IDirect3DDevice9* device, long( __
 		if ( corrected )
 			Web_RestoreOverColorCorr( device, g_color_correction.input_texture( ), g_color_correction.width( ),
 			                          g_color_correction.height( ) );
+
+		// last copy reader this frame: idle slots go
+		n_frame_copy::trim( );
 	}
 
 	flash_probe_sample( device, 1 );
@@ -146,6 +151,16 @@ long n_detoured_functions::overlay_end_scene( IDirect3DDevice9* device, long( __
 	if ( graded && !overlay_pass && SUCCEEDED( device->BeginScene( ) ) ) {
 		draw_overlay_frame( device );
 		device->EndScene( );
+	}
+
+	/* the NtAllocateVirtualMemory detour handed ballast back ( address space ran out once ): it can't log, this says it */
+	static long s_rescues_seen = 0;
+	if ( const long rescues = n_va_ballast::g_rescues.load( std::memory_order_acquire ); rescues != s_rescues_seen ) {
+		s_rescues_seen = rescues;
+		g_console.print< n_console::log_level::WARNING >(
+			std::format( "OOM: address space full, gave back ballast ( {}/{} left ), ask {} kb {} - restart the game soon", n_va_ballast::left( ),
+		                 n_va_ballast::k_chunks, n_va_ballast::g_last_ask.load( ) >> 10, n_va_ballast::g_last_ok.load( ) ? "fit" : "still failed" )
+				.c_str( ) );
 	}
 
 	/* leak watch: one line per 8 mb of new private bytes; mem_due gates the locked counts */

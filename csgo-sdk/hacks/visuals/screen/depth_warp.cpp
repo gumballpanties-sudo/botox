@@ -59,15 +59,11 @@ void n_depth_warp::impl_t::release( )
 
 	drop( this->m_history_surface );
 	drop( this->m_history_texture );
-	drop( this->m_resolve_surface );
-	drop( this->m_frame_surface );
-	drop( this->m_frame_texture );
 
 	this->m_history_effect = -1;
 	this->m_width          = 0;
 	this->m_height         = 0;
 	this->m_format         = D3DFMT_UNKNOWN;
-	this->m_multi_sample   = D3DMULTISAMPLE_NONE;
 }
 
 void n_depth_warp::impl_t::on_device_lost( )
@@ -136,32 +132,14 @@ bool n_depth_warp::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DES
 		}
 	};
 
-	if ( !this->m_frame_texture || this->m_width != width || this->m_height != height || this->m_format != description.Format ||
-	     this->m_multi_sample != description.MultiSampleType ) {
+	if ( this->m_width != width || this->m_height != height || this->m_format != description.Format ) {
 		drop( this->m_history_surface );
 		drop( this->m_history_texture );
-		drop( this->m_resolve_surface );
-		drop( this->m_frame_surface );
-		drop( this->m_frame_texture );
 		this->m_history_effect = -1;
 
-		if ( FAILED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, description.Format, D3DPOOL_DEFAULT,
-		                                    &this->m_frame_texture, nullptr ) ) ||
-		     FAILED( this->m_frame_texture->GetSurfaceLevel( 0, &this->m_frame_surface ) ) ||
-		     ( description.MultiSampleType != D3DMULTISAMPLE_NONE &&
-		       FAILED( device->CreateRenderTarget( description.Width, description.Height, description.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
-		                                           &this->m_resolve_surface, nullptr ) ) ) ) {
-			g_console.print< n_console::log_level::WARNING >( "depth distort: frame copy creation failed" );
-			drop( this->m_resolve_surface );
-			drop( this->m_frame_surface );
-			drop( this->m_frame_texture );
-			return false;
-		}
-
-		this->m_width        = width;
-		this->m_height       = height;
-		this->m_format       = description.Format;
-		this->m_multi_sample = description.MultiSampleType;
+		this->m_width  = width;
+		this->m_height = height;
+		this->m_format = description.Format;
 	}
 
 	if ( history && !this->m_history_texture ) {
@@ -254,7 +232,9 @@ void n_depth_warp::impl_t::execute( const frame_t frame )
 		return;
 	}
 
-	if ( FAILED( n_frame_copy::copy( device, target, this->m_resolve_surface, this->m_frame_surface ) ) ) {
+	IDirect3DTexture9* frame_copy = n_frame_copy::grab( device, target, description );
+
+	if ( !frame_copy ) {
 		target->Release( );
 		return;
 	}
@@ -459,7 +439,7 @@ void n_depth_warp::impl_t::execute( const frame_t frame )
 
 	device->SetPixelShaderConstantF( 0, constants[ 0 ], k_constants );
 	device->SetTexture( 0, depth );
-	device->SetTexture( 1, this->m_frame_texture );
+	device->SetTexture( 1, frame_copy );
 	device->SetTexture( 2, nullptr );
 	device->SetViewport( &viewport );
 

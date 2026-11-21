@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <thread>
 
@@ -85,9 +86,9 @@ namespace
 		return attributes != INVALID_FILE_ATTRIBUTES && !( attributes & FILE_ATTRIBUTE_DIRECTORY );
 	}
 
-	/* error: http status when one came back, else the WinHTTP GetLastError code */
-	bool http_get( const std::string& url, std::string& out, const bool allow_empty = false, const size_t max_bytes = k_max_bytes,
-	               unsigned long* error = nullptr )
+	/* error: http status when one came back, else the WinHTTP GetLastError code. sink false = stop, failed */
+	bool http_get( const std::string& url, const std::function< bool( const char*, DWORD ) >& sink, const bool allow_empty = false,
+	               const size_t max_bytes = k_max_bytes, unsigned long* error = nullptr )
 	{
 		unsigned long dummy = 0;
 		unsigned long& code = error ? *error : dummy;
@@ -121,7 +122,8 @@ namespace
 		                                                        parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0u )
 		                                  : nullptr;
 
-		bool ok = false;
+		bool ok      = false;
+		size_t total = 0;
 
 		const bool sent = request && WinHttpSendRequest( request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0 );
 
@@ -134,17 +136,29 @@ namespace
 
 			if ( status == 200 ) {
 				char buffer[ 8192 ]{ };
-				DWORD read = 0;
-				ok         = true;
+				DWORD read = 0, length = 0, length_size = sizeof( length );
+				const bool sized = WinHttpQueryHeaders( request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+				                                        &length, &length_size, WINHTTP_NO_HEADER_INDEX );
+				ok = true;
 
-				while ( WinHttpReadData( request, buffer, sizeof( buffer ), &read ) && read ) {
-					out.append( buffer, read );
+				/* a dropped connection mid body = failed, never a cut file renamed into the cache */
+				for ( ;; ) {
+					if ( !WinHttpReadData( request, buffer, sizeof( buffer ), &read ) ) {
+						code = GetLastError( );
+						ok   = false;
+						break;
+					}
+					if ( !read )
+						break;
 
-					if ( out.size( ) > max_bytes ) { // a hud icon is never this big - something is wrong
+					total += read;
+
+					if ( total > max_bytes || !sink( buffer, read ) ) { // a hud icon is never this big - something is wrong
 						ok = false;
 						break;
 					}
 				}
+				ok = ok && ( !sized || total == length );
 			}
 		} else
 			code = GetLastError( );
@@ -155,27 +169,28 @@ namespace
 			WinHttpCloseHandle( connection );
 		WinHttpCloseHandle( session );
 
-		return ok && ( allow_empty || !out.empty( ) );
+		return ok && ( allow_empty || total );
 	}
 
-	// write next to the target then rename, so a half-downloaded file is never loadable
+	/* 8 kb chunks straight to the .part file, never the whole body in memory ( old mods = 8 threads of up to 5 mb files ). renamed
+	   when whole, so a half download is never loadable */
 	bool download_to( const std::string& url, const std::string& destination, const bool allow_empty = false,
 	                  const size_t max_bytes = k_max_bytes )
 	{
-		std::string body;
-		if ( !http_get( url, body, allow_empty, max_bytes ) )
-			return false;
-
 		const std::string temp = destination + ".part";
+		bool ok                = false;
 		{
 			std::ofstream file( temp, std::ios::binary | std::ios::trunc );
 			if ( !file )
 				return false;
 
-			file.write( body.data( ), static_cast< std::streamsize >( body.size( ) ) );
+			ok = http_get(
+				url, [ & ]( const char* data, DWORD size ) { return static_cast< bool >( file.write( data, static_cast< std::streamsize >( size ) ) ); },
+				allow_empty, max_bytes );
+			ok = ok && static_cast< bool >( file.flush( ) );
 		}
 
-		if ( !MoveFileExA( temp.c_str( ), destination.c_str( ), MOVEFILE_REPLACE_EXISTING ) ) {
+		if ( !ok || !MoveFileExA( temp.c_str( ), destination.c_str( ), MOVEFILE_REPLACE_EXISTING ) ) {
 			DeleteFileA( temp.c_str( ) );
 			return false;
 		}
@@ -254,7 +269,7 @@ bool n_image_cache::download_file( const std::string& url, const std::string& de
 
 bool n_image_cache::http_get_text( const std::string& url, std::string& out, unsigned long* error )
 {
-	return http_get( url, out, false, k_max_bytes, error );
+	return http_get( url, [ & ]( const char* data, DWORD size ) { out.append( data, size ); return true; }, false, k_max_bytes, error );
 }
 
 const std::string& n_image_cache::air_kill_icon( )

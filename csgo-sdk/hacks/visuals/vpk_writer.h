@@ -37,13 +37,21 @@ namespace n_vpk_writer
 		return ~crc;
 	}
 
+	/* one exact block, reused file to file ( no grow copies ). no room in a fragmented 32 bit csgo = false, a throw kills the pack thread */
 	inline bool read_disk( const std::string& path, std::vector< char >& out )
 	{
-		std::ifstream file( path, std::ios::binary );
-		if ( !file )
+		std::ifstream file( path, std::ios::binary | std::ios::ate );
+		const std::streamoff size = file ? static_cast< std::streamoff >( file.tellg( ) ) : -1;
+		if ( size < 0 )
 			return false;
-		out.assign( std::istreambuf_iterator< char >( file ), std::istreambuf_iterator< char >( ) );
-		return true;
+		try {
+			out.resize( static_cast< size_t >( size ) );
+		}
+		catch ( const std::bad_alloc& ) {
+			return false;
+		}
+		file.seekg( 0 );
+		return static_cast< bool >( file.read( out.data( ), static_cast< std::streamsize >( out.size( ) ) ) );
 	}
 
 	/* root = folder holding the files ( trailing slash ), files = forward slash relative lowercase paths, aliases = { path, file } extra

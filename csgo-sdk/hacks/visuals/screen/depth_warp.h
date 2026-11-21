@@ -32,19 +32,14 @@ namespace n_depth_warp
 		bool m_failed[ 11 ][ 4 ]{ };
 		bool m_write_failed[ 2 ]{ };
 
-		IDirect3DTexture9* m_frame_texture = nullptr;
-		IDirect3DSurface9* m_frame_surface = nullptr;
-		IDirect3DSurface9* m_resolve_surface = nullptr;
-
 		// slit scan history, persists across frames
 		IDirect3DTexture9* m_history_texture = nullptr;
 		IDirect3DSurface9* m_history_surface = nullptr;
 		int m_history_effect = -1;
 
-		int m_width                        = 0;
-		int m_height                       = 0;
-		D3DFORMAT m_format                 = D3DFMT_UNKNOWN;
-		D3DMULTISAMPLE_TYPE m_multi_sample = D3DMULTISAMPLE_NONE;
+		int m_width        = 0;
+		int m_height       = 0;
+		D3DFORMAT m_format = D3DFMT_UNKNOWN;
 
 		unsigned m_scan_frame = 0;
 		int m_logged_effect   = -2;

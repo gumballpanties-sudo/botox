@@ -15,6 +15,7 @@
 #include "../../hacks/visuals/screen/depth_view.h"
 #include "../../hacks/visuals/screen/depth_warp.h"
 #include "../../hacks/visuals/screen/flip_world.h"
+#include "../../hacks/visuals/screen/frame_copy.h"
 #include "../../hacks/visuals/screen/fx_compat.h"
 #include "../../hacks/visuals/screen/mc_clouds.h"
 #include "../../hacks/visuals/screen/gpu_timer.h"
@@ -57,6 +58,7 @@ long __stdcall n_detoured_functions::reset( IDirect3DDevice9* device, D3DPRESENT
 	g_glass_chams.on_reset( );
 	g_flip_world.on_device_lost( );
 	g_mc_clouds.on_device_lost( );
+	n_frame_copy::release( );
 	n_gpu_timer::on_device_lost( );
 	n_fx_compat::on_device_lost( );
 

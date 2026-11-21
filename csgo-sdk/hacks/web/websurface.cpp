@@ -132,7 +132,8 @@ static void WebPublishPixels(const uint8_t* bgra, int w, int h, int pitch)
     if (!s_lockInit || !bgra || w <= 0 || h <= 0 || !s_pixWanted) return;
 
     const size_t row = (size_t)w * 4, bytes = row * (size_t)h;
-    if (s_pixIn.size() != bytes) s_pixIn.resize(bytes);
+    // 8 mb+ on a capture thread: no block that big ( fragmented 32 bit ) = drop the frame, a throw here kills the game
+    try { if (s_pixIn.size() != bytes) s_pixIn.resize(bytes); } catch (const std::bad_alloc&) { return; }
     if (pitch == (int)row) memcpy(s_pixIn.data(), bgra, bytes);
     else for (int y = 0; y < h; ++y) memcpy(&s_pixIn[(size_t)y * row], bgra + (size_t)y * pitch, row);
 
@@ -1696,7 +1697,7 @@ static void WebPeerSink(int slot, const uint8_t* bgra, int w, int h, int pitch)
     if (slot < 1 || slot > wv2::k_peers || !bgra || w <= 0 || h <= 0) return;
     WsPeer& p = s_peers[slot - 1];
     const size_t row = (size_t)w * 4, bytes = row * (size_t)h;
-    if (p.pixIn.size() != bytes) p.pixIn.resize(bytes);
+    try { if (p.pixIn.size() != bytes) p.pixIn.resize(bytes); } catch (const std::bad_alloc&) { return; } // same as WebPublishPixels
     if (pitch == (int)row) memcpy(p.pixIn.data(), bgra, bytes);
     else for (int y = 0; y < h; ++y) memcpy(&p.pixIn[(size_t)y * row], bgra + (size_t)y * pitch, row);
 

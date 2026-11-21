@@ -384,25 +384,9 @@ IDirect3DPixelShader9* n_color_correction::impl_t::ensure_shader( IDirect3DDevic
 
 void n_color_correction::impl_t::release_targets( )
 {
-	if ( this->m_resolve_surface ) {
-		this->m_resolve_surface->Release( );
-		this->m_resolve_surface = nullptr;
-	}
-
-	if ( this->m_input_surface ) {
-		this->m_input_surface->Release( );
-		this->m_input_surface = nullptr;
-	}
-
-	if ( this->m_input_texture ) {
-		this->m_input_texture->Release( );
-		this->m_input_texture = nullptr;
-	}
-
-	this->m_width        = 0;
-	this->m_height       = 0;
-	this->m_format       = D3DFMT_UNKNOWN;
-	this->m_multi_sample = D3DMULTISAMPLE_NONE;
+	this->m_input_texture = nullptr;
+	this->m_width         = 0;
+	this->m_height        = 0;
 }
 
 void n_color_correction::impl_t::release( )
@@ -453,45 +437,6 @@ bool n_color_correction::impl_t::wants_pass( )
 	return true;
 }
 
-bool n_color_correction::impl_t::build( IDirect3DDevice9* device, const D3DSURFACE_DESC& description )
-{
-	const int width  = static_cast< int >( description.Width );
-	const int height = static_cast< int >( description.Height );
-
-	if ( this->m_input_texture && this->m_width == width && this->m_height == height && this->m_format == description.Format &&
-	     this->m_multi_sample == description.MultiSampleType )
-		return true;
-
-	this->release_targets( );
-
-	if ( FAILED( device->CreateTexture( description.Width, description.Height, 1, D3DUSAGE_RENDERTARGET, description.Format, D3DPOOL_DEFAULT,
-	                                    &this->m_input_texture, nullptr ) ) ||
-	     FAILED( this->m_input_texture->GetSurfaceLevel( 0, &this->m_input_surface ) ) ) {
-		g_console.print< n_console::log_level::WARNING >( "color correction: render target creation failed" );
-		this->release( );
-		return false;
-	}
-
-	if ( description.MultiSampleType != D3DMULTISAMPLE_NONE &&
-	     FAILED( device->CreateRenderTarget( description.Width, description.Height, description.Format, D3DMULTISAMPLE_NONE, 0, FALSE,
-	                                         &this->m_resolve_surface, nullptr ) ) ) {
-		g_console.print< n_console::log_level::WARNING >( "color correction: msaa resolve target creation failed" );
-		this->release( );
-		return false;
-	}
-
-	this->m_width        = width;
-	this->m_height       = height;
-	this->m_format       = description.Format;
-	this->m_multi_sample = description.MultiSampleType;
-
-	const int samples = static_cast< int >( description.MultiSampleType );
-
-	g_console.print( std::vformat( "color correction: built {:d}x{:d} msaa {:d}", std::make_format_args( width, height, samples ) ).c_str( ) );
-
-	return true;
-}
-
 bool n_color_correction::impl_t::on_end_scene_post( IDirect3DDevice9* device )
 {
 	if ( !device )
@@ -512,11 +457,6 @@ bool n_color_correction::impl_t::on_end_scene_post( IDirect3DDevice9* device )
 
 	D3DSURFACE_DESC description{ };
 	if ( FAILED( back_buffer->GetDesc( &description ) ) ) {
-		back_buffer->Release( );
-		return false;
-	}
-
-	if ( !this->build( device, description ) ) {
 		back_buffer->Release( );
 		return false;
 	}
@@ -551,9 +491,13 @@ bool n_color_correction::impl_t::on_end_scene_post( IDirect3DDevice9* device )
 
 	static bool logged_blit = false;
 
-	const long blit_result = n_frame_copy::copy( device, back_buffer, this->m_resolve_surface, this->m_input_surface );
+	HRESULT blit_result = E_FAIL;
 
-	if ( FAILED( blit_result ) ) {
+	this->m_input_texture = n_frame_copy::grab( device, back_buffer, description, &blit_result );
+	this->m_width         = static_cast< int >( description.Width );
+	this->m_height        = static_cast< int >( description.Height );
+
+	if ( !this->m_input_texture ) {
 		if ( !logged_blit ) {
 			logged_blit = true;
 

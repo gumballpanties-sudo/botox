@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <mutex>
 #include <set>
 #include <string>
 #include <string_view>
@@ -157,9 +158,13 @@ namespace
 		return n_vpk_writer::write( vpk_path( pack ), pack_dir( pack ), files, aliases, &always_setup_bones );
 	}
 
+	/* one pack at a time: 5 packs at once = 40 fetch threads ( 1 mb stack each ) + 5 vpk builds in 32 bit csgo */
+	std::mutex s_one_pack{ };
+
 	void download( int pack )
 	{
 		n_perf::background_thread( );
+		std::unique_lock< std::mutex > one_pack( s_one_pack );
 
 		n_old_mods::pack_state_t& state = g_old_mods.m_packs[ pack ];
 		const pack_t& info              = k_packs[ pack ];
@@ -200,6 +205,7 @@ namespace
 			botox_dbg_log( "OLD: %s %d/%d files missing", info.m_dir, missing.load( ), info.m_count );
 		else if ( !packed )
 			botox_dbg_log( "OLD: %s vpk build FAILED %s", info.m_dir, vpk_path( pack ).c_str( ) );
+		one_pack.unlock( ); // before the count: eject frees the dll at 0
 		--g_url_image_downloads;
 	}
 
@@ -442,7 +448,14 @@ namespace
 			return false;
 
 		const unsigned int size = g_virtual.call< unsigned int >( fs, 7, handle );
-		out.resize( size );
+		/* big model / vtf at a map load in a fragmented 32 bit process: skip the file, not throw through the game */
+		try {
+			out.resize( size );
+		}
+		catch ( const std::bad_alloc& ) {
+			g_virtual.call< void >( fs, 3, handle );
+			return false;
+		}
 		const int got = size ? g_virtual.call< int >( fs, 0, static_cast< void* >( out.data( ) ), static_cast< int >( size ), handle ) : 0;
 		g_virtual.call< void >( fs, 3, handle );
 		return size && got == static_cast< int >( size );
