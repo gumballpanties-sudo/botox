@@ -82,6 +82,8 @@ enum e_font_names {
 	font_name_minesweeper_19, // tahoma bd 19, digits 1-8 only: minesweeper cell numbers (24 px cells)
 	font_name_primordial_roboto_13,
 	font_name_primordial_roboto_medium_13,
+	font_name_grimoire_tahoma_bd_11, // grimoire wm / spec header: tahomabd 11 mono ( rows = verdana_11 )
+	font_name_datashell_verdana_bd_12, // datashell wm / spec / media: verdanab 12, mono hinting + no aa
 	font_name_max
 };
 

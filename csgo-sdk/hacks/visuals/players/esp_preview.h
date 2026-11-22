@@ -63,6 +63,7 @@ namespace n_esp_preview
 		bool m_ready          = false;
 		bool m_constructed    = false;
 		bool m_standalone     = false; /* old csgo: old body is the root, no merged agent */
+		bool m_warm           = false; /* preload done: model built + drawn once ( materials, animations loaded ) */
 		int m_stage           = 0;
 
 		int m_bone_map[ 256 ]{ }; /* agent bone -> animset bone, -1 = parent's */

@@ -573,6 +573,9 @@ void n_movement::impl_t::auto_align( c_user_cmd* cmd )
 	if ( GET_VARIABLE( g_variables.m_auto_align_type, int ) == 1 ) {
 		wall_detected = false;
 		auto_align_lumia( cmd );
+	} else if ( GET_VARIABLE( g_variables.m_auto_align_type, int ) == 2 ) {
+		wall_detected = false;
+		auto_align_grimoire( cmd );
 	} else
 		auto_align_botox( cmd );
 	/* square wall, no prop = no wedge: native behaviour, no extra sims. reverted = never sent: no park / pj verdict / pj count off it */

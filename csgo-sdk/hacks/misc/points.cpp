@@ -77,6 +77,8 @@ namespace
 				break;
 			case 22: font = g_render.m_fonts[ e_font_names::font_name_millionware_tahoma_11 ]; break;
 			case 23: font = g_render.m_fonts[ e_font_names::font_name_lobotomy_bold_13 ]; break;
+			case 24: font = g_render.m_fonts[ e_font_names::font_name_grimoire_tahoma_bd_11 ]; break;
+			case 25: font = g_render.m_fonts[ e_font_names::font_name_datashell_verdana_bd_12 ]; break;
 			default: break;
 			}
 		}

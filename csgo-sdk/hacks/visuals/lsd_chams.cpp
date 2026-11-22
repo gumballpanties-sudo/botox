@@ -51,6 +51,8 @@ float cosRange( float amt, float range, float minimum )
 float4 main( float2 vpos : VPOS ) : COLOR
 {
 	const float brightness = 0.975;
+	// melt phases are age * f( time ): live time there = speed grows with uptime. 150 = 2 min uptime look
+	const float age = 150.0;
 	float time   = cLsd.x * 1.25;
 	float2 res   = cViewport.zw;
 	float2 frag  = float2( vpos.x - cViewport.x + 0.5, res.y - ( vpos.y - cViewport.y + 0.5 ) );
@@ -63,8 +65,8 @@ float4 main( float2 vpos : VPOS ) : COLOR
 	[loop] for ( int i = 1; i < 40; i++ ) {
 		float _i    = float( i );
 		float2 newp = p;
-		newp.x += 0.25 / _i * sin( _i * p.y + time * cos( ct ) * 0.5 / 20.0 + 0.005 * _i ) * fScale + xBoost;
-		newp.y += 0.25 / _i * sin( _i * p.x + time * ct * 0.3 / 40.0 + 0.03 * float( i + 15 ) ) * fScale + yBoost;
+		newp.x += 0.25 / _i * sin( _i * p.y + age * cos( ct ) * 0.5 / 20.0 + 0.005 * _i ) * fScale + xBoost;
+		newp.y += 0.25 / _i * sin( _i * p.x + age * ct * 0.3 / 40.0 + 0.03 * float( i + 15 ) ) * fScale + yBoost;
 		p = newp;
 	}
 

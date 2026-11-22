@@ -1,4 +1,5 @@
 #include "misc.h"
+#include "../menu/menu.h"
 
 #include <algorithm>
 #include <atomic>
@@ -98,6 +99,15 @@ namespace
 		p.m_alpha         = 0.4f + frand( ) * 0.5f;
 		p.m_phase         = static_cast< float >( rand( ) % 1000 ) * 0.01f;
 		p.m_rate          = 0.6f + static_cast< float >( rand( ) % 40 ) / 100.f;
+	}
+
+	/* scale = alpha x 256 */
+	void scale_alpha( ImDrawList* list, const int begin, const int end, const ImU32 scale )
+	{
+		for ( int v = begin; v < end; ++v ) {
+			ImU32& col = list->VtxBuffer.Data[ v ].col;
+			col        = ( col & ~IM_COL32_A_MASK ) | ( ( ( ( col >> IM_COL32_A_SHIFT ) & 0xFF ) * scale >> 8 ) << IM_COL32_A_SHIFT );
+		}
 	}
 }
 
@@ -257,14 +267,11 @@ void boot_screen_draw( )
 	ImDrawList* const list = ImGui::GetForegroundDrawList( );
 	g_splash_vtx           = list->VtxBuffer.Size;
 	const float w = g_ctx.m_width, h = g_ctx.m_height, u = h / 1080.f;
-	const auto color = [ fade ]( const float a ) { return IM_COL32( 255, 255, 255, static_cast< int >( a * fade * 255.f + 0.5f ) ); };
 
-	screen_blur_fullscreen( list, color( 1.f ), 5 );
+	screen_blur_fullscreen( list, IM_COL32( 255, 255, 255, static_cast< int >( fade * 255.f + 0.5f ) ), 5 );
 	list->AddRectFilled( ImVec2( 0.f, 0.f ), ImVec2( w, h ), IM_COL32( 0, 0, 0, static_cast< int >( 0.18f * fade * 255.f ) ) );
 
-	/* content grows 94 -> 100% and rises 10 px with the fade */
-	const float grow = 0.94f + 0.06f * fade;
-	const ImVec2 center( w * 0.5f, h * 0.5f + 10.f * u * ( 1.f - fade ) );
+	const ImVec2 center( w * 0.5f, h * 0.5f );
 
 	/* first frame spreads them along their rays so the stream is already full; off screen = back to the center */
 	const float reach = std::hypot( w, h ) * 0.5f + 4.f * u;
@@ -287,37 +294,70 @@ void boot_screen_draw( )
 		                       ImGui::GetColorU32( ImVec4( accent.x, accent.y, accent.z, alpha ) ) );
 	}
 
-	char text[ 96 ];
-	if ( ejecting )
-		done ? strcpy_s( text, "ejected" ) : sprintf_s( text, "ejecting   %d%%", static_cast< int >( shown * 100.f ) );
-	else if ( done )
-		strcpy_s( text, "injected" );
+	char label[ 64 ], percent[ 8 ], date[ 48 ];
+	if ( done )
+		strcpy_s( label, ejecting ? "ejected" : "injected" );
+	else if ( ejecting )
+		strcpy_s( label, "ejecting" );
 	else
-		sprintf_s( text, "injecting %s   %d%%", k_steps[ std::min( g_done.load( ), k_count - 1 ) ], static_cast< int >( shown * 100.f ) );
+		sprintf_s( label, "injecting %s", k_steps[ std::min( g_done.load( ), k_count - 1 ) ] );
+	sprintf_s( percent, "%d%%", done ? 100 : static_cast< int >( std::clamp( shown, 0.f, 1.f ) * 100.f ) );
+	sprintf_s( date, " | %s", menu_build_date( ) );
 
-	/* menu "botox" label font, native size: monochrome verdana goes soft when scaled */
-	ImFont* const font  = g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ] ? g_render.m_fonts[ e_font_names::font_name_verdana_bd_11 ] : ImGui::GetFont( );
-	const ImVec2 extent = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, text );
-	const float dot_w   = done ? 0.f : font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, "." ).x;
+	/* the default menu window in small, never the picked theme: band with its title, accent lines, slider look bar.
+	   drawn opaque, alpha scaled after; one block = dpi panel scale + aspect stretch */
+	const auto block     = g_render.begin_stretch_block( list );
+	const int card_begin = list->VtxBuffer.Size;
 
-	/* bar + gap + label centered as one block */
-	const float bar_w = 260.f * u * grow, bar_h = std::max( std::round( 4.f * u ), 2.f ), gap = std::round( 12.f * u );
-	const ImVec2 bar_min( std::floor( center.x - bar_w * 0.5f ), std::floor( center.y - ( bar_h + gap + extent.y ) * 0.5f ) );
-	const ImVec2 bar_max( bar_min.x + bar_w, bar_min.y + bar_h );
+	ImFont* const bold    = g_render.menu_font( true ) ? g_render.menu_font( true ) : ImGui::GetFont( );
+	ImFont* const regular = g_render.menu_font( false ) ? g_render.menu_font( false ) : ImGui::GetFont( );
+	const auto width      = []( ImFont* font, const char* text ) { return font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, text ).x; };
 
-	list->AddRectFilled( bar_min, bar_max, color( 0.15f ), bar_h * 0.5f );
-	if ( shown > 0.001f )
-		list->AddRectFilled( bar_min, ImVec2( bar_min.x + bar_w * std::min( shown, 1.f ), bar_max.y ), color( 0.95f ), bar_h * 0.5f );
+	constexpr float k_width = 280.f, k_pad = 12.f, k_gap = 7.f, k_bar = 8.f;
+	const ImGuiStyle& style = ImGui::GetStyle( );
+	const ImU32 accent_col  = ImGui::GetColorU32( ImGuiCol_Accent ), band_col = ImGui::GetColorU32( ImGuiCol_MenuBand );
+	const ImU32 text_col    = ImGui::GetColorU32( ImGuiCol_Text );
 
-	/* dots counted in the width so the label never shifts */
-	const ImVec2 text_pos( std::floor( center.x - ( extent.x + 3.f * dot_w ) * 0.5f ), bar_max.y + gap );
-	list->AddText( font, font->FontSize, text_pos, color( 1.f ), text );
+	/* slides up 10 px with the fade, whole px: text stays sharp */
+	const ImVec2 size( k_width, menu_band_height + k_pad + regular->FontSize + k_gap + k_bar + k_pad + menu_bottom_band_height );
+	const ImVec2 pos( std::floor( center.x - size.x * 0.5f ), std::floor( center.y - size.y * 0.5f + 10.f * ( 1.f - fade ) ) );
+	const ImVec2 max( pos.x + size.x, pos.y + size.y );
+
+	list->AddRectFilled( pos, max, ImGui::GetColorU32( ImGuiCol_WindowBg ), style.WindowRounding );
+	list->AddRectFilled( pos, ImVec2( max.x, pos.y + menu_band_height ), band_col, style.WindowRounding, ImDrawFlags_RoundCornersTop );
+	list->AddRectFilled( ImVec2( pos.x, max.y - menu_bottom_band_height ), max, band_col, style.WindowRounding, ImDrawFlags_RoundCornersBottom );
+	list->AddRect( pos, max, ImGui::GetColorU32( ImGuiCol_MenuWindowOutline ), style.WindowRounding );
+	RenderFadedGradientLine( list, ImVec2( pos.x, pos.y + menu_band_height - 1.f ), ImVec2( size.x, 1.f ), accent_col );
+	RenderFadedGradientLine( list, ImVec2( pos.x, max.y - menu_bottom_band_height ), ImVec2( size.x, 1.f ), accent_col );
+
+	/* menu title: bold name, accent build date */
+	const ImVec2 title_size = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.f, "botox" );
+	const ImVec2 title_pos( pos.x + ( size.x - title_size.x - width( regular, date ) ) / 2.f, pos.y + ( menu_band_height - title_size.y ) / 2.f );
+	list->AddText( bold, bold->FontSize, title_pos, text_col, "botox" );
+	list->AddText( regular, regular->FontSize, ImVec2( title_pos.x + title_size.x, title_pos.y ), accent_col, date );
+
+	const float left = pos.x + k_pad, right = max.x - k_pad, row_y = pos.y + menu_band_height + k_pad;
+	list->AddText( regular, regular->FontSize, ImVec2( left, row_y ), text_col, label );
+	list->AddText( regular, regular->FontSize, ImVec2( right - width( regular, percent ), row_y ), ImGui::GetColorU32( ImGuiCol_TextDisabled ), percent );
 
 	/* working: 3 dots pulse left to right, 1.2s loop */
+	const float label_w = width( regular, label ), dot_w = width( regular, "." );
 	for ( int i = 0; i < 3 && !done; ++i ) {
 		const float wave = 0.5f + 0.5f * std::cos( ( clock - static_cast< float >( i ) * 0.2f ) * ( 2.f * IM_PI / 1.2f ) );
-		list->AddText( font, font->FontSize, ImVec2( text_pos.x + extent.x + static_cast< float >( i ) * dot_w, text_pos.y ), color( 0.2f + 0.8f * wave ), "." );
+		list->AddText( regular, regular->FontSize, ImVec2( left + label_w + static_cast< float >( i ) * dot_w, row_y ),
+		               ImGui::GetColorU32( ImGuiCol_Text, 0.2f + 0.8f * wave ), "." );
 	}
+
+	/* menu slider: frame, outline, solid accent fill over both */
+	const ImVec2 bar_min( left, row_y + regular->FontSize + k_gap ), bar_max( right, bar_min.y + k_bar );
+	const float fill = std::floor( ( bar_max.x - bar_min.x ) * std::clamp( shown, 0.f, 1.f ) );
+	list->AddRectFilled( bar_min, bar_max, ImGui::GetColorU32( ImGuiCol_MenuFrame ), style.FrameRounding );
+	list->AddRect( bar_min, bar_max, ImGui::GetColorU32( ImGuiCol_MenuOutline ), style.FrameRounding );
+	if ( fill >= 1.f )
+		list->AddRectFilled( bar_min, ImVec2( bar_min.x + fill, bar_max.y ), accent_col | IM_COL32_A_MASK, fill > 1.f ? style.FrameRounding : 0.f );
+
+	scale_alpha( list, card_begin, list->VtxBuffer.Size, static_cast< ImU32 >( fade * 256.f ) );
+	g_render.end_stretch_block( block );
 }
 
 void boot_screen_fade_others( ImDrawData* draw_data )
@@ -331,12 +371,7 @@ void boot_screen_fade_others( ImDrawData* draw_data )
 
 	for ( int i = 0; i < draw_data->CmdListsCount; ++i ) {
 		ImDrawList* const list = draw_data->CmdLists[ i ];
-		const int end          = list == splash && g_splash_vtx >= 0 ? std::min( g_splash_vtx, list->VtxBuffer.Size ) : list->VtxBuffer.Size;
-
-		for ( int v = 0; v < end; ++v ) {
-			ImU32& col = list->VtxBuffer.Data[ v ].col;
-			col        = ( col & ~IM_COL32_A_MASK ) | ( ( ( ( col >> IM_COL32_A_SHIFT ) & 0xFF ) * scale >> 8 ) << IM_COL32_A_SHIFT );
-		}
+		scale_alpha( list, 0, list == splash && g_splash_vtx >= 0 ? std::min( g_splash_vtx, list->VtxBuffer.Size ) : list->VtxBuffer.Size, scale );
 	}
 }
 

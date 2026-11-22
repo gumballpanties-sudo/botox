@@ -749,6 +749,9 @@ void n_old_mods::impl_t::on_frame( )
 
 	if ( changed.empty( ) )
 		return;
+	/* one pack per serial reload, rest on the next frames once it ends: every pack in one go = snd_restart + all material dirs +
+	   all model flushes at once = 32 bit OOM inside execute_client_cmd ( 11-22 08:21 crash ) */
+	changed.resize( 1 );
 
 	m_any_mounted = true; // before the mount: async loaders may already ask for a pack file
 	m_serial_remove.clear( );

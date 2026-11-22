@@ -174,6 +174,8 @@ namespace n_misc
 		void draw_watermark_gamesense( );
 		void draw_watermark_millionware_v1( );
 		void draw_watermark_lobotomy_v2( );
+		void draw_watermark_grimoire( );
+		void draw_watermark_datashell( );
 		void draw_watermark_gif( );
 		void draw_screen_images( );
 		void draw_media_player( );
@@ -241,6 +243,8 @@ namespace n_misc
 		void draw_spectator_list_gamesense( );
 		void draw_spectator_list_millionware_v1( );
 		void draw_spectator_list_hotwheels_v1( );
+		void draw_spectator_list_grimoire( );
+		void draw_spectator_list_datashell( );
 
 	public:
 		/* gifs + gdi+ + eyes art, render thread only. textures_only = Reset hook (decoded gifs stay), full = unload */
@@ -270,6 +274,13 @@ bool kill_effects_shows_ragdoll( int entity_index );
 bool kill_effects_wants_ragdoll_dme( );
 /* main thread, kill_effects_paint only: disc billboard in the z tested kill fx world pass, offsets in radius units */
 void kill_effects_disc( const c_vector& at, float radius, float x0, float y0, float x1, float y1, unsigned int color );
+/* same pass: soul shape ( n_particle_shape combo, spin 0..1 ), glow nullptr = none. shape 0 + glow = glow only, like soul */
+void kill_effects_shape( const c_vector& at, float size, int shape, const c_color& color, const c_color* glow, float alpha, float spin );
+/* same pass, glyph on the world plane u / v ( unit, orthogonal ) instead of facing the view, no glow */
+void kill_effects_shape_plane( const c_vector& at, const c_vector& u, const c_vector& v, float size, int shape, const c_color& color, float alpha );
+inline constexpr int k_precip_clipart = 4; // m_precipitation_type combo index, no engine rain entity
+/* kill_effects_paint only: dt = kfx step, eye / fwd = last view origin / forward ( fwd zero = no facing cull ) */
+void precip_clipart_paint( float dt, const c_vector& eye, const c_vector& fwd );
 void typing_bubbles_on_key( unsigned int msg, long long_param );
 bool typing_bubbles_local( );
 void typing_bubbles_paint( );

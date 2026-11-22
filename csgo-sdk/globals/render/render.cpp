@@ -792,6 +792,16 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 		atlas->AddFontFromMemoryCompressedTTF( tahoma_compressed_data, tahoma_compressed_size, 11.f, &tahoma_font_config );
 	merge_extended_glyphs( atlas, 11.f, tahoma_font_config.FontBuilderFlags, e_glyph_tier::glyph_tier_basic );
 
+	/* grimoire menu_font_bold: tahomabd 11, mono hinting ( its Bitmap flag is a no-op, tahomabd has no EBDT ) */
+	fonts[ e_font_names::font_name_grimoire_tahoma_bd_11 ] =
+		atlas->AddFontFromMemoryCompressedTTF( tahoma_bold_compressed_data, tahoma_bold_compressed_size, 11.f, &tahoma_font_config );
+	merge_extended_glyphs( atlas, 11.f, tahoma_font_config.FontBuilderFlags, e_glyph_tier::glyph_tier_basic );
+
+	/* datashell watermark_font: verdanab 12, flags mono hinting + no antialiasing */
+	fonts[ e_font_names::font_name_datashell_verdana_bd_12 ] =
+		atlas->AddFontFromMemoryCompressedTTF( verdana_bold_compressed_data, verdana_bold_compressed_size, 12.f, &verdana_font_config );
+	merge_extended_glyphs( atlas, 12.f, verdana_font_config.FontBuilderFlags, e_glyph_tier::glyph_tier_basic );
+
 	{
 		ImFontConfig lobotomy_v1_config     = { };
 		lobotomy_v1_config.PixelSnapH       = true;

@@ -56,9 +56,15 @@ namespace n_edgebug
 			m_donor   = { };
 			m_hw      = { };
 			m_lob     = { };
+			m_grim    = { };
 		}
-		/* style 0 botox = edgebug.cpp ( + dispatch ), 1..4 = one file each */
+		/* style 0 botox = edgebug.cpp ( + dispatch ), 1..5 = one file each */
 		void frame_start( );
+		/* style 5 grimoire: edgebug_grimoire.cpp */
+		void grim_post( c_user_cmd* cmd );
+		void grim_frame_start( );
+		void grim_mouse( float* x );
+		bool grim_lock_live( ) const;
 		/* style 4 lobotomy v2: edgebug_lobotomy.cpp */
 		void lob_pre( c_user_cmd* cmd );
 		void lob_post( c_user_cmd* cmd );
@@ -113,6 +119,22 @@ namespace n_edgebug
 			lob_strafe_t strafe[ 4 ];
 			predicted_cmd_t cmds[ 128 ];
 		} m_lob;
+		/* donor detect_data + the features:: copies fsn / mouse read ( pub_ = taken at the top of the cmd ) */
+		struct grim_t {
+			int ticks_left = 0, eblength = 0, detecttick = 0, edgebugtick = 0;
+			bool crouched = false, strafing = false, should = false;
+			float forwardmove = 0.f, sidemove = 0.f, yawdelta = 0.f, startingyaw = 0.f, first_pitch = 0.f;
+			int pub_ticks_left = 0, pub_tick = 0, pub_detecttick = 0, pub_length = 0;
+			float pub_startingyaw = 0.f, pub_yawdelta = 0.f;
+			bool pub_strafing = false;
+		} m_grim;
+		bool grim_check( c_user_cmd* cmd, bool& brk );
+		void grim_reset( )
+		{
+			m_grim        = { };
+			m_found       = false;
+			m_replay_hits = 0;
+		}
 		bool lob_check( c_user_cmd* cmd );
 		void hw_reset( );
 		void hw_detect( c_user_cmd* cmd );

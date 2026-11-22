@@ -80,6 +80,7 @@
     <ClCompile Include="hacks\movement\pixel_finder.cpp" />
     <ClCompile Include="hacks\movement\auto_align.cpp" />
     <ClCompile Include="hacks\movement\auto_align_lumia.cpp" />
+    <ClCompile Include="hacks\movement\auto_align_grimoire.cpp" />
     <ClCompile Include="hacks\movement\air_stuck.cpp" />
     <ClCompile Include="hacks\movement\fireman.cpp" />
     <ClCompile Include="hacks\misc\hitmarker.cpp" />
@@ -93,6 +94,7 @@
     <ClCompile Include="hacks\misc\discord_rpc.cpp" />
     <ClCompile Include="hacks\misc\kill_effects.cpp" />
     <ClCompile Include="hacks\misc\typing_bubbles.cpp" />
+    <ClCompile Include="hacks\misc\precip_clipart.cpp" />
     <ClCompile Include="hacks\movement\texturebug.cpp" />
     <ClCompile Include="hacks\movement\wall_climb.cpp" />
     <ClCompile Include="hacks\movement\edge_skip.cpp" />
@@ -104,6 +106,7 @@
     <ClCompile Include="hacks\movement\edgebug_dna.cpp" />
     <ClCompile Include="hacks\movement\edgebug_hotwheels.cpp" />
     <ClCompile Include="hacks\movement\edgebug_lobotomy.cpp" />
+    <ClCompile Include="hacks\movement\edgebug_grimoire.cpp" />
     <ClCompile Include="hacks\movement\pixel_calc.cpp" />
     <ClCompile Include="hacks\movement\route_calc.cpp" />
     <ClCompile Include="hacks\movement\movement_recorder.cpp" />

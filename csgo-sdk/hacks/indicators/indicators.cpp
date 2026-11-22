@@ -15,6 +15,7 @@
 #include "../movement/edge_catch.h"
 #include "../movement/movement.h"
 #include "../misc/misc.h"
+#include "../misc/particle_shapes.h"
 #include "../aimbot/aimbot.h"
 #include "../lagcomp/lagcomp.h"
 #include "../visuals/screen/resolution_spoof.h"
@@ -1163,6 +1164,7 @@ struct key_particle_t {
 	float m_x, m_y, m_vx, m_vy;
 	float m_life, m_max_life;
 	float m_radius;
+	float m_spin;
 	ImVec4 m_color;
 };
 
@@ -1324,6 +1326,7 @@ static void part_burst( const c_vector_2d& at )
 		p.m_vy          = std::sin( ang ) * mag;
 		p.m_life = p.m_max_life = life * part_rand( 0.7f, 1.f );
 		p.m_radius              = std::max( 1.f, size * part_rand( 0.7f, 1.3f ) );
+		p.m_spin                = part_rand( 0.f, 1.f );
 
 		if ( random ) {
 			p.m_color = ImVec4( 0.f, 0.f, 0.f, 1.f );
@@ -1375,6 +1378,14 @@ static void key_particles( )
 
 	const float dt      = std::min( ImGui::GetIO( ).DeltaTime, 0.1f );
 	const float gravity = GET_VARIABLE( g_variables.m_key_indicators_particle_gravity, float );
+	const int shape     = std::clamp( GET_VARIABLE( g_variables.m_key_indicators_particle_shape, int ), 0, n_particle_shape::k_last );
+
+	struct shaped_t {
+		ImVec2 m_at;
+		float m_radius, m_spin;
+		ImU32 m_color;
+	};
+	std::vector< shaped_t > shaped;
 
 	std::size_t live = 0;
 	for ( auto& p : s_key_particles ) {
@@ -1388,12 +1399,22 @@ static void key_particles( )
 
 		ImVec4 c = p.m_color;
 		c.w *= std::clamp( p.m_life / p.m_max_life, 0.f, 1.f );
-		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_filled_circle,
-		                                   std::make_any< filled_circle_draw_object_t >( c_vector_2d( p.m_x, p.m_y ), p.m_radius,
-		                                                                                 ImGui::ColorConvertFloat4ToU32( c ), 0 ) );
+		const ImU32 color = ImGui::ColorConvertFloat4ToU32( c );
+		if ( shape )
+			shaped.push_back( { ImVec2( p.m_x, p.m_y ), p.m_radius * n_particle_shape::k_scale, p.m_spin, color } );
+		else
+			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_filled_circle,
+			                                   std::make_any< filled_circle_draw_object_t >( c_vector_2d( p.m_x, p.m_y ), p.m_radius, color, 0 ) );
 		s_key_particles[ live++ ] = p;
 	}
 	s_key_particles.resize( live );
+
+	if ( !shaped.empty( ) )
+		g_render.m_draw_data.emplace_back( e_draw_type::draw_type_callback,
+		                                   std::make_any< callback_draw_object_t >( callback_draw_object_t{ [ shape, shaped = std::move( shaped ) ]( ImDrawList* dl ) {
+			                                   for ( const shaped_t& s : shaped )
+				                                   n_particle_shape::fill( dl, s.m_at, s.m_radius, s.m_spin, s.m_color, shape );
+		                                   } } ) );
 }
 
 struct smooth_tag_t {
@@ -2919,7 +2940,9 @@ void n_indicators::impl_t::velocity( const bool on_ground )
 	const bool kamibebra = style == indicator_style_kamibebra;
 	const float speed    = g_ctx.m_local->get_velocity( ).length_2d( );
 
-	float alpha = std::min( speed / 250.f, 1.f );
+	/* gradient t stays speed based in every style; kamibebra only swaps the fade curve */
+	const float blend = std::min( speed / 250.f, 1.f );
+	float alpha       = blend;
 	if ( kamibebra ) {
 		alpha = 1.f;
 		if ( GET_VARIABLE( g_variables.m_velocity_indicator_fade_alpha, bool ) ) {
@@ -2933,7 +2956,7 @@ void n_indicators::impl_t::velocity( const bool on_ground )
 	}
 
 	const ImColor blended_color = ImColor::Blend( GET_VARIABLE( g_variables.m_velocity_indicator_color1, c_color ).get_u32( ),
-	                                              GET_VARIABLE( g_variables.m_velocity_indicator_color2, c_color ).get_u32( ), alpha );
+	                                              GET_VARIABLE( g_variables.m_velocity_indicator_color2, c_color ).get_u32( ), blend );
 
 	const ImColor speed_based_color = velocity == this->m_indicator_data.m_last_velocity
 	                                      ? GET_VARIABLE( g_variables.m_velocity_indicator_color3, c_color )
@@ -2953,8 +2976,6 @@ void n_indicators::impl_t::velocity( const bool on_ground )
 			? ImColor( blended_color.Value.x, blended_color.Value.y, blended_color.Value.z,
 	                   blended_color.Value.w * ( GET_VARIABLE( g_variables.m_velocity_indicator_fade_alpha, bool ) ? alpha : 1.f ) )
 			: ImColor( speed_based_color.Value.x, speed_based_color.Value.y, speed_based_color.Value.z, speed_based_color.Value.w );
-	if ( kamibebra )
-		text_color.Value.w = alpha;
 
 	const float shadow_alpha = GET_VARIABLE( g_variables.m_velocity_indicator_fade_alpha, bool ) ? alpha : 1.f;
 

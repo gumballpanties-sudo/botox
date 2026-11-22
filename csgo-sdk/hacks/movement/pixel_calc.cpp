@@ -224,6 +224,7 @@ void n_movement::impl_t::pixel_calc( c_user_cmd* cmd )
 		pt.hb_ceiling = pf_hb_is_ceiling( pt.pos );
 		pt.hb_win     = !pt.hb_ceiling && pf_hb_window( pt.pos, pt.hb_lo, pt.hb_hi );
 	}
+	pt.ps_prop     = pt.type == route_pt_pixelsurf && data.snapped && pf_ps_is_prop( pt.pos );
 	pt.quantized_z = n_route::target_z( pt );
 	if ( pixeljump ) {
 		float gap  = -1.f;
@@ -276,9 +277,9 @@ void n_movement::impl_t::pixel_calc( c_user_cmd* cmd )
 		n_route::solve( in, result );
 		const double seconds = std::chrono::duration< double >( std::chrono::steady_clock::now( ) - clock_start ).count( );
 
-		botox_dbg_log( "[px] %s z %9.4f ( %s%s%s%s ) +%d hops -> %lld routes in %.3f s, closest %.4f\n",
+		botox_dbg_log( "[px] %s z %9.4f ( %s%s%s%s%s ) +%d hops -> %lld routes in %.3f s, closest %.4f\n",
 		                   pc_type_name( calc_type ), pt.quantized_z, data.snapped ? "snapped" : "aimed",
-		                   pt.pj_skin ? ", skin" : "", pt.hb_ceiling ? ", ceiling" : "",
+		                   pt.pj_skin ? ", skin" : "", pt.ps_prop ? ", prop" : "", pt.hb_ceiling ? ", ceiling" : "",
 		                   pt.hb_win ? std::format( ", window {:.5f}..{:.5f}", pt.hb_lo, pt.hb_hi ).c_str( ) : "", hops, result.total, seconds,
 		                   result.best_gap < 3.4e38f ? result.best_gap : -1.f );
 

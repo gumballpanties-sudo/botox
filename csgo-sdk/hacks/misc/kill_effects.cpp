@@ -1,5 +1,6 @@
 #include "misc.h"
 #include "mc_xp_orb.h"
+#include "particle_shapes.h"
 #include "../visuals/screen/reflections.h"
 #include "../visuals/screen/render_queue.h"
 #include "../visuals/screen/stream_guard.h"
@@ -110,6 +111,7 @@ namespace
 		float m_seed  = 0.f;
 		int m_style   = 0;
 		bool m_resting = false;
+		float m_floor  = 0.f;
 		// minecraft: ticks at 20 hz, m_vel = u / tick
 		c_vector m_prev{ };
 		float m_tick_acc = 0.f;
@@ -136,6 +138,13 @@ namespace
 	constexpr int k_mc_style        = 5;
 	constexpr int k_mc_xp_style     = 6;
 	constexpr int k_kfx_want        = -2;
+	constexpr int k_explode_style   = 7;
+	// tools/soul_explode_check.py parses these
+	constexpr float k_explode_speed[ 2 ]  = { 140.f, 300.f };
+	constexpr float k_explode_settle[ 2 ] = { 0.25f, 0.6f };
+	constexpr float k_explode_drag        = 6.f;
+	constexpr float k_explode_fall_drag   = 1.2f;
+	constexpr float k_explode_gravity     = 420.f;
 
 	std::vector< kfx_particle_t > g_kfx{ };
 	std::mt19937 g_kfx_rng{ 0x6b667821u };
@@ -196,7 +205,7 @@ namespace
 
 	void spawn_soul( c_base_entity* victim, const int victim_index )
 	{
-		const int style  = std::clamp( GET_VARIABLE( g_variables.m_death_particles_soul_style, int ), 0, 3 );
+		const int style  = std::clamp( GET_VARIABLE( g_variables.m_death_particles_soul_style, int ), 0, 4 );
 		const int amount = std::clamp( GET_VARIABLE( g_variables.m_death_particles_amount, int ), 1, 40 );
 		const float size = std::clamp( GET_VARIABLE( g_variables.m_death_particles_size, float ), 0.25f, 4.f );
 		const float life = std::clamp( GET_VARIABLE( g_variables.m_death_particles_lifetime, float ), 0.5f, 10.f );
@@ -212,12 +221,16 @@ namespace
 		}
 
 		const c_vector core = points.front( ) + c_vector( 0.f, 0.f, 40.f );
+		const float feet    = victim->get_abs_origin( ).m_z;
+		c_trace_filter filter( g_ctx.m_local );
 
 		for ( const c_vector& point : points ) {
 			for ( int i = 0; i < amount; i++ ) {
+				if ( g_kfx.size( ) >= k_kfx_cap )
+					return;
 				kfx_particle_t particle{ };
 				particle.m_pos   = point + c_vector( rand_range( -5.f, 5.f ), rand_range( -5.f, 5.f ), rand_range( -5.f, 5.f ) );
-				particle.m_style = style;
+				particle.m_style = style == 4 ? k_explode_style : style;
 
 				const float angle = rand_range( 0.f, 6.2831853f );
 
@@ -231,6 +244,17 @@ namespace
 				case 2: {
 					const float speed = rand_range( 15.f, 50.f );
 					particle.m_vel    = c_vector( std::cos( angle ) * speed, std::sin( angle ) * speed, rand_range( -10.f, 10.f ) );
+					break;
+				}
+				case 4: {
+					const float z  = rand_range( -0.35f, 1.f ), r = std::sqrt( 1.f - z * z );
+					particle.m_vel = c_vector( std::cos( angle ) * r, std::sin( angle ) * r, z ) * rand_range( k_explode_speed[ 0 ], k_explode_speed[ 1 ] );
+					// floor trace point: step_explode xy drag must stay constant + exact, burst ends at v_xy / drag
+					const c_vector settle = particle.m_pos + c_vector( particle.m_vel.m_x, particle.m_vel.m_y, 0.f ) * ( 1.f / k_explode_drag );
+					trace_t trace{ };
+					g_interfaces.m_engine_trace->trace_ray( ray_t( settle, settle - c_vector( 0.f, 0.f, 4096.f ) ), e_mask::mask_solid_brushonly, &filter,
+					                                        &trace );
+					particle.m_floor = trace.m_start_solid ? feet : trace.m_end.m_z;
 					break;
 				}
 				default: {
@@ -563,6 +587,27 @@ namespace
 		particle.m_pos = particle.m_pos + particle.m_vel * dt;
 	}
 
+	void step_explode( kfx_particle_t& particle, const float dt )
+	{
+		const float s   = std::clamp( ( particle.m_age - k_explode_settle[ 0 ] ) / ( k_explode_settle[ 1 ] - k_explode_settle[ 0 ] ), 0.f, 1.f );
+		const float ramp = s * s * ( 3.f - 2.f * s );
+
+		const auto integrate = [ dt ]( float& pos, float& vel, const float drag, const float gravity ) {
+			const float decay = std::exp( -drag * dt ), terminal = gravity / drag;
+			pos += ( vel + terminal ) * ( 1.f - decay ) / drag - terminal * dt;
+			vel = ( vel + terminal ) * decay - terminal;
+		};
+		integrate( particle.m_pos.m_x, particle.m_vel.m_x, k_explode_drag, 0.f );
+		integrate( particle.m_pos.m_y, particle.m_vel.m_y, k_explode_drag, 0.f );
+		integrate( particle.m_pos.m_z, particle.m_vel.m_z, k_explode_drag + ( k_explode_fall_drag - k_explode_drag ) * ramp, k_explode_gravity * ramp );
+
+		const float rest = particle.m_floor + particle.m_size;
+		if ( particle.m_pos.m_z <= rest ) {
+			particle.m_pos.m_z = rest;
+			particle.m_vel.m_z = ( std::max )( particle.m_vel.m_z, 0.f );
+		}
+	}
+
 	/* world billboard corner = center + ( right * m_ox + up * m_oy ) * m_radius, expanded in k_kfx_vs with the view's axes.
 	   m_su / m_sv run -1..1 across the quad ( shape space for the pixel shader ) */
 	struct kfx_vertex_t {
@@ -572,8 +617,8 @@ namespace
 		float m_su, m_sv;
 	};
 
-	// kfx_star .. kfx_cross = soul shape combo 1..5, same order
-	enum e_kfx_kind : int { kfx_square, kfx_disc, kfx_glow, kfx_smoke, kfx_star, kfx_star5, kfx_triangle, kfx_box, kfx_cross };
+	// kfx_star .. kfx_butterfly = soul shape combo 1..6, same order
+	enum e_kfx_kind : int { kfx_square, kfx_disc, kfx_glow, kfx_smoke, kfx_star, kfx_star5, kfx_triangle, kfx_box, kfx_cross, kfx_butterfly };
 
 	// rebuilt every paint, drawn in kill_effects_world ( main thread both )
 	std::vector< kfx_vertex_t > g_kfx_quads{ };
@@ -589,6 +634,21 @@ namespace
 			return kfx_vertex_t{ at.m_x, at.m_y, at.m_z, argb, x, y, radius, static_cast< float >( kind ) + spin, su, sv };
 		};
 		const kfx_vertex_t a = corner( x0, y0, -1.f, -1.f ), b = corner( x1, y0, 1.f, -1.f ), c = corner( x1, y1, 1.f, 1.f ), d = corner( x0, y1, -1.f, 1.f );
+		g_kfx_quads.insert( g_kfx_quads.end( ), { a, b, c, a, c, d } );
+	}
+
+	/* world plane quad ( clipart 3d rotation ): corners = at + ( u * x + v * y ) * radius sent as positions with a zero
+	   billboard offset, so k_kfx_vs passes them through; su / sv stay the shape space */
+	void kfx_quad_plane( const c_vector& at, const c_vector& u, const c_vector& v, const float radius, const e_kfx_kind kind, const ImU32 color,
+	                     float spin = 0.f )
+	{
+		spin = std::clamp( spin, 0.f, 0.999f );
+		const unsigned int argb = ( color & 0xff00ff00u ) | ( ( color & 0xffu ) << 16 ) | ( ( color >> 16 ) & 0xffu );
+		const auto corner       = [ & ]( const float x, const float y ) {
+			const c_vector p = at + ( u * x + v * y ) * radius;
+			return kfx_vertex_t{ p.m_x, p.m_y, p.m_z, argb, 0.f, 0.f, 0.f, static_cast< float >( kind ) + spin, x, y };
+		};
+		const kfx_vertex_t a = corner( -1.f, -1.f ), b = corner( 1.f, -1.f ), c = corner( 1.f, 1.f ), d = corner( -1.f, 1.f );
 		g_kfx_quads.insert( g_kfx_quads.end( ), { a, b, c, a, c, d } );
 	}
 
@@ -1708,6 +1768,8 @@ namespace
 	IDirect3DVertexShader9* g_kfx_vs      = nullptr;
 	IDirect3DPixelShader9* g_kfx_ps       = nullptr;
 	bool g_kfx_shader_failed              = false;
+	// main thread: one preload build per device, so the ~0.5 s k_kfx_ps compile never lands on the first kill. reset clears
+	std::atomic< bool > g_kfx_preloaded{ false };
 
 	std::vector< melt_t > g_melts{ };
 	std::vector< melt_skin_slot_t > g_melt_skins{ };
@@ -1715,6 +1777,7 @@ namespace
 	std::vector< c_base_entity* > g_melt_skip{ };
 	c_vector g_melt_eye{ };
 	bool g_melt_eye_valid = false;
+	c_vector g_kfx_fwd{ }; // last view forward ( kill_effects_world ), zero = no facing cull
 	int g_melt_slot_next  = 0;
 
 	/* m_state 1 = render thread owns everything below it, 0 and 2 = main thread */
@@ -2318,21 +2381,58 @@ float fbm( float2 p )
 	return v / 0.9375;
 }
 
+/* butterfly-filled svg, right half ( x >= 0 ) flattened at 0.1 viewbox units: notch ( 12, 16 ) -> lower wing -> upper wing -> top notch ( 12, 10.82 ).
+   viewbox -> shape: ( x - 12, 11.002 - y ) / 11.7127 ( min circle, fits r 1 at any spin ). made by tools/soul_shape_check.py --gen */
+static const float2 k_bfly[ 26 ] = {
+	{ 0.0000, -0.4267 }, { 0.0145, -0.5783 }, { 0.0548, -0.7177 }, { 0.1164, -0.8324 }, { 0.1944, -0.9103 }, { 0.2843, -0.9390 },
+	{ 0.3950, -0.9165 }, { 0.4854, -0.8552 }, { 0.5463, -0.7643 }, { 0.5686, -0.6530 }, { 0.5431, -0.5356 }, { 0.4747, -0.4412 },
+	{ 0.6261, -0.3698 }, { 0.7462, -0.2555 }, { 0.8253, -0.1079 }, { 0.8538, 0.0634 }, { 0.8538, 0.4450 }, { 0.8215, 0.5652 },
+	{ 0.7364, 0.6507 }, { 0.6164, 0.6832 }, { 0.5839, 0.6801 }, { 0.4987, 0.6585 }, { 0.3793, 0.5997 }, { 0.2441, 0.4854 },
+	{ 0.1115, 0.2968 }, { 0.0000, 0.0155 } };
+
+// iq polygon sdf mirrored by abs( x ); edge 0 ( on the axis ) counts for the sign only. unrolled: up is constant per edge
+float bfly_dist( float2 p )
+{
+	p.x = abs( p.x );
+	float dd = 4.0, s = 1.0;
+	[unroll] for ( int i = 0; i < 26; i++ ) {
+		const float2 vi = k_bfly[ i ], vj = k_bfly[ i == 0 ? 25 : i - 1 ];
+		const float2 e = vj - vi, w = p - vi;
+		const float2 b = w - e * saturate( dot( w, e ) / dot( e, e ) );
+		if ( i > 0 )
+			dd = min( dd, dot( b, b ) );
+		if ( vi.y < vj.y ? p.y >= vi.y && p.y < vj.y && e.x * w.y > e.y * w.x : p.y < vi.y && p.y >= vj.y && e.x * w.y <= e.y * w.x )
+			s = -s;
+	}
+	return s * sqrt( dd );
+}
+
 float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 {
 	const float r    = length( shape.xy );
-	const float edge = saturate( ( 1.0 - r ) / max( fwidth( r ), 1e-4 ) + 0.5 );
+	const float fw   = max( fwidth( r ), 1e-4 );
+	const float edge = saturate( ( 1.0 - r ) / fw + 0.5 );
 
 	// glow: soul rings 0.4 / 1 / 1.7 / 2.8 radii at alpha 1 / 0.5 / 0.16 / 0, quad spans 2.8
 	const float g    = r * 2.8;
 	const float glow = g < 0.4 ? 1.0 : g < 1.0 ? lerp( 1.0, 0.5, ( g - 0.4 ) / 0.6 ) : g < 1.7 ? lerp( 0.5, 0.16, ( g - 1.0 ) / 0.7 ) : lerp( 0.16, 0.0, saturate( ( g - 1.7 ) / 1.1 ) );
 
+	/* kind = id + spin, branch on the id ( cross 8 + spin 0.5 must not read as butterfly 9 ).
+	   + 0.0005: interpolation lands an integer kind at 1.9999999 on some pixels, bare floor = next kind down
+	   in pixel bands ( glow 2 -> disc 1 = hard bars ); spin caps at 0.999 so the bias never reaches the next id */
 	const float kind = shape.z;
-	if ( kind > 3.5 ) {
+	const float id   = floor( kind + 0.0005 );
+	// real branch: the polygon is ~330 slots, every other particle skips it
+	[branch] if ( id > 8.5 ) {
+		float sn, cs;
+		sincos( frac( kind ) * 6.2831853, sn, cs );
+		const float d = bfly_dist( float2( shape.x * cs - shape.y * sn, shape.x * sn + shape.y * cs ) );
+		return float4( color.rgb, color.a * saturate( -d / fw + 0.5 ) );
+	}
+	if ( id > 3.5 ) {
 		/* shapes 4 star / 5 star / triangle / square / cross, tips at r 1, frac( kind ) = orientation.
 		   fold to half a sector ( tip on +y ), sign dist to tip-notch edge; notch r = cos( pi / n ) = polygon.
 		   4 star notch 0.431 ( star-2-solid svg ), 5 star 0.454 ( material star svg ) */
-		const float id     = floor( kind );
 		const float n      = id < 4.5 ? 4.0 : id < 5.5 ? 5.0 : id < 6.5 ? 3.0 : 4.0;
 		const float rf     = id < 4.5 ? 0.431 : id < 5.5 ? 0.454 : id < 6.5 ? 0.5 : 0.7071068;
 		const float sector = 6.2831853 / n;
@@ -2346,7 +2446,7 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 			d = max( q.x - 0.23, q.y - 0.973 ); // cross: + of two boxes, svg arm width / length 0.236
 		return float4( color.rgb, color.a * saturate( -d / max( fwidth( d ), 1e-4 ) + 0.5 ) );
 	}
-	if ( kind > 2.5 ) {
+	if ( id > 2.5 ) {
 		// smoke: warped fbm puff, frac( kind ) = spin -> rotation + noise offset ( both wrap at 1 ), edge 0 before r = 1
 		const float spin = frac( kind ) * 6.2831853;
 		const float2 cs  = float2( cos( spin ), sin( spin ) );
@@ -2358,7 +2458,7 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 		return float4( color.rgb * ( 0.72 + 0.36 * n + 0.1 * shape.y ), a );
 	}
 
-	const float a = kind < 0.5 ? color.a : kind < 1.5 ? color.a * edge : color.a * glow;
+	const float a = id < 0.5 ? color.a : id < 1.5 ? color.a * edge : color.a * glow;
 	return float4( color.rgb, a );
 }
 )";
@@ -3045,11 +3145,12 @@ void kill_effects_paint( )
 
 	g_kfx_quads.clear( );
 	typing_bubbles_paint( );
+	precip_clipart_paint( dt, melt_eye( ), g_kfx_fwd );
 	if ( g_kfx.empty( ) )
 		return;
 
 	const bool glow  = GET_VARIABLE( g_variables.m_death_particles_glow, bool );
-	const int shape  = std::clamp( GET_VARIABLE( g_variables.m_death_particles_soul_shape, int ), 0, 5 );
+	const int shape  = std::clamp( GET_VARIABLE( g_variables.m_death_particles_soul_shape, int ), 0, n_particle_shape::k_last );
 
 	for ( kfx_particle_t& particle : g_kfx ) {
 		particle.m_age += dt;
@@ -3101,6 +3202,8 @@ void kill_effects_paint( )
 			step_ball( particle, dt );
 		else if ( smoke )
 			step_smoke( particle, dt );
+		else if ( particle.m_style == k_explode_style )
+			step_explode( particle, dt );
 		else
 			step_soul( particle, dt );
 
@@ -3110,6 +3213,8 @@ void kill_effects_paint( )
 		                                   : ( std::min )( particle.m_age / 0.1f, 1.f ) * std::pow( 1.f - t, 1.5f );
 		if ( particle.m_style == 1 || particle.m_style == 2 )
 			alpha *= rand_range( 0.55f, 1.f );
+		else if ( particle.m_style == k_explode_style )
+			alpha = std::clamp( ( 1.f - t ) / 0.3f, 0.f, 1.f );
 
 		const float size = smoke ? particle.m_size * ( 1.f + 0.7f * t ) : particle.m_size;
 		if ( alpha <= 0.01f || particle.m_capture != -1 )
@@ -3122,16 +3227,9 @@ void kill_effects_paint( )
 			kfx_quad( particle.m_pos, size, -1.f, -1.f, 1.f, 1.f, kfx_smoke, color.get_u32( alpha * 0.55f ), spin - std::floor( spin ) );
 			continue;
 		}
-		if ( particle.m_style >= 0 && shape ) {
-			// shape over its glow, m_seed = fixed random orientation
-			if ( glow )
-				kfx_quad( particle.m_pos, size, -2.8f, -2.8f, 2.8f, 2.8f, kfx_glow, color.get_u32( alpha * 0.5f ) );
-			kfx_quad( particle.m_pos, size * 1.6f, -1.f, -1.f, 1.f, 1.f, static_cast< e_kfx_kind >( kfx_star + shape - 1 ), color.get_u32( alpha ),
-			          particle.m_seed );
-			continue;
-		}
-		if ( glow && particle.m_style >= 0 ) {
-			kfx_quad( particle.m_pos, size, -2.8f, -2.8f, 2.8f, 2.8f, kfx_glow, color.get_u32( alpha ) );
+		if ( particle.m_style >= 0 ) {
+			// m_seed = fixed random orientation
+			kill_effects_shape( particle.m_pos, size, shape, color, glow ? &color : nullptr, alpha, particle.m_seed );
 			continue;
 		}
 		kfx_quad( particle.m_pos, size, -1.f, -1.f, 1.f, 1.f, kfx_disc, color.get_u32( alpha ) );
@@ -3150,15 +3248,52 @@ void kill_effects_disc( const c_vector& at, const float radius, const float x0, 
 	kfx_quad( at, radius, x0, y0, x1, y1, kfx_disc, color );
 }
 
+void kill_effects_shape_plane( const c_vector& at, const c_vector& u, const c_vector& v, const float size, const int shape, const c_color& color,
+                               const float alpha )
+{
+	if ( !shape )
+		kfx_quad_plane( at, u, v, size, kfx_disc, color.get_u32( alpha ) );
+	else
+		kfx_quad_plane( at, u, v, size * n_particle_shape::k_scale, static_cast< e_kfx_kind >( kfx_star + shape - 1 ), color.get_u32( alpha ) );
+}
+
+void kill_effects_shape( const c_vector& at, const float size, const int shape, const c_color& color, const c_color* glow, const float alpha, const float spin )
+{
+	if ( !shape ) {
+		if ( glow )
+			kfx_quad( at, size, -2.8f, -2.8f, 2.8f, 2.8f, kfx_glow, glow->get_u32( alpha ) );
+		else
+			kfx_quad( at, size, -1.f, -1.f, 1.f, 1.f, kfx_disc, color.get_u32( alpha ) );
+		return;
+	}
+	// shape over its glow
+	if ( glow )
+		kfx_quad( at, size, -2.8f, -2.8f, 2.8f, 2.8f, kfx_glow, glow->get_u32( alpha * 0.5f ) );
+	kfx_quad( at, size * n_particle_shape::k_scale, -1.f, -1.f, 1.f, 1.f, static_cast< e_kfx_kind >( kfx_star + shape - 1 ), color.get_u32( alpha ), spin );
+}
+
 void kill_effects_world( const c_vector& origin, const c_angle& angles )
 {
 	g_melt_eye       = origin;
 	g_melt_eye_valid = true;
+	g_math.angle_vectors( angles, &g_kfx_fwd );
 
 	std::vector< melt_draw_t > draws{ };
 	for ( const melt_t& melt : g_melts )
 		if ( melt.m_stage >= melt_run && melt.m_mesh && !melt.m_mesh->m_indices.empty( ) && melt.m_alpha > 0.f )
 			draws.push_back( { melt.m_mesh, melt.m_slot, melt.m_alpha } );
+
+	const bool clipart = GET_VARIABLE( g_variables.m_precipitation, bool ) && GET_VARIABLE( g_variables.m_precipitation_type, int ) == k_precip_clipart;
+	if ( ( GET_VARIABLE( g_variables.m_death_particles, bool ) || clipart ) && !g_kfx_preloaded.exchange( true ) ) {
+		auto preload = [ ] {
+			if ( IDirect3DDevice9* device = g_interfaces.m_direct_device ) {
+				build_shaders( device, k_kfx_vs, k_kfx_ps, g_kfx_vs, g_kfx_ps, g_kfx_shader_failed, "KFX" );
+				melt_shaders( device );
+			}
+		};
+		if ( !n_render_queue::submit( preload ) )
+			preload( );
+	}
 
 	if ( draws.empty( ) && g_kfx_quads.empty( ) )
 		return;
@@ -3168,7 +3303,26 @@ void kill_effects_world( const c_vector& origin, const c_angle& angles )
 
 	c_vector right{ }, up{ };
 	g_math.angle_vectors( angles, nullptr, &right, &up );
-	const auto quads = g_kfx_quads.empty( ) ? nullptr : std::make_shared< const std::vector< kfx_vertex_t > >( g_kfx_quads );
+	/* three reused buffers: a queued job holds one until it ran ( use_count 1 = free again ), assign keeps the capacity,
+	   so no fresh ~1.4 mb block a frame in a 32 bit process that dies of address space. x86: the job's release decrement
+	   orders its reads before this thread's use_count read */
+	static std::array< std::shared_ptr< std::vector< kfx_vertex_t > >, 3 > pool{ };
+	std::shared_ptr< const std::vector< kfx_vertex_t > > quads{ };
+	if ( !g_kfx_quads.empty( ) ) {
+		std::shared_ptr< std::vector< kfx_vertex_t > > slot{ };
+		for ( auto& buffer : pool ) {
+			if ( !buffer )
+				buffer = std::make_shared< std::vector< kfx_vertex_t > >( );
+			if ( buffer.use_count( ) == 1 ) {
+				slot = buffer;
+				break;
+			}
+		}
+		if ( !slot )
+			slot = std::make_shared< std::vector< kfx_vertex_t > >( ); // every buffer still queued: one-off
+		slot->assign( g_kfx_quads.begin( ), g_kfx_quads.end( ) );
+		quads = std::move( slot );
+	}
 
 	auto job = [ draws = std::move( draws ), quads, matrix, origin, right, up ] {
 		if ( !draws.empty( ) )
@@ -3230,6 +3384,7 @@ void kill_effects_release_textures( )
 	g_kfx_vs            = nullptr;
 	g_kfx_ps            = nullptr;
 	g_kfx_shader_failed = false;
+	g_kfx_preloaded.store( false );
 }
 
 void kill_effects_shutdown( )

@@ -287,6 +287,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_menu_blur_amount, 100.f );
 		ADD_VARIABLE( float, m_menu_blur_darken, 18.f );
 		ADD_VARIABLE( int, m_menu_style, 0 );
+		ADD_VARIABLE( int, m_menu_opacity, 100 );
 		ADD_VARIABLE( key_bind_t, m_menu_key, key_bind_t( 0x2D /* VK_INSERT */, 1 ) );
 		ADD_VARIABLE( bool, m_console_color_enable, false );
 		ADD_VARIABLE( c_color, m_console_color, c_color( 102, 111, 102, 255 ) );
@@ -753,6 +754,23 @@ namespace n_variables
 
 		ADD_VARIABLE( bool, m_precipitation, false );
 		ADD_VARIABLE( int, m_precipitation_type, 0 );
+		ADD_VARIABLE( int, m_precipitation_clipart_shape, 1 );
+		ADD_VARIABLE( int, m_precipitation_clipart_color_mode, 0 );
+		ADD_VARIABLE( c_color, m_precipitation_clipart_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( float, m_precipitation_clipart_saturation, 0.7f );
+		ADD_VARIABLE( float, m_precipitation_clipart_rainbow_speed, 0.2f );
+		ADD_VARIABLE( int, m_precipitation_clipart_glow, 0 );
+		ADD_VARIABLE( c_color, m_precipitation_clipart_glow_color, c_color( 255, 255, 255, 160 ) );
+		ADD_VARIABLE( int, m_precipitation_clipart_density, 600 );
+		ADD_VARIABLE( float, m_precipitation_clipart_speed, 70.f );
+		ADD_VARIABLE( float, m_precipitation_clipart_size, 3.f );
+		ADD_VARIABLE( float, m_precipitation_clipart_spin, 0.25f );
+		ADD_VARIABLE( bool, m_precipitation_clipart_3d, false );
+		ADD_VARIABLE( float, m_precipitation_clipart_sway, 8.f );
+		ADD_VARIABLE( float, m_precipitation_clipart_wind, 0.f );
+		ADD_VARIABLE( float, m_precipitation_clipart_wind_yaw, 0.f );
+		ADD_VARIABLE( float, m_precipitation_clipart_radius, 900.f );
+		ADD_VARIABLE( float, m_precipitation_clipart_ground_time, 3.f );
 		ADD_VARIABLE( bool, m_fog, false );
 		ADD_VARIABLE( float, m_fog_start, 0.f );
 		ADD_VARIABLE( float, m_fog_end, 0.f );
@@ -1393,6 +1411,13 @@ namespace n_variables
 		ADD_VARIABLE( float, m_edgebug_lob_strafe_angle, 0.f );
 		ADD_VARIABLE( int, m_edgebug_lob_delta_type, 0 );
 		ADD_VARIABLE( float, m_edgebug_lob_lock, 0.f );
+		ADD_VARIABLE( bool, m_edgebug_grim_strafe, true );
+		ADD_VARIABLE( bool, m_edgebug_grim_silent, false );
+		ADD_VARIABLE( bool, m_edgebug_grim_lock_movement, true );
+		ADD_VARIABLE( float, m_edgebug_grim_scan, 0.32f );
+		ADD_VARIABLE( float, m_edgebug_grim_lock_amount, 50.f );
+		ADD_VARIABLE( int, m_edgebug_grim_search, 5 );
+		ADD_VARIABLE( float, m_edgebug_grim_angle_limit, 20.f );
 		ADD_VARIABLE( bool, m_edgebug_visualize, false );
 		ADD_VARIABLE( c_color, m_edgebug_visualize_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( float, m_edgebug_visualize_thickness, 1.5f );
@@ -1637,6 +1662,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_key_indicators_custom_labels, false );
 		ADD_VARIABLE_VECTOR( std::string, e_keybind_labels::label_max, m_key_indicators_labels, "" );
 		ADD_VARIABLE( bool, m_key_indicators_particles, false );
+		ADD_VARIABLE( int, m_key_indicators_particle_shape, 0 );
 		ADD_VARIABLE( c_color, m_key_indicators_particle_color, c_color( 175, 210, 170, 255 ) );
 		ADD_VARIABLE( bool, m_key_indicators_particle_random, false );
 		ADD_VARIABLE( int, m_key_indicators_particle_amount, 12 );
@@ -1917,6 +1943,7 @@ namespace n_variables
 		ADD_VARIABLE( float, m_watermark_gamesense_y, 0.f );
 		ADD_VARIABLE( bool, m_spectators_gamesense_bar, true );
 		ADD_VARIABLE( float, m_spectators_hotwheels_gap, 2.f );
+		ADD_VARIABLE( float, m_spectators_datashell_gap, 5.f );
 		ADD_VARIABLE( int, m_watermark_lumi_design, 0 );
 		ADD_VARIABLE( bool, m_watermark_lumi_animated_title, false );
 		ADD_VARIABLE( bool, m_watermark_lumi_no_border, false );
@@ -2201,7 +2228,8 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_debugger_visual, false );
 		ADD_VARIABLE( bool, m_disable_interp, false );
 #endif
-        ADD_VARIABLE( int, m_auto_align_type, 0 ); // 0 Botox, 1 Lumia.
+        ADD_VARIABLE( int, m_auto_align_type, 0 ); // 0 Botox, 1 Lumia, 2 Grimoire.
+		ADD_VARIABLE( bool, m_auto_align_grim_freelook, false );
 	};
 };
 

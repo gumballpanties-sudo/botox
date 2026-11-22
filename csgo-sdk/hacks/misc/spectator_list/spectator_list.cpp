@@ -6809,6 +6809,360 @@ void n_misc::impl_t::draw_watermark_lobotomy_v2( )
 	g_render.end_stretch_block( block );
 }
 
+namespace {
+	constexpr ImU32 grimoire_text = IM_COL32( 180, 180, 180, 255 );
+
+	ImU32 grimoire_accent( )
+	{
+		const ImVec4 accent = ImGui::GetStyleColorVec4( ImGuiCol_::ImGuiCol_Accent );
+		return ImColor( accent.x, accent.y, accent.z, 1.f );
+	}
+
+	/* grimv5 menu chrome, donor call order: 56 ring out, 56 ring in ( the fill covers it ), fill 12, header fill 25, border 45 */
+	void grimoire_box( ImDrawList* list, const float x, const float y, const float w, const float h, const float header_h = 0.f )
+	{
+		list->AddRect( ImVec2( x - 1.f, y - 1.f ), ImVec2( x + w + 1.f, y + h + 1.f ), IM_COL32( 56, 56, 56, 255 ) );
+		list->AddRect( ImVec2( x + 1.f, y + 1.f ), ImVec2( x + w - 1.f, y + h - 1.f ), IM_COL32( 56, 56, 56, 255 ) );
+		list->AddRectFilled( ImVec2( x, y ), ImVec2( x + w, y + h ), IM_COL32( 12, 12, 12, 255 ) );
+		if ( header_h > 0.f )
+			list->AddRectFilled( ImVec2( x, y ), ImVec2( x + w, y + header_h ), IM_COL32( 25, 25, 25, 255 ) );
+		list->AddRect( ImVec2( x, y ), ImVec2( x + w, y + h ), IM_COL32( 45, 45, 45, 255 ) );
+	}
+}
+
+/* grimv5 features/visuals/visuals.cpp watermark: menu_font_bold ( tahomabd 11 ) box at ( screen - w - 10, 10 ), w = text + 20,
+   h = line + 12. brand split at its last '.' ( "grimoire.tk" = grimoire 180 + .tk accent ), then " | " parts in 180 */
+void n_misc::impl_t::draw_watermark_grimoire( )
+{
+	const auto font = g_render.m_fonts[ e_font_names::font_name_grimoire_tahoma_bd_11 ];
+
+	if ( !font )
+		return;
+
+	const auto globals = g_interfaces.m_global_vars_base;
+
+	const std::string brand = watermark_brand( );
+	const std::size_t dot   = brand.rfind( '.' );
+	const std::string part1 = dot == std::string::npos ? brand : brand.substr( 0, dot );
+	const std::string part2 = dot == std::string::npos ? std::string{ } : brand.substr( dot );
+
+	std::string part3{ };
+
+	if ( GET_VARIABLE( g_variables.m_watermark_user, bool ) )
+		part3 += " | " + GET_VARIABLE( g_variables.m_watermark_clarity_user, std::string );
+
+	if ( GET_VARIABLE( g_variables.m_watermark_time, bool ) ) {
+		const std::time_t raw = std::time( nullptr );
+		std::tm local{ };
+		localtime_s( &local, &raw );
+		part3 += std::format( " | {:02}:{:02}:{:02}", local.tm_hour, local.tm_min, local.tm_sec );
+	}
+
+	if ( GET_VARIABLE( g_variables.m_watermark_tickrate, bool ) && g_interfaces.m_engine_client->is_in_game( ) && globals && globals->m_interval_per_tick > 0.f )
+		part3 += std::format( " | {} tick", static_cast< int >( 1.f / globals->m_interval_per_tick + 0.5f ) );
+
+	/* donor fps = imgui's rolling Framerate + 0.5 */
+	if ( GET_VARIABLE( g_variables.m_watermark_fps, bool ) )
+		part3 += std::format( " | {} fps", static_cast< int >( ImGui::GetIO( ).Framerate + 0.5f ) );
+
+	const float size = font->FontSize;
+	const float w1   = font->CalcTextSizeA( size, FLT_MAX, 0.f, part1.c_str( ) ).x;
+	const float w2   = font->CalcTextSizeA( size, FLT_MAX, 0.f, part2.c_str( ) ).x;
+	const float w3   = font->CalcTextSizeA( size, FLT_MAX, 0.f, part3.c_str( ) ).x;
+
+	constexpr float padding_x = 10.f, padding_y = 6.f;
+
+	const float width  = w1 + w2 + w3 + padding_x * 2.f;
+	const float height = font->CalcTextSizeA( size, FLT_MAX, 0.f, "A" ).y + padding_y * 2.f;
+	const float x      = static_cast< float >( g_ctx.m_width ) - width - 10.f;
+	const float y      = 10.f;
+
+	g_watermark_box = ImVec4( x - 1.f, y - 1.f, x + width + 1.f, y + height + 1.f );
+
+	const auto draw_list = ImGui::GetForegroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	grimoire_box( draw_list, x, y, width, height );
+
+	const float tx = x + padding_x, ty = y + padding_y;
+	draw_list->AddText( font, size, ImVec2( tx, ty ), grimoire_text, part1.c_str( ) );
+	draw_list->AddText( font, size, ImVec2( tx + w1, ty ), grimoire_accent( ), part2.c_str( ) );
+	draw_list->AddText( font, size, ImVec2( tx + w1 + w2, ty ), grimoire_text, part3.c_str( ) );
+
+	g_render.end_stretch_block( block );
+}
+
+/* grimv5 features/misc/misc.cpp spectators_list_grimoire: watermark chrome, header 24 ( fill 25, line 45 ) "spectators" tahomabd 11
+   centred with 4 dir black a220 outline, rows verdana 11 at pad 10 / 6, row = size + 4, watcher of us = accent else 180.
+   avatar 14 + 6 gap, "?" when none. donor filter = collect_spectators all + GOTV; a dead local watching someone is listed too */
+void n_misc::impl_t::draw_spectator_list_grimoire( )
+{
+	const auto bold = g_render.m_fonts[ e_font_names::font_name_grimoire_tahoma_bd_11 ];
+	const auto thin = g_render.m_fonts[ e_font_names::font_name_verdana_11 ];
+
+	if ( !bold || !thin )
+		return;
+
+	const bool show_target = GET_VARIABLE( g_variables.m_spectators_list_show_target, bool );
+
+	std::vector< spectator_entry_t > entries{ };
+	collect_spectators( entries, true, true );
+	std::erase_if( entries, [ & ]( const spectator_entry_t& entry ) { return !show_target && !entry.m_watching_local; } );
+	std::sort( entries.begin( ), entries.end( ), []( const spectator_entry_t& a, const spectator_entry_t& b ) { return a.m_index < b.m_index; } );
+
+	/* menu open forces always show ( draw_spectator_list scope ) = donor's menu::open || show_empty */
+	if ( entries.empty( ) ) {
+		if ( !GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ) )
+			return;
+
+		entries.push_back( { "no spectators" } );
+	}
+
+	constexpr float avatar_size = 14.f, avatar_gap = 6.f, pad_x = 10.f, pad_y = 6.f, header_h = 24.f;
+	constexpr auto header = "spectators", arrow = " -> ";
+
+	const float size     = bold->FontSize;
+	const float row_h    = size + 4.f;
+	const bool avatars   = GET_VARIABLE( g_variables.m_spectators_avatar, bool );
+	const float avatar_w = avatars ? avatar_size + avatar_gap : 0.f;
+
+	const auto width_of = [ & ]( ImFont* font, const std::string& text ) { return font->CalcTextSizeA( size, FLT_MAX, 0.f, text.c_str( ) ).x; };
+	const auto targeted = [ & ]( const spectator_entry_t& entry ) { return show_target && !entry.m_target_name.empty( ); };
+
+	const float header_w = width_of( bold, header );
+
+	float max_w = header_w + 30.f;
+	for ( const auto& entry : entries )
+		max_w = ImMax( max_w, width_of( thin, entry.m_name ) + ( targeted( entry ) ? width_of( thin, arrow + entry.m_target_name ) : 0.f ) + avatar_w );
+
+	const float box_w   = max_w + pad_x * 2.f;
+	const float total_h = header_h + pad_y * 2.f + static_cast< float >( entries.size( ) ) * row_h;
+
+	drag_placed_panel( box_w, total_h );
+
+	const float x = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_x, int ) );
+	const float y = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_y, int ) );
+
+	const auto draw_list = ImGui::GetBackgroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	const ImU32 accent = grimoire_accent( );
+
+	grimoire_box( draw_list, x, y, box_w, total_h, header_h );
+	draw_list->AddLine( ImVec2( x, y + header_h ), ImVec2( x + box_w, y + header_h ), IM_COL32( 45, 45, 45, 255 ) );
+
+	const ImVec2 header_pos( x + ( box_w - header_w ) / 2.f, y + ( header_h - size ) / 2.f );
+	constexpr ImVec2 offsets[ 4 ] = { { -1.f, 0.f }, { 1.f, 0.f }, { 0.f, -1.f }, { 0.f, 1.f } };
+	for ( const auto& offset : offsets )
+		draw_list->AddText( bold, size, ImVec2( header_pos.x + offset.x, header_pos.y + offset.y ), IM_COL32( 0, 0, 0, 220 ), header );
+	draw_list->AddText( bold, size, header_pos, grimoire_text, header );
+
+	float row_y = y + header_h + pad_y;
+	for ( const auto& entry : entries ) {
+		float cursor_x = x + pad_x;
+
+		if ( avatars ) {
+			const float avatar_y = row_y + ( row_h - avatar_size ) * 0.5f;
+			const ImVec2 min( cursor_x, avatar_y ), max( cursor_x + avatar_size, avatar_y + avatar_size );
+
+			if ( const auto texture = entry.m_index > 0 ? spectator_avatar_texture( entry.m_index, entry.m_team, entry.m_fake_player ) : nullptr )
+				draw_list->AddImage( texture, min, max );
+			else {
+				const ImVec2 q = thin->CalcTextSizeA( size, FLT_MAX, 0.f, "?" );
+				draw_list->AddText( thin, size, ImVec2( cursor_x + ( avatar_size - q.x ) * 0.5f, avatar_y + ( avatar_size - q.y ) * 0.5f ),
+				                    IM_COL32( 200, 200, 200, 255 ), "?" );
+			}
+
+			draw_list->AddRect( min, max, IM_COL32( 90, 90, 90, 255 ) );
+			cursor_x += avatar_w;
+		}
+
+		const ImU32 color = entry.m_watching_local ? accent : grimoire_text;
+		draw_list->AddText( thin, size, ImVec2( cursor_x, row_y ), color, entry.m_name.c_str( ) );
+
+		if ( targeted( entry ) )
+			draw_list->AddText( thin, size, ImVec2( cursor_x + width_of( thin, entry.m_name ), row_y ), color, ( arrow + entry.m_target_name ).c_str( ) );
+
+		row_y += row_h;
+	}
+
+	g_render.end_stretch_block( block );
+}
+
+namespace {
+	ImU32 datashell_accent( const float alpha = 1.f )
+	{
+		const ImVec4 accent = ImGui::GetStyleColorVec4( ImGuiCol_::ImGuiCol_Accent );
+		return ImColor( accent.x, accent.y, accent.z, alpha );
+	}
+
+	/* donor accent line: 3 strips over [ x0, x1 ], each fading out from the middle ( peaks 1 / peak2 / peak3, last 1 px taller ) */
+	void datashell_line( ImDrawList* list, const float x0, const float x1, const float y, const float h, const float peak2, const float peak3 )
+	{
+		const float mid        = x0 + ( x1 - x0 ) * 0.5f;
+		const ImU32 none       = datashell_accent( 0.f );
+		const float peaks[ 3 ] = { 1.f, peak2, peak3 };
+
+		for ( int i = 0; i < 3; i++ ) {
+			const ImU32 peak   = datashell_accent( peaks[ i ] );
+			const float bottom = y + h + ( i == 2 ? 1.f : 0.f );
+			list->AddRectFilledMultiColor( ImVec2( x0, y ), ImVec2( mid, bottom ), none, peak, peak, none );
+			list->AddRectFilledMultiColor( ImVec2( mid, y ), ImVec2( x1, bottom ), peak, none, none, peak );
+		}
+	}
+
+	/* donor bg: black, 9 a205 outline, 9 a205 fill ( spec header grows that last fill 1 px ) */
+	void datashell_fill( ImDrawList* list, const ImVec2 min, const ImVec2 max, const float grow = 0.f )
+	{
+		list->AddRectFilled( min, max, IM_COL32( 0, 0, 0, 255 ) );
+		list->AddRect( min, max, IM_COL32( 9, 9, 9, 205 ) );
+		list->AddRectFilled( min, ImVec2( max.x + grow, max.y + grow ), IM_COL32( 9, 9, 9, 205 ) );
+	}
+
+	/* wm / media chrome: fill, accent line from 1 px above ( 2.5 in left, 6.5 in right ), accent a.5 fading up from the bottom */
+	void datashell_box( ImDrawList* list, const ImVec2 min, const ImVec2 max )
+	{
+		datashell_fill( list, min, max );
+		datashell_line( list, min.x + 2.5f, max.x - 6.5f, min.y - 1.f, 4.f, 0.65f, 0.5f );
+
+		const ImU32 fade = datashell_accent( 0.5f );
+		list->AddRectFilledMultiColor( min, max, IM_COL32( 0, 0, 0, 0 ), IM_COL32( 0, 0, 0, 0 ), fade, fade );
+	}
+}
+
+/* Datashell-main features/visuals/visuals.cpp watermark, donor fixed slots ( tw = brand width ): box x = screen - tw - 92.5, y 5,
+   w tw + 84, h 15. brand at box + 2.5 split in half ( "datashell" = data white + shell accent right-aligned to tw ). fps slot tw + 4
+   ( "|", value +5, "fps" accent +2 after ), tick slot tw + 51 ( "|", value +6, "T" accent +2 after ), box ends tw + 84. a knob off
+   drops its slot ( 47 / 33 ). fps = donor 0.7 s ema of 1 / abs frametime, tick = cl_cmdrate like the donor */
+void n_misc::impl_t::draw_watermark_datashell( )
+{
+	const auto font    = g_render.m_fonts[ e_font_names::font_name_datashell_verdana_bd_12 ];
+	const auto globals = g_interfaces.m_global_vars_base;
+
+	if ( !font || !globals )
+		return;
+
+	static float fps = 0.f, last_update = 0.f;
+	if ( globals->m_real_time - last_update >= 0.7f || globals->m_real_time < last_update ) {
+		fps         = 0.7f * fps + 0.3f * ( 1.f / ImMax( 0.0001f, globals->m_abs_frame_time ) );
+		last_update = globals->m_real_time;
+	}
+
+	static c_cconvar* cmdrate = nullptr;
+	if ( !cmdrate )
+		cmdrate = g_convars[ HASH_BT( "cl_cmdrate" ) ];
+
+	const bool show_fps  = GET_VARIABLE( g_variables.m_watermark_fps, bool );
+	const bool show_tick = GET_VARIABLE( g_variables.m_watermark_tickrate, bool ) && cmdrate;
+
+	const std::string brand = watermark_brand( );
+	const std::size_t cut   = gamesense_split( brand );
+	const std::string head = brand.substr( 0, cut ), tail = brand.substr( cut );
+
+	const float size    = font->FontSize;
+	const auto width_of = [ & ]( const std::string& text ) { return font->CalcTextSizeA( size, FLT_MAX, 0.f, text.c_str( ) ).x; };
+
+	const float tw    = width_of( brand );
+	const float box_w = tw + 4.f + ( show_fps ? 47.f : 0.f ) + ( show_tick ? 33.f : 0.f );
+	const float x     = static_cast< float >( g_ctx.m_width ) - 8.5f - box_w;
+	constexpr float y = 5.f, box_h = 15.f;
+
+	g_watermark_box = ImVec4( x, y - 1.f, x + box_w, y + box_h );
+
+	const auto draw_list = ImGui::GetForegroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	datashell_box( draw_list, ImVec2( x, y ), ImVec2( x + box_w, y + box_h ) );
+
+	const ImU32 white = IM_COL32( 255, 255, 255, 255 ), accent = datashell_accent( );
+	const float gx = x + 2.5f, ty = y + 2.f;
+
+	draw_list->AddText( font, size, ImVec2( gx, ty ), white, head.c_str( ) );
+	draw_list->AddText( font, size, ImVec2( gx + tw - width_of( tail ), ty ), accent, tail.c_str( ) );
+
+	const auto slot = [ & ]( const float at, const float value_gap, const std::string& value, const char* suffix ) {
+		draw_list->AddText( font, size, ImVec2( at, ty ), white, "|" );
+		draw_list->AddText( font, size, ImVec2( at + value_gap, ty ), white, value.c_str( ) );
+		draw_list->AddText( font, size, ImVec2( at + value_gap + 2.f + width_of( value ), ty ), accent, suffix );
+	};
+
+	float at = gx + tw + 4.f;
+	if ( show_fps ) {
+		slot( at, 5.f, std::to_string( static_cast< int >( fps ) ), "fps" );
+		at += 47.f;
+	}
+	if ( show_tick )
+		slot( at, 6.f, std::to_string( static_cast< int >( cmdrate->get_float( ) ) ), "T" );
+
+	g_render.end_stretch_block( block );
+}
+
+/* Datashell-main visuals::spec_list: header box h 15 ( last fill 1 px bigger ), "spectators" accent 46.5 in, line peaks 1 / .4 / .3.
+   rows box gap ( spec_seperator 5..25 ) under it, .5 px wider each side, h 15 + rows * 10, row n at top + n * 10, 9.5 in from the
+   header. width = "spectators" + 84, never grows ( donor ). watcher of us = spectating local colour, rest white, GOTV dropped */
+void n_misc::impl_t::draw_spectator_list_datashell( )
+{
+	const auto font = g_render.m_fonts[ e_font_names::font_name_datashell_verdana_bd_12 ];
+
+	if ( !font )
+		return;
+
+	const bool show_target = GET_VARIABLE( g_variables.m_spectators_list_show_target, bool );
+
+	std::vector< spectator_entry_t > entries{ };
+	collect_spectators( entries, true );
+	std::erase_if( entries, [ & ]( const spectator_entry_t& entry ) { return !show_target && !entry.m_watching_local; } );
+	std::sort( entries.begin( ), entries.end( ), []( const spectator_entry_t& a, const spectator_entry_t& b ) { return a.m_index < b.m_index; } );
+
+	/* donor always draws the header; empty = header only */
+	if ( entries.empty( ) && !GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ) )
+		return;
+
+	constexpr auto header = "spectators";
+	constexpr float box_h = 15.f;
+
+	const float size     = font->FontSize;
+	const float header_w = font->CalcTextSizeA( size, FLT_MAX, 0.f, header ).x;
+	const float box_w    = header_w + 84.f;
+	const float gap      = std::clamp( GET_VARIABLE( g_variables.m_spectators_datashell_gap, float ), 5.f, 25.f );
+	const float rows_h   = box_h + static_cast< float >( entries.size( ) ) * 10.f;
+	const float total_h  = entries.empty( ) ? box_h + 1.f : box_h + gap + rows_h;
+
+	drag_placed_panel( box_w + 1.f, total_h );
+
+	const float x = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_x, int ) );
+	const float y = static_cast< float >( GET_VARIABLE( g_variables.m_spectators_list_y, int ) );
+
+	const auto draw_list = ImGui::GetBackgroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	const ImU32 accent = datashell_accent( );
+	const float head_x = x + 0.5f;
+
+	/* donor order: header bg, header text, header line ( over the text top ), rows bg, rows line, rows */
+	datashell_fill( draw_list, ImVec2( head_x, y ), ImVec2( head_x + box_w, y + box_h ), 1.f );
+	draw_list->AddText( font, size, ImVec2( head_x + 46.5f, y + 2.f ), accent, header );
+	datashell_line( draw_list, head_x + 3.5f, head_x + box_w - 5.5f, y, 4.f, 0.4f, 0.3f );
+
+	if ( !entries.empty( ) ) {
+		const float rows_y = y + box_h + gap;
+
+		datashell_fill( draw_list, ImVec2( x, rows_y ), ImVec2( x + box_w + 1.f, rows_y + rows_h ) );
+		datashell_line( draw_list, x + 4.f, x + box_w - 5.f, rows_y, 4.f, 0.4f, 0.3f );
+
+		const ImU32 local_color = GET_VARIABLE( g_variables.m_spectators_list_text_color_one, c_color ).get_u32( );
+
+		float row_y = rows_y;
+		for ( const auto& entry : entries ) {
+			row_y += 10.f;
+			draw_list->AddText( font, size, ImVec2( head_x + 9.5f, row_y ), entry.m_watching_local ? local_color : IM_COL32( 255, 255, 255, 255 ),
+			                    spectator_row_text( entry ).c_str( ) );
+		}
+	}
+
+	g_render.end_stretch_block( block );
+}
+
 bool n_misc::media_player_donor_look( const int style, media_look_t& look )
 {
 	const ImVec4 accent = ImGui::GetStyleColorVec4( ImGuiCol_::ImGuiCol_Accent );
@@ -6837,6 +7191,10 @@ bool n_misc::media_player_donor_look( const int style, media_look_t& look )
 		look                 = { true, IM_COL32( title[ 0 ], title[ 1 ], title[ 2 ], 255 ), IM_COL32( 150, 150, 150, 255 ), 0 };
 		return true;
 	}
+	/* wm chrome box ( frame case 24 ), grimv5 display_spotify colours: track white, artist 150 */
+	case 24: look = { true, IM_COL32( 255, 255, 255, 255 ), IM_COL32( 150, 150, 150, 255 ), 0 }; return true;
+	/* wm chrome box ( frame case 25 ), datashell display_spotify: white text, black 1 px drop shadow */
+	case 25: look = { true, IM_COL32( 255, 255, 255, 255 ), IM_COL32( 255, 255, 255, 255 ), 1 }; return true;
 	default: return false;
 	}
 }
@@ -7107,6 +7465,8 @@ void n_misc::media_player_donor_frame( ImDrawList* list, const ImVec2 min, const
 		list->AddRect( ImVec2( min.x - 1.f, min.y - 1.f ), ImVec2( max.x + 1.f, max.y + 1.f ), IM_COL32( 0, 0, 0, 255 ), 4.f, 0, 1.f );
 		list->AddRect( min, max, IM_COL32( 50, 50, 50, 255 ), 4.f, 0, 1.f );
 		break;
+	case 24: grimoire_box( list, min.x, min.y, max.x - min.x, max.y - min.y ); break;
+	case 25: datashell_box( list, min, max ); break;
 	default: break;
 	}
 }

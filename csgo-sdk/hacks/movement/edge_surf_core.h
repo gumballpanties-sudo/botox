@@ -751,7 +751,7 @@ namespace n_es
 		struct ev_t {
 			int k = -1, score = -1;
 			float f0 = 0.f, g = 0.f, cl = 0.f, u = 0.f, hs = 0.f, v = 0.f, danger = FLT_MAX, qv = 0.f, hk = 0.f, loss = 0.f;
-			bool riding = false, mine = false, fly = false, upq = false, flip = false;
+			bool riding = false, mine = false, fly = false, upq = false, flip = false, under = true, alt = false;
 			char act = 'F', qact = 'F';
 		};
 		const hull_t hst = w.hull( false );
@@ -812,25 +812,37 @@ namespace n_es
 					e.qact = gq.act;
 					e.qv   = gq.v;
 				}
-				/* the ledge ends before you get there: no owned bonus either ( a working plan elsewhere wins ) */
-				if ( gone[ i ] && !e.upq )
-					e.mine = false;
 				/* a prop pins over the top then out ( vphysics, log 11-20 ): the crossing must START 2u+ over the top, else CategorizePosition grounds the
 				   tick before. a ground jump beside a curb always crosses at the same height: an air duck / unduck ( feet +9 / -9 ) moves that phase.
 				   a brush read too with a box phase: no flip ( the box beside pin needs this stance ) */
+				bool flip_ok = false;
 				if ( f.prop && !( f.brush && e.f0 >= k_min_frac ) && e.k >= 3 && e.hk <= 2.05f ) {
 					const hull_t hf = w.hull( !s.duck );
 					int kf          = -1;
 					float ff = 0.f, zf = 0.f;
 					e.flip = crossing( f.top, s.o.z + ( s.duck ? -9.f : 9.f ), s.v.z, hf.maxs.z * 0.5f, w.pin, w.dt, kf, ff, &zf ) && kf >= 2 && zf - f.top > 2.05f;
+					/* this stance's arrival past the end: the flipped one crosses on another tick, its own top + face */
+					if ( e.flip && gone[ i ] ) {
+						const float tf = ( static_cast< float >( kf ) + ff ) * w.dt;
+						const v3 pf    = mk( s.o.x + s.v.x * tf, s.o.y + s.v.y * tf, s.o.z );
+						float t4       = 0.f;
+						edge_t ef;
+						flip_ok = top_at( w, f, hf, pf, s.o.z + 1.f, f.top - 1.f, t4 ) && fabsf( t4 - f.top ) < k_ztol && face_at( w, f, hf, pf, ef ) >= 0;
+						e.flip  = flip_ok;
+					}
 				}
+				/* the ledge ends before you get there ( no stance change reaches it ): no owned bonus, out of the pick */
+				e.under = under;
+				e.alt   = e.upq || flip_ok;
+				if ( gone[ i ] && !e.alt )
+					e.mine = false;
 				/* a box crossing whose feet start inside the top's 1/32 band hits it at fraction 0 ( MINIMUM_MOVE_FRACTION ): no arrival pin. read both
 				   ways: either kind may pin, the sims pick */
 				const bool phase = ( f.brush && e.f0 >= k_min_frac ) || ( f.prop && ( e.hk > 2.05f || e.flip ) );
 				const bad_t* b   = bad_of( m, f, s.duck );
 				if ( !b )
 					b = bad_of( m, raw[ i ], s.duck );
-				e.fly            = ( ( under && e.act != 'F' && phase ) || e.upq ) && ( !b || b->fails < 2 || e.mine );
+				e.fly            = ( ( ( under || flip_ok ) && e.act != 'F' && phase ) || e.upq ) && ( !b || b->fails < 2 || e.mine );
 				e.score        = ( e.mine ? 8 : 0 ) + ( e.fly ? 4 : 0 );
 				if ( e.g > 0.f && e.cl > 0.f && e.g / e.cl < static_cast< float >( e.k + 1 ) * w.dt )
 					e.danger = e.g / e.cl;
@@ -839,6 +851,14 @@ namespace n_es
 		}
 		/* owned / flyable, then the ledge you land on unless braked ( beside closing ), then the least speed lost: within 2 u/s of the class's
 		   least = a tie ( one band, no chain ), then the nearest. a top you are over ( you land on it first ) and a ride stay in the band: k decides */
+		/* a ledge that ends before you get there sits out ( picked only when nothing else is there: hands off, why=e ) */
+		bool live = false;
+		for ( int i = 0; i < nc; ++i )
+			if ( ok[ i ] && !( gone[ i ] && !ev[ i ].alt ) )
+				live = true;
+		if ( live )
+			for ( int i = 0; i < nc; ++i )
+				ok[ i ] = ok[ i ] && !( gone[ i ] && !ev[ i ].alt );
 		int best = -1;
 		for ( int i = 0; i < nc; ++i )
 			if ( ok[ i ] && ( best < 0 || ev[ i ].score > ev[ best ].score || ( ev[ i ].score == ev[ best ].score && ev[ i ].danger < ev[ best ].danger ) ) )
@@ -982,8 +1002,8 @@ namespace n_es
 			m.own = false;
 			return r;
 		}
-		/* no face where the hull gets there ( and no earlier standing arrival ): nothing to hold off from either */
-		if ( gone[ best ] && !e.upq ) {
+		/* no face where the hull gets there ( and no stance change that does ): nothing to hold off from either */
+		if ( gone[ best ] && !e.alt ) {
 			why = 'e';
 			return hands_off( );
 		}
@@ -1049,6 +1069,11 @@ namespace n_es
 				m.up_top = f.top;
 				return own( 'Q', q, false );
 			}
+		}
+		/* T / Q refused: this stance's own arrival has no ledge ( gone, no top, floor ), never guide onto it */
+		if ( !e.under ) {
+			why = 'u';
+			return gone[ best ] ? hands_off( ) : let_go( 'u' );
 		}
 		if ( e.act == 'F' )
 			return let_go( 'g' );

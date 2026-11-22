@@ -246,6 +246,26 @@ namespace
 			return 2;
 		return ( std::min )( z - lo, plane + k_dist_eps - z ) >= 0.001f ? 0 : 1;
 	}
+	/* brush top under a vphysics prop wall ( de_nuke -160: brush 6016 top, roof trim props 142 / 144 over it ). the world
+	   trace hits the top at t = ( z_in - top ) / fall, the prop is clipped on the ray SHORTENED to that hit
+	   ( enginetrace.cpp:1864 ). hull flush on the prop = vphysics near miss: it blocks ( wall wins, hull falls past ) once
+	   the into-wall travel t * press passes ~eps * 0.1 ( vphysics trace.cpp:1506; lab: 0.0015 .. 0.003 with the parked gap
+	   and the GJK estimate ). tools/wc_engine/ps_prop_lab + log 11-22: caught x8 at t 0.0122, fell at t 0.16 / 0.18 / 0.72 / 0.86.
+	   0 = any press ( hardest key press: sv_airaccelerate 12 * 250 * dt a tick ), 1 = light press only ( <= 7 u/s into the
+	   wall: lab stops the logged arc at 8, not at 12 ), -1 = falls past */
+	constexpr float k_prop_near_miss  = 0.0015f;
+	constexpr float k_prop_press_hard = 12.f * 250.f;
+	constexpr float k_prop_press_soft = 7.f;
+	int prop_cross_tier( float z_in, float z_out, float top )
+	{
+		const float fall = z_in - z_out;
+		if ( !( z_in > top ) || z_out > top || fall <= 0.f )
+			return -1;
+		const float t = ( z_in - top ) / fall, dt = tick_dt( );
+		if ( t * k_prop_press_hard * dt * dt <= k_prop_near_miss )
+			return 0;
+		return t * k_prop_press_soft * dt <= k_prop_near_miss ? 1 : -1;
+	}
 	void sim_categorize( n_route::sim_t& s, float floor_z, bool solid, bool move_to_end, bool skin = false )
 	{
 		const float over = s.z - floor_z;
@@ -1915,6 +1935,17 @@ namespace n_route
 								const bool px_next_down = s.vz - half_g < 0.f;
 								const bool px_duck_ok = point.type == route_pt_pixelsurf && !( s.ducked || s.ducking ) &&
 								                        point.allow_duck && duck_press_lands( s_tick_in );
+								/* prop wall over the top: a pressed fall starting a hair over the window top is stopped ON the top
+								   ( prop_cross_tier; log 11-22: prop catches at exactly plane + 1/32 ). a duck / unduck tick
+								   teleports, never sweeps */
+								const float px_top   = px_plane + k_dist_eps;
+								const bool prop_tick = point.ps_prop && px_grid && s.ducked == ducked_in;
+								const int prop_tier  = prop_tick ? prop_cross_tier( z_in, s.z, px_top ) : -1;
+								const bool prop_cross = prop_tier >= 0;
+								/* same crossing with the duck pressed this tick or earlier ( the arc +9 ), only when the standing
+								   arc never stops. the +9 into the window ( duck late ) stays first */
+								const bool prop_cross_duck =
+									prop_tick && px_duck_ok && prop_cross_tier( z_in + k_duck_delta, s.z + k_duck_delta, px_top ) >= 0;
 
 								const bool by_head = point.type == route_pt_headbang || point.type == route_pt_texturebug;
 								const bool hb_rise   = point.type == route_pt_headbounce && !s.on_ground && vz_in - half_g > 0.f;
@@ -1934,11 +1965,18 @@ namespace n_route
 											return px_grid ? pixel_window_gap( z, px_plane ) : std::fabs( z - target_z );
 										};
 										gap = FLT_MAX;
-										if ( ( s.ducked || s.ducking ) ? point.allow_duck : point.allow_stand )
-											gap = px_gap( s.z );
+										if ( ( s.ducked || s.ducking ) ? point.allow_duck : point.allow_stand ) {
+											gap = prop_cross ? 0.f : px_gap( s.z );
+											if ( prop_cross )
+												px_z = px_top;
+										}
 										if ( px_duck_ok && px_gap( s.z + k_duck_delta ) < gap ) {
 											gap  = px_gap( s.z + k_duck_delta );
 											px_z = s.z + k_duck_delta;
+										}
+										if ( prop_cross_duck && gap > 0.f ) {
+											gap  = 0.f;
+											px_z = px_top;
 										}
 									} else if ( point.type == route_pt_headbang ) {
 										gap = std::fabs( s.z + hull_top( s ) - target_z );
@@ -1983,15 +2021,22 @@ namespace n_route
 										continue;
 									for ( int variant = 0; variant < 2; ++variant ) {
 										const bool catch_duck = variant == 1;
-										if ( catch_duck && !px_duck_ok )
+										/* standing hull stopped on the top: a duck after that is a ride move, the ducked twin adds nothing */
+										if ( catch_duck && ( !px_duck_ok || prop_cross ) )
 											continue;
 										const bool ducked = catch_duck || s.ducked || s.ducking;
 										if ( !catch_duck && ( ducked ? !point.allow_duck : !point.allow_stand ) )
 											continue;
-										const float catch_z = catch_duck ? s.z + k_duck_delta : s.z;
+										const bool duck_in_win = catch_duck && px_grid && in_pixel_window( s.z + k_duck_delta, px_plane );
+										const bool stop_top    = catch_duck ? !duck_in_win && prop_cross_duck : prop_cross;
+										const float catch_z   = stop_top ? px_top : catch_duck ? s.z + k_duck_delta : s.z;
 										int tier       = 0;
 										float rank_gap = std::fabs( catch_z - target_z );
-										if ( px_grid ) {
+										if ( stop_top ) {
+											rank_gap = pixel_centre_gap( catch_z, px_plane, ducked );
+											/* light press only + every ducked twin list after the GOOD rows */
+											tier = catch_duck ? 1 : prop_tier;
+										} else if ( px_grid ) {
 											if ( !in_pixel_window( catch_z, px_plane ) )
 												continue;
 											tier     = pixel_tier( catch_z, px_plane, ducked );
@@ -2006,7 +2051,7 @@ namespace n_route
 											           ? 0
 											           : ( pixel_bucket( catch_z ) == pixel_bucket( target_z ) ? 1 : 2 );
 										}
-										if ( tier > 0 && r.edge.counts( rank_gap ) ) {
+										if ( tier > 0 && !stop_top && r.edge.counts( rank_gap ) ) {
 											char line[ 160 ]{ };
 											sprintf_s( line, "%-18s%s catch %9.4f  gap %6.4f", dep.text( ).c_str( ),
 											           catch_duck ? " +9" : "   ", catch_z, target_z - catch_z );
@@ -2043,7 +2088,7 @@ namespace n_route
 									}
 									// the plain arc hangs on the first tick in the window (allowed stance or not): later ticks
 									// never happen. near the apex two tick ends can sit in one 1/32, one chance only
-									const bool plain_caught = px_grid ? in_pixel_window( s.z, px_plane )
+									const bool plain_caught = px_grid ? prop_cross || in_pixel_window( s.z, px_plane )
 									                                  : ( point.has_measured ? s.z <= target_z + 0.0005f && s.z >= target_z - 0.004f
 									                                                         : check( s.z, target_z ) );
 									if ( plain_caught )

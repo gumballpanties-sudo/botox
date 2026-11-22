@@ -412,6 +412,9 @@ namespace
 		float hang_z  = 0.f;
 		float hang_vz = 0.f;
 		c_vector hang_pos{ };
+		/* catch tick press: tick-start z, the cmd wish seen last call + this call ( world, 450 scale ), xy velocity */
+		float hang_from = 0.f;
+		c_vector prev_wish{ }, hang_wish_prev{ }, hang_wish_now{ }, hang_vel{ };
 	};
 	recorder_t g_rec;
 
@@ -604,11 +607,31 @@ namespace
 		return -1;
 	}
 
-	void record_tick( n_movement::impl_t::route_calc_t& data )
+	/* into-wall speed one cmd's AirAccelerate adds ( wall normal n, wish = world wishvel ) */
+	float press_into( const c_vector& wish, const c_vector& vel, const c_vector& n )
+	{
+		const float len = wish.length_2d( );
+		if ( len < 1.f )
+			return 0.f;
+		const float wx = wish.m_x / len, wy = wish.m_y / len;
+		const float add = g_convars.float_or( HASH_BT( "sv_air_max_wishspeed" ), 30.f ) - ( vel.m_x * wx + vel.m_y * wy );
+		if ( add <= 0.f )
+			return 0.f;
+		const float acc = g_convars.float_or( HASH_BT( "sv_airaccelerate" ), 12.f ) * ( std::min )( len, 250.f ) * n_tick::engine_interval( );
+		return -( std::min )( acc, add ) * ( wx * n.m_x + wy * n.m_y );
+	}
+
+	void record_tick( n_movement::impl_t::route_calc_t& data, const c_user_cmd* cmd )
 	{
 		auto* local = g_ctx.m_local;
 		if ( !local )
 			return;
+		c_vector wish{ };
+		if ( cmd ) {
+			const float yaw = cmd->m_view_point.m_y * ( 3.14159265f / 180.f );
+			wish = c_vector( cmd->m_forward_move * std::cos( yaw ) + cmd->m_side_move * std::sin( yaw ),
+			                 cmd->m_forward_move * std::sin( yaw ) - cmd->m_side_move * std::cos( yaw ), 0.f );
+		}
 
 		const float grav       = gravity_per_tick( );
 		const int flags        = local->get_flags( );
@@ -672,12 +695,21 @@ namespace
 				g_rec.hang_z  = z;
 				g_rec.hang_vz = -g_rec.prev_vz;
 				g_rec.hang_pos = local->get_origin( );
+				g_rec.hang_from      = g_rec.prev_z;
+				g_rec.hang_wish_prev = g_rec.prev_wish;
+				g_rec.hang_wish_now  = wish;
+				g_rec.hang_vel       = local->get_velocity( );
 			}
 			if ( g_rec.hang == 2 ) {
 				botox_dbg_log( "[rc surf] CAUGHT at z %9.4f  ( arrived at %6.1f, duck %d ) at %.2f %.2f\n", g_rec.hang_z,
 				               g_rec.hang_vz, ducking ? 1 : 0, g_rec.hang_pos.m_x, g_rec.hang_pos.m_y );
-				if ( const c_vector wall_n = log_wall_ground( "surf" ); wall_n.length_2d( ) > 0.5f )
+				if ( const c_vector wall_n = log_wall_ground( "surf" ); wall_n.length_2d( ) > 0.5f ) {
 					pf_check_catch( g_rec.hang_pos, wall_n, local->get_velocity( ).dot_product( c_vector( wall_n.m_y, -wall_n.m_x, 0.f ) ), ducking );
+					/* prop wall rule ( route_engine prop_cross_tier ): how far over the catch the tick began + how hard the press was */
+					botox_dbg_log( "[rc surf] catch tick began %.4f over it | press into the wall %.1f u/s ( cmd before ) %.1f ( cmd now )\n",
+					               g_rec.hang_from - g_rec.hang_z, press_into( g_rec.hang_wish_prev, g_rec.hang_vel, wall_n ),
+					               press_into( g_rec.hang_wish_now, g_rec.hang_vel, wall_n ) );
+				}
 				for ( std::size_t i = 0; i < data.points.size( ); ++i ) {
 					route_point_t& pt = data.points[ i ];
 					if ( pt.type != route_pt_pixelsurf )
@@ -686,6 +718,14 @@ namespace
 					const float dy = pt.pos.m_y - g_rec.hang_pos.m_y;
 					if ( dx * dx + dy * dy > 32.f * 32.f || fabsf( pt.pos.m_z - g_rec.hang_z ) > 1.f )
 						continue;
+					/* held at exactly this marker's plane + 1/32 = the fall was stopped there, not a tick that ended in the
+					   window ( ~1 ulp: a window end lands there 1 in ~1500 ) */
+					if ( !pt.ps_prop && floorf( pt.pos.m_z ) == floorf( g_rec.hang_z ) &&
+					     fabsf( g_rec.hang_z - ( floorf( g_rec.hang_z ) + 0.03125f ) ) <= 2e-5f ) {
+						pt.ps_prop = true;
+						botox_dbg_log( "[rc surf] marker %d: held at the window top = a crossing fall stops here ( prop rule on )\n",
+						               static_cast< int >( i ) + 1 );
+					}
 					if ( pt.has_measured && g_rec.hang_z <= pt.measured_z + 0.0005f )
 						continue;
 					pt.measured_z   = g_rec.hang_z;
@@ -733,6 +773,25 @@ namespace
 			}
 		}
 
+		/* a fall through a pixelsurf marker's window with no catch: the numbers prop_cross_tier needs */
+		if ( g_rec.have_prev && !g_rec.prev_ground && !on_ground && g_rec.hang == 0 && vz < 0.f ) {
+			const c_vector o = local->get_origin( );
+			for ( std::size_t i = 0; i < data.points.size( ); ++i ) {
+				const route_point_t& pt = data.points[ i ];
+				if ( pt.type != route_pt_pixelsurf )
+					continue;
+				const float dx = pt.pos.m_x - o.m_x, dy = pt.pos.m_y - o.m_y;
+				const float plane = floorf( pt.pos.m_z ), top = plane + 0.03125f;
+				if ( dx * dx + dy * dy > 64.f * 64.f || !( g_rec.prev_z > top && z < plane ) )
+					continue;
+				const float probe_z = top;
+				const c_vector wall_n = log_wall_ground( "ps past", &probe_z );
+				botox_dbg_log( "[rc ps] marker %d FELL PAST: z %9.4f -> %9.4f | began %.4f over the top, t %.4f | press %.1f u/s ( cmd before ) %.1f ( cmd now ) duck %d\n",
+				               static_cast< int >( i ) + 1, g_rec.prev_z, z, g_rec.prev_z - top, ( g_rec.prev_z - top ) / ( g_rec.prev_z - z ),
+				               press_into( g_rec.prev_wish, local->get_velocity( ), wall_n ), press_into( wish, local->get_velocity( ), wall_n ), ducking ? 1 : 0 );
+			}
+		}
+
 		if ( g_rec.started && on_ground ) {
 			if ( ++g_rec.idle > static_cast< int >( 0.5f / n_tick::engine_interval( ) ) ) {
 				botox_dbg_log( "[rc rec] chain over — %d presses\n", g_rec.presses );
@@ -748,6 +807,7 @@ namespace
 		g_rec.prev_ground = on_ground;
 		g_rec.prev_duck   = ducking;
 		g_rec.prev_walk   = walk;
+		g_rec.prev_wish   = wish;
 		g_rec.have_prev   = true;
 	}
 }
@@ -1086,7 +1146,7 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 	auto& data = m_route_calc_data;
 
 	if ( cmd )
-		record_tick( data );
+		record_tick( data, cmd );
 
 	if ( !data.map.empty( ) && data.map != g_interfaces.m_engine_client->get_level_name_short( ) )
 		data.clear( );
@@ -1189,6 +1249,7 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 			point.snap_type  = snap_type;
 			point.hb_ceiling = snap_type == route_pt_headbounce && pf_hb_is_ceiling( snapped );
 			point.hb_win     = snap_type == route_pt_headbounce && !point.hb_ceiling && pf_hb_window( snapped, point.hb_lo, point.hb_hi );
+			point.ps_prop    = point.type == route_pt_pixelsurf && pf_ps_is_prop( snapped );
 			point.tb_kind    = tb.kind;
 			point.tb_tall    = tb.tall;
 			point.tb_coord   = tb.coord;
@@ -1494,7 +1555,9 @@ void n_movement::impl_t::route_calc( c_user_cmd* cmd )
 		                   pt.has_measured ? ( ceil_pt ? "PROBED - hull top stops here" : "MEASURED - this pixel has been ridden" )
 		                                   : ( pt.snapped ? "snapped to finder" : "aimed" ),
 		                   pt.ent > 0 ? " ON PLAYER" : "", pt.enabled ? "" : " ( OFF )",
-		                   pt.type == route_pt_headbounce ? ( pt.hb_ceiling ? " | ceiling: any crossing stops" : " | seam window" ) : "",
+		                   pt.type == route_pt_headbounce ? ( pt.hb_ceiling ? " | ceiling: any crossing stops" : " | seam window" )
+		                   : pt.type == route_pt_pixelsurf && pt.ps_prop ? " | prop wall over it: a fall starting a hair over the top stops on it"
+		                                                                  : "",
 		                   sloped ? " | SLOPED ceiling, hull probe missed: raw ray z" : "",
 		                   slope_floor ? " | SLOPED floor: the landing slides, later heights approximate" : "" );
 		if ( sloped && GET_VARIABLE( g_variables.m_route_calc_advanced_readout, bool ) )

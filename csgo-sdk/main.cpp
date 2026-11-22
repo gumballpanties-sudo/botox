@@ -185,6 +185,13 @@ static void crash_append_address_space( )
 	              largest >> 20, priv >> 20, reserved >> 20, mapped >> 20, image >> 20 );
 	/* ballast 0/3 = rescues ran out, 3/3 = the ask never reached the NtAllocateVirtualMemory detour ( or no hook ) */
 	crash_append( " ballast=%d/%d rescues=%ld", n_va_ballast::left( ), n_va_ballast::k_chunks, n_va_ballast::g_rescues.load( ) );
+	/* game capture frame buffers live in csgo's address space ( mapped ~+100 mb ) */
+	if ( GetModuleHandleA( "DiscordHook.dll" ) )
+		crash_append( " capture=discord" );
+	if ( GetModuleHandleA( "graphics-hook32.dll" ) )
+		crash_append( " capture=obs" );
+	if ( GetModuleHandleA( "nvspcap.dll" ) )
+		crash_append( " capture=nvidia" );
 }
 
 static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
@@ -308,6 +315,8 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 
 	/* after the log line: a dump that hangs or dies still leaves the line on disk */
 	if ( dump ) {
+		if ( oom )
+			n_va_ballast::give_dump_room( ); // dbghelp's heap grows into it, else a 0 byte dump at largest free 0 mb
 		const HANDLE dump_file = CreateFileA( dump_path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr );
 		if ( dump_file != INVALID_HANDLE_VALUE ) {
 			MINIDUMP_EXCEPTION_INFORMATION exception{ GetCurrentThreadId( ), info, FALSE };

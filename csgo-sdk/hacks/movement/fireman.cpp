@@ -2020,8 +2020,6 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 	}
 
 	if ( !GET_VARIABLE( g_variables.m_fire_man, bool ) || !g_input.check_input( &GET_VARIABLE( g_variables.m_fire_man_key, key_bind_t ) ) ) {
-		m_fireman_data.key_held      = false;
-		m_fireman_data.key_on_ladder = false;
 		m_fireman_data.fall_seen = false;
 		m_fireman_data.key_ticks = 0;
 		stand_down( );
@@ -2029,22 +2027,6 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 	}
 
 	++m_fireman_data.key_ticks;
-
-	if ( !m_fireman_data.key_held ) {
-		m_fireman_data.key_held      = true;
-		m_fireman_data.key_on_ladder = g_prediction.backup_data.m_move_type == move_type_ladder;
-	}
-
-	if ( m_fireman_data.key_on_ladder ) {
-		const bool clear = ( g_prediction.backup_data.m_flags & fl_onground ) != 0 && g_prediction.backup_data.m_move_type != move_type_ladder;
-
-		if ( !clear ) {
-			stand_down( );
-			return;
-		}
-
-		m_fireman_data.key_on_ladder = false;
-	}
 
 	// ladder edge jump: the player jumped off their own ladder; that airtime is theirs (the hunt / lock / latch guard
 	// would steer them back onto the ladder they just left). never inside our own ride / landing jump
@@ -2102,6 +2084,13 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 	const bool probe_only = user_steering && !locked && airborne_now;
 
 	const bool on_ladder_now = g_prediction.backup_data.m_move_type == move_type_ladder;
+
+	// player's own ladder, adopted hands off: a move key = their climb again (re-adopted when they let go)
+	if ( on_ladder_now && m_fireman_data.engaged && m_fireman_data.hands_adopt && user_steering ) {
+		m_fireman_data.engaged = false;
+		botox_dbg_log( "[fr] hands back t=%d", m_fireman_data.ride_ticks );
+	}
+
 	const int ride_grab_age  = cmd->m_tick_count - m_fireman_data.grab_tick;
 	const bool ours_ladder   = m_fireman_data.was_ladder
 	                             ? m_fireman_data.engaged
@@ -2117,7 +2106,8 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 	}
 
 	/* grounded with a key: stand down, unless our exit / landing jump is still owed (keys don't cancel the one jump) */
-	if ( user_steering && !locked && !probe_only && !riding_now && !m_fireman_data.was_ladder && m_fireman_data.launch_ticks <= 0 ) {
+	// on a ladder: fall through (writes nothing) so was_ladder tracks it and jumping off arms the left ban
+	if ( user_steering && !locked && !probe_only && !riding_now && !on_ladder_now && !m_fireman_data.was_ladder && m_fireman_data.launch_ticks <= 0 ) {
 		stand_down( );
 		return;
 	}
@@ -2245,8 +2235,9 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			const int grab_age = cmd->m_tick_count - m_fireman_data.grab_tick;
 			const bool ours    = m_fireman_data.fell_ready && grab_age >= 0 && grab_age <= 2;
 
-			m_fireman_data.engaged    = ours;
-			m_fireman_data.ride_ticks = 0;
+			m_fireman_data.engaged     = ours;
+			m_fireman_data.hands_adopt = false;
+			m_fireman_data.ride_ticks  = 0;
 
 			if ( !ours )
 				botox_dbg_log( "[fr] alien vz=%.0f h=%.0f ready=%d age=%d", g_prediction.backup_data.m_velocity.m_z,
@@ -2255,10 +2246,32 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 
 		m_fireman_data.was_ladder = true;
 
+		bool stale_latch = false;
+
 		if ( !m_fireman_data.engaged ) {
-			if ( m_fireman_data.fell_ready && ( g_prediction.backup_data.m_flags & fl_onground ) == 0 ) {
-				m_fireman_data.engaged = true;
-				botox_dbg_log( "[fr] adopt vz=%.0f drop=%.0f", g_prediction.backup_data.m_velocity.m_z, drop_to_floor( ) );
+			const bool airborne = ( g_prediction.backup_data.m_flags & fl_onground ) == 0;
+			// player's own ladder, hands off = slide down + jump away. never grounded: jump held at a ladder's base climbs UP it (:4218).
+			// real bind only (style 0 = always on, every ladder pause would slide). <= 16 over the floor (W tap at the base) = fling_ok
+			// at rest: the ride flings z 0 at the foot, not a climb down
+			const bool hands = airborne && !m_fireman_data.fell_ready && !user_steering && m_fireman_data.launch_ticks <= 0 &&
+			                   GET_VARIABLE( g_variables.m_fire_man_key, key_bind_t ).m_key_style != 0 && [ & ]( ) {
+				                   const float d = drop_to_floor( );
+				                   return d < 0.f || d > 16.f;
+			                   }( );
+
+			if ( airborne && ( m_fireman_data.fell_ready || hands ) ) {
+				m_fireman_data.engaged     = true;
+				m_fireman_data.hands_adopt = hands;
+				m_fireman_data.ride_ticks  = 0;
+
+				// jump ignore arms on the latch tick only: a jump that flings now = old latch, ride clock already expired
+				if ( hands ) {
+					const fireman_sim_t jump = fireman_sim( cmd, ( cmd->m_buttons & ~( move_buttons | in_duck | in_speed ) ) | in_jump );
+					stale_latch              = jump.valid && !jump.ladder;
+				}
+
+				botox_dbg_log( "[fr] adopt vz=%.0f drop=%.0f hands=%d stale=%d", g_prediction.backup_data.m_velocity.m_z, drop_to_floor( ), ( int )hands,
+				               ( int )stale_latch );
 			} else {
 				if ( m_fireman_data.launch_ticks > 0 && ( g_prediction.backup_data.m_flags & fl_onground ) == 0 ) {
 					cmd->m_forward_move = 0.f;
@@ -2319,6 +2332,9 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 			m_fireman_data.ride_wait_ticks  = 0;
 			m_fireman_data.ride_hover_ticks = 0;
 		}
+
+		if ( stale_latch )
+			m_fireman_data.ride_ticks = cooldown_ticks;
 
 		cmd->m_forward_move = 0.f;
 		cmd->m_side_move    = 0.f;
@@ -2512,7 +2528,9 @@ void n_movement::impl_t::fire_man( c_user_cmd* cmd )
 
 		// ride tick cooldown_ticks - 1 is the engine's expiry tick: frozen moves left = cooldown_ticks - 1 - ride_ticks.
 		// drop_to_floor is world only: a prop / func_brush floor in the path must agree with it (descend sizing reads ride_drop)
-		if ( !end_hang && !m_fireman_data.ride_descend && !ride_grounded && m_fireman_data.ride_ticks < cooldown_ticks - 1 && m_fireman_data.ride_push == 0 &&
+		// hands ride past expiry still attached = fling refused (wall behind): climb down, else parked until a key
+		if ( !end_hang && !m_fireman_data.ride_descend && !ride_grounded &&
+		     ( m_fireman_data.ride_ticks < cooldown_ticks - 1 || ( m_fireman_data.hands_adopt && cooldown_done ) ) && m_fireman_data.ride_push == 0 &&
 		     m_fireman_data.yaw_valid && ride_drop > fireman_ride_floor_probe && descend_vz < vz_ride - 1.f &&
 		     -vz_ride * static_cast< float >( cooldown_ticks - 1 - m_fireman_data.ride_ticks ) * phys_dt_ride < ride_drop - fireman_ride_floor_probe &&
 		     descend_path_ok( hover_floor, hover_dist ) && ( !hover_floor || std::fabsf( hover_dist - ride_drop ) < 1.f ) ) {

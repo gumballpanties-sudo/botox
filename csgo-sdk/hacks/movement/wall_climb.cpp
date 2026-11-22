@@ -10,6 +10,7 @@
 extern bool HITGODA;
 /* edge_surf.cpp: an edge surf feet approach owned the last cmd ( its fall back over a ledge top is not a climb ) */
 bool edge_surf_latched( const c_user_cmd* cmd );
+bool botox_is_ladder_trace( const trace_t& tr ); /* movement.cpp */
 extern bool HITGODA2;
 extern bool HITGODA3;
 
@@ -388,10 +389,12 @@ void n_wall_climb::impl_t::on_create_move( c_user_cmd* cmd )
 		return;
 	}
 	// fireman has a ladder ( last tick's state, it runs after us ): a wc park on a ladder face latches it jumpless = 12 tick hang, a pin
-	// eats the fall ( 10-07 21:07 log: every [fr] alien + 3 misses sat on WC park / PIN CATCH at nuke #3 )
+	// eats the fall ( 10-07 21:07 log: every [fr] alien + 3 misses sat on WC park / PIN CATCH at nuke #3 ).
+	// or this wall IS a ladder face: fireman bails on active( ), so touching one = fireman never got state to yield to ( 11-22 log: 200
+	// WC T ticks on the face, 0 [fr] lines )
 	const auto& fr = g_movement.m_fireman_data;
 	if ( GET_VARIABLE( g_variables.m_fire_man, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_fire_man_key, key_bind_t ) ) &&
-	     ( fr.is_ladder || fr.owns_cmd || fr.yaw_valid || fr.ladder_lock || fr.drop_in_lock || fr.launch_ticks > 0 ) ) {
+	     ( fr.is_ladder || fr.owns_cmd || fr.yaw_valid || fr.ladder_lock || fr.drop_in_lock || fr.launch_ticks > 0 || botox_is_ladder_trace( wall_tr ) ) ) {
 		m_holding = false;
 		++s_count[ wc_yield ];
 		return;

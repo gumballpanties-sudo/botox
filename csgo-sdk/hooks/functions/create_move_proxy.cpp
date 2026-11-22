@@ -4,6 +4,7 @@
 
 #include "../../hacks/aimbot/aimbot.h"
 #include "../../hacks/aimbot/grenade_aim.h"
+#include "../../hacks/chams/shot_chams.h"
 #include "../../hacks/lagcomp/lagcomp.h"
 #include "../../hacks/lua/lua.h"
 #include "../../hacks/misc/misc.h"
@@ -608,6 +609,9 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		cmd->m_command_number = 0x7fffffff;
 		cmd->m_tick_count     = 0x7fffffff;
 	}
+
+	if ( local && local->is_alive( ) && g_aimbot.shot_leaves( ) )
+		g_shot_chams.on_shot( cmd );
 
 	verified_cmd->m_user_cmd = *cmd;
 	verified_cmd->m_hash_crc = cmd->get_check_sum( );

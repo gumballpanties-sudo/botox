@@ -222,6 +222,9 @@ struct route_point_t {
 	int ent = 0;
 	c_vector ent_offset{ };
 	bool pj_skin = false;
+	/* pixelsurf seam under a static prop wall ( finder dot or a ridden catch at plane + 1/32 ): a pressed fall that starts a
+	   hair over the window top stops ON it ( route_engine prop_cross_tier ), not only a tick that ends inside the window */
+	bool ps_prop = false;
 	bool hb_ceiling = false;
 	/* seam headbounce: finder measured tick start head window [ hb_lo, hb_hi ), target_z = hb_hi */
 	bool hb_win  = false;
@@ -488,8 +491,8 @@ namespace n_movement
 			const char* press_by = "";
 			float press_yaw      = 0.f;
 			c_vector press_origin{ };
-			bool key_held      = false;
-			bool key_on_ladder = false;
+			/* ride adopted off the player's own ladder ( hands off ): a move key hands it back */
+			bool hands_adopt = false;
 			bool backing_out = false;
 			int steer_ticks = 0;
 			bool recall_valid  = false;
@@ -960,6 +963,7 @@ namespace n_movement
 		void auto_align( c_user_cmd* cmd );
 		void auto_align_botox( c_user_cmd* cmd );
         void auto_align_lumia( c_user_cmd* cmd );
+		void auto_align_grimoire( c_user_cmd* cmd );
 		void AutoStrafe( c_user_cmd* cmd );
 		void strafe_optimizer( c_user_cmd* cmd );
 		void strafe_to_yaw( c_user_cmd* cmd, c_angle& angle, const float yaw );
@@ -994,6 +998,7 @@ bool pf_dot_screen( const AnimatedPoint& ap, c_vector_2d& out );
 bool pf_tb_info( c_vector& dot, pf_tb_t& out );
 bool pf_hb_is_ceiling( const c_vector& dot );
 bool pf_hb_window( const c_vector& dot, float& lo, float& hi );
+bool pf_ps_is_prop( const c_vector& dot );
 struct pf_map_state_t {
 	bool busy = false;
 	int done = 0, total = 0, lines = 0, tb = 0;

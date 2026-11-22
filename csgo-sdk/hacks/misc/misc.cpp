@@ -455,6 +455,10 @@ void n_misc::impl_t::draw_watermark( )
 		return this->draw_watermark_millionware_v1( );
 	case 23:
 		return this->draw_watermark_lobotomy_v2( );
+	case 24:
+		return this->draw_watermark_grimoire( );
+	case 25:
+		return this->draw_watermark_datashell( );
 	default:
 		break;
 	}
@@ -1283,6 +1287,8 @@ static std::tuple< ImFont*, ImFont*, float > media_player_fonts( )
 			break;
 		case 22: pick( e_font_names::font_name_millionware_tahoma_11, e_font_names::font_name_millionware_tahoma_11 ); break;
 		case 23: pick( e_font_names::font_name_lobotomy_bold_13, e_font_names::font_name_lobotomy_bold_13 ); break;
+		case 24: pick( e_font_names::font_name_grimoire_tahoma_bd_11, e_font_names::font_name_grimoire_tahoma_bd_11 ); break;
+		case 25: pick( e_font_names::font_name_datashell_verdana_bd_12, e_font_names::font_name_datashell_verdana_bd_12 ); break;
 		default: break;
 		}
 	}
@@ -2588,6 +2594,12 @@ void n_misc::impl_t::on_end_scene( )
 			break;
 		case 34:
 			draw_spectator_list_hotwheels_v1( );
+			break;
+		case 35:
+			draw_spectator_list_grimoire( );
+			break;
+		case 36:
+			draw_spectator_list_datashell( );
 			break;
 		default:
 			break;

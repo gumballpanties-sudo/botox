@@ -62,3 +62,8 @@ namespace n_menu
 }
 
 inline n_menu::impl_t g_menu{ };
+
+constexpr float menu_band_height        = 25.f;
+constexpr float menu_bottom_band_height = 12.f;
+
+const char* menu_build_date( );

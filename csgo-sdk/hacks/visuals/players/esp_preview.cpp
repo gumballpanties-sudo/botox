@@ -389,6 +389,7 @@ void n_esp_preview::impl_t::rebuild( )
 	this->m_constructed = false;
 	this->m_ready       = false;
 	this->m_failed      = false;
+	this->m_warm        = false;
 	this->m_stage       = 5;
 }
 
@@ -398,7 +399,10 @@ void n_esp_preview::impl_t::on_paint_traverse( )
 	const bool wanted      = frame != this->m_seen_frame;
 	this->m_seen_frame     = frame;
 
-	if ( !wanted || g_ctx.m_eject_restoring || !g_interfaces.m_material_system || !g_interfaces.m_render_view || !g_interfaces.m_engine_client )
+	/* preload, menu closed: build + one hidden draw ( first draw loads materials + animations ), opening the tab = no hitch */
+	const bool preload = !wanted && !this->m_warm && !this->m_failed && GET_VARIABLE( g_variables.m_players_preview, bool );
+
+	if ( ( !wanted && !preload ) || g_ctx.m_eject_restoring || !g_interfaces.m_material_system || !g_interfaces.m_render_view || !g_interfaces.m_engine_client )
 		return;
 
 	/* level load ( connected, not in game ) flushes model + material data under queued draws; the old mods serial reload flushes
@@ -415,8 +419,12 @@ void n_esp_preview::impl_t::on_paint_traverse( )
 
 	PERF_ZONE( zone_paint_preview );
 
-	if ( this->init( ) )
+	/* finishing step and first draw on separate paints: splits the load hitch */
+	const bool was_ready = this->m_ready;
+	if ( this->init( ) && was_ready ) {
 		this->render( );
+		this->m_warm = true;
+	}
 }
 
 namespace

@@ -5,6 +5,7 @@
 #include "../../../globals/includes/includes.h"
 
 #include "../../entity_cache/entity_cache.h"
+#include "../../misc/misc.h"
 #include "../players/sound_esp/sound_esp.h"
 
 #include <algorithm>
@@ -387,12 +388,14 @@ static bool leaf_table_near_full( const bool rain )
 
 void n_edicts::impl_t::precipitation( )
 {
-	if ( leaf_table_near_full( m_created ) && GET_VARIABLE( g_variables.m_precipitation, bool ) ) {
+	// clipart = own glyphs ( precip_clipart.cpp ), takes no leaves
+	const bool clipart = GET_VARIABLE( g_variables.m_precipitation_type, int ) == k_precip_clipart;
+	if ( leaf_table_near_full( m_created ) && !clipart && GET_VARIABLE( g_variables.m_precipitation, bool ) ) {
 		g_console.print< n_console::log_level::WARNING >( "leaf table almost full (game crashes at 65535), precipitation turned off" );
 		GET_VARIABLE( g_variables.m_precipitation, bool ) = false;
 	}
 
-	if ( !GET_VARIABLE( g_variables.m_precipitation, bool ) ) {
+	if ( !GET_VARIABLE( g_variables.m_precipitation, bool ) || clipart ) {
 		this->remove_precipitation( );
 		return;
 	}

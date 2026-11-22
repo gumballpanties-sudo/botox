@@ -547,11 +547,13 @@ float n_menu::impl_t::fade_draw_lists( ImVector< ImDrawList* >& out, ImVector< f
 		++i;
 	}
 
+	const float opacity = ImClamp( GET_VARIABLE( g_variables.m_menu_opacity, int ), 50, 100 ) / 100.f;
+
 	/* !shown already emptied m_popups above */
-	if ( !shown || ( this->m_anim_progress >= 0.999f && this->m_popups.empty( ) ) )
+	if ( !shown || ( this->m_anim_progress >= 0.999f && this->m_popups.empty( ) && opacity >= 1.f ) )
 		return 1.f;
 
-	const float menu_fade = ImSaturate( this->m_anim_progress );
+	const float menu_fade = ImSaturate( this->m_anim_progress ) * opacity;
 
 	ImGuiWindow* web          = ImGui::FindWindowByName( "Web##websurf" );
 	ImGuiWindow* minesweeper  = ImGui::FindWindowByName( Minesweeper_WindowName( ) );
@@ -633,10 +635,12 @@ const menu_style_t k_menu_styles[ ] = {
 	{ "kamibebra", IM_COL32( 13, 13, 13, 255 ), IM_COL32( 16, 16, 16, 255 ), IM_COL32( 13, 13, 13, 255 ), IM_COL32( 16, 16, 16, 255 ),
 	  IM_COL32( 33, 33, 33, 255 ), IM_COL32( 11, 11, 11, 255 ), IM_COL32( 13, 13, 13, 255 ), IM_COL32( 200, 200, 200, 255 ),
 	  IM_COL32( 150, 150, 150, 255 ), 6.f, 4.f, 6.f, e_font_names::font_name_kamibebra_13, e_font_names::font_name_kamibebra_bold_13 },
-	{ "clarity v2", IM_COL32( 23, 23, 23, 255 ), IM_COL32( 28, 28, 28, 255 ), IM_COL32( 23, 23, 23, 255 ), IM_COL32( 28, 28, 28, 255 ),
-	  IM_COL32( 55, 55, 55, 255 ), IM_COL32( 7, 7, 7, 255 ), IM_COL32( 23, 23, 23, 255 ), IM_COL32( 255, 255, 255, 255 ),
-	  IM_COL32( 100, 100, 100, 255 ), 5.f, 5.f, 5.f, e_font_names::font_name_clarity_inter_semibold_14,
-	  e_font_names::font_name_clarity_inter_bold_15 },
+	/* clarity v2 screenshot px: window 9 r5, group 13 + 31 line r3 ( title on group bg, band = child ), checkbox / search 23 + 31
+	   r2, text 221 ( unchecked label = 221 @ .5 on 13 = 117 ) */
+	{ "clarity v2", IM_COL32( 9, 9, 9, 255 ), IM_COL32( 13, 13, 13, 255 ), IM_COL32( 13, 13, 13, 255 ), IM_COL32( 23, 23, 23, 255 ),
+	  IM_COL32( 31, 31, 31, 255 ), IM_COL32( 31, 31, 31, 255 ), IM_COL32( 13, 13, 13, 255 ), IM_COL32( 221, 221, 221, 255 ),
+	  IM_COL32( 117, 117, 117, 255 ), 5.f, 2.f, 3.f, e_font_names::font_name_clarity_inter_semibold_14,
+	  e_font_names::font_name_clarity_inter_bold_15, false, false, true },
 	{ "lobotomy v1", IM_COL32( 15, 15, 15, 255 ), IM_COL32( 13, 13, 13, 255 ), IM_COL32( 15, 15, 15, 255 ), IM_COL32( 13, 13, 13, 255 ),
 	  IM_COL32( 30, 30, 30, 255 ), IM_COL32( 30, 30, 30, 255 ), IM_COL32( 15, 15, 15, 255 ), IM_COL32( 255, 255, 255, 255 ),
 	  IM_COL32( 200, 200, 200, 255 ), 0.f, 0.f, 0.f, e_font_names::font_name_menu_tahoma_9, e_font_names::font_name_menu_tahoma_bd_9 },
@@ -726,6 +730,18 @@ static void menu_style_apply( ImGuiStyle& style, const menu_style_t& s )
 		set( ImGuiCol_ScrollbarGrabHovered, IM_COL32( 61, 61, 61, 255 ) );
 		style.ScrollbarRounding = 9.f;
 	}
+
+	/* clarity scrollbar: grab 31 idle + hover, track alpha 1 = themed path on, nothing visible */
+	if ( s.m_clarity ) {
+		set( ImGuiCol_ScrollbarBg, IM_COL32( 0, 0, 0, 1 ) );
+		set( ImGuiCol_ScrollbarGrab, IM_COL32( 31, 31, 31, 255 ) );
+		set( ImGuiCol_ScrollbarGrabHovered, IM_COL32( 31, 31, 31, 255 ) );
+	}
+}
+
+const char* menu_build_date( )
+{
+	return build_date_text( ).c_str( );
 }
 
 void n_menu::impl_t::on_end_scene( )

@@ -195,7 +195,8 @@ void n_lagcomp::impl_t::on_frame_stage_notify( )
 			        return std::find( on.begin( ), on.end( ), true ) != on.end( );
 		        }( ) ) ||
 		        ( GET_VARIABLE( g_variables.m_chams_enable, bool ) &&
-		          n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_backtrack_layers, std::vector< int > ) ) );
+		          ( n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_backtrack_layers, std::vector< int > ) ) ||
+		            n_chams::impl_t::has_layers( GET_VARIABLE( g_variables.m_chams_shot_layers, std::vector< int > ) ) ) );
 
 	g_entity_cache.enumerate( e_enumeration_type::type_players, [ & ]( c_base_entity* entity ) {
 		if ( !entity || !entity->is_valid_aim_target( ) )

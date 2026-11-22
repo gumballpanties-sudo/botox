@@ -157,11 +157,25 @@ long n_detoured_functions::overlay_end_scene( IDirect3DDevice9* device, long( __
 	static long s_rescues_seen = 0;
 	if ( const long rescues = n_va_ballast::g_rescues.load( std::memory_order_acquire ); rescues != s_rescues_seen ) {
 		s_rescues_seen = rescues;
+		/* game capture maps its frame buffers into csgo: ~150-175 mb of the 4 gb ( 11-21 dumps ) */
+		const char* const capture = GetModuleHandleA( "DiscordHook.dll" )       ? " - discord overlay is in the game, turn it off"
+		                            : GetModuleHandleA( "graphics-hook32.dll" ) ? " - obs game capture is in the game, use display capture"
+		                            : GetModuleHandleA( "nvspcap.dll" )         ? " - nvidia overlay is in the game, turn it off"
+		                                                                        : "";
 		g_console.print< n_console::log_level::WARNING >(
-			std::format( "OOM: address space full, gave back ballast ( {}/{} left ), ask {} kb {} - restart the game soon", n_va_ballast::left( ),
-		                 n_va_ballast::k_chunks, n_va_ballast::g_last_ask.load( ) >> 10, n_va_ballast::g_last_ok.load( ) ? "fit" : "still failed" )
+			std::format( "OOM: address space full, gave back ballast ( {}/{} left ), ask {} kb {}{}", n_va_ballast::left( ), n_va_ballast::k_chunks,
+		                 n_va_ballast::g_last_ask.load( ) >> 10, n_va_ballast::g_last_ok.load( ) ? "fit" : "still failed", capture )
 				.c_str( ) );
 	}
+
+	/* rescues only come from the detour: none yet = maybe no detour, and chunks nobody hands back are just lost room */
+	static unsigned long long s_rearm_next = 0ull;
+	if ( s_rescues_seen > 0 && n_va_ballast::left( ) < n_va_ballast::k_chunks )
+		if ( const unsigned long long now = GetTickCount64( ); now >= s_rearm_next ) {
+			s_rearm_next = now + 3000ull;
+			if ( n_va_ballast::rearm( ) )
+				g_console.print( std::format( "OOM: room came back, ballast {}/{} again", n_va_ballast::left( ), n_va_ballast::k_chunks ).c_str( ) );
+		}
 
 	/* leak watch: one line per 8 mb of new private bytes; mem_due gates the locked counts */
 	if ( n_perf::mem_due( ) ) {

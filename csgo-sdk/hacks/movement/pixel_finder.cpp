@@ -64,6 +64,14 @@ bool pf_hb_window( const c_vector& dot, float& lo, float& hi )
 		}
 	return false;
 }
+
+/* ps dots held on a static prop top ( pf_spot_t::prop ) */
+static std::vector< c_vector > Point_ps_prop{ };
+
+bool pf_ps_is_prop( const c_vector& dot )
+{
+	return std::find( Point_ps_prop.begin( ), Point_ps_prop.end( ), dot ) != Point_ps_prop.end( );
+}
 static std::vector< c_vector > Point_tb{ };
 static std::vector< std::pair< c_vector, pf_tb_t > > Point_tb_info{ };
 static std::vector< std::pair< c_vector, float > > Point_tb_rise{ };
@@ -1663,6 +1671,7 @@ void n_movement::impl_t::on_level_init( )
 	Point_bounce.clear( );
 	Point_bounce_ceil.clear( );
 	Point_bounce_win.clear( );
+	Point_ps_prop.clear( );
 	Point_tb.clear( );
 	Point_tb_info.clear( );
 	Point_tb_rise.clear( );
@@ -1690,6 +1699,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 			Point_bounce.clear( );
 			Point_bounce_ceil.clear( );
 			Point_bounce_win.clear( );
+			Point_ps_prop.clear( );
 			Point_tb.clear( );
 			Point_tb_info.clear( );
 			Point_tb_rise.clear( );
@@ -1778,6 +1788,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 		Point_bounce.clear( );
 		Point_bounce_ceil.clear( );
 		Point_bounce_win.clear( );
+		Point_ps_prop.clear( );
 		Point_tb.clear( );
 		Point_tb_info.clear( );
 		Point_tb_rise.clear( );
@@ -1911,6 +1922,8 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 				return pf_dup;
 			const c_vector dot = pf_dot( pf_face_pt( c, sp ), got );
 			Points.push_back( dot );
+			if ( sp.prop )
+				Point_ps_prop.push_back( dot );
 			Point_len.push_back( { dot, z, lat, duck } );
 			botox_dbg_log( "[pf ps] dot z %.4f | %s %.4f lat %+.1f %s slide %+.0f, %s%s", got, h.seam ? "seam" : "edge", h.z, lat, duck ? "ducked" : "standing", slid,
 			               sp.disp ? "disp" : "brush", sp.prop ? " prop" : "" );
@@ -1919,6 +1932,9 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 					++s.tb_unverified;
 				else if ( !pf_near_z( Point_tb, std::floor( got ), 0.05f ) ) {
 					Point_tb.emplace_back( dot.m_x, dot.m_y, std::floor( got ) );
+					/* its feet-seam twin snaps as the same pixelsurf ( route_calc ) */
+					if ( sp.prop )
+						Point_ps_prop.push_back( Point_tb.back( ) );
 					Point_tb_info.emplace_back( Point_tb.back( ), pf_tb_make( pf_tb_feet, dot, c.n, std::floor( got ),
 					                                                          std::fabs( c.n.m_x ) > 0.5f ? sp.o.m_x : sp.o.m_y, c.traces ) );
 					++s.tb_seams;

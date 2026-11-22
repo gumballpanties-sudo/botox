@@ -1,5 +1,6 @@
 #include "menu_internal.h"
 #include "../movement/movement_recorder.h"
+#include "../misc/particle_shapes.h"
 
 static bool move_mask_combo( const char* label, int& stored )
 {
@@ -458,7 +459,7 @@ void n_menu::impl_t::tab_movement( )
 					[ & ]( ) {
 						ImGui::Label( "edgebug keybind" );
 						ImGui::Keybind( "edge bug key", &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) );
-						ImGui::Combo( "style##ebstyle", &GET_VARIABLE( g_variables.m_edgebug_style, int ), "botox\0delusional\0dna\0hotwheels\0lobotomy v2\0" );
+						ImGui::Combo( "style##ebstyle", &GET_VARIABLE( g_variables.m_edgebug_style, int ), "botox\0delusional\0dna\0hotwheels\0lobotomy v2\0grimoire\0" );
 						const int style = GET_VARIABLE( g_variables.m_edgebug_style, int );
 						if ( style == 1 ) {
 							ImGui::Checkbox( "mouse fix##ebdelmousefix", &GET_VARIABLE( g_variables.m_edgebug_del_mouse_fix, bool ) );
@@ -500,6 +501,15 @@ void n_menu::impl_t::tab_movement( )
 							}
 							ImGui::SliderInt( "edgebug ticks##eblobticks", &GET_VARIABLE( g_variables.m_edgebug_lob_ticks, int ), 1, 64 );
 							ImGui::SliderFloat( "edgebug lock##ebloblock", &GET_VARIABLE( g_variables.m_edgebug_lob_lock, float ), 0.f, 10.f, "%.2f" );
+						} else if ( style == 5 ) {
+							ImGui::Checkbox( "advanced detection##ebgrimadv", &GET_VARIABLE( g_variables.m_edgebug_grim_strafe, bool ) );
+							ImGui::Checkbox( "disable edgebug strafing##ebgrimsilent", &GET_VARIABLE( g_variables.m_edgebug_grim_silent, bool ) );
+							ImGui::Checkbox( "lock movement on detection##ebgrimlockmove", &GET_VARIABLE( g_variables.m_edgebug_grim_lock_movement, bool ) );
+							ImGui::SliderFloat( "scan time##ebgrimscan", &GET_VARIABLE( g_variables.m_edgebug_grim_scan, float ), 0.f, 1.f, "%.2f" );
+							ImGui::SliderFloat( "lock amount##ebgrimlock", &GET_VARIABLE( g_variables.m_edgebug_grim_lock_amount, float ), 0.f, 100.f, "%.2f" );
+							ImGui::SliderInt( "search amount##ebgrimsearch", &GET_VARIABLE( g_variables.m_edgebug_grim_search, int ), 1, 10 );
+							ImGui::SliderFloat( "auto strafe angle limit##ebgrimangle", &GET_VARIABLE( g_variables.m_edgebug_grim_angle_limit, float ), 0.f, 180.f,
+							                    "%.2f" );
 						}
 						/* standing -> standing ebs only, holding duck -> ducked ebs only */
 						if ( ImGui::Checkbox( "current stance only##ebcurstance", &GET_VARIABLE( g_variables.m_edgebug_cur_stance, bool ) ) &&
@@ -914,8 +924,12 @@ void n_menu::impl_t::tab_movement( )
 				ImGui::OptionPopup(
 					"auto align settings",
 					[ & ]( ) {
-                        ImGui::Combo("type",&GET_VARIABLE(g_variables.m_auto_align_type,int),"botox\0lumia\0");
-                        ImGui::Checkbox( "pixel jumps over pixelsurfs", &GET_VARIABLE( g_variables.m_auto_align_pixel_jump, bool ) );
+                        ImGui::Combo("type",&GET_VARIABLE(g_variables.m_auto_align_type,int),"botox\0lumia\0grimoire\0");
+                        /* grimoire has no pj creep, only its freelook row */
+                        if ( GET_VARIABLE( g_variables.m_auto_align_type, int ) == 2 )
+                            ImGui::Checkbox( "freelook##aagrimfree", &GET_VARIABLE( g_variables.m_auto_align_grim_freelook, bool ) );
+                        else
+                            ImGui::Checkbox( "pixel jumps over pixelsurfs", &GET_VARIABLE( g_variables.m_auto_align_pixel_jump, bool ) );
                     },
 					ImVec2( 220.f, -1.f ) );
 			}
@@ -1417,6 +1431,7 @@ void n_menu::impl_t::tab_movement( )
 
 						ImGui::Checkbox( "detection particles", &GET_VARIABLE( g_variables.m_key_indicators_particles, bool ) );
 						if ( GET_VARIABLE( g_variables.m_key_indicators_particles, bool ) ) {
+							ImGui::Combo( "shape##key particles", &GET_VARIABLE( g_variables.m_key_indicators_particle_shape, int ), n_particle_shape::k_names );
 							ImGui::Checkbox( "random colors##key particles", &GET_VARIABLE( g_variables.m_key_indicators_particle_random, bool ) );
 							if ( !GET_VARIABLE( g_variables.m_key_indicators_particle_random, bool ) )
 								ImGui::ColorEdit4( "particle color##key particles", &GET_VARIABLE( g_variables.m_key_indicators_particle_color, c_color ),

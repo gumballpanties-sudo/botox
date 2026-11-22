@@ -26,14 +26,16 @@ void __fastcall n_detoured_functions::override_mouse_input( void* thisptr, int e
 		g_edgebug.add_mouse_x( *x );
 	/* the style the last post ran ( edge surf prediction = style 0 ), never the menu's */
 	const int eb_style      = g_edgebug.m_style_now;
-	const bool eb_live      = eb_style == 1 ? g_edgebug.donor_live( ) : g_edgebug.m_found;
-	/* hotwheels / lobotomy locks have no toggle: always on while found, their own scale */
-	const bool edgebug_lock = eb_live && ( eb_style == 3 || ( eb_style == 4 && !GET_VARIABLE( g_variables.m_edgebug_lob_silent, bool ) ) ||
+	const bool eb_live      = eb_style == 1 ? g_edgebug.donor_live( ) : eb_style == 5 ? g_edgebug.grim_lock_live( ) : g_edgebug.m_found;
+	/* hotwheels / lobotomy / grimoire locks have no toggle: always on while found, their own scale */
+	const bool edgebug_lock = eb_live && ( eb_style == 3 || eb_style == 5 || ( eb_style == 4 && !GET_VARIABLE( g_variables.m_edgebug_lob_silent, bool ) ) ||
 	                                       ( eb_style < 3 && GET_VARIABLE( g_variables.m_edgebug_mouse_lock, bool ) ) );
 	if ( edgebug_lock && x && eb_style == 3 )
 		g_edgebug.hw_mouse( x, y );
 	else if ( edgebug_lock && x && eb_style == 4 )
 		g_edgebug.lob_mouse( x );
+	else if ( edgebug_lock && x && eb_style == 5 )
+		g_edgebug.grim_mouse( x );
 	else if ( edgebug_lock && x ) {
 		const float strength = std::clamp( GET_VARIABLE( g_variables.m_edgebug_mouse_lock_strength, float ), 0.f, 100.f ) / 100.f;
 		const int lock_type  = GET_VARIABLE( g_variables.m_edgebug_mouse_lock_type, int );

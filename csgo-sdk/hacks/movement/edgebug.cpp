@@ -626,7 +626,17 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 		m_lob.ticks  = 0;
 		m_lob.ducked = false;
 	}
+	if ( style != 5 && m_grim.eblength )
+		grim_reset( );
 	if ( style != 0 ) {
+		if ( style == 5 ) {
+			if ( m_donor.eblength )
+				donor_reset( );
+			if ( m_hw.will_edgebug )
+				hw_reset( );
+			grim_post( cmd );
+			return;
+		}
 		if ( style == 4 ) {
 			if ( m_donor.eblength )
 				donor_reset( );
@@ -1722,6 +1732,8 @@ void n_edgebug::impl_t::frame_start( )
 		lob_frame_start( );
 	else if ( style == 1 )
 		del_frame_start( );
+	else if ( style == 5 )
+		grim_frame_start( );
 	else if ( style != 0 )
 		dna_frame_start( );
 }

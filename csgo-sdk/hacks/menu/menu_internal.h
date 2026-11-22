@@ -30,9 +30,6 @@ constexpr int color_picker_no_alpha_flags = ImGuiColorEditFlags_NoOptions | ImGu
                                             ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop | ImGuiColorEditFlags_PickerHueBar |
                                             ImGuiColorEditFlags_NoBorder;
 
-constexpr float menu_band_height        = 25.f;
-constexpr float menu_bottom_band_height = 12.f;
-
 void modulation_row( const char* label, const std::uint32_t enable_variable, const std::uint32_t color_variable,
                      const std::uint32_t brightness_variable );
 void draw_color_correction_curves( );
@@ -107,6 +104,7 @@ struct menu_style_t {
 	int m_font, m_font_bold;
 	bool m_gamesense; /* skeet chrome: layered border, gradient bar, icon tab strip */
 	bool m_primordial; /* primordial chrome: black 180 outer line, solid accent line, scrollbar colours */
+	bool m_clarity;    /* clarity scrollbar: grab 31, no track */
 };
 
 extern const menu_style_t k_menu_styles[ ];

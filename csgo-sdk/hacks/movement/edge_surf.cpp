@@ -112,10 +112,11 @@ namespace
 	n_es::v3 to3( const c_vector& v ) { return n_es::mk( v.m_x, v.m_y, v.m_z ); }
 	c_vector tov( const n_es::v3& v ) { return c_vector( v.x, v.y, v.z ); }
 
-	/* the surface name, never dispFlags: only disp code writes those, a closer brush hit later in the same trace keeps them ( cmodel.cpp:1670 ) */
+	/* the surface name, never dispFlags: only disp code writes those, a closer brush hit later in the same trace keeps them ( cmodel.cpp:1670 ).
+	   exact name ( cmodel_disp.cpp:40 ): a brush material with "displacement" in its path is a brush */
 	bool es_disp_hit( const trace_t& t )
 	{
-		return t.surface.m_name && strstr( t.surface.m_name, "displacement" );
+		return t.surface.m_name && !strcmp( t.surface.m_name, "**displacement**" );
 	}
 	/* movement collides with it: world, a static prop, or an entity outside debris / pushaway / weapon ( COLLISION_GROUP_PLAYER_MOVEMENT passes those,
 	   cs_gamerules.cpp:15118 "Don't stand on COLLISION_GROUP_WEAPONs" ) */
