@@ -28,6 +28,7 @@
 #include "../lagcomp/lagcomp.h"
 #include "texturebug.h"
 #include "wall_climb.h"
+#include "movement_recorder.h"
 #include "edgebug.h"
 #include "edge_skip.h"
 #include "edge_catch.h"
@@ -3205,8 +3206,9 @@ void n_movement::impl_t::AutoStrafe( c_user_cmd* cmd )
 			key_off = 0.f;
 		target -= key_off;
 	} else if ( type == 2 ) {
-		const float mx = s_as_mouse_x, my = s_as_mouse_y;
+		float mx = s_as_mouse_x, my = s_as_mouse_y;
 		s_as_mouse_x = s_as_mouse_y = 0.f;
+		g_movement_recorder.strafe_mouse( mx, my );
 		if ( mx != 0.f || my != 0.f )
 			mouse_off = rad2deg( std::atan2f( mx, -my ) );
 		else if ( !GET_VARIABLE( g_variables.m_auto_strafe_last_mouse, bool ) )

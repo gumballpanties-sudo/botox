@@ -348,6 +348,10 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 
 	g_lagcomp.begin_command( cmd );
 
+	/* before the snapshots below: on a live replay frame every feature must read the recorded raw input */
+	if ( local && local->is_alive( ) && local->get_observer_mode( ) == e_obs_mode::obs_mode_none )
+		g_movement_recorder.begin_cmd( cmd );
+
 	g_ctx.old_view_point      = cmd->m_view_point;
 	g_ctx.m_first_view_angles = cmd->m_view_point;
 	g_ctx.m_input_buttons     = cmd->m_buttons;
@@ -396,8 +400,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 			return;
 		}
 
-		g_movement_recorder.capture_user_input( cmd );
-		g_movement_recorder.apply_playback( cmd );
+		/* raw frame: laid here as before; live frame: already on ( begin_cmd ) */
+		g_movement_recorder.apply_playback( cmd, true );
 
 		gnd_wish_start( );
 		g_aimbot.nospread_pre_move( );

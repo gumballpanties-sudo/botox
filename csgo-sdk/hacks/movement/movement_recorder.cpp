@@ -138,6 +138,8 @@ namespace
 
 	void copy_live( frame_t& f, const frame_t& from )
 	{
+		f.strafe_mx   = from.strafe_mx;
+		f.strafe_my   = from.strafe_my;
 		f.live        = from.live;
 		f.raw_pitch   = from.raw_pitch;
 		f.raw_yaw     = from.raw_yaw;
@@ -303,6 +305,8 @@ static bool read_clip_from_file( const std::filesystem::path& file_path, n_movem
 			f.keys[ 1 ]    = jf.value( "k1", std::uint64_t{ 0 } );
 			f.keys[ 2 ]    = jf.value( "k2", std::uint64_t{ 0 } );
 			f.keys[ 3 ]    = jf.value( "k3", std::uint64_t{ 0 } );
+			f.strafe_mx    = jf.value( "smx", 0.f );
+			f.strafe_my    = jf.value( "smy", 0.f );
 			clip_out.frames.emplace_back( std::move( f ) );
 		}
 	} catch ( ... ) {
@@ -358,6 +362,10 @@ static bool write_clip_to_file( const std::filesystem::path& file_path, const n_
 			for ( int i = 0; i < 4; ++i )
 				if ( f.keys[ i ] )
 					jf[ k_key_names[ i ] ] = f.keys[ i ];
+			if ( f.strafe_mx != 0.f || f.strafe_my != 0.f ) {
+				jf[ "smx" ] = f.strafe_mx;
+				jf[ "smy" ] = f.strafe_my;
+			}
 		}
 		j[ "frames" ].push_back( jf );
 	}
@@ -880,8 +888,38 @@ void n_movement_recorder::impl_t::capture_user_input( c_user_cmd* cmd )
 
 	m_feat_keys[ 0 ] = m_feat_keys[ 1 ] = m_feat_keys[ 2 ] = m_feat_keys[ 3 ] = 0ull;
 	m_feat_armed                                                               = false;
+	m_cmd_mouse_x = m_cmd_mouse_y = 0.f;
 	m_cmd_live = m_playing && m_play_idx < m_play_frames.size( ) && m_play_frames[ m_play_idx ].live && GET_VARIABLE( g_variables.m_movement_rec, bool );
 	sync_binds( );
+}
+
+void n_movement_recorder::impl_t::begin_cmd( c_user_cmd* cmd )
+{
+	capture_user_input( cmd );
+	if ( !cmd || !m_cmd_live )
+		return;
+
+	apply_playback( cmd );
+	const frame_t& f = m_play_frames[ m_play_idx ];
+	m_cmd_mouse_x    = f.strafe_mx;
+	m_cmd_mouse_y    = f.strafe_my;
+	/* last tick's view as the recording had it: the sent view may be the turned route camera */
+	if ( m_play_idx > 0 ) {
+		const frame_t& prev   = m_play_frames[ m_play_idx - 1 ];
+		g_ctx.m_last_tick_yaw = prev.view_yaw;
+		g_ctx.last_view_point = c_angle( prev.view_pitch, prev.view_yaw, 0.f );
+	}
+}
+
+void n_movement_recorder::impl_t::strafe_mouse( float& x, float& y )
+{
+	if ( m_cmd_live ) {
+		x = m_cmd_mouse_x;
+		y = m_cmd_mouse_y;
+		return;
+	}
+	m_cmd_mouse_x = x;
+	m_cmd_mouse_y = y;
 }
 
 n_movement_recorder::feat_scope_t::feat_scope_t( )
@@ -922,7 +960,7 @@ void n_movement_recorder::impl_t::bind_note( const int key, const int style )
 /* state of the frame this cmd sends; the tick after the last frame is the player's again */
 void n_movement_recorder::impl_t::sync_binds( )
 {
-	const bool frame = m_playing && m_play_idx < m_play_frames.size( );
+	const bool frame = m_playing && m_play_idx < m_play_frames.size( ) && GET_VARIABLE( g_variables.m_movement_rec, bool );
 	if ( frame )
 		for ( int i = 0; i < 4; ++i )
 			m_bind_keys[ i ] = m_play_frames[ m_play_idx ].keys[ i ];
@@ -1080,11 +1118,12 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 	if ( ( stop_play || user_moved ) && owns_cmd( ) ) {
 		botox_dbg_log( "REC: stop play idx=%d/%d moved=%d\n", static_cast< int >( m_play_idx ), static_cast< int >( m_play_frames.size( ) ),
 		               user_moved ? 1 : 0 );
-		/* stop key: the cmd going out still is that frame */
-		if ( !user_moved && m_playing && m_play_idx < m_play_frames.size( ) )
+		/* stop key, or your move on a live frame ( its features already own this cmd, their stamps would put it back ): the cmd going out still is that frame */
+		const bool keep = !user_moved || m_cmd_live;
+		if ( keep && m_playing && m_play_idx < m_play_frames.size( ) )
 			stop_idx = static_cast< int >( m_play_idx );
 		force_stop( true );
-		if ( user_moved )
+		if ( !keep )
 			m_user_input.replay( cmd );
 	}
 
@@ -1241,8 +1280,11 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 		copy_live( f, m_play_frames[ m_play_idx - 1 ] );
 	else if ( stop_idx >= 0 )
 		copy_live( f, m_play_frames[ stop_idx ] );
-	else if ( !flown )
+	else if ( !flown && !owns_cmd( ) ) {
 		stamp_live( f, m_user_input, m_feat_keys, m_feat_armed );
+		f.strafe_mx = m_cmd_mouse_x;
+		f.strafe_my = m_cmd_mouse_y;
+	}
 
 	/* frame m_play_idx - 1 went out this tick: its recorded start pos vs ours = desync */
 	if ( m_playing && m_play_idx > 0 ) {

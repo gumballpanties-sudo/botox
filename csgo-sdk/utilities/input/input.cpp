@@ -140,8 +140,10 @@ bool n_input::impl_t::check_input( key_bind_t* key_data )
 	if ( !g_movement_recorder.in_feat_scope( ) )
 		return this->check_input_live( key_data );
 
-	const int play = g_movement_recorder.bind_play( key_data->m_key, key_data->m_key_style );
-	const bool on  = play >= 0 ? play != 0 : this->check_input_live( key_data );
+	/* always asked: a toggle counts its releases in there, skipping it under a replay would lose flips */
+	const bool live = this->check_input_live( key_data );
+	const int play  = g_movement_recorder.bind_play( key_data->m_key, key_data->m_key_style );
+	const bool on   = play >= 0 ? play != 0 : live;
 	if ( on )
 		g_movement_recorder.bind_note( key_data->m_key, key_data->m_key_style );
 	return on;

@@ -40,6 +40,9 @@ namespace n_movement_recorder
 		float raw_up      = 0.f;
 		int raw_buttons   = 0;
 		std::uint64_t keys[ 4 ]{ };
+		/* mouse auto strafe type 2 ate this cmd: never reaches the cmd */
+		float strafe_mx = 0.f;
+		float strafe_my = 0.f;
 
 		frame_t( ) = default;
 		frame_t( c_user_cmd* cmd, const c_vector& pos );
@@ -154,6 +157,8 @@ namespace n_movement_recorder
 		bool m_cmd_live      = false;
 		bool m_play_has_live = false;
 		int m_play_live      = 0;
+		float m_cmd_mouse_x  = 0.f;
+		float m_cmd_mouse_y  = 0.f;
 
 		bool owns_cmd( ) const
 		{
@@ -169,7 +174,11 @@ namespace n_movement_recorder
 		bool in_feat_scope( ) const;
 		int bind_play( int key, int style ) const;
 		void bind_note( int key, int style );
+		/* auto strafe type 2's eaten mouse: live frame = the route's, else noted for the frame */
+		void strafe_mouse( float& x, float& y );
 
+		/* before anything snapshots the cmd ( old_view_point, input buttons ): a live frame's raw input goes on here */
+		void begin_cmd( c_user_cmd* cmd );
 		void capture_user_input( c_user_cmd* cmd );
 		void apply_playback( c_user_cmd* cmd, bool relay = false ) const;
 		void on_create_move( c_user_cmd* cmd );
