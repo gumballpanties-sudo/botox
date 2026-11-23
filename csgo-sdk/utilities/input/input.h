@@ -44,7 +44,10 @@ namespace n_input
 		/* keys belong to a menu / chat / console, not binds. any thread: plain reads only */
 		bool keys_blocked( );
 
+		/* feature bind: inside the recorder's feat scope a replay answers it ( movement_recorder.h ) */
 		bool check_input( key_bind_t* key_data );
+		/* always the keyboard: tools / action binds a replay must never fire */
+		bool check_input_live( key_bind_t* key_data );
 	};
 }
 

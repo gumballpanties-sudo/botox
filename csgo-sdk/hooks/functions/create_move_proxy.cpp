@@ -403,31 +403,35 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		g_aimbot.nospread_pre_move( );
 		gnd_wish_check( "nospread_pre" );
 
-		g_movement.apply_nulls( );
-		gnd_wish_check( "nulls" );
-		g_movement.half_sideways( );
-		gnd_wish_check( "hsw" );
-
-		/* before every sim: the snap ( ProcessMovement ) must be in all of them */
 		{
-			PERF_ZONE( zone_cmd_tung );
-			g_movement.tung_surf( cmd );
-		}
-		cmd_start_guard( "tung", false );
+			n_movement_recorder::feat_scope_t feat_scope;
 
-		{
-			PERF_ZONE( zone_cmd_edgebug );
-			g_edgebug.PrePredictionEdgeBug( cmd );
-			cmd_start_guard( "edgebug_pre", false );
-			g_edge_skip.pre( cmd );
-			cmd_start_guard( "edge_skip_pre", false );
-			g_edge_catch.pre( cmd );
-			cmd_start_guard( "edge_catch_pre", false );
-		}
+			g_movement.apply_nulls( );
+			gnd_wish_check( "nulls" );
+			g_movement.half_sideways( );
+			gnd_wish_check( "hsw" );
 
-		{
-			PERF_ZONE( zone_cmd_movement_pre );
-			g_movement.on_create_move_pre( );
+			/* before every sim: the snap ( ProcessMovement ) must be in all of them */
+			{
+				PERF_ZONE( zone_cmd_tung );
+				g_movement.tung_surf( cmd );
+			}
+			cmd_start_guard( "tung", false );
+
+			{
+				PERF_ZONE( zone_cmd_edgebug );
+				g_edgebug.PrePredictionEdgeBug( cmd );
+				cmd_start_guard( "edgebug_pre", false );
+				g_edge_skip.pre( cmd );
+				cmd_start_guard( "edge_skip_pre", false );
+				g_edge_catch.pre( cmd );
+				cmd_start_guard( "edge_catch_pre", false );
+			}
+
+			{
+				PERF_ZONE( zone_cmd_movement_pre );
+				g_movement.on_create_move_pre( );
+			}
 		}
 		gnd_wish_check( "movement_pre" );
 
@@ -442,8 +446,8 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 
 		g_lua.on_create_move( cmd, &send_packet, true );
 
-		/* pre features may have rewritten it: predict + detect on the exact recorded inputs */
-		g_movement_recorder.apply_playback( cmd );
+		/* pre features may have rewritten it: predict + detect on the exact recorded inputs ( live frame: theirs stays ) */
+		g_movement_recorder.apply_playback( cmd, true );
 
 		cmd_start_guard( "pre_end", true );
 		g_prediction.begin( g_ctx.m_local, cmd, true );
@@ -473,35 +477,39 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 		gnd_wish_check( "aimbot" );
 
 		{
-			PERF_ZONE( zone_cmd_movement_post );
-			g_movement.on_create_move_post( );
-		}
+			n_movement_recorder::feat_scope_t feat_scope;
 
-		/* recorder owns cmd: eb post over a desynced replay overwrites recorded duck timing */
-		if ( !g_movement_recorder.owns_cmd( ) ) {
-			PERF_ZONE( zone_cmd_edgebug );
-			g_edgebug.EdgeBugPostPredict( cmd );
 			{
-				PERF_ZONE( zone_cmd_edge_skip );
-				g_edge_skip.post( cmd );
-				g_edge_catch.post( cmd );
+				PERF_ZONE( zone_cmd_movement_post );
+				g_movement.on_create_move_post( );
 			}
-		} else {
-			/* post never runs: a plan latched by pre would hold mouse lock */
-			g_edgebug.m_found  = false;
-			g_edgebug.m_ducked = false;
-			g_edgebug.drop_mouse( );
-			g_edge_skip.reset( true );
-			g_edge_catch.reset( true );
+
+			/* raw replay owns the cmd: eb post over a desynced replay overwrites recorded duck timing. live frame: eb flies it */
+			if ( g_movement_recorder.play_state( ) != 0 ) {
+				PERF_ZONE( zone_cmd_edgebug );
+				g_edgebug.EdgeBugPostPredict( cmd );
+				{
+					PERF_ZONE( zone_cmd_edge_skip );
+					g_edge_skip.post( cmd );
+					g_edge_catch.post( cmd );
+				}
+			} else {
+				/* post never runs: a plan latched by pre would hold mouse lock */
+				g_edgebug.m_found  = false;
+				g_edgebug.m_ducked = false;
+				g_edgebug.drop_mouse( );
+				g_edge_skip.reset( true );
+				g_edge_catch.reset( true );
+			}
+			gnd_wish_check( "edgebug_post", true );
+
+			air_stuck_final_stamp( cmd );
+			gnd_wish_check( "as_stamp", true );
+
+			/* debug: a wall climb catch rewritten after it committed never lands */
+			g_wall_climb.check_stomp( cmd );
+			g_movement.auto_align_sent( cmd );
 		}
-		gnd_wish_check( "edgebug_post", true );
-
-		air_stuck_final_stamp( cmd );
-		gnd_wish_check( "as_stamp", true );
-
-		/* debug: a wall climb catch rewritten after it committed never lands */
-		g_wall_climb.check_stomp( cmd );
-		g_movement.auto_align_sent( cmd );
 
 		g_movement_recorder.on_create_move( cmd );
 
@@ -580,11 +588,15 @@ void __stdcall create_move( int sequence_number, float input_sample_frametime, b
 	cmd->m_view_point.normalize( );
 	cmd->m_view_point.clamp( );
 
-	air_stuck_shot_proof( cmd );
-	g_texturebug.preserve_move( cmd );
-	/* an owned edge surf tick leaves with its own move ( anything after movement post could close you onto the ledge top ) */
-	edge_surf_final_stamp( cmd );
-	air_align_final_stamp( cmd );
+	{
+		n_movement_recorder::feat_scope_t feat_scope;
+
+		air_stuck_shot_proof( cmd );
+		g_texturebug.preserve_move( cmd );
+		/* an owned edge surf tick leaves with its own move ( anything after movement post could close you onto the ledge top ) */
+		edge_surf_final_stamp( cmd );
+		air_align_final_stamp( cmd );
+	}
 
 	/* fireman view silent_view could not hide ( ladder moves read the view ): FSN animates the 3p model with your view instead */
 	{

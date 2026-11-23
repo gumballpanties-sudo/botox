@@ -205,7 +205,7 @@ void n_wall_climb::impl_t::trace_stomp( const c_user_cmd* cmd, const char* stage
 void n_wall_climb::impl_t::show_wall_slope( )
 {
 	const bool down = GET_VARIABLE( g_variables.m_show_wall_slope, bool ) &&
-	                  g_input.check_input( &GET_VARIABLE( g_variables.m_show_wall_slope_key, key_bind_t ) );
+	                  g_input.check_input_live( &GET_VARIABLE( g_variables.m_show_wall_slope_key, key_bind_t ) );
 	const bool press = down && !m_slope_down;
 	m_slope_down     = down;
 	c_base_entity* const local = g_ctx.m_local;

@@ -122,7 +122,7 @@ void n_movement::impl_t::dist_calc( c_user_cmd* cmd )
 		data = { };
 
 	static bool prev = false;
-	const bool down  = GET_VARIABLE( g_variables.m_dist_calc, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_dist_calc_key, key_bind_t ) );
+	const bool down  = GET_VARIABLE( g_variables.m_dist_calc, bool ) && g_input.check_input_live( &GET_VARIABLE( g_variables.m_dist_calc_key, key_bind_t ) );
 	const bool press = down && !prev;
 	prev             = down;
 	if ( !press || !cmd || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) )
@@ -426,7 +426,7 @@ void n_movement::impl_t::floor_level( c_user_cmd* cmd )
 	s_floor_level_shown = data.on;
 
 	static bool prev = false;
-	const bool down  = GET_VARIABLE( g_variables.m_floor_level, bool ) && g_input.check_input( &GET_VARIABLE( g_variables.m_floor_level_key, key_bind_t ) );
+	const bool down  = GET_VARIABLE( g_variables.m_floor_level, bool ) && g_input.check_input_live( &GET_VARIABLE( g_variables.m_floor_level_key, key_bind_t ) );
 	const bool press = ( down && !prev ) | s_floor_level_click.exchange( false );
 	prev             = down;
 	if ( !press || !cmd || !g_ctx.m_local || !g_ctx.m_local->is_alive( ) )

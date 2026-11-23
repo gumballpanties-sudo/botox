@@ -111,6 +111,44 @@ namespace
 		       ( cmd->m_buttons & in_jump );
 	}
 
+	/* the buttons movement features write; attack etc. always replay from the sent cmd */
+	constexpr int k_move_mask = in_jump | in_duck | in_forward | in_back | in_moveleft | in_moveright;
+
+	using frame_t = n_movement_recorder::frame_t;
+
+	bool cmd_changed( const frame_t& f )
+	{
+		return f.raw_pitch != f.view_pitch || f.raw_yaw != f.view_yaw || f.raw_forward != f.forward || f.raw_side != f.side || f.raw_up != f.up ||
+		       ( ( f.raw_buttons ^ f.buttons ) & k_move_mask ) != 0;
+	}
+
+	/* live = a feature bind was armed or the features changed the cmd: playback flies it again from the raw input */
+	void stamp_live( frame_t& f, const frame_t& raw, const std::uint64_t* keys, const bool armed )
+	{
+		f.raw_pitch   = raw.view_pitch;
+		f.raw_yaw     = raw.view_yaw;
+		f.raw_forward = raw.forward;
+		f.raw_side    = raw.side;
+		f.raw_up      = raw.up;
+		f.raw_buttons = raw.buttons;
+		for ( int i = 0; i < 4; ++i )
+			f.keys[ i ] = keys[ i ];
+		f.live = armed || cmd_changed( f );
+	}
+
+	void copy_live( frame_t& f, const frame_t& from )
+	{
+		f.live        = from.live;
+		f.raw_pitch   = from.raw_pitch;
+		f.raw_yaw     = from.raw_yaw;
+		f.raw_forward = from.raw_forward;
+		f.raw_side    = from.raw_side;
+		f.raw_up      = from.raw_up;
+		f.raw_buttons = from.raw_buttons;
+		for ( int i = 0; i < 4; ++i )
+			f.keys[ i ] = from.keys[ i ];
+	}
+
 	/* cs:go ground accelerate is a speed command ( along wish dir: v -> min( v + step, wish ) ), so ask for the speed that
 	   still brakes to 0 on the spot; last tick = exact remaining distance. world wish, duck crop undone */
 	c_vector approach_wish( const c_vector& delta, const c_vector& vel, const float surface, const float duck_mod )
@@ -254,6 +292,17 @@ static bool read_clip_from_file( const std::filesystem::path& file_path, n_movem
 			f.velocity.m_z = jf.value( "vz", 0.f );
 			f.has_duck     = jf.contains( "da" );
 			f.duck_amount  = jf.value( "da", 0.f );
+			f.live         = jf.value( "lv", false );
+			f.raw_pitch    = jf.value( "rvx", 0.f );
+			f.raw_yaw      = jf.value( "rvy", 0.f );
+			f.raw_forward  = jf.value( "rf", 0.f );
+			f.raw_side     = jf.value( "rs", 0.f );
+			f.raw_up       = jf.value( "ru", 0.f );
+			f.raw_buttons  = jf.value( "rb", 0 );
+			f.keys[ 0 ]    = jf.value( "k0", std::uint64_t{ 0 } );
+			f.keys[ 1 ]    = jf.value( "k1", std::uint64_t{ 0 } );
+			f.keys[ 2 ]    = jf.value( "k2", std::uint64_t{ 0 } );
+			f.keys[ 3 ]    = jf.value( "k3", std::uint64_t{ 0 } );
 			clip_out.frames.emplace_back( std::move( f ) );
 		}
 	} catch ( ... ) {
@@ -297,6 +346,19 @@ static bool write_clip_to_file( const std::filesystem::path& file_path, const n_
 		jf[ "vz" ]   = f.velocity.m_z;
 		if ( f.has_duck )
 			jf[ "da" ] = f.duck_amount;
+		if ( f.live ) {
+			static const char* const k_key_names[ 4 ] = { "k0", "k1", "k2", "k3" };
+			jf[ "lv" ]  = true;
+			jf[ "rvx" ] = f.raw_pitch;
+			jf[ "rvy" ] = f.raw_yaw;
+			jf[ "rf" ]  = f.raw_forward;
+			jf[ "rs" ]  = f.raw_side;
+			jf[ "ru" ]  = f.raw_up;
+			jf[ "rb" ]  = f.raw_buttons;
+			for ( int i = 0; i < 4; ++i )
+				if ( f.keys[ i ] )
+					jf[ k_key_names[ i ] ] = f.keys[ i ];
+		}
 		j[ "frames" ].push_back( jf );
 	}
 
@@ -659,7 +721,12 @@ bool n_movement_recorder::impl_t::play_clip( size_t index )
 	if ( const frame_t& f0 = c.frames[ 0 ]; f0.has_velocity && f0.velocity.length( ) >= 1.f )
 		movement_add_window( 0, "\"" + c.display_name + "\" starts moving: replay may drift" );
 
-	botox_dbg_log( "REC: play %s ticks=%d dist=%.2f yaw=%d in=%.2f out=%.2f\n", c.filename.c_str( ), static_cast< int >( c.frames.size( ) ),
+	/* no live frame ( old clip ) = the old replay: binds follow the keyboard, every cmd re-laid */
+	const int live  = static_cast< int >( std::count_if( c.frames.begin( ), c.frames.end( ), [ ]( const frame_t& f ) { return f.live; } ) );
+	m_play_has_live = live > 0;
+	m_play_live     = 0;
+
+	botox_dbg_log( "REC: play %s ticks=%d live=%d dist=%.2f yaw=%d in=%.2f out=%.2f\n", c.filename.c_str( ), static_cast< int >( c.frames.size( ) ), live,
 	               g_prediction.backup_data.m_origin.dist_to( c.frames[ 0 ].position ), GET_VARIABLE( g_variables.m_movement_rec_yaw, int ),
 	               GET_VARIABLE( g_variables.m_movement_rec_smooth_start, float ), GET_VARIABLE( g_variables.m_movement_rec_smooth_end, float ) );
 	return true;
@@ -719,14 +786,15 @@ void n_movement_recorder::impl_t::force_stop( bool keep_played )
 	const size_t played    = m_play_idx;
 
 	if ( was_playing )
-		botox_dbg_log( "REC: end idx=%d/%d drift max=%.3f first>1u=%d take=%d\n", static_cast< int >( played ), static_cast< int >( m_play_frames.size( ) ),
-		               m_play_max_drift, m_play_drift_tick, keep_played ? 1 : 0 );
+		botox_dbg_log( "REC: end idx=%d/%d drift max=%.3f first>1u=%d take=%d live=%d\n", static_cast< int >( played ),
+		               static_cast< int >( m_play_frames.size( ) ), m_play_max_drift, m_play_drift_tick, keep_played ? 1 : 0, m_play_live );
 
 	apply_replay_jetpack( false );
 	m_playing        = false;
 	m_wish_to_start  = false;
 	m_play_idx       = 0;
 	m_approach_ticks = 0;
+	m_cmd_live       = false;
 
 	/* take over: keep the ticks really sent ( m_play_capture ) and go on recording, clipper session too */
 	if ( keep_played && was_playing && !m_play_capture.empty( ) ) {
@@ -741,6 +809,7 @@ void n_movement_recorder::impl_t::force_stop( bool keep_played )
 		movement_add_window( 0, "took over at tick " + std::to_string( m_play_capture.size( ) ) + ", recording" );
 	}
 	m_play_capture.clear( );
+	sync_binds( );
 }
 
 void n_movement_recorder::impl_t::set_round_frozen( bool frozen )
@@ -808,30 +877,99 @@ void n_movement_recorder::impl_t::capture_user_input( c_user_cmd* cmd )
 	m_user_input          = frame_t( cmd, g_prediction.backup_data.m_origin );
 	m_user_move_mask_prev = m_user_move_mask;
 	m_user_move_mask      = cmd->m_buttons & ( in_forward | in_back | in_moveleft | in_moveright | in_jump | in_duck );
+
+	m_feat_keys[ 0 ] = m_feat_keys[ 1 ] = m_feat_keys[ 2 ] = m_feat_keys[ 3 ] = 0ull;
+	m_feat_armed                                                               = false;
+	m_cmd_live = m_playing && m_play_idx < m_play_frames.size( ) && m_play_frames[ m_play_idx ].live && GET_VARIABLE( g_variables.m_movement_rec, bool );
+	sync_binds( );
 }
 
-/* cmd-only: create_move calls it early too, so features + prediction see the replayed inputs */
-void n_movement_recorder::impl_t::apply_playback( c_user_cmd* cmd ) const
+n_movement_recorder::feat_scope_t::feat_scope_t( )
 {
-	if ( !cmd || !m_playing || m_play_idx >= m_play_frames.size( ) || !GET_VARIABLE( g_variables.m_movement_rec, bool ) )
-		return;
+	g_movement_recorder.m_feat_thread = GetCurrentThreadId( );
+}
 
-	const c_angle backup_view = cmd->m_view_point;
-	m_play_frames[ m_play_idx ].replay( cmd );
+n_movement_recorder::feat_scope_t::~feat_scope_t( )
+{
+	g_movement_recorder.m_feat_thread = 0ul;
+}
 
-	if ( GET_VARIABLE( g_variables.m_movement_rec_force_weapon, bool ) ) {
-		cmd->m_weapon_select   = 0;
-		cmd->m_weapon_sub_type = 0;
-		select_weapon( cmd, m_play_frames[ m_play_idx ] );
-	}
+bool n_movement_recorder::impl_t::in_feat_scope( ) const
+{
+	return m_feat_thread.load( ) == GetCurrentThreadId( );
+}
 
-	/* movement fix keeps the recorded world wish dir under any sent view; same view = untouched, bit exact replay */
-	const c_angle view = camera_locked( ) ? camera_at( m_play_idx, now_real( ) ) : backup_view;
+/* -1 = ask the keyboard. approach / raw frame = nothing was armed there; live frame = the recorded key, style 0 = on */
+int n_movement_recorder::impl_t::bind_play( const int key, const int style ) const
+{
+	const int state = m_bind_state.load( );
+	if ( state < 0 || !m_bind_force.load( ) )
+		return -1;
+	if ( state == 0 )
+		return 0;
+	if ( style != 1 && style != 2 )
+		return 1;
+	return key > 0 && key < 256 && ( ( m_bind_keys[ key >> 6 ].load( ) >> ( key & 63 ) ) & 1ull ) ? 1 : 0;
+}
+
+void n_movement_recorder::impl_t::bind_note( const int key, const int style )
+{
+	m_feat_armed = true;
+	if ( ( style == 1 || style == 2 ) && key > 0 && key < 256 )
+		m_feat_keys[ key >> 6 ] |= 1ull << ( key & 63 );
+}
+
+/* state of the frame this cmd sends; the tick after the last frame is the player's again */
+void n_movement_recorder::impl_t::sync_binds( )
+{
+	const bool frame = m_playing && m_play_idx < m_play_frames.size( );
+	if ( frame )
+		for ( int i = 0; i < 4; ++i )
+			m_bind_keys[ i ] = m_play_frames[ m_play_idx ].keys[ i ];
+	m_bind_force = m_play_has_live;
+	m_bind_state = frame ? ( m_play_frames[ m_play_idx ].live ? 1 : 0 ) : m_wish_to_start ? 0 : -1;
+}
+
+/* movement fix keeps the cmd's world wish dir under the sent view; same view = untouched, bit exact */
+void n_movement_recorder::impl_t::playback_view( c_user_cmd* cmd, const c_angle& own ) const
+{
+	const c_angle view = camera_locked( ) ? camera_at( m_play_idx, now_real( ) ) : own;
 	if ( view.m_x == cmd->m_view_point.m_x && view.m_y == cmd->m_view_point.m_y )
 		return;
 	start_movement_fix( cmd );
 	cmd->m_view_point = view;
 	end_movement_fix( cmd );
+}
+
+/* cmd-only: create_move calls it early too, so features + prediction see the replayed inputs.
+   live frame: the raw input goes on once ( first call ), the features fly it, relay = no-op */
+void n_movement_recorder::impl_t::apply_playback( c_user_cmd* cmd, const bool relay ) const
+{
+	if ( !cmd || !m_playing || m_play_idx >= m_play_frames.size( ) || !GET_VARIABLE( g_variables.m_movement_rec, bool ) )
+		return;
+	if ( relay && m_cmd_live )
+		return;
+
+	const c_angle backup_view = cmd->m_view_point;
+	const frame_t& f          = m_play_frames[ m_play_idx ];
+	f.replay( cmd );
+	if ( m_cmd_live ) {
+		cmd->m_view_point.m_x = f.raw_pitch;
+		cmd->m_view_point.m_y = f.raw_yaw;
+		cmd->m_forward_move   = f.raw_forward;
+		cmd->m_side_move      = f.raw_side;
+		cmd->m_up_move        = f.raw_up;
+		cmd->m_buttons        = ( cmd->m_buttons & ~k_move_mask ) | ( f.raw_buttons & k_move_mask );
+	}
+
+	if ( GET_VARIABLE( g_variables.m_movement_rec_force_weapon, bool ) ) {
+		cmd->m_weapon_select   = 0;
+		cmd->m_weapon_sub_type = 0;
+		select_weapon( cmd, f );
+	}
+
+	if ( !m_cmd_live )
+		playback_view( cmd, backup_view );
 }
 
 /* smooth end: offset eases to 0, spin decelerates to a stop over the last n seconds */
@@ -935,9 +1073,16 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 	/* fresh press only: still holding w from before play must not kill it */
 	const bool user_moved = GET_VARIABLE( g_variables.m_movement_rec_stop_on_move, bool ) && ( m_user_move_mask & ~m_user_move_mask_prev ) != 0;
 
+	/* this cmd is the recorder's ( approach steer / a frame went on ): its stored frame is no feature's */
+	const bool flown = m_wish_to_start || ( m_playing && m_play_idx < m_play_frames.size( ) );
+	int stop_idx     = -1;
+
 	if ( ( stop_play || user_moved ) && owns_cmd( ) ) {
 		botox_dbg_log( "REC: stop play idx=%d/%d moved=%d\n", static_cast< int >( m_play_idx ), static_cast< int >( m_play_frames.size( ) ),
 		               user_moved ? 1 : 0 );
+		/* stop key: the cmd going out still is that frame */
+		if ( !user_moved && m_playing && m_play_idx < m_play_frames.size( ) )
+			stop_idx = static_cast< int >( m_play_idx );
 		force_stop( true );
 		if ( user_moved )
 			m_user_input.replay( cmd );
@@ -1075,7 +1220,12 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 			force_stop( );
 		} else {
 			apply_replay_jetpack( m_play_frames[ m_play_idx ].jetpack );
-			apply_playback( cmd );
+			/* live: the features flew the raw input off the real hull, their cmd goes out under the sent view */
+			if ( m_cmd_live ) {
+				playback_view( cmd, c_angle( m_user_input.view_pitch, m_user_input.view_yaw, cmd->m_view_point.m_z ) );
+				++m_play_live;
+			} else
+				apply_playback( cmd );
 			++m_play_idx;
 			m_step_realtime = now_real( );
 		}
@@ -1086,6 +1236,13 @@ void n_movement_recorder::impl_t::on_create_move( c_user_cmd* cmd )
 	g_prediction.restore_entity_to_predicted_frame( g_interfaces.m_prediction->m_commands_predicted - 1 );
 	frame_t f( cmd, g_ctx.m_local->get_origin( ) );
 	f.jetpack = m_replay_jetpack_active;
+	/* a replayed tick ( stop key tick too ) keeps the route's live half, your own tick gets this cmd's */
+	if ( m_playing && m_play_idx > 0 )
+		copy_live( f, m_play_frames[ m_play_idx - 1 ] );
+	else if ( stop_idx >= 0 )
+		copy_live( f, m_play_frames[ stop_idx ] );
+	else if ( !flown )
+		stamp_live( f, m_user_input, m_feat_keys, m_feat_armed );
 
 	/* frame m_play_idx - 1 went out this tick: its recorded start pos vs ours = desync */
 	if ( m_playing && m_play_idx > 0 ) {

@@ -88,7 +88,7 @@ void n_movement::impl_t::pixel_calc( c_user_cmd* cmd )
 
 	if ( cmd ) {
 		static bool set_point_prev = false;
-		bool set_point_pressed     = g_input.check_input( &GET_VARIABLE( g_variables.m_pixel_calc_aim_key, key_bind_t ) );
+		bool set_point_pressed     = g_input.check_input_live( &GET_VARIABLE( g_variables.m_pixel_calc_aim_key, key_bind_t ) );
 		if ( set_point_pressed && !set_point_prev ) {
 			c_vector eye = g_ctx.m_local->get_eye_position( );
 			c_angle cam{ };
@@ -161,7 +161,7 @@ void n_movement::impl_t::pixel_calc( c_user_cmd* cmd )
 	}
 
 	static bool calc_prev_pressed = false;
-	bool calc_pressed             = g_input.check_input( &GET_VARIABLE( g_variables.m_pixel_calc_solve_key, key_bind_t ) );
+	bool calc_pressed             = g_input.check_input_live( &GET_VARIABLE( g_variables.m_pixel_calc_solve_key, key_bind_t ) );
 	if ( !calc_pressed ) {
 		calc_prev_pressed = false;
 		return;

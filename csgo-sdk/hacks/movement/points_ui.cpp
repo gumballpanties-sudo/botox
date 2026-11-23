@@ -1083,7 +1083,7 @@ std::vector< AnimatedPoint > animated_points;
 
 bool consume_key_edge( key_bind_t& key, bool& was_down )
 {
-	const bool down = g_input.check_input( &key );
+	const bool down = g_input.check_input_live( &key );
 	const bool edge = down && !was_down;
 
 	was_down = down;

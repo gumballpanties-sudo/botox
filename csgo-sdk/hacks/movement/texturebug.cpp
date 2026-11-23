@@ -249,7 +249,7 @@ void n_texturebug::impl_t::preserve_move( c_user_cmd* cmd )
 	     !GET_VARIABLE( g_variables.m_texture_bug_wallstrafe, bool ) ||
 	     !g_input.check_input( &GET_VARIABLE( g_variables.m_texture_bug_key, key_bind_t ) ) )
 		return;
-	if ( g_movement_recorder.owns_cmd( ) || g_movement.m_fireman_data.owns_cmd ||
+	if ( g_movement_recorder.play_state( ) == 0 || g_movement.m_fireman_data.owns_cmd ||
 	     ( GET_VARIABLE( g_variables.m_air_stuck, bool ) &&
 	       g_input.check_input( &GET_VARIABLE( g_variables.m_air_stuck_key, key_bind_t ) ) ) ||
 	     ( GET_VARIABLE( g_variables.m_air_freeze, bool ) &&

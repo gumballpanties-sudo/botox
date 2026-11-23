@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <mutex>
@@ -30,6 +31,15 @@ namespace n_movement_recorder
 		int weapon_slot   = -1;
 		c_vector position{ };
 		c_vector velocity{ };
+		/* live replay: raw = cmd before any movement feature, keys = feature binds down ( vk bitmap ) */
+		bool live         = false;
+		float raw_pitch   = 0.f;
+		float raw_yaw     = 0.f;
+		float raw_forward = 0.f;
+		float raw_side    = 0.f;
+		float raw_up      = 0.f;
+		int raw_buttons   = 0;
+		std::uint64_t keys[ 4 ]{ };
 
 		frame_t( ) = default;
 		frame_t( c_user_cmd* cmd, const c_vector& pos );
@@ -65,6 +75,12 @@ namespace n_movement_recorder
 		action_stop_play  = 1u << 4,
 		action_clear      = 1u << 5,
 		action_clip       = 1u << 6,
+	};
+
+	/* movement feature section of create_move: g_input.check_input inside = a feature bind ( noted / answered by the route ) */
+	struct feat_scope_t {
+		feat_scope_t( );
+		~feat_scope_t( );
 	};
 
 	struct impl_t {
@@ -128,13 +144,34 @@ namespace n_movement_recorder
 
 		std::vector< float > m_point_progress;
 
+		/* live replay. atomics: check_input asks from any thread */
+		std::atomic< unsigned long > m_feat_thread{ 0ul };
+		std::uint64_t m_feat_keys[ 4 ]{ };
+		bool m_feat_armed = false;
+		std::atomic< int > m_bind_state{ -1 };
+		std::atomic< bool > m_bind_force{ false };
+		std::atomic< std::uint64_t > m_bind_keys[ 4 ]{ };
+		bool m_cmd_live      = false;
+		bool m_play_has_live = false;
+		int m_play_live      = 0;
+
 		bool owns_cmd( ) const
 		{
 			return m_playing || m_wish_to_start;
 		}
 
+		/* this cmd: -1 no playback, 0 approach / raw frame ( replay owns the cmd ), 1 live frame ( features own the move ) */
+		int play_state( ) const
+		{
+			return m_bind_state.load( );
+		}
+
+		bool in_feat_scope( ) const;
+		int bind_play( int key, int style ) const;
+		void bind_note( int key, int style );
+
 		void capture_user_input( c_user_cmd* cmd );
-		void apply_playback( c_user_cmd* cmd ) const;
+		void apply_playback( c_user_cmd* cmd, bool relay = false ) const;
 		void on_create_move( c_user_cmd* cmd );
 		void on_frame_stage( int stage );
 		void on_paint_traverse( );
@@ -160,6 +197,8 @@ namespace n_movement_recorder
 		static bool select_weapon( c_user_cmd* cmd, const frame_t& frame );
 		float yaw_offset( size_t idx ) const;
 		c_angle camera_at( size_t idx, float now ) const;
+		void playback_view( c_user_cmd* cmd, const c_angle& own ) const;
+		void sync_binds( );
 		void check_map_change( );
 		void apply_replay_jetpack( bool active );
 		bool save_frames( const std::vector< frame_t >& frames, const char* kind, std::string* saved_as = nullptr );

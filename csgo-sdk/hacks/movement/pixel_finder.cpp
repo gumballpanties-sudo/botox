@@ -1729,7 +1729,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 		pf_render_dots( GET_VARIABLE( g_variables.m_pixel_finder_pixelsurfs, bool ) ? Points : none,
 		                GET_VARIABLE( g_variables.m_pixel_finder_headbounces, bool ) ? Point_bounce : none, tb,
 		                GET_VARIABLE( g_variables.m_pixel_finder_pixeljumps, bool ) ? Point_pj : none );
-		if ( !s_pf_anchored || !g_input.check_input( &GET_VARIABLE( g_variables.m_pixel_finder_key, key_bind_t ) ) )
+		if ( !s_pf_anchored || !g_input.check_input_live( &GET_VARIABLE( g_variables.m_pixel_finder_key, key_bind_t ) ) )
 			return;
 		c_vector_2d start2D, end2D;
 		if ( !g_render.world_to_screen( StartPos, start2D ) || !g_render.world_to_screen( EndPos, end2D ) )
@@ -1777,7 +1777,7 @@ void n_movement::impl_t::pixel_finder( c_user_cmd* cmd )
 	}
 
 	static bool held_prev = false;
-	const bool held       = g_input.check_input( &GET_VARIABLE( g_variables.m_pixel_finder_key, key_bind_t ) );
+	const bool held       = g_input.check_input_live( &GET_VARIABLE( g_variables.m_pixel_finder_key, key_bind_t ) );
 	const c_vector eye    = g_ctx.m_local->get_eye_position( );
 	const c_vector dir    = c_vector::fromAngle( c_vector( cmd->m_view_point.m_x, cmd->m_view_point.m_y, 0.f ) );
 

@@ -170,7 +170,7 @@ namespace
 	{
 		if ( bind.m_key <= 0 )
 			return false;
-		return g_input.check_input( &bind );
+		return g_input.check_input_live( &bind );
 	}
 
 	std::string key_label( const key_bind_t& bind )
