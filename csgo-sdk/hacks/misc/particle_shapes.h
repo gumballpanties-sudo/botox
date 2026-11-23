@@ -5,14 +5,14 @@
 #include "../../dependencies/imgui/imgui.h"
 #include "../../dependencies/imgui/imgui_internal.h"
 
-/* soul death particle shapes ( kill_effects k_kfx_ps kind 4..9 ), shared with detection particles. index = combo, 0 = circle.
+/* soul death particle shapes ( kill_effects k_kfx_ps kind 4..10 ), shared with detection particles. index = combo, 0 = circle.
    outline( ) = same shapes as the shader sdf, checked by tools/soul_shape_check.py */
 namespace n_particle_shape
 {
-	inline constexpr const char* k_names = "circle\0" "4 star\0" "5 star\0" "triangle\0" "square\0" "cross\0" "butterfly\0";
-	inline constexpr int k_last          = 6;
+	inline constexpr const char* k_names = "circle\0" "4 star\0" "5 star\0" "triangle\0" "square\0" "cross\0" "butterfly\0" "snowflake\0";
+	inline constexpr int k_last          = 7;
 	inline constexpr float k_scale       = 1.6f; // shape tip radius per circle radius
-	inline constexpr int k_max_points    = 50;
+	inline constexpr int k_max_points    = 66;
 
 	// == k_kfx_ps k_bfly: right half, bottom notch -> top notch
 	inline constexpr float k_bfly[ 26 ][ 2 ] = {
@@ -22,7 +22,20 @@ namespace n_particle_shape
 		{ 0.7364f, 0.6507f }, { 0.6164f, 0.6832f }, { 0.5839f, 0.6801f }, { 0.4987f, 0.6585f }, { 0.3793f, 0.5997f }, { 0.2441f, 0.4854f },
 		{ 0.1115f, 0.2968f }, { 0.0000f, 0.0155f } };
 
-	/* unit outline, tips at r 1, +y up, clockwise ( imgui winding once y flips to screen ), star shaped from 0, 0 */
+	// == k_kfx_ps k_snow[ 2.. ]: top arm right half, tip corner -> branch root -> branch tips -> branch root -> 30 deg bisector
+	inline constexpr float k_snow[ 6 ][ 2 ] = {
+		{ 0.0993f, 0.9931f }, { 0.0936f, 0.7641f }, { 0.3016f, 0.9275f }, { 0.3936f, 0.8104f }, { 0.0887f, 0.5708f }, { 0.0779f, 0.1348f } };
+
+	/* points off the center fan: snowflake branch tips ( 11 per arm, L4 L3 / R3 R4 ). a run of them fans from the point
+	   before it ( a convex branch quad ), so the flake fills though it is not star shaped from 0, 0 */
+	inline bool ear( const int shape, const int i )
+	{
+		const int k = i % 11;
+		return shape == 7 && ( k == 1 || k == 2 || k == 7 || k == 8 );
+	}
+
+	/* unit outline, tips at r 1, +y up, clockwise ( imgui winding once y flips to screen ), star shaped from 0, 0 but for ear( ) points.
+	   last point never an ear */
 	inline int outline( const int shape, float ( &out )[ k_max_points ][ 2 ] )
 	{
 		int n          = 0;
@@ -52,13 +65,24 @@ namespace n_particle_shape
 				put( k_bfly[ i ][ 0 ], k_bfly[ i ][ 1 ] );
 			for ( int i = 1; i <= 24; ++i )
 				put( -k_bfly[ i ][ 0 ], k_bfly[ i ][ 1 ] );
+		} else if ( shape == 7 ) {
+			// 6 arms clockwise from +y: mirrored half reversed ( L5 .. L1 ), half ( R1 .. R6 ); R6 on the bisector = next arm's L6
+			for ( int arm = 0; arm < 6; ++arm ) {
+				const float sn = std::sin( 1.0471976f * static_cast< float >( arm ) ), cs = std::cos( 1.0471976f * static_cast< float >( arm ) );
+				const auto rot = [ & ]( const float x, const float y ) { put( x * cs + y * sn, y * cs - x * sn ); };
+				for ( int i = 4; i >= 0; --i )
+					rot( -k_snow[ i ][ 0 ], k_snow[ i ][ 1 ] );
+				for ( int i = 0; i <= 5; ++i )
+					rot( k_snow[ i ][ 0 ], k_snow[ i ][ 1 ] );
+			}
 		}
 		return n;
 	}
 
 	/* imgui AddConvexPolyFilled fringe over screen points, fanned from center ( stars / cross / butterfly are concave,
-	   star shaped from center ). any winding: the area sign turns the fringe outward ( a 3d plane seen from behind flips it ) */
-	inline void fill_screen( ImDrawList* dl, const ImVec2& center, const ImVec2* pts, const int n, const ImU32 col )
+	   star shaped from center ), ear( shape ) points fanned from the point before their run.
+	   any winding: the area sign turns the fringe outward ( a 3d plane seen from behind flips it ) */
+	inline void fill_screen( ImDrawList* dl, const ImVec2& center, const ImVec2* pts, const int n, const ImU32 col, const int shape = 0 )
 	{
 		if ( n < 3 || n > k_max_points )
 			return;
@@ -82,6 +106,8 @@ namespace n_particle_shape
 		dl->PrimReserve( n * 9, n * 2 + 1 );
 		const unsigned int base = dl->_VtxCurrentIdx;
 		const unsigned int mid  = base + static_cast< unsigned int >( n ) * 2u;
+		// one fill triangle per edge either way: an ear edge's ( hub, in0, in1 ) + a fan edge's ( mid, hub, in1 ) = ears + fans = n
+		unsigned int hub = base + static_cast< unsigned int >( n - 1 ) * 2u;
 		for ( int i0 = n - 1, i1 = 0; i1 < n; i0 = i1++ ) {
 			float mx = ( nrm[ i0 ].x + nrm[ i1 ].x ) * 0.5f, my = ( nrm[ i0 ].y + nrm[ i1 ].y ) * 0.5f;
 			if ( const float d2 = mx * mx + my * my; d2 > 1e-6f ) {
@@ -93,9 +119,19 @@ namespace n_particle_shape
 			dl->PrimWriteVtx( ImVec2( pts[ i1 ].x + mx * half, pts[ i1 ].y + my * half ), uv, clear );
 
 			const unsigned int in0 = base + static_cast< unsigned int >( i0 ) * 2u, in1 = base + static_cast< unsigned int >( i1 ) * 2u;
-			const unsigned int idx[ 9 ] = { mid, in0, in1, in1, in0, in0 + 1u, in0 + 1u, in1 + 1u, in1 };
-			for ( const unsigned int i : idx )
-				dl->PrimWriteIdx( static_cast< ImDrawIdx >( i ) );
+			const auto tri = [ & ]( const unsigned int a, const unsigned int b, const unsigned int c ) {
+				dl->PrimWriteIdx( static_cast< ImDrawIdx >( a ) );
+				dl->PrimWriteIdx( static_cast< ImDrawIdx >( b ) );
+				dl->PrimWriteIdx( static_cast< ImDrawIdx >( c ) );
+			};
+			if ( ear( shape, i0 ) )
+				tri( hub, in0, in1 );
+			if ( !ear( shape, i1 ) ) {
+				tri( mid, hub, in1 );
+				hub = in1;
+			}
+			tri( in1, in0, in0 + 1u );
+			tri( in0 + 1u, in1 + 1u, in1 );
 		}
 		dl->PrimWriteVtx( center, uv, col );
 	}
@@ -113,7 +149,7 @@ namespace n_particle_shape
 		for ( int i = 0; i < n; ++i )
 			pts[ i ] = ImVec2( center.x + ( unit[ i ][ 0 ] * cs - unit[ i ][ 1 ] * sn ) * radius,
 			                   center.y - ( unit[ i ][ 0 ] * sn + unit[ i ][ 1 ] * cs ) * radius );
-		fill_screen( dl, center, pts, n, col );
+		fill_screen( dl, center, pts, n, col, shape );
 	}
 
 	/* 3d planar rotation ( clipart "3d rotation" ), float[ 3 ] so every game's vector type can use it.

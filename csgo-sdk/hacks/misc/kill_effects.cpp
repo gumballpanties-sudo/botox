@@ -617,8 +617,8 @@ namespace
 		float m_su, m_sv;
 	};
 
-	// kfx_star .. kfx_butterfly = soul shape combo 1..6, same order
-	enum e_kfx_kind : int { kfx_square, kfx_disc, kfx_glow, kfx_smoke, kfx_star, kfx_star5, kfx_triangle, kfx_box, kfx_cross, kfx_butterfly };
+	// kfx_star .. kfx_snowflake = soul shape combo 1..7, same order
+	enum e_kfx_kind : int { kfx_square, kfx_disc, kfx_glow, kfx_smoke, kfx_star, kfx_star5, kfx_triangle, kfx_box, kfx_cross, kfx_butterfly, kfx_snowflake };
 
 	// rebuilt every paint, drawn in kill_effects_world ( main thread both )
 	std::vector< kfx_vertex_t > g_kfx_quads{ };
@@ -2407,6 +2407,27 @@ float bfly_dist( float2 p )
 	return s * sqrt( dd );
 }
 
+/* svgrepo snowflake ( viewbox 512 ), the 30 deg wedge of the top arm: center, tip on the axis, tip corner, branch root, branch tips, branch root,
+   bisector. rel / 214.8261 ( tip corner r 1, + 0.2 % ), 6 fold + mirror rebuild the flake. made by tools/soul_shape_check.py --gen */
+static const float2 k_snow[ 8 ] = {
+	{ 0.0000, 0.0000 }, { 0.0000, 0.9931 }, { 0.0993, 0.9931 }, { 0.0936, 0.7641 }, { 0.3016, 0.9275 }, { 0.3936, 0.8104 }, { 0.0887, 0.5708 }, { 0.0779, 0.1348 } };
+
+// iq polygon sdf on the folded wedge; edges 0 / 1 ( bisector, axis ) are fold lines, they count for the sign only
+float snow_dist( float2 p )
+{
+	float dd = 4.0, s = 1.0;
+	[unroll] for ( int i = 0; i < 8; i++ ) {
+		const float2 vi = k_snow[ i ], vj = k_snow[ i == 0 ? 7 : i - 1 ];
+		const float2 e = vj - vi, w = p - vi;
+		const float2 b = w - e * saturate( dot( w, e ) / dot( e, e ) );
+		if ( i > 1 )
+			dd = min( dd, dot( b, b ) );
+		if ( vi.y < vj.y ? p.y >= vi.y && p.y < vj.y && e.x * w.y > e.y * w.x : p.y < vi.y && p.y >= vj.y && e.x * w.y <= e.y * w.x )
+			s = -s;
+	}
+	return s * sqrt( dd );
+}
+
 float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 {
 	const float r    = length( shape.xy );
@@ -2422,6 +2443,14 @@ float4 main( float4 color : TEXCOORD0, float3 shape : TEXCOORD1 ) : COLOR
 	   in pixel bands ( glow 2 -> disc 1 = hard bars ); spin caps at 0.999 so the bias never reaches the next id */
 	const float kind = shape.z;
 	const float id   = floor( kind + 0.0005 );
+	/* snowflake: fold to half a 60 deg sector ( tip on +y ), frac( kind ) = orientation. clamped just inside the wedge so the
+	   sign test never lands on a fold edge */
+	[branch] if ( id > 9.5 ) {
+		const float a = atan2( shape.x + 1e-6, shape.y ) + frac( kind ) * 6.2831853;
+		const float f = clamp( abs( a - 1.0471976 * floor( a / 1.0471976 + 0.5 ) ), 1e-4, 0.5234988 );
+		const float d = snow_dist( r * float2( sin( f ), cos( f ) ) );
+		return float4( color.rgb, color.a * saturate( -d / fw + 0.5 ) );
+	}
 	// real branch: the polygon is ~330 slots, every other particle skips it
 	[branch] if ( id > 8.5 ) {
 		float sn, cs;
