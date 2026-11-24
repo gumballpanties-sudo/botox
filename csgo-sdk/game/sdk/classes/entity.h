@@ -287,6 +287,8 @@ public:
 	NETVAR_VARIABLE( bool, is_grabbing_hostage, "CCSPlayer->m_bIsGrabbingHostage" );
 	NETVAR_VARIABLE( bool, has_defuser, "CCSPlayer->m_bHasDefuser" );
 	NETVAR_VARIABLE( bool, is_walking, "CCSPlayer->m_bIsWalking" );
+	/* attack ignored until released ( deploy / spawn, weapon_csbase.cpp:992 ) */
+	NETVAR_VARIABLE( bool, is_waiting_for_no_attack, "CCSPlayer->m_bWaitForNoAttack" );
 	/* blind seconds LEFT (server countdown). > 0 = overlay up on their screen. not m_flFlashMaxAlpha */
 	NETVAR_VARIABLE( float, get_flash_duration, "CCSPlayer->m_flFlashDuration" );
 	/* server immunity: OnTakeDamage_Alive returns 0 when set. FL_GODMODE (1<<15) is unreadable,

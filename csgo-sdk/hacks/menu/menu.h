@@ -17,6 +17,7 @@ namespace n_menu
 		void tab_settings( );
 		void player_list_page( );
 		void cvars_page( );
+		void servers_page( );
 		void lua_page( );
 		void search_page( );
 		void draw_tab( );

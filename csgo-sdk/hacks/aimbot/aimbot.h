@@ -65,6 +65,16 @@ namespace n_aimbot
 
 		bool can_aimbot( );
 
+		/* jumpshot: first bullet held until the jump's top ( least air spread ), capped by m_aimbot_air_wait ms.
+		   m_air_wait_cmd = last held cmd, the click is re-pressed on the next one even if released */
+		bool air_wait( c_base_entity* weapon, bool aiming );
+		int m_air_wait_cmd = 0, m_air_wait_ticks = 0, m_air_prev_input = 0;
+		/* weapon select that ended a hold, sent one cmd after the bullet ( select runs before ItemPostFrame ) */
+		int m_air_select = 0, m_air_select_cmd = 0;
+		/* run_triggerbot pressed attack this cmd */
+		bool m_trigger_pressed = false;
+		float m_air_wait_vz = 0.f;
+
 		float rcs_strength( bool gated );
 
 		int m_target_hitbox  = 0;

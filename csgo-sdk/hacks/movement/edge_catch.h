@@ -30,6 +30,7 @@ namespace n_edge_catch
 		bool jb_works( c_user_cmd* cmd, int k, int from, int base );
 		bool jb_drops( c_user_cmd* cmd, int k, float land_z );
 		bool live_jb( c_user_cmd* cmd );
+		bool recheck( c_user_cmd* cmd );
 		void apply( c_user_cmd* cmd, const tick_t& t, const c_angle& view ) const;
 		void sim( c_user_cmd* cmd, int index, const tick_t& t, int buttons );
 		bool out( ) const;
@@ -43,6 +44,7 @@ namespace n_edge_catch
 		float m_takeoff_z = 0.f;
 		bool m_had_ground = false;
 		float m_prev_vz   = 0.f;
+		bool m_rose       = false; /* airborne START rising after a fall = jb / bounce */
 		float m_prev_yaw  = 0.f;
 		bool m_yaw_valid  = false;
 		bool m_turn_left  = false;

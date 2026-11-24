@@ -25,6 +25,7 @@ extern bool HITGODA;
 extern bool HITGODA2;
 extern bool HITGODA3;
 extern bool g_edge_surf_active;
+extern int g_edge_surf_eb_due;
 extern bool g_air_align_owns;
 
 extern void botox_dbg_log( const char* fmt, ... );
@@ -2102,9 +2103,13 @@ void n_indicators::impl_t::keybind_indicators( )
 		push( id, true, success, active, s_lit_predicted[ id ] );
 	};
 
-	if ( GET_VARIABLE( g_variables.edge_bug, bool ) && key_indicators[ e_keybind_indicators::key_eb ] )
-		add_hit( label_eb, trick_states.m_edge_bug_queued, g_input.check_input( &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) ),
-		         trick_states.m_edge_bug_tick > g_interfaces.m_global_vars_base->m_tick_count );
+	/* edge surf guide's proven pin = an eb queued too */
+	if ( GET_VARIABLE( g_variables.edge_bug, bool ) && key_indicators[ e_keybind_indicators::key_eb ] ) {
+		const int now    = g_interfaces.m_global_vars_base->m_tick_count;
+		const bool guide = g_edge_surf_eb_due - now >= 0 && g_edge_surf_eb_due - now <= 2;
+		add_hit( label_eb, trick_states.m_edge_bug_queued || guide, g_input.check_input( &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) ),
+		         trick_states.m_edge_bug_tick > now || ( guide && g_edge_surf_eb_due > now ) );
+	}
 
 	if ( GET_VARIABLE( g_variables.m_pixel_surf, bool ) && key_indicators[ e_keybind_indicators::key_ps ] )
 		add_hit( label_ps, g_movement.m_pixelsurf_data.m_predicted_succesful || trick_states.m_pixel_surf_now,

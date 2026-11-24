@@ -62,6 +62,10 @@ namespace n_misc
 	/* false = nothing decoded yet ( empty path, url downloading, bad file ) */
 	bool screen_image_info( const std::string& path, int& width, int& height, int& frames );
 	void screen_image_reload( const std::string& path );
+	/* lua render.image ( lua_api.cpp ), render thread. key = "path|stamp": decoded on first use, freed by lua_image_sweep
+	   ( on_end_scene ) 10 s after its last draw */
+	IDirect3DTexture9* lua_image_frame( const std::string& key );
+	void lua_image_sweep( );
 
 	struct media_look_t {
 		bool m_box     = true;

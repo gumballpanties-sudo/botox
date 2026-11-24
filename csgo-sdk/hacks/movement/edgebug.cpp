@@ -607,6 +607,13 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 	const float mouse_yaw = -( m_yaw_var ? m_yaw_var->get_float( ) : 0.022f ) * m_mouse_x;
 	m_mouse_x             = 0.f;
 	const bool steer      = GET_VARIABLE( g_variables.m_edgebug_mouse_steer, bool );
+	/* view delta the search carries forward ( unscaled ). every cmd, before any return: a tick that yields ( edge surf guide, ground ) is no 1-tick turn */
+	static c_angle prev_angle;
+	c_angle delta_angle = cmd->m_view_point - prev_angle;
+	prev_angle          = cmd->m_view_point;
+	delta_angle.m_y     = std::remainderf( delta_angle.m_y, 360.f );
+	if ( steer && mouse_yaw != 0.f )
+		delta_angle.m_y = std::clamp( mouse_yaw, -30.f, 30.f );
 	const auto drop_plan = [ this ]( const char* why ) {
 		if ( m_found )
 			botox_dbg_log( "EB: drop why=%s at %d/%d\n", why, m_replay_hits, m_prediction_ticks );
@@ -701,13 +708,6 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 	if ( !m_found && m_ducked && m_backup_velocity.m_z < -40.f )
 		m_ducked = false;
 	const int detection_mode = GET_VARIABLE( g_variables.m_edgebug_detection_mode, int );
-	static c_angle prev_angle;
-	/* view delta the search carries forward ( unscaled ). */
-	c_angle delta_angle = cmd->m_view_point - prev_angle;
-	prev_angle = cmd->m_view_point;
-	delta_angle.m_y = std::remainderf( delta_angle.m_y, 360.f );
-	if ( steer && mouse_yaw != 0.f )
-		delta_angle.m_y = std::clamp( mouse_yaw, -30.f, 30.f );
 	/* only a near-180 flip counts as large. */
 	auto is_large_delta = []( float y1, float y2 ) {
 		float d = fabsf( y1 - y2 );
@@ -855,6 +855,15 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			allow_duck  = ( user_buttons & in_duck ) != 0;
 			allow_stand = !allow_duck;
 		}
+		/* prevent changing stance: steer re-plan keeps held plan's bug stance + this tick's duck bit ( no crouch flicker ).
+		   edgesurf hunting a lift, or a stance the settings above no longer allow, still swaps */
+		const bool lock_stance = replan && steer && GET_VARIABLE( g_variables.m_edgebug_steer_keep_stance, bool ) && !( esurf && !last_lift ) &&
+		                         ( last_bug_duck == 1 ? allow_duck : allow_stand );
+		const bool held_duck   = lock_stance && ( m_predicted_cmds[ m_replay_hits ].buttons & in_duck ) != 0;
+		if ( lock_stance ) {
+			allow_duck  = last_bug_duck == 1;
+			allow_stand = !allow_duck;
+		}
 		/* bug ticks the stance refused ( `srej=` ) */
 		int stance_rej = 0;
 		/* last pass's first ground tick, -1 = never; contact_z = origin z there ( refine tells lip vs lower floor ). */
@@ -978,6 +987,8 @@ void n_edgebug::impl_t::EdgeBugPostPredict( c_user_cmd* cmd )
 			bool run_found = false;
 			auto latch = [ & ]( const int tick_index, const c_vector& end_pos, const bool duck, const bool lift ) {
 				run_found = true;
+				if ( lock_stance && ( ( m_run_cmds[ 0 ].buttons & in_duck ) != 0 ) != held_duck )
+					return;
 				const bool spare = esurf && !lift;
 				if ( spare && m_fallback_ok )
 					return;

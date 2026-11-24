@@ -18,6 +18,7 @@
 #include "../../hacks/gta_hud/gta_hud.h"
 #include "../../hacks/menu/menu.h"
 #include "../../hacks/misc/misc.h"
+#include "../../hacks/misc/server_browser.h"
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/visuals/bullets/bullets.h"
@@ -89,6 +90,7 @@ void __fastcall n_detoured_functions::paint_traverse( void* ecx, void* edx, unsi
 				g_scaleform.on_eject( );
 				g_hud_font.on_createmove( );
 				g_esp_preview.on_eject( );
+				g_server_browser.on_eject( ); /* steam must not call back into an unloaded response object */
 				g_chud.on_createmove( );
 				g_edicts.fog( true );
 				g_edicts.skybox_fog( true );

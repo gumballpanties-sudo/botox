@@ -7,6 +7,7 @@
 #include "../misc/misc.h"
 #include "../movement/edge_skip.h"
 #include "../movement/edgebug.h"
+#include "../movement/movement_recorder.h"
 #include "../prediction/prediction.h"
 #include "../web/websurface.h"
 #include "lumia_aim_logic.h"
@@ -468,6 +469,9 @@ namespace
 
 	constexpr float k_ray_range = 8192.f;
 
+	/* run_backtrack: server bones are its own animstate, a centre ray this close to our record still counts */
+	constexpr float k_bt_near_miss = 4.f;
+
 	float ray_segment_distance_sq( const c_vector& eye, const c_vector& dir, const float range, const c_vector& a, const c_vector& b )
 	{
 		const c_vector axis   = b - a;
@@ -504,6 +508,24 @@ namespace
 		bool wide( ) const { return m_inaccuracy + m_spread > 0.002f; }
 	};
 
+	float air_spread_scale( )
+	{
+		return g_convars.float_or( HASH_BT( "weapon_air_spread_scale" ), 1.f );
+	}
+
+	/* vz term of GetInaccuracy in air: RemapVal( sqrt|vz|, sqrt( impulse ) / 4 -> apex, sqrt( impulse ) -> initial ), clamp [ 0, 2 initial ]
+	   ( weapon_csbase.cpp:1262, retail adds apex as the low end ). smallest at the top of the jump */
+	float air_inaccuracy( const c_weapon_data* data, const float vz )
+	{
+		const float scale     = air_spread_scale( );
+		const float initial   = std::clamp( data->m_inaccuracy_jump_initial, 0.f, 1.f ) * scale;
+		const float apex      = std::clamp( data->m_inaccuracy_jump_apex, 0.f, 1.f ) * scale;
+		const float sqrt_jump = std::sqrt( std::max( g_convars.float_or( HASH_BT( "sv_jump_impulse" ), 301.993378f ), 1.f ) );
+		const float t         = ( std::sqrt( std::fabs( vz ) ) - sqrt_jump * 0.25f ) / ( sqrt_jump * 0.75f );
+
+		return std::clamp( apex + ( initial - apex ) * t, 0.f, 2.f * initial );
+	}
+
 	cone_t weapon_cone( c_base_entity* weapon )
 	{
 		if ( !weapon || !g_ctx.m_local )
@@ -518,7 +540,15 @@ namespace
 		if ( GET_VARIABLE( g_variables.m_nospread_enable, bool ) )
 			return { 0.f, data->m_spread[ mode ] };
 
-		float inaccuracy = weapon->get_accuracy_penalty( );
+		const bool air = !( g_ctx.m_local->get_flags( ) & e_flags::fl_onground );
+
+		/* ItemPostFrame's UpdateAccuracyPenalty ( weapon_csbase.cpp:3711 ) runs before the bullet, our prediction skips it:
+		   the penalty jumps to its state floor at once ( takeoff tick = stand + jump ), decay ignored */
+		const float floor = g_ctx.m_local->get_move_type( ) == move_type_ladder ? data->m_inaccuracy_ladder[ mode ] + data->m_inaccuracy_ladder[ 0 ]
+		                    : air ? data->m_inaccuracy_stand[ mode ] + data->m_inaccuracy_jump[ mode ] * air_spread_scale( )
+		                    : ( g_ctx.m_local->get_flags( ) & e_flags::fl_ducking ) ? data->m_inaccuracy_crouch[ mode ]
+		                                                                           : data->m_inaccuracy_stand[ mode ];
+		float inaccuracy = std::max( weapon->get_accuracy_penalty( ), floor );
 
 		const c_vector velocity = g_ctx.m_local->get_velocity( );
 		const float max_speed   = data->m_max_speed[ mode ] > 0.f ? data->m_max_speed[ mode ] : 250.f;
@@ -526,15 +556,8 @@ namespace
 		if ( const float move = std::clamp( ( velocity.length_2d( ) - max_speed * 0.34f ) / ( max_speed * 0.61f ), 0.f, 1.f ); move > 0.f )
 			inaccuracy += std::pow( move, 0.25f ) * data->m_inaccuracy_move[ mode ];
 
-		if ( !( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) ) {
-			static const auto air_scale = g_convars[ HASH_BT( "weapon_air_spread_scale" ) ];
-
-			const float initial   = std::clamp( data->m_inaccuracy_jump_initial, 0.f, 1.f ) * ( air_scale ? air_scale->get_float( ) : 1.f );
-			const float sqrt_jump = std::sqrt( 301.993378f );
-			const float air       = ( std::sqrt( std::fabs( velocity.m_z ) ) - sqrt_jump * 0.25f ) / ( sqrt_jump * 0.75f ) * initial;
-
-			inaccuracy += std::clamp( air, 0.f, 2.f * initial );
-		}
+		if ( air )
+			inaccuracy += air_inaccuracy( data, velocity.m_z );
 
 		if ( !std::isfinite( inaccuracy ) )
 			return { };
@@ -874,6 +897,7 @@ float n_aimbot::impl_t::active_fov( )
 void n_aimbot::impl_t::on_level_init( )
 {
     s_lumia_smoothing={};m_lock_index=0;m_lock_handle=0;m_cam_stamp=0.f;
+	m_air_wait_cmd = m_air_wait_ticks = m_air_prev_input = m_air_select = 0;
 	m_ns_sent_on   = false;
 	m_ns_last_send = 0.f;
 
@@ -1233,6 +1257,8 @@ static int trigger_state( int& config, n_lagcomp::impl_t::record_t*& record )
 
 void n_aimbot::impl_t::run_triggerbot( )
 {
+	m_trigger_pressed = false;
+
 	int config                          = aim_config_general;
 	n_lagcomp::impl_t::record_t* record = nullptr;
 	const int state                     = trigger_state( config, record );
@@ -1252,6 +1278,7 @@ void n_aimbot::impl_t::run_triggerbot( )
 		return;
 
 	g_ctx.m_cmd->m_buttons |= in_attack;
+	m_trigger_pressed = true;
 
 	/* run_backtrack bails once m_shot is set, so this record keeps the tick */
 	if ( record ) {
@@ -1265,6 +1292,15 @@ void n_aimbot::impl_t::on_create_move_post( )
 {
     m_cam_stamp=0.f;const auto previous=s_lumia_smoothing;s_lumia_smoothing={};
     if(!g_ctx.m_local||!g_ctx.m_cmd||!g_ctx.m_local->is_alive())return;
+    // jumpshot click held on a recent cmd ( a skipped cmd = alt-tab ): press it again, the tap may be released by now
+    if(const int since=g_ctx.m_cmd->m_command_number-m_air_wait_cmd;m_air_wait_cmd&&since>=1&&since<=8&&g_movement_recorder.play_state()<0)
+        g_ctx.m_cmd->m_buttons|=in_attack;
+    else m_air_wait_cmd=m_air_wait_ticks=0;
+    if(m_air_select){
+        if(!g_ctx.m_cmd->m_weapon_select&&m_air_select_cmd+1==g_ctx.m_cmd->m_command_number&&g_movement_recorder.play_state()<0)
+            g_ctx.m_cmd->m_weapon_select=m_air_select;
+        m_air_select=0;
+    }
     const bool camlock=GET_VARIABLE(g_variables.m_aimbot_camlock,bool);
     const bool silent=GET_VARIABLE(g_variables.m_aimbot_silent,bool)&&!camlock;
     const bool trigger=firing_weapon()!=nullptr;
@@ -1376,6 +1412,7 @@ void n_aimbot::impl_t::on_create_move_post( )
     // Lumia rechecks ownership after target/bone/visibility work.
     if(target.m_entity&&!can_aimbot())target={};
     const bool aiming=target.m_entity!=nullptr;
+    const bool held=air_wait(weapon,aiming);
     if(aiming){m_lock_index=target.m_entity->get_index();m_lock_handle=target.m_entity->get_ref_ehandle();m_target_hitbox=target.m_hitbox;}
     else if(!hold){m_lock_index=0;m_lock_handle=0;}
     m_rcs_aim_burst|=aiming;
@@ -1441,7 +1478,64 @@ void n_aimbot::impl_t::on_create_move_post( )
     // shot still short of the point (smooth / step): run_backtrack picks the tick off the real ray
     auto miss=result-aim;miss.normalize();
     const bool on_aim=std::fabs(miss.m_x)<1e-3f&&std::fabs(miss.m_y)<1e-3f;
-    if(silent&&can_fire&&trigger&&on_aim)g_lagcomp.commit_shot(target.m_record);
+    if(silent&&can_fire&&trigger&&on_aim&&!held)g_lagcomp.commit_shot(target.m_record);
+}
+
+bool n_aimbot::impl_t::air_wait( c_base_entity* weapon, const bool aiming )
+{
+	const int wait_ms = GET_VARIABLE( g_variables.m_aimbot_air_wait, int );
+	const auto data   = weapon ? g_interfaces.m_weapon_system->get_weapon_data( weapon->get_item_definition_index( ) ) : nullptr;
+	const float dt    = g_interfaces.m_global_vars_base->m_interval_per_tick;
+	const float vz    = g_ctx.m_local->get_velocity( ).m_z; /* post-move ( prediction ran ) = what the server's bullet sees */
+
+	/* starts only on a fresh press of the user's own button: a click held through a deploy / round start / past a shot
+	   has m_bWaitForNoAttack or m_iShotsFired set, stripping it runs ProcessIdleNoAction ( clears both ) = the re-press
+	   fires a bullet the game never would. same for a burst. triggerbot clicks + its record, zeus bug switch, replay keep their tick */
+	const bool press = ( g_ctx.m_input_buttons & in_attack ) && !( m_air_prev_input & in_attack );
+	m_air_prev_input = g_ctx.m_input_buttons;
+
+	/* reload / attack2 / zoom / weapon select run before ( or instead of ) the held bullet server side: never start with one,
+	   and one mid hold, a 2nd tap or a triggerbot press ends it = bullet goes now ( attack is first in ItemPostFrame :943 ) */
+	const bool other    = ( g_ctx.m_input_buttons & ( in_reload | in_second_attack | in_zoom ) ) || g_ctx.m_cmd->m_weapon_select;
+	const bool holding  = m_air_wait_ticks > 0;
+	const bool start    = !holding && press && !other && !m_trigger_pressed && !g_ctx.m_local->is_waiting_for_no_attack( ) && !Web_BlockFire( );
+	const bool keep_on  = holding && !press && !other && !m_trigger_pressed;
+
+	bool hold = wait_ms > 0 && aiming && data && !data->m_full_auto && weapon->get_item_definition_index( ) != weapon_revolver &&
+	            !GET_VARIABLE( g_variables.m_nospread_enable, bool ) && !zeusbug_busy( ) && g_movement_recorder.play_state( ) < 0 &&
+	            g_lagcomp.m_shot == n_lagcomp::e_shot::none && ( start || keep_on ) && g_ctx.m_local->get_shots_fired( ) == 0 &&
+	            weapon->get_burst_shots_remaining( ) == 0 && shot_leaves( ) &&
+	            !( g_ctx.m_local->get_flags( ) & ( e_flags::fl_onground | e_flags::fl_inwater | e_flags::fl_waterjump ) ) &&
+	            g_ctx.m_local->get_move_type( ) == move_type_walk && static_cast< float >( m_air_wait_ticks + 1 ) * dt * 1000.f <= wait_ms;
+
+	/* wait only while the next tick's air spread is smaller ( rising toward the top ) */
+	if ( hold )
+		hold = air_inaccuracy( data, vz - g_convars.float_or( HASH_BT( "sv_gravity" ), 800.f ) * dt ) < air_inaccuracy( data, vz ) - 1e-4f;
+
+	if ( hold ) {
+		if ( !m_air_wait_ticks )
+			m_air_wait_vz = vz;
+
+		m_air_wait_ticks++;
+		m_air_wait_cmd = g_ctx.m_cmd->m_command_number;
+		g_ctx.m_cmd->m_buttons &= ~in_attack;
+		return true;
+	}
+
+	/* the switch would drop the bullet: it goes this cmd, the select next */
+	if ( holding && g_ctx.m_cmd->m_weapon_select ) {
+		m_air_select                  = g_ctx.m_cmd->m_weapon_select;
+		m_air_select_cmd              = g_ctx.m_cmd->m_command_number;
+		g_ctx.m_cmd->m_weapon_select = 0;
+	}
+
+	if ( holding && data )
+		botox_dbg_log( "AIRWAIT: held=%d ticks vz %.0f -> %.0f air %.3f -> %.3f gnd=%d aim=%d cut=%d", m_air_wait_ticks, m_air_wait_vz, vz,
+		               air_inaccuracy( data, m_air_wait_vz ), air_inaccuracy( data, vz ), ( g_ctx.m_local->get_flags( ) & e_flags::fl_onground ) ? 1 : 0,
+		               ( int )aiming, ( int )( press || other || m_trigger_pressed ) );
+
+	m_air_wait_cmd = m_air_wait_ticks = 0;
+	return false;
 }
 
 
@@ -1463,19 +1557,23 @@ void n_aimbot::impl_t::run_backtrack( )
 
 	const auto eye     = g_ctx.m_local->get_eye_position( false );
 	const bool live_ok = g_lagcomp.live_accepted( );
+	const cone_t cone  = weapon_cone( weapon );
 
 	/* clarity FUN_3c531170: every fire cmd goes out on the tick of the candidate nearest the bullet. a miss left on the
-	   cmd tick is scored on the live body = behind the wall it just ran to, spread can still land on the near record */
+	   cmd tick is scored on the live body = behind the wall it just ran to, spread can still land on the near record.
+	   only candidates the cone can reach ( + 4u server bone slack ); wide cone: of the 8 nearest, most of the cone that lands */
 	struct pick_t {
 		c_base_entity* m_entity               = nullptr;
 		n_lagcomp::impl_t::record_t* m_record = nullptr;
 		matrix3x4_t* m_matrix                 = nullptr;
 		hitbox_resolver_t m_resolver{ };
-		float m_score = -1e9f, m_depth = 0.f;
+		float m_score = -1e9f, m_depth = 0.f, m_hc = -1.f;
 		int m_hitbox = -1;
-	} best{ };
+	};
 
-	int records = 0, usable = 0;
+	constexpr int k_top = 8;
+	pick_t top[ k_top ]{ };
+	int n_top = 0, records = 0, usable = 0, unreachable = 0;
 
 	g_entity_cache.enumerate( e_enumeration_type::type_players, [ & ]( c_base_entity* entity ) {
 		if ( !entity || !entity->is_valid_aim_target( ) || entity->has_immunity( ) || !player_list_aim_allowed( entity->get_index( ) ) )
@@ -1488,10 +1586,26 @@ void n_aimbot::impl_t::run_backtrack( )
 		const auto consider = [ & ]( n_lagcomp::impl_t::record_t* record, matrix3x4_t* matrix, const c_vector& origin ) {
 			int hitbox        = -1;
 			const float depth = ray_depth( resolver, matrix, eye, dir, hitbox );
-			const float score = depth / std::max( ( origin + c_vector( 0.f, 0.f, k_body_center ) - eye ).length( ), 1.f );
+			const float dist  = std::max( ( origin + c_vector( 0.f, 0.f, k_body_center ) - eye ).length( ), 1.f );
 
-			if ( hitbox >= 0 && score > best.m_score )
-				best = { entity, record, matrix, resolver, score, depth, hitbox };
+			if ( hitbox < 0 )
+				return;
+
+			if ( depth < -( k_bt_near_miss + dist * ( cone.m_inaccuracy + cone.m_spread ) ) ) {
+				unreachable++;
+				return;
+			}
+
+			/* top list, deepest ( per distance ) first */
+			const float score = depth / dist;
+			int at            = n_top < k_top ? n_top++ : k_top - 1;
+			if ( at == k_top - 1 && n_top == k_top && top[ at ].m_entity && score <= top[ at ].m_score )
+				return;
+
+			for ( ; at > 0 && top[ at - 1 ].m_score < score; at-- )
+				top[ at ] = top[ at - 1 ];
+
+			top[ at ] = { entity, record, matrix, resolver, score, depth, -1.f, hitbox };
 		};
 
 		if ( live_ok )
@@ -1518,20 +1632,34 @@ void n_aimbot::impl_t::run_backtrack( )
 		}
 	} );
 
+	if ( cone.wide( ) )
+		for ( int i = 0; i < n_top; i++ ) {
+			capsules_t body{ };
+			body.build( top[ i ].m_resolver, top[ i ].m_matrix );
+			top[ i ].m_hc = hit_chance( body, eye, eye + dir * 100.f, cone );
+		}
+
+	/* sorted by depth: strict > keeps the deeper one on a hit share tie */
+	pick_t best{ };
+	for ( int i = 0; i < n_top; i++ )
+		if ( !best.m_entity || top[ i ].m_hc > best.m_hc )
+			best = top[ i ];
+
 	if ( !best.m_entity ) {
 		if ( records > 0 )
-			botox_dbg_log( "BT: none live=%d recs=%d ok=%d centre=%.0fms", ( int )live_ok, records, usable, g_lagcomp.window_center( ) * 1000.f );
+			botox_dbg_log( "BT: none live=%d recs=%d ok=%d far=%d centre=%.0fms", ( int )live_ok, records, usable, unreachable, g_lagcomp.window_center( ) * 1000.f );
 		return;
 	}
 
 	m_target_hitbox = best.m_hitbox;
 	g_lagcomp.commit_shot( best.m_record );
 
-	botox_dbg_log( "BT: pick=%s ent=%d hb=%d age=%.0fms depth=%.1f ang=%.2f vis=%d recs=%d ok=%d tick=%d", best.m_record ? "rec" : "live",
+	botox_dbg_log( "BT: pick=%s ent=%d hb=%d age=%.0fms depth=%.1f hc=%.2f cone=%.4f vis=%d recs=%d ok=%d far=%d tick=%d", best.m_record ? "rec" : "live",
 	               best.m_entity->get_index( ), best.m_hitbox,
-	               best.m_record ? ( g_lagcomp.server_time( ) - best.m_record->m_sim_time ) * 1000.f : -1.f, best.m_depth,
-	               rad2deg( best.m_score ), ( int )record_visible( best.m_entity, best.m_resolver.position( best.m_hitbox, best.m_matrix ), eye ),
-	               records, usable, g_ctx.m_cmd->m_tick_count );
+	               best.m_record ? ( g_lagcomp.server_time( ) - best.m_record->m_sim_time ) * 1000.f : -1.f, best.m_depth, best.m_hc,
+	               cone.m_inaccuracy + cone.m_spread,
+	               ( int )record_visible( best.m_entity, best.m_resolver.position( best.m_hitbox, best.m_matrix ), eye ), records, usable, unreachable,
+	               g_ctx.m_cmd->m_tick_count );
 }
 
 void n_aimbot::impl_t::run_zeusbug( )

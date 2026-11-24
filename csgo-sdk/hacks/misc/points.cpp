@@ -268,8 +268,9 @@ void points_draw( )
 	const std::string text = std::to_string( shown ) + " pts";
 	const ImVec2 size      = font->CalcTextSizeA( font_size, FLT_MAX, 0.f, text.c_str( ) );
 
-	ImVec4 box          = n_misc::g_watermark_box;
-	const bool has_box  = box.z > box.x;
+	const bool standalone = GET_VARIABLE( g_variables.m_points_standalone, bool );
+	ImVec4 box            = n_misc::g_watermark_box;
+	const bool has_box    = !standalone && box.z > box.x;
 
 	if ( const ImVec4 gif = n_misc::g_watermark_gif_box; has_box && gif.z > gif.x ) {
 		box.x = ( std::min )( box.x, gif.x );
@@ -279,10 +280,23 @@ void points_draw( )
 	const bool right_of = has_box && ( style == 11 || style == 19 || style == 20 || style == 22 );
 	const bool screen   = !has_box || style == 5;
 
-	float x = screen ? g_ctx.m_width - 8.f - size.x : right_of ? box.z + k_gap : box.x - k_gap - size.x;
-	float y = ( has_box && !screen ? ( box.y + box.w ) * 0.5f : 20.f ) - size.y * 0.5f;
+	/* standalone corner, media player order: 0 tr 1 tl 2 tc 3 bc 4 bl 5 br 6 cl 7 cr. align 0 left 1 center 2 right */
+	const int position     = std::clamp( GET_VARIABLE( g_variables.m_points_position, int ), 0, 7 );
+	const int align        = !standalone ? 2 : position == 0 || position == 5 || position == 7 ? 2 : position == 1 || position == 4 || position == 6 ? 0 : 1;
+	const bool from_bottom = standalone && position >= 3 && position <= 5;
 
-	const float shift_x = ( right_of ? -offset : offset ) + GET_VARIABLE( g_variables.m_points_x_offset, float );
+	float x, y;
+	if ( standalone ) {
+		constexpr float k_margin = 8.f;
+		x = align == 0 ? k_margin : align == 1 ? ( g_ctx.m_width - size.x ) * 0.5f : g_ctx.m_width - k_margin - size.x;
+		y = from_bottom ? g_ctx.m_height - k_margin - size.y : position >= 6 ? ( g_ctx.m_height - size.y ) * 0.5f : k_margin;
+	} else {
+		x = screen ? g_ctx.m_width - 8.f - size.x : right_of ? box.z + k_gap : box.x - k_gap - size.x;
+		y = ( has_box && !screen ? ( box.y + box.w ) * 0.5f : 20.f ) - size.y * 0.5f;
+	}
+
+	/* slide out away from the anchor side: left anchored ( or right of the watermark ) slides left */
+	const float shift_x = ( right_of || align == 0 ? -offset : offset ) + GET_VARIABLE( g_variables.m_points_x_offset, float );
 	const float text_bottom = y + size.y + GET_VARIABLE( g_variables.m_points_y_offset, float );
 	x += shift_x;
 	y += drop + bob + GET_VARIABLE( g_variables.m_points_y_offset, float );
@@ -323,9 +337,10 @@ void points_draw( )
 		}
 		std::sort( order, order + count, [ & ]( const int a, const int b ) { return rows[ a ].order < rows[ b ].order; } );
 
-		/* under the watermark like the reference, right edge = watermark right ( pts left of it ) else the pts text */
+		/* under the watermark like the reference, right edge = watermark right ( pts left of it ) else the pts text.
+		   standalone: rows align with the pts text, bottom corners stack upward */
 		const bool under_box  = has_box && !screen;
-		const float right     = under_box && !right_of ? box.z + shift_x : x + size.x;
+		const float anchor    = under_box && !right_of ? box.z + shift_x : align == 0 ? x : align == 1 ? x + size.x * 0.5f : x + size.x;
 		float row_y           = text_bottom;
 		if ( under_box ) {
 			float box_bottom = box.w;
@@ -333,7 +348,7 @@ void points_draw( )
 				box_bottom = ( std::max )( box_bottom, gif.w );
 			row_y = ( std::max )( row_y, box_bottom + GET_VARIABLE( g_variables.m_points_y_offset, float ) );
 		}
-		row_y += 3.f;
+		row_y += from_bottom ? -( size.y + 3.f ) : 3.f;
 
 		const float group_alpha = fading || revealing ? alpha : 1.f;
 		const float row_size    = GET_VARIABLE( g_variables.m_points_big_font, bool ) ? font_size * 0.72f : font_size;
@@ -362,8 +377,10 @@ void points_draw( )
 			const float mult_w     = mult.empty( ) ? 0.f : font->CalcTextSizeA( mult_size, FLT_MAX, 0.f, mult.c_str( ) ).x + space;
 			const float gain_w     = font->CalcTextSizeA( row_size, FLT_MAX, 0.f, gain.c_str( ) ).x;
 
-			float rx       = std::floor( right - ( name_size.x + space + mult_w + gain_w ) + ( 1.f - t ) * 12.f );
-			const float ry = std::floor( row_y );
+			const float row_w = name_size.x + space + mult_w + gain_w;
+			const float slide = ( 1.f - t ) * 12.f;
+			float rx          = std::floor( align == 0 ? anchor - slide : ( align == 1 ? anchor - row_w * 0.5f : anchor - row_w ) + slide );
+			const float ry    = std::floor( from_bottom ? row_y - name_size.y : row_y );
 
 			put( k_row_names[ i ], rx, ry, row_size, white( 255.f ), accent_row( 150.f ) );
 			rx += name_size.x + space;
@@ -373,7 +390,7 @@ void points_draw( )
 			}
 			put( gain.c_str( ), rx, ry, row_size, accent_row( 255.f ), tint( 0, 0, 0, 150.f ) );
 
-			row_y += name_size.y + 1.f;
+			row_y += from_bottom ? -( name_size.y + 1.f ) : name_size.y + 1.f;
 		}
 	}
 

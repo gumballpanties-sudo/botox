@@ -22,6 +22,7 @@
 #include "../visuals/players/esp_preview.h"
 
 #include "lua_api.h"
+#include "lua_image.h"
 
 using n_lua::element_t;
 using n_lua::script_t;
@@ -34,6 +35,7 @@ namespace
 	constexpr const char* k_cmd_meta     = "botox.cmd";
 	constexpr const char* k_event_meta   = "botox.event";
 	constexpr const char* k_model_meta   = "botox.model";
+	constexpr const char* k_image_meta   = "botox.image";
 
 	struct element_ref_t {
 		int m_index;
@@ -742,6 +744,90 @@ namespace
 
 		lua_pushnumber( L, screen.m_x );
 		lua_pushnumber( L, screen.m_y );
+		return 2;
+	}
+
+	/* ---- images: load_image reads the header only ( lua_image.h ), the render thread decodes on the first draw
+	   ( n_misc::lua_image_frame ). uservalue 1 = "path|stamp": a new stamp = the file changed on disk ---- */
+
+	constexpr int k_image_max_side = 4096;
+
+	struct image_ref_t {
+		int m_width;
+		int m_height;
+	};
+
+	const image_ref_t* check_image( lua_State* L )
+	{
+		return static_cast< const image_ref_t* >( luaL_checkudata( L, 1, k_image_meta ) );
+	}
+
+	int l_render_load_image( lua_State* L )
+	{
+		const std::string name = luaL_checkstring( L, 1 );
+		const bool absolute    = ( name.size( ) > 1 && name[ 1 ] == ':' ) || name.starts_with( "\\\\" );
+		const std::string path = absolute ? name : g_lua.folder( ).string( ) + "\\images\\" + name;
+
+		int width = 0, height = 0;
+		std::uint64_t stamp = 0;
+		const char* why     = n_lua_image::probe( path.c_str( ), width, height, stamp );
+		std::string error   = why ? why : "";
+		if ( error.empty( ) && ( width > k_image_max_side || height > k_image_max_side ) )
+			error = std::format( "{}x{}, max {} px a side", width, height, k_image_max_side );
+
+		if ( !error.empty( ) ) {
+			lua_pushnil( L );
+			lua_pushstring( L, std::format( "render.load_image: {}: {}", path, error ).c_str( ) );
+			return 2;
+		}
+
+		auto* image     = static_cast< image_ref_t* >( lua_newuserdatauv( L, sizeof( image_ref_t ), 1 ) );
+		image->m_width  = width;
+		image->m_height = height;
+		lua_pushstring( L, std::format( "{}|{:x}", path, stamp ).c_str( ) );
+		lua_setiuservalue( L, -2, 1 );
+		luaL_setmetatable( L, k_image_meta );
+		return 1;
+	}
+
+	int l_render_image( lua_State* L )
+	{
+		require_paint( L );
+
+		const image_ref_t* image = check_image( L );
+		const float x = check_float( L, 2 ), y = check_float( L, 3 );
+		float w = opt_float( L, 4, 0.f ), h = opt_float( L, 5, 0.f );
+		if ( w <= 0.f && h <= 0.f ) {
+			w = static_cast< float >( image->m_width );
+			h = static_cast< float >( image->m_height );
+		} else if ( h <= 0.f )
+			h = w * static_cast< float >( image->m_height ) / static_cast< float >( image->m_width );
+		else if ( w <= 0.f )
+			w = h * static_cast< float >( image->m_width ) / static_cast< float >( image->m_height );
+
+		const unsigned int color = opt_color( L, 6 );
+		const float rounding     = opt_float( L, 7, 0.f );
+
+		lua_getiuservalue( L, 1, 1 );
+		const char* text = lua_tostring( L, -1 );
+		std::string key  = text ? text : "";
+		lua_pop( L, 1 );
+
+		g_render.m_draw_data.emplace_back(
+			e_draw_type::draw_type_callback,
+			std::make_any< callback_draw_object_t >( callback_draw_object_t{
+				[ key = std::move( key ), min = ImVec2( x, y ), max = ImVec2( x + w, y + h ), color, rounding ]( ImDrawList* draw_list ) {
+					if ( IDirect3DTexture9* const texture = n_misc::lua_image_frame( key ) )
+						draw_list->AddImageRounded( texture, min, max, ImVec2( 0.f, 0.f ), ImVec2( 1.f, 1.f ), color, rounding );
+				} } ) );
+		return 0;
+	}
+
+	int l_image_size( lua_State* L )
+	{
+		const image_ref_t* image = check_image( L );
+		lua_pushinteger( L, image->m_width );
+		lua_pushinteger( L, image->m_height );
 		return 2;
 	}
 
@@ -3418,8 +3504,13 @@ void n_lua_api::open( lua_State* L )
 		                                { "triangle", l_render_triangle },
 		                                { "poly", l_render_poly },
 		                                { "world_to_screen", l_render_world_to_screen },
+		                                { "load_image", l_render_load_image },
+		                                { "image", l_render_image },
 		                                { nullptr, nullptr } };
 	add_table( L, "render", render );
+
+	static const luaL_Reg image_methods[ ] = { { "size", l_image_size }, { nullptr, nullptr } };
+	new_meta( L, k_image_meta, image_methods, nullptr );
 
 	static const luaL_Reg entities[ ] = { { "local_player", l_entities_local },
 		                                  { "get", l_entities_get },

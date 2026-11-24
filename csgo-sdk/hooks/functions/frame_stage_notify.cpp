@@ -8,6 +8,7 @@
 #include "../../hacks/entity_cache/entity_cache.h"
 #include "../../hacks/lua/lua.h"
 #include "../../hacks/misc/misc.h"
+#include "../../hacks/misc/server_browser.h"
 #include "../../hacks/movement/edgebug.h"
 #include "../../hacks/movement/movement.h"
 #include "../../hacks/movement/movement_recorder.h"
@@ -51,6 +52,7 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 		Web_MainTick( );
 		discord_rpc_frame( );
 		g_old_mods.on_frame( );
+		g_server_browser.on_frame( );
 	}
 
 	if ( !g_interfaces.m_engine_client->is_connected_safe( ) ) {

@@ -2008,6 +2008,15 @@ namespace
 	std::vector< n_screen_image::image_t > screen_image_list{ };
 	std::string screen_image_synced = "\x01"; // never a saved value: the first call parses
 
+	/* lua render.image by "path|stamp" ( map nodes never move, same reason ). m_used = tick of the last draw */
+	struct lua_image_t {
+		file_image_t m_image{ };
+		ULONGLONG m_used = 0;
+		bool m_failed    = false;
+	};
+	std::map< std::string, lua_image_t > lua_image_cache{ };
+	ULONGLONG lua_image_swept = 0;
+
 	std::mutex url_image_mutex;
 	std::unordered_set< std::string > url_image_started;
 
@@ -3023,6 +3032,12 @@ void n_misc::impl_t::release_spectator_textures( const bool textures_only )
 
 	if ( !textures_only )
 		screen_image_cache.clear( );
+
+	for ( auto& [ key, entry ] : lua_image_cache )
+		release_file_image( entry.m_image, textures_only );
+
+	if ( !textures_only )
+		lua_image_cache.clear( );
 
 	if ( !textures_only && gdiplus_token ) {
 		Gdiplus::GdiplusShutdown( gdiplus_token );
@@ -7287,6 +7302,43 @@ void n_misc::screen_image_reload( const std::string& path )
 {
 	if ( const auto it = screen_image_cache.find( path ); it != screen_image_cache.end( ) )
 		release_file_image( it->second, false );
+}
+
+IDirect3DTexture9* n_misc::lua_image_frame( const std::string& key )
+{
+	lua_image_t* entry = nullptr;
+	try {
+		entry         = &lua_image_cache[ key ];
+		entry->m_used = GetTickCount64( );
+		return entry->m_failed ? nullptr : file_image_frame( entry->m_image, key.substr( 0, key.rfind( '|' ) ) );
+	} catch ( const std::bad_alloc& ) {
+		/* 32 bit address space ran out reading / decoding it: draw nothing, never retry this key */
+		if ( entry ) {
+			release_file_image( entry->m_image, false );
+			entry->m_failed = true;
+		}
+		return nullptr;
+	}
+}
+
+/* every frame ( on_end_scene ): a script never says it stopped drawing, so 10 s unused = freed ( unload, toggled off,
+   file changed = new stamp ). never one drawn this frame: m_used is now */
+void n_misc::lua_image_sweep( )
+{
+	const ULONGLONG now = GetTickCount64( );
+	if ( now - lua_image_swept < 1000 )
+		return;
+
+	lua_image_swept = now;
+	for ( auto it = lua_image_cache.begin( ); it != lua_image_cache.end( ); ) {
+		if ( now - it->second.m_used < 10000 ) {
+			++it;
+			continue;
+		}
+
+		release_file_image( it->second.m_image, false );
+		it = lua_image_cache.erase( it );
+	}
 }
 
 /* fpsoverlay image overlay: free spot or parked next to the watermark, both dragged with the menu open */

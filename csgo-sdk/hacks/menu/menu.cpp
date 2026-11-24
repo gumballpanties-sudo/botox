@@ -866,7 +866,7 @@ void n_menu::impl_t::on_end_scene( )
 
 		static const menu_tab_t tabs[ ] = {
 			{ "aimbot", { "main", "triggerbot" } }, { "visuals", { "esp", "world", "screen", "images" } }, { "movement", { "main", "indicators", "calculator", "recorder", "points" } },
-			{ "misc", { "main", "player list", "cvars" } },   { "inventory", { "weapons", "player" } }, { "fonts", { "indicators", "esp", "chud hud", "default hud", "net graph" } },
+			{ "misc", { "main", "player list", "cvars", "servers" } },   { "inventory", { "weapons", "player" } }, { "fonts", { "indicators", "esp", "chud hud", "default hud", "net graph" } },
 			{ "settings", { "main", "lua" } },
 		};
 
@@ -1173,7 +1173,7 @@ void n_menu::impl_t::search_page( )
 		std::vector< int > m_pages;
 	};
 
-	/* skipped: calculator, recorder, points, player list, cvars, lua = lists + previews, not rows */
+	/* skipped: calculator, recorder, points, player list, cvars, servers, lua = lists + previews, not rows */
 	static const search_tab_t tabs[ ] = {
 		{ "aimbot", 0, { 0, 1 } },     { "visuals", 1, { 0, 1, 2 } }, { "movement", 2, { 0, 1 } },        { "misc", 3, { 0 } },
 		{ "inventory", 4, { 0, 1 } }, { "fonts", 5, { 0, 1, 2, 3, 4 } }, { "settings", 6, { 0 } },
@@ -1360,6 +1360,7 @@ void n_menu::impl_t::tab_aimbot( )
 
 		ImGui::Checkbox( "silent aim", &GET_VARIABLE( g_variables.m_aimbot_silent, bool ) );
 		ImGui::SliderFloat( "silent aim step", &GET_VARIABLE( g_variables.m_aimbot_silent_step, float ), 0.f, 90.f, "%.0f deg" );
+		ImGui::SliderInt( "jumpshot apex wait", &GET_VARIABLE( g_variables.m_aimbot_air_wait, int ), 0, 400, "%d ms", ImGuiSliderFlags_AlwaysClamp );
 
 		ImGui::Checkbox( "camlock", &GET_VARIABLE( g_variables.m_aimbot_camlock, bool ) );
 		ImGui::Checkbox( "no target switching", &GET_VARIABLE( g_variables.m_aimbot_no_switch, bool ) );

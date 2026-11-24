@@ -622,6 +622,7 @@ namespace n_es
 	struct in_t {
 		float range = 96.f, reach = 6.f, turn = 0.f;
 		bool takeover = false; /* edgebug's option: only a pin START we never sent ( an eb end ) or our own chain */
+		bool eb_guide = false; /* edgebug's guide: one pin then the drop ( no ride, no lift ), never holds off or brakes ( H / V ) */
 	};
 	struct out_t {
 		bool own = false, pin = false;
@@ -929,6 +930,9 @@ namespace n_es
 		};
 		const auto let_go = [ & ]( const char w_ ) {
 			why = w_;
+			/* eb guide: never holds off */
+			if ( in.eb_guide )
+				return hands_off( );
 			/* in reach = beside: a ledge you are over with no plan was never ours, you land on it */
 			if ( !( e.mine || guarded || ( e.g > 0.f && e.g <= in.reach ) ) || e.riding || s.o.z <= f.top )
 				return hands_off( );
@@ -960,11 +964,11 @@ namespace n_es
 
 		if ( e.riding ) {
 			mv_t mv;
-			if ( find_pin( w, f, h, s, [ & ] { w.reset( ); }, e.u, mv ) )
+			if ( !in.eb_guide && find_pin( w, f, h, s, [ & ] { w.reset( ); }, e.u, mv ) )
 				return own( 'C', mv, true );
 			/* standing: an air duck lifts the feet 9 ( FinishDuck ), the fall back is a second arrival. the sim says if the engine lets the duck in.
 			   never on a prop: the 9u fall back steps < 2u, its over the top pin needs more */
-			if ( !s.duck && !vphys( f ) && w.sims_left( ) > 0 ) {
+			if ( !in.eb_guide && !s.duck && !vphys( f ) && w.sims_left( ) > 0 ) {
 				const mv_t up = press( w, f, e.cl, 0.f, true );
 				w.reset( );
 				const st_t e1   = w.sim( up );
@@ -986,6 +990,18 @@ namespace n_es
 			}
 			/* drop beside it: closing 0, unless that freezes ( a 1 ulp gap where hull centre + 16 crosses a power of two reads touching ) */
 			const auto fell = [ & ]( const st_t& q ) { return q.walk && !q.ground && q.o.z < s.o.z - 1e-3f; };
+			/* eb guide: a coast that falls keeps your speed ( a leaving eb ), else the drop */
+			if ( in.eb_guide && w.sims_left( ) > 0 ) {
+				mv_t cm;
+				cm.duck = s.duck;
+				w.reset( );
+				if ( fell( w.sim( cm ) ) ) {
+					why = 'c';
+					own( 'E', cm, false );
+					m.own = false;
+					return r;
+				}
+			}
 			mv_t dm = press( w, f, e.cl, 0.f, s.duck );
 			st_t q  = s;
 			if ( w.sims_left( ) > 0 ) {
@@ -1095,7 +1111,7 @@ namespace n_es
 			return own( e.act, mv, false );
 		mv = press( w, f, e.cl, 0.f, s.duck );
 		w.reset( );
-		if ( w.sims_left( ) > 0 && ok_end( w.sim( mv ) ) ) {
+		if ( !in.eb_guide && w.sims_left( ) > 0 && ok_end( w.sim( mv ) ) ) {
 			why = e.act;
 			return own( 'V', mv, false );
 		}

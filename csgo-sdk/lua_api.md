@@ -4,7 +4,7 @@ Lua 5.4.7 scripting for botox. Scripts can draw, read and change user commands, 
 
 - [Quick start](#quick-start)
 - [How scripts run](#how-scripts-run)
-- [callbacks](#callbacks) - [ui](#ui) - [render](#render) - [entities](#entities) - [entity](#entity)
+- [callbacks](#callbacks) - [ui](#ui) - [render](#render) - [image](#image) - [entities](#entities) - [entity](#entity)
 - [cmd](#cmd) - [event](#event) - [model](#model) - [engine](#engine) - [globals](#globals) - [cvar](#cvar) - [config](#config)
 - [trace](#trace) - [fx](#fx) - [input](#input) - [mem](#mem) - [client](#client) - [constants](#constants)
 - [Examples](#examples) - [Limits](#limits)
@@ -34,6 +34,7 @@ Files and folders:
 | --- | --- |
 | `C:\botox\lua\*.lua` | scripts, listed in the menu (top level only) |
 | `C:\botox\lua\lib\*.lua` | modules for `require( "name" )`, never listed as scripts |
+| `C:\botox\lua\images\` | pictures for [`render.load_image`](#renderload_imagefile) (png, jpg, gif, bmp), created on inject |
 | `C:\botox\lua\settings\<script>.json` | saved ui values, keyed by element label |
 | `C:\botox\lua\autoload.txt` | scripts that were loaded last time, loaded again on inject |
 
@@ -208,6 +209,32 @@ Vertical gradient.
 #### `render.world_to_screen(x, y, z)`
 
 Returns `screen_x, screen_y`, or `nil` when the point is behind the camera.
+
+#### `render.load_image(file)`
+
+Works anywhere. `file` = a png, jpg, gif or bmp in `C:\botox\lua\images\` (`"logo.png"`, subfolders too: `"icons\\skull.gif"`), or a full path (`"D:\\pics\\cat.png"`). Returns an [image](#image), or `nil, error` (no such file, other format, bigger than 4096 px a side, file over 32 MB). Plain ASCII file names.
+
+Only the file header is read here. The picture itself is decoded the first time it is drawn (a big one can hitch that frame) and freed 10 s after its last draw. A file with a good header but broken pixels (cut short, still being written) draws nothing or a cut picture. Load once (top level, or when the name changes), not every frame. Changed the file on disk? Call `load_image` again (or reload the script) to see the new one.
+
+#### `render.image(image, x, y, w, h, color, rounding)`
+
+Draws `image` with its top left corner at `x, y`. `w, h` left out = the file's own size. Only `w` (or `h = 0`) = the other one keeps the aspect ratio, same for only `h` (`w = 0`). `color` tints and fades: default white = as is, `color(255, 255, 255, 128)` = half see-through. `rounding` = corner radius, default `0`. Animated gifs play on their own.
+
+### image
+
+#### `image:size()`
+
+Returns `width, height` in px, the file's own size. Works anywhere.
+
+```lua
+local logo = render.load_image("logo.png")
+
+callbacks.register("paint", function()
+    if logo then
+        render.image(logo, 20, 20, 128)   -- 128 px wide, height keeps the aspect
+    end
+end)
+```
 
 ---
 
@@ -889,6 +916,7 @@ Full scripts in [lua_examples/](lua_examples/), copy them into `C:\botox\lua\`:
 | file | shows |
 | --- | --- |
 | [watermark.lua](lua_examples/watermark.lua) | paint, text_size, ui color / slider, latency |
+| [image.lua](lua_examples/image.lua) | render.load_image + render.image: a picture from `lua\images\` in a corner, scale / opacity / rounding, ui.input file name, ui.text status |
 | [speed.lua](lua_examples/speed.lua) | local player velocity, keybind, indicator font |
 | [box_esp.lua](lua_examples/box_esp.lua) | entities.players, world_to_screen, mins_maxs, combo |
 | [slow_walk.lua](lua_examples/slow_walk.lua) | create_move cmd editing with a keybind |

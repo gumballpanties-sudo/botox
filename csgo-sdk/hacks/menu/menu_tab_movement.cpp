@@ -540,6 +540,8 @@ void n_menu::impl_t::tab_movement( )
 									ImGui::SliderInt( "refine steps##ebrefsteps", &GET_VARIABLE( g_variables.m_edgebug_refine_steps, int ), 1, 12 );
 								ImGui::Checkbox( "path bend##ebbend", &GET_VARIABLE( g_variables.m_edgebug_path_bend, bool ) );
 								ImGui::Checkbox( "ebanat shapes##ebshapes", &GET_VARIABLE( g_variables.m_edgebug_ebanat_shapes, bool ) );
+								/* no plan held: edge surf's controller guides you onto a ledge for one pin, the search runs when it lets go */
+								ImGui::Checkbox( "edge surf guide##ebesguide", &GET_VARIABLE( g_variables.m_edgebug_edge_surf_guide, bool ) );
 							}
 							ImGui::Checkbox( "duck timing##ebducktiming", &GET_VARIABLE( g_variables.m_edgebug_duck_timing, bool ) );
 							if ( GET_VARIABLE( g_variables.m_edgebug_duck_timing, bool ) )
@@ -548,8 +550,10 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::SliderFloat( "search effort##ebeffort", &GET_VARIABLE( g_variables.m_edgebug_search_effort, float ), 0.25f, 3.f, "%.2fx" );
 
 							ImGui::Checkbox( "mouse steer##ebsteer", &GET_VARIABLE( g_variables.m_edgebug_mouse_steer, bool ) );
-							if ( GET_VARIABLE( g_variables.m_edgebug_mouse_steer, bool ) )
+							if ( GET_VARIABLE( g_variables.m_edgebug_mouse_steer, bool ) ) {
 								ImGui::SliderInt( "paths##ebpaths", &GET_VARIABLE( g_variables.m_edgebug_paths, int ), 1, 8 );
+								ImGui::Checkbox( "prevent changing stance##ebkeepst", &GET_VARIABLE( g_variables.m_edgebug_steer_keep_stance, bool ) );
+							}
 						}
 
 						if ( style < 3 )

@@ -97,7 +97,8 @@ void n_edge_catch::impl_t::pre( c_user_cmd* cmd )
 	}
 	/* airborne rise after a fall = jumpbug / bounce: that floor is the new takeoff ( rising search would pull you back onto it ) */
 	float jb_z = 0.f;
-	if ( air && m_yaw_valid && m_start_vel.m_z > 0.f && m_prev_vz <= 0.f && floor_under( local->get_origin( ), ( m_start_flags & fl_ducking ) != 0, jb_z ) ) {
+	m_rose     = air && m_yaw_valid && m_start_vel.m_z > 0.f && m_prev_vz <= 0.f;
+	if ( m_rose && floor_under( local->get_origin( ), ( m_start_flags & fl_ducking ) != 0, jb_z ) ) {
 		m_takeoff_z  = jb_z;
 		m_had_ground = true;
 	}
@@ -300,6 +301,73 @@ bool n_edge_catch::impl_t::live_jb( c_user_cmd* cmd )
 	return ok;
 }
 
+/* rest of the plan from the exact START, this cmd's keys on the unstrafed ticks ( as search ): lands on the lip = keep, landing tick
+   moves with it ( live jb crouch follows ), else drop + same-tick re-search. budget cut = old 1 u rule. 11-24 log: sub 1 u drift lost 2
+   catches the old dist > 1 drop never saw ( 1 eb on the lip, 1 fell past 0.84 u over it ), a 1.14 u drop's re-search needed 4 strafes
+   not 2, 2 drops landed anyway */
+bool n_edge_catch::impl_t::recheck( c_user_cmd* cmd )
+{
+	const auto local = g_ctx.m_local;
+	bounds_guard_t bounds_guard;
+	m_budget.start( 0.25f, n_tick::engine_interval( ), n_tick::search_ec );
+	m_sims                 = 0;
+	m_view                 = cmd->m_view_point;
+	m_fwd0                 = cmd->m_forward_move;
+	m_side0                = cmd->m_side_move;
+	const int buttons_live = cmd->m_buttons;
+	m_buttons0             = m_jb_stamp ? buttons_live & ~in_duck : buttons_live;
+	restore_start( );
+	m_tick_base0     = local->get_tick_base( );
+	const c_vector d = local->get_origin( ) - m_plan[ m_hit ].origin;
+	int left         = 0;
+	for ( int i = m_hit; i <= m_last; i++ )
+		left += m_plan[ i ].strafe ? 1 : 0;
+	int land  = -1; /* -2 = landed under the lip */
+	bool cut  = false;
+	for ( int i = m_hit; i < k_max_ticks && i <= m_last + 3; i++ ) {
+		if ( out( ) ) {
+			cut = true;
+			break;
+		}
+		/* past the plan = your keys, a duck plan keeps holding duck ( chain ducks every tick ) */
+		if ( i > m_last ) {
+			m_plan[ i ]      = tick_t{ };
+			m_plan[ i ].duck = m_plan[ m_last ].duck;
+		}
+		m_plan[ i ].origin = local->get_origin( );
+		sim( cmd, i - m_hit, m_plan[ i ], m_buttons0 );
+		if ( landed( ) ) {
+			land = local->get_origin( ).m_z >= m_ground_z - 2.f ? i : -2;
+			break;
+		}
+		if ( local->get_move_type( ) != move_type_walk || ( local->get_origin( ).m_z + 9.f < m_ground_z - 2.f && local->get_velocity( ).m_z <= 0.f ) )
+			break;
+	}
+	const c_vector end = local->get_origin( );
+	const float end_vz = local->get_velocity( ).m_z;
+	cmd->m_view_point       = m_view;
+	cmd->m_forward_move     = m_fwd0;
+	cmd->m_side_move        = m_side0;
+	cmd->m_buttons          = buttons_live;
+	local->get_tick_base( ) = m_tick_base0;
+	restore_start( );
+	if ( land >= 0 ) {
+		m_last     = land;
+		m_land_pos = end;
+		for ( int i = m_hit; i <= m_last; i++ )
+			m_viz[ i ] = m_plan[ i ].origin;
+		m_viz[ m_last + 1 ] = m_land_pos;
+		return true;
+	}
+	/* cut ( cmd clock spent by earlier searches ) = old rule, 1 u drift drops */
+	if ( cut && d.length( ) <= 1.f )
+		return true;
+	/* rz / rvz = where the replay stopped: rvz ~ -6 at gz = eb, low = landed under the lip */
+	botox_dbg_log( "EC: drop at %d/%d dist=%.3f dz=%.3f dxy=%.3f left=%d jb=%d sims=%d rz=%.2f rvz=%.2f low=%d cut=%d\n", m_hit, m_last, d.length( ), d.m_z,
+	               d.length_2d( ), left, m_jb_plan ? 1 : 0, m_sims, end.m_z, end_vz, land == -2 ? 1 : 0, cut ? 1 : 0 );
+	return false;
+}
+
 /* strafe ticks [ 0, prefix ) at the perfect angle, your keys after. save = full chain, slot base + k + 1 = START of tick k + 1,
    m_seed = its ticks ( a prefix chain starts mid-plan, ticks below prefix come from there ).
    0 = no landing on the lip, 2 = lands ( jb bind off / jb fires there ), 1 = lands but the jb can't fire = plain landing fallback */
@@ -314,6 +382,10 @@ int n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool n
 		std::copy_n( m_seed[ side ], prefix, m_plan );
 		k = prefix;
 	}
+	/* prefix chain, jb bind: START of a tick that can land kept in slot 61, jb_works loads it instead of replaying prefix..k
+	   ( 11-24 log: 12/22 searches cut by the clock ) */
+	int jb_from = prefix, jb_base = base;
+	const float dt = n_tick::engine_interval( );
 	m_chains++;
 	for ( ; k < m_max_ticks; k++ ) {
 		if ( out( ) )
@@ -332,6 +404,9 @@ int n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool n
 		}
 		if ( save && k < k_max_snap )
 			m_seed[ side ][ k ] = t;
+		if ( m_jb && !save && k > prefix && t.origin.m_z + std::min( local->get_velocity( ).m_z, 0.f ) * dt <= m_ground_z + 4.f &&
+		     g_prediction.snapshot_save( k_jb_slot ) )
+			jb_from = k, jb_base = k_jb_slot - k;
 		sim( cmd, k, t, m_buttons0 );
 		if ( save && k + 1 <= k_max_snap && g_prediction.snapshot_save( base + k + 1 ) )
 			m_saved[ side ] = k + 1;
@@ -341,7 +416,7 @@ int n_edge_catch::impl_t::chain( c_user_cmd* cmd, const int prefix, const bool n
 			m_last     = k;
 			m_land_pos = local->get_origin( );
 			m_jb_plan  = false;
-			return !m_jb || jb_works( cmd, k, save ? std::min( k, m_saved[ side ] ) : prefix, base ) ? 2 : 1;
+			return !m_jb || jb_works( cmd, k, save ? std::min( k, m_saved[ side ] ) : jb_from, save ? base : jb_base ) ? 2 : 1;
 		}
 		if ( local->get_move_type( ) != move_type_walk )
 			return 0;
@@ -605,6 +680,11 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 		reset( );
 		return;
 	}
+	/* a jb never has a grounded START: first rise after a drop = its outcome */
+	if ( m_dropped && m_rose ) {
+		botox_dbg_log( "EC: after drop jb vz=%.2f\n", m_start_vel.m_z );
+		m_dropped = false;
+	}
 	if ( m_active ) {
 		/* backup_data origin = abs origin = render interp, lags a falling player up to 2 ticks ( 11-12 log: drop dist=7.6 at
 		   vz -223 = 2 ticks of fall ). the plan compares against the predicted START, same as edge skip */
@@ -620,15 +700,10 @@ void n_edge_catch::impl_t::post( c_user_cmd* cmd )
 			m_jb_out = true;
 			return;
 		} else if ( m_hit > m_last ) {
-			botox_dbg_log( "EC: missed spent=%d z=%.2f gz=%.2f\n", m_last, clean.m_z, m_ground_z );
+			/* recheck passed ( or was cut ) every tick: vz ~ -6 at gz = sim vs engine on an eb pixel, not drift */
+			botox_dbg_log( "EC: missed spent=%d z=%.2f gz=%.2f vz=%.2f\n", m_last, clean.m_z, m_ground_z, local->get_velocity( ).m_z );
 			reset( );
-		} else if ( const float dist = clean.dist_to( m_plan[ m_hit ].origin ); dist > 1.f ) {
-			int left = 0;
-			for ( int i = m_hit; i <= m_last; i++ )
-				left += m_plan[ i ].strafe ? 1 : 0;
-			const c_vector d = clean - m_plan[ m_hit ].origin;
-			botox_dbg_log( "EC: drop at %d/%d dist=%.3f dz=%.3f dxy=%.3f interp=%.3f left=%d jb=%d\n", m_hit, m_last, dist, d.m_z, d.length_2d( ),
-			               start.dist_to( m_plan[ m_hit ].origin ), left, m_jb_plan ? 1 : 0 );
+		} else if ( !recheck( cmd ) ) {
 			m_dropped = true;
 			m_drop_gz = m_ground_z;
 			reset( );

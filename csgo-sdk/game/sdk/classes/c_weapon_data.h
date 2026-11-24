@@ -51,8 +51,9 @@ public:
 	float m_spread[ 2 ];                    
 	float m_inaccuracy_crouch[ 2 ];         
 	float m_inaccuracy_stand[ 2 ];          
-	float m_inaccuracy_unknown;
+	/* supremacy 2019-20 order: initial, apex. items_game awp 172.86 / 0, deagle 548.82 / 331.55 */
 	float m_inaccuracy_jump_initial;
+	float m_inaccuracy_jump_apex;
 	float m_inaccuracy_jump[ 2 ];
 	float m_inaccuracy_land[ 2 ];           
 	float m_inaccuracy_ladder[ 2 ];         

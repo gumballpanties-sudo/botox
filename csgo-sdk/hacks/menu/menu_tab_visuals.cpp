@@ -802,39 +802,45 @@ void n_menu::impl_t::tab_visuals( )
 			}
 
 			ImGui::Checkbox( "precipitation", &GET_VARIABLE( g_variables.m_precipitation, bool ) );
-			if ( GET_VARIABLE( g_variables.m_precipitation, bool ) )
-				ImGui::Combo( "type##precipitation", &GET_VARIABLE( g_variables.m_precipitation_type, int ), "rain\0ash\0rain storm\0snow\0clipart\0" );
-			if ( GET_VARIABLE( g_variables.m_precipitation, bool ) && GET_VARIABLE( g_variables.m_precipitation_type, int ) == k_precip_clipart ) {
-				ImGui::Combo( "shape##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_shape, int ), n_particle_shape::k_names );
-				const int color_mode = GET_VARIABLE( g_variables.m_precipitation_clipart_color_mode, int );
-				ImGui::Combo( "color mode##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_color_mode, int ), "single\0multicolor\0rainbow\0" );
-				c_color& clipart_color = GET_VARIABLE( g_variables.m_precipitation_clipart_color, c_color );
-				if ( !color_mode )
-					ImGui::ColorEdit4( "color##clipart", &clipart_color, color_picker_alpha_flags );
-				else {
-					// hue comes from the mode, picker alpha still applies
-					int alpha = clipart_color[ 3 ];
-					if ( ImGui::SliderInt( "alpha##clipart", &alpha, 0, 255, "%d", ImGuiSliderFlags_AlwaysClamp ) )
-						clipart_color[ 3 ] = static_cast< std::uint8_t >( alpha );
-					ImGui::SliderFloat( "saturation##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_saturation, float ), 0.f, 1.f, "%.2f" );
-				}
-				if ( color_mode == 2 )
-					ImGui::SliderFloat( "rainbow speed##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_rainbow_speed, float ), 0.01f, 2.f, "%.2f" );
-				ImGui::Combo( "glow##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_glow, int ), "off\0glyph color\0custom\0" );
-				if ( GET_VARIABLE( g_variables.m_precipitation_clipart_glow, int ) == 2 )
-					ImGui::ColorEdit4( "glow color##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_glow_color, c_color ), color_picker_alpha_flags );
-				ImGui::SliderInt( "density##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_density, int ), 10, 3000 );
-				ImGui::SliderFloat( "fall speed##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_speed, float ), 10.f, 600.f, "%.0f u/s" );
-				ImGui::SliderFloat( "size##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_size, float ), 0.5f, 16.f, "%.1f" );
-				ImGui::SliderFloat( "spin##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_spin, float ), 0.f, 3.f, "%.2f rev/s" );
-				// spin = tumble speed here: glyphs are flat planes turning in 3d, they settle flat on what they land on
-				ImGui::Checkbox( "3d rotation##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_3d, bool ) );
-				ImGui::SliderFloat( "sway##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_sway, float ), 0.f, 48.f, "%.0f u" );
-				ImGui::SliderFloat( "wind##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_wind, float ), 0.f, 400.f, "%.0f u/s" );
-				if ( GET_VARIABLE( g_variables.m_precipitation_clipart_wind, float ) > 0.f )
-					ImGui::SliderFloat( "wind direction##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_wind_yaw, float ), 0.f, 360.f, "%.0f deg" );
-				ImGui::SliderFloat( "area##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_radius, float ), 200.f, 4000.f, "%.0f u" );
-				ImGui::SliderFloat( "ground time##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_ground_time, float ), 0.f, 20.f, "%.1f s" );
+			if ( GET_VARIABLE( g_variables.m_precipitation, bool ) ) {
+				ImGui::OptionPopup(
+					"precipitation settings##precipitation settings",
+					[ & ]( ) {
+						ImGui::Combo( "type##precipitation", &GET_VARIABLE( g_variables.m_precipitation_type, int ), "rain\0ash\0rain storm\0snow\0clipart\0" );
+						if ( GET_VARIABLE( g_variables.m_precipitation_type, int ) != k_precip_clipart )
+							return;
+						ImGui::Combo( "shape##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_shape, int ), n_particle_shape::k_names );
+						const int color_mode = GET_VARIABLE( g_variables.m_precipitation_clipart_color_mode, int );
+						ImGui::Combo( "color mode##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_color_mode, int ), "single\0multicolor\0rainbow\0" );
+						c_color& clipart_color = GET_VARIABLE( g_variables.m_precipitation_clipart_color, c_color );
+						if ( !color_mode )
+							ImGui::ColorEdit4( "color##clipart", &clipart_color, color_picker_alpha_flags );
+						else {
+							// hue comes from the mode, picker alpha still applies
+							int alpha = clipart_color[ 3 ];
+							if ( ImGui::SliderInt( "alpha##clipart", &alpha, 0, 255, "%d", ImGuiSliderFlags_AlwaysClamp ) )
+								clipart_color[ 3 ] = static_cast< std::uint8_t >( alpha );
+							ImGui::SliderFloat( "saturation##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_saturation, float ), 0.f, 1.f, "%.2f" );
+						}
+						if ( color_mode == 2 )
+							ImGui::SliderFloat( "rainbow speed##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_rainbow_speed, float ), 0.01f, 2.f, "%.2f" );
+						ImGui::Combo( "glow##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_glow, int ), "off\0glyph color\0custom\0" );
+						if ( GET_VARIABLE( g_variables.m_precipitation_clipart_glow, int ) == 2 )
+							ImGui::ColorEdit4( "glow color##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_glow_color, c_color ), color_picker_alpha_flags );
+						ImGui::SliderInt( "density##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_density, int ), 10, 3000 );
+						ImGui::SliderFloat( "fall speed##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_speed, float ), 10.f, 600.f, "%.0f u/s" );
+						ImGui::SliderFloat( "size##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_size, float ), 0.5f, 16.f, "%.1f" );
+						ImGui::SliderFloat( "spin##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_spin, float ), 0.f, 3.f, "%.2f rev/s" );
+						// spin = tumble speed here: glyphs are flat planes turning in 3d, they settle flat on what they land on
+						ImGui::Checkbox( "3d rotation##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_3d, bool ) );
+						ImGui::SliderFloat( "sway##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_sway, float ), 0.f, 48.f, "%.0f u" );
+						ImGui::SliderFloat( "wind##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_wind, float ), 0.f, 400.f, "%.0f u/s" );
+						if ( GET_VARIABLE( g_variables.m_precipitation_clipart_wind, float ) > 0.f )
+							ImGui::SliderFloat( "wind direction##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_wind_yaw, float ), 0.f, 360.f, "%.0f deg" );
+						ImGui::SliderFloat( "area##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_radius, float ), 200.f, 4000.f, "%.0f u" );
+						ImGui::SliderFloat( "ground time##clipart", &GET_VARIABLE( g_variables.m_precipitation_clipart_ground_time, float ), 0.f, 20.f, "%.1f s" );
+					},
+					ImVec2( 220.f, -1.f ) );
 			}
 
 			{

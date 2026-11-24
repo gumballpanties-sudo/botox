@@ -4,6 +4,7 @@
 #include "../misc/minesweeper.h"
 #include "../misc/names_pure.h"
 #include "../misc/particle_shapes.h"
+#include "../misc/server_browser.h"
 #include "../misc/hud_font/hud_font.h"
 #include "../network/botox_net.h"
 #include "../../game/sdk/includes/includes.h"
@@ -1267,6 +1268,207 @@ void n_menu::impl_t::cvars_page( )
 		n_misc::exec_cvars( );
 }
 
+/* this game version on both csgo app ids, vac hidden while insecure ( server_browser.cpp ); double click or join = connect on the
+   main thread */
+void n_menu::impl_t::servers_page( )
+{
+	using n_server_browser::server_t;
+
+	static std::vector< server_t > servers;
+	static n_server_browser::status_t status;
+	static unsigned generation = 0;
+	static std::vector< int > rows;
+	static ImGuiTextFilter filter;
+	static bool cybershoke_only = false, hide_full = false, asked = false, stale = false;
+	static int hidden = 0, other_app = 0;
+	static std::string selected;
+	static double copied_at = -1.0;
+
+	if ( !asked ) {
+		asked = true;
+		g_server_browser.refresh( );
+	}
+
+	/* a running refresh bumps the list per reply: copy 4x a second, not every frame. stale survives a clipped child */
+	const double now = ImGui::GetTime( );
+	if ( ( !status.m_refreshing || now - copied_at > 0.25 ) && g_server_browser.snapshot( servers, status, generation ) ) {
+		copied_at = now;
+		stale     = true;
+	}
+
+	/* same row as cvars_page: custom InputText only narrows inside a table cell, pushes itself 10 px down */
+	constexpr float k_frame = 17.f, k_input_lift = 10.f, k_side = 66.f;
+	const float spacing = ImGui::GetStyle( ).WindowPadding.x;
+	bool join           = false;
+
+	if ( ImGui::BeginChild( "servers", ImVec2( 0.f, -menu_bottom_band_height ), true, 0, true ) ) {
+		const float top = ImGui::GetCursorPosY( );
+
+		ImGui::PushStyleVar( ImGuiStyleVar_CellPadding, ImVec2( ImGui::GetStyle( ).CellPadding.x, 0.f ) );
+		const bool open = ImGui::BeginTable( "##server search", 2 );
+		ImGui::PopStyleVar( );
+		if ( open ) {
+			ImGui::TableSetupColumn( "##text", ImGuiTableColumnFlags_WidthStretch );
+			ImGui::TableSetupColumn( "##side", ImGuiTableColumnFlags_WidthFixed, k_side );
+			ImGui::TableNextRow( ImGuiTableRowFlags_None, k_frame );
+			ImGui::TableNextColumn( );
+			ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) - k_input_lift );
+			if ( ImGui::InputTextWithHint( "##server filter", "filter name / map", filter.InputBuf, IM_ARRAYSIZE( filter.InputBuf ) ) ) {
+				filter.Build( );
+				stale = true;
+			}
+			ImGui::TableNextColumn( );
+			ImGui::SetCursorPosY( ImGui::GetCursorPosY( ) + 2.f );
+			if ( ImGui::Button( "refresh", ImVec2( -1.f, k_frame - 4.f ) ) )
+				g_server_browser.refresh( );
+			ImGui::EndTable( );
+		}
+
+		const float line_y = top + k_frame + spacing;
+		ImGui::SetCursorPosY( line_y );
+		const ImVec2 line = ImGui::GetCursorScreenPos( );
+		ImGui::GetWindowDrawList( )->AddLine( line, ImVec2( line.x + ImGui::GetContentRegionAvail( ).x, line.y ),
+		                                      ImGui::GetColorU32( ImGuiCol_Separator ) );
+		ImGui::SetCursorPosY( line_y + 1.f + spacing );
+
+		stale |= ImGui::Checkbox( "cybershoke only", &cybershoke_only );
+		ImGui::SameLine( 0.f, 12.f );
+		stale |= ImGui::Checkbox( "hide full", &hide_full );
+
+		if ( stale ) {
+			stale = false;
+			rows.clear( );
+			hidden = other_app = 0;
+			bool kept = false;
+			for ( int i = 0; i < static_cast< int >( servers.size( ) ); i++ ) {
+				const server_t& server = servers[ i ];
+				/* one string: a "-word" exclude must hit name and map together */
+				if ( ( cybershoke_only && !server.m_cybershoke ) || !filter.PassFilter( ( server.m_name + ' ' + server.m_map ).c_str( ) ) )
+					continue;
+				/* full = no free slot for a human: bots give theirs up */
+				if ( hide_full && server.m_max_players > 0 && server.m_players - server.m_bots >= server.m_max_players )
+					continue;
+				if ( server.m_secure && !status.m_secure_allowed ) {
+					hidden++;
+					continue;
+				}
+				rows.push_back( i );
+				kept |= server.m_address == selected;
+				other_app += server.m_app_id != status.m_app_id;
+			}
+			if ( !kept )
+				selected.clear( ); /* join must never hit a row the list doesn't show */
+
+			const auto humans = []( const server_t& server ) { return ImMax( server.m_players - server.m_bots, 0 ); };
+			std::sort( rows.begin( ), rows.end( ), [ & ]( const int a, const int b ) {
+				const server_t &l = servers[ a ], &r = servers[ b ];
+				const bool l_own = l.m_app_id == status.m_app_id, r_own = r.m_app_id == status.m_app_id;
+				if ( l_own != r_own )
+					return l_own;
+				if ( humans( l ) != humans( r ) )
+					return humans( l ) > humans( r );
+				if ( l.m_ping != r.m_ping )
+					return l.m_ping < r.m_ping;
+				return l.m_name < r.m_name;
+			} );
+		}
+
+		if ( status.m_no_steam )
+			ImGui::TextDisabled( "steam server list unavailable" );
+		else
+			ImGui::TextDisabled( "%s", std::format( "{} servers{}   {}{}{}", rows.size( ), status.m_refreshing ? "   searching..." : "",
+			                                        status.m_version.empty( ) ? "any version" : status.m_version,
+			                                        status.m_secure_allowed ? std::string( ) : std::format( "   {} vac hidden ( insecure )", hidden ),
+			                                        other_app ? "   dim = other csgo app" : "" )
+			                                   .c_str( ) );
+
+		/* no ScrollY table: its inner child is a fork BeginChild = name drawn as a title. headers sit above a plain
+		   scroll child; both tables leave the scrollbar's width free so they line up with or without it */
+		constexpr float k_scrollbar = 12.f; /* menu-wide 8 = 2 px grab after the fork's 3 px inset, unseen on a long list */
+		const float map_width = ImGui::CalcTextSize( "de_mirage_xxxx" ).x, players_width = ImGui::CalcTextSize( "players" ).x + 8.f,
+		            ping_width = ImGui::CalcTextSize( "ping" ).x + 8.f;
+		const auto setup_columns = [ & ]( ) {
+			ImGui::TableSetupColumn( "name", ImGuiTableColumnFlags_WidthStretch );
+			ImGui::TableSetupColumn( "map", ImGuiTableColumnFlags_WidthFixed, map_width );
+			ImGui::TableSetupColumn( "players", ImGuiTableColumnFlags_WidthFixed, players_width );
+			ImGui::TableSetupColumn( "ping", ImGuiTableColumnFlags_WidthFixed, ping_width );
+		};
+
+		if ( ImGui::BeginTable( "##server head", 4, ImGuiTableFlags_SizingFixedFit, ImVec2( ImGui::GetContentRegionAvail( ).x - k_scrollbar, 0.f ) ) ) {
+			setup_columns( );
+			ImGui::TableNextRow( );
+			for ( int column = 0; column < 4; column++ ) {
+				ImGui::TableSetColumnIndex( column );
+				ImGui::Label( "%s", ImGui::TableGetColumnName( column ) );
+			}
+			ImGui::EndTable( );
+		}
+
+		/* bottom = join: standard 15 px button, frame 19 ( cvars_page execute ). scrollbar style is read inside Begin, pop right after */
+		ImGui::PushStyleVar( ImGuiStyleVar_ScrollbarSize, k_scrollbar );
+		ImGui::PushStyleVar( ImGuiStyleVar_GrabMinSize, 20.f );
+		const bool rows_open = ImGui::BeginChild( "##server rows", ImVec2( 0.f, -( 15.f + 4.f + spacing ) ), false, 0, false );
+		ImGui::PopStyleVar( 2 );
+		if ( rows_open ) {
+			if ( rows.empty( ) )
+				ImGui::TextDisabled( status.m_refreshing ? "searching..." : "no servers" );
+			else if ( ImGui::BeginTable( "##server list", 4, ImGuiTableFlags_SizingFixedFit, ImVec2( ImGui::GetWindowWidth( ) - k_scrollbar, 0.f ) ) ) {
+				setup_columns( );
+
+				ImGuiListClipper clipper;
+				clipper.Begin( static_cast< int >( rows.size( ) ) );
+				while ( clipper.Step( ) ) {
+					for ( int row = clipper.DisplayStart; row < clipper.DisplayEnd; row++ ) {
+						const server_t& server = servers[ rows[ row ] ];
+
+						/* hostname is the imgui label: defuse "##", id = address ( stable across re-sorts, the fork's
+						   Selectable keeps 2 never-freed animation slots per id ) */
+						std::string label = server.m_password ? "(pw) " + server.m_name : server.m_name;
+						for ( std::size_t at; ( at = label.find( "##" ) ) != std::string::npos; )
+							label.replace( at, 2, "# " );
+						label += "###" + server.m_address;
+
+						/* registered under the other csgo app id: listed, but its server may reject this client's ticket */
+						const bool other = server.m_app_id != status.m_app_id;
+						if ( other )
+							ImGui::PushStyleColor( ImGuiCol_Text, ImGui::GetStyleColorVec4( ImGuiCol_TextDisabled ) );
+
+						ImGui::TableNextRow( );
+						ImGui::TableNextColumn( );
+						/* double click joins only the row the first click picked: the list re-sorts under the cursor while it loads */
+						const bool was_selected = selected == server.m_address;
+						if ( ImGui::Selectable( label.c_str( ), was_selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick ) ) {
+							join |= was_selected && ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left );
+							selected = server.m_address;
+						}
+
+						ImGui::TableNextColumn( );
+						ImGui::TextUnformatted( server.m_map.c_str( ) );
+						ImGui::TableNextColumn( );
+						ImGui::Text( "%d/%d", ImMax( server.m_players - server.m_bots, 0 ), server.m_max_players );
+						ImGui::TableNextColumn( );
+						ImGui::Text( "%d", server.m_ping );
+
+						if ( other )
+							ImGui::PopStyleColor( );
+					}
+				}
+				ImGui::EndTable( );
+			}
+		}
+		ImGui::EndChild( );
+
+		ImGui::SetCursorScreenPos( ImVec2( ImGui::GetCursorScreenPos( ).x, ImGui::GetItemRectMax( ).y + spacing + 2.f ) );
+		ImGui::BeginDisabled( selected.empty( ) );
+		join |= ImGui::Button( "join", ImVec2( -1.f, 15.f ) );
+		ImGui::EndDisabled( );
+	}
+	ImGui::EndChild( );
+
+	if ( join && !selected.empty( ) )
+		g_server_browser.join( selected );
+}
+
 void n_menu::impl_t::tab_misc( )
 {
 	if ( this->m_subtab == 1 ) {
@@ -1275,6 +1477,10 @@ void n_menu::impl_t::tab_misc( )
 	}
 	if ( this->m_subtab == 2 ) {
 		this->cvars_page( );
+		return;
+	}
+	if ( this->m_subtab == 3 ) {
+		this->servers_page( );
 		return;
 	}
 
@@ -1813,8 +2019,19 @@ void n_menu::impl_t::tab_misc( )
 					ImGui::Checkbox( "readout##points", &GET_VARIABLE( g_variables.m_points_readout, bool ) );
 					ImGui::SliderFloat( "appear speed##points", &GET_VARIABLE( g_variables.m_points_appear_speed, float ), 0.5f, 20.f, "%.2fx" );
 					ImGui::SliderFloat( "bob speed##points", &GET_VARIABLE( g_variables.m_points_speed, float ), 0.1f, 10.f, "%.2fx" );
-					ImGui::SliderFloat( "x offset##points", &GET_VARIABLE( g_variables.m_points_x_offset, float ), -300.f, 300.f, "%.0f px" );
-					ImGui::SliderFloat( "y offset##points", &GET_VARIABLE( g_variables.m_points_y_offset, float ), -50.f, 50.f, "%.0f px" );
+					ImGui::Checkbox( "standalone##points", &GET_VARIABLE( g_variables.m_points_standalone, bool ) );
+					const bool standalone = GET_VARIABLE( g_variables.m_points_standalone, bool );
+					if ( standalone ) {
+						auto& position = GET_VARIABLE( g_variables.m_points_position, int );
+						if ( position < 0 || position > 7 )
+							position = 0;
+						ImGui::Combo( "position##points", &position,
+						              "top right\0top left\0top center\0bottom center\0bottom left\0bottom right\0center left\0center right\0" );
+					}
+					ImGui::SliderFloat( "x offset##points", &GET_VARIABLE( g_variables.m_points_x_offset, float ), standalone ? -1000.f : -300.f,
+					                    standalone ? 1000.f : 300.f, "%.0f px" );
+					ImGui::SliderFloat( "y offset##points", &GET_VARIABLE( g_variables.m_points_y_offset, float ), standalone ? -600.f : -50.f,
+					                    standalone ? 600.f : 50.f, "%.0f px" );
 				},
 				ImVec2( 220.f, -1.f ) );
 		}

@@ -305,6 +305,8 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_aimbot_on_key, false );
 		ADD_VARIABLE( bool, m_aimbot_silent, false );
 		ADD_VARIABLE( float, m_aimbot_silent_step, 15.f );
+		/* ms the first air bullet may wait for the jump's top, 0 = fire on click */
+		ADD_VARIABLE( int, m_aimbot_air_wait, 0 );
 		ADD_VARIABLE( bool, m_aimbot_camlock, false );
 		ADD_VARIABLE( bool, m_aimbot_no_switch, false );
 		ADD_VARIABLE( bool, m_aimbot_target_team, false );
@@ -1376,6 +1378,7 @@ namespace n_variables
 		ADD_VARIABLE( int, m_edgebug_search_amount, 2 );
 		ADD_VARIABLE( bool, m_edgebug_mouse_steer, true );
 		ADD_VARIABLE( int, m_edgebug_paths, 3 );
+		ADD_VARIABLE( bool, m_edgebug_steer_keep_stance, false );
 		ADD_VARIABLE( float, m_edgebug_search_effort, 1.f );
 		ADD_VARIABLE( bool, m_edgebug_duck_timing, true );
 		ADD_VARIABLE( bool, m_edgebug_full_window, true );
@@ -1384,6 +1387,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_edgebug_path_bend, true );
 		ADD_VARIABLE( bool, m_edgebug_ebanat_shapes, true );
 		ADD_VARIABLE( bool, m_edgebug_edge_surf, false );
+		ADD_VARIABLE( bool, m_edgebug_edge_surf_guide, true );
 		ADD_VARIABLE( bool, m_edgebug_mouse_lock, false );
 		ADD_VARIABLE( int, m_edgebug_mouse_lock_type, 1 );
 		ADD_VARIABLE( float, m_edgebug_mouse_lock_strength, 100.f );
@@ -2000,6 +2004,8 @@ namespace n_variables
 		ADD_VARIABLE( float, m_points_speed, 1.f );
 		ADD_VARIABLE( float, m_points_x_offset, 0.f );
 		ADD_VARIABLE( float, m_points_y_offset, 0.f );
+		ADD_VARIABLE( bool, m_points_standalone, false );
+		ADD_VARIABLE( int, m_points_position, 0 );
 
 		ADD_VARIABLE( bool, m_media_player, false );
 		ADD_VARIABLE( bool, m_media_player_cover_art, true );

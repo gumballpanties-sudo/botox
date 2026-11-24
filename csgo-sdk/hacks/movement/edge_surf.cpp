@@ -63,12 +63,27 @@ bool edge_surf_armed( )
 	       g_air_align_ledge;
 }
 
-/* edgebug "edgesurf on eb": the eb key arms only the takeover at an eb's pin END + the chain after it, never a fresh approach */
+static bool eb_key_down( )
+{
+	return GET_VARIABLE( g_variables.edge_bug, bool ) && GET_VARIABLE( g_variables.m_edgebug_style, int ) == 0 && !g_ctx.m_eject_restoring &&
+	       g_input.check_input( &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) );
+}
+
+/* edgebug "edgesurf on eb": the eb key arms the takeover at an eb's pin END + the chain after it */
 bool edge_surf_eb_armed( )
 {
-	return GET_VARIABLE( g_variables.m_edgebug_edge_surf, bool ) && GET_VARIABLE( g_variables.edge_bug, bool ) && GET_VARIABLE( g_variables.m_edgebug_style, int ) == 0 &&
-	       !g_ctx.m_eject_restoring && g_input.check_input( &GET_VARIABLE( g_variables.edge_bug_key, key_bind_t ) );
+	return GET_VARIABLE( g_variables.m_edgebug_edge_surf, bool ) && eb_key_down( );
 }
+
+/* edgebug "edge surf guide" ( autostrafe to edge on ): no eb plan live = this controller flies the eb key's fall for one pin, never holds or brakes.
+   an owned cmd = eb_cmd_taken: the eb search runs on the ticks it lets go */
+static bool eb_guide_armed( )
+{
+	return GET_VARIABLE( g_variables.m_edgebug_edge_surf_guide, bool ) && GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool ) && eb_key_down( );
+}
+
+/* indicators.cpp: tick the guided eb is due ( its pin proven: A = next cmd, P = this one ) */
+int g_edge_surf_eb_due = -100;
 
 void edge_surf_skip( const c_user_cmd* cmd, const char* why )
 {
@@ -274,8 +289,10 @@ bool edge_surf_online( c_user_cmd* cmd, bool& pinned, bool& held )
 	pinned = held = false;
 	c_base_entity* const local = g_ctx.m_local;
 	g_edge_surf_active         = false;
-	const bool key   = edge_surf_armed( );
-	const bool armed = cmd && local && local->is_alive( ) && local->get_collideable( ) && ( key || edge_surf_eb_armed( ) );
+	const bool key    = edge_surf_armed( );
+	const bool esurf  = edge_surf_eb_armed( );
+	const bool guide  = !key && eb_guide_armed( );
+	const bool armed  = cmd && local && local->is_alive( ) && local->get_collideable( ) && ( key || esurf || guide );
 	/* START must be the server's END, like texture bug */
 	g_prediction.sync_arm( n_prediction::impl_t::k_sync_es, armed );
 	const auto off = [ & ]( const char* why ) {
@@ -300,12 +317,14 @@ bool edge_surf_online( c_user_cmd* cmd, bool& pinned, bool& held )
 	const bool debug   = GET_VARIABLE( g_variables.m_debug_log, bool );
 	const float pin    = g_prediction.get_engine_target_predict_z_velocity( );
 	const bool pin_now = std::fabsf( start.m_velocity.m_z - pin ) < 1e-3f;
-	/* eb key alone: a fresh pin START ( an edgebug just ended, its plan spent ) or our chain, nothing else */
+	/* eb key alone: a fresh pin START ( an edgebug just ended, its plan spent ) or our chain, nothing else. the guide: any fall with no eb plan live,
+	   except a pinned START with edgesurf on eb ( the takeover's full chain rides it ) */
 	static int s_pin_cmd = -1;
 	const bool fresh     = pin_now && s_pin_cmd != cmd->m_command_number - 1;
 	if ( pin_now )
 		s_pin_cmd = cmd->m_command_number;
-	if ( !key && !edge_surf_latched( cmd ) && ( !fresh || ( g_edgebug.m_found && !g_edgebug.replay_spent( ) ) ) )
+	const bool eb_guide = guide && !( g_edgebug.m_found && !g_edgebug.replay_spent( ) ) && !( esurf && pin_now );
+	if ( !key && !eb_guide && !edge_surf_latched( cmd ) && ( !fresh || ( g_edgebug.m_found && !g_edgebug.replay_spent( ) ) ) )
 		return off( "eb" );
 	/* a locked edgebug plan flies first: a tick we own makes it drop ( EB: drop why=taken ) */
 	if ( g_edgebug.m_found && !pin_now ) {
@@ -339,7 +358,8 @@ bool edge_surf_online( c_user_cmd* cmd, bool& pinned, bool& held )
 	in.range    = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_range, float ), 8.f, 512.f );
 	in.reach    = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_reach, float ), 0.f, 32.f );
 	in.turn     = std::clamp( GET_VARIABLE( g_variables.m_edge_surf_delta_strafe, float ), 0.f, 15.f );
-	in.takeover = !key;
+	in.takeover = !key && !eb_guide;
+	in.eb_guide = eb_guide;
 	const n_es::out_t r = n_es::tick( w, s_mem, cmd->m_command_number, in );
 	w.reset( );
 	s_viz_time   = g_interfaces.m_global_vars_base->m_real_time;
@@ -353,11 +373,21 @@ bool edge_surf_online( c_user_cmd* cmd, bool& pinned, bool& held )
 	cmd->m_forward_move = c.m_forward_move;
 	cmd->m_side_move    = c.m_side_move;
 	cmd->m_buttons      = c.m_buttons;
-	pinned              = r.pin;
 	held                = true;
-	g_edge_surf_active  = true;
-	if ( r.pin )
-		g_edge_surf_pin_cmd = cmd->m_command_number;
+	/* a guided pin is an edgebug: detected + indicated as one, never as edge surf / texture bug */
+	if ( eb_guide ) {
+		static int s_guide_cmd = -1;
+		if ( debug && s_guide_cmd != cmd->m_command_number - 1 )
+			botox_dbg_log( "ESURF: eb guide act=%c cmd=%d vz=%.1f", r.act, cmd->m_command_number, start.m_velocity.m_z );
+		s_guide_cmd = cmd->m_command_number;
+		if ( r.pin || r.act == 'A' )
+			g_edge_surf_eb_due = g_interfaces.m_global_vars_base->m_tick_count + ( r.pin ? 1 : 2 );
+	} else {
+		pinned             = r.pin;
+		g_edge_surf_active = true;
+		if ( r.pin )
+			g_edge_surf_pin_cmd = cmd->m_command_number;
+	}
 	g_edge_surf_latch_cmd = s_mem.own ? cmd->m_command_number : -1;
 	s_es_sent             = { cmd->m_command_number, cmd->m_buttons, cmd->m_view_point.m_y, cmd->m_forward_move, cmd->m_side_move };
 	return true;
