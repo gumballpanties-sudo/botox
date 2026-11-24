@@ -4,6 +4,8 @@
 #include "../prediction/prediction.h"
 #include "texturebug_common.h"
 #include "edgebug.h"
+#include "edge_catch.h"
+#include "edge_skip.h"
 #include "edge_surf_core.h"
 #include <algorithm>
 #include <cfloat>
@@ -317,13 +319,20 @@ bool edge_surf_online( c_user_cmd* cmd, bool& pinned, bool& held )
 	const bool debug   = GET_VARIABLE( g_variables.m_debug_log, bool );
 	const float pin    = g_prediction.get_engine_target_predict_z_velocity( );
 	const bool pin_now = std::fabsf( start.m_velocity.m_z - pin ) < 1e-3f;
-	/* eb key alone: a fresh pin START ( an edgebug just ended, its plan spent ) or our chain, nothing else. the guide: any fall with no eb plan live,
-	   except a pinned START with edgesurf on eb ( the takeover's full chain rides it ) */
+	/* eb key alone: a fresh pin START ( an edgebug just ended, its plan spent ) or our chain, nothing else. the guide: any fall with no eb / edge catch /
+	   edge skip plan live ( eb yields to those too ), except where edgesurf on eb rides: a pinned START, then that chain until it lets go ( the lift ) */
 	static int s_pin_cmd = -1;
 	const bool fresh     = pin_now && s_pin_cmd != cmd->m_command_number - 1;
 	if ( pin_now )
 		s_pin_cmd = cmd->m_command_number;
-	const bool eb_guide = guide && !( g_edgebug.m_found && !g_edgebug.replay_spent( ) ) && !( esurf && pin_now );
+	static bool s_take = false;
+	if ( !edge_surf_latched( cmd ) )
+		s_take = false;
+	const bool ec_live  = g_edge_catch.active( ) || g_edge_skip.active( );
+	const bool eb_guide = guide && !( g_edgebug.m_found && !g_edgebug.replay_spent( ) ) && !( esurf && ( pin_now || s_take ) ) && !ec_live;
+	/* their plans start in pre: one cuts a guide chain too */
+	if ( guide && ec_live && !s_take && edge_surf_latched( cmd ) )
+		return off( "ec" );
 	if ( !key && !eb_guide && !edge_surf_latched( cmd ) && ( !fresh || ( g_edgebug.m_found && !g_edgebug.replay_spent( ) ) ) )
 		return off( "eb" );
 	/* a locked edgebug plan flies first: a tick we own makes it drop ( EB: drop why=taken ) */
@@ -367,8 +376,12 @@ bool edge_surf_online( c_user_cmd* cmd, bool& pinned, bool& held )
 	if ( !r.own ) {
 		g_edge_surf_latch_cmd = -1;
 		s_es_sent.cmd         = -1;
+		/* an arrival whose pin then failed: no eb due */
+		if ( eb_guide && !pin_now )
+			g_edge_surf_eb_due = -100;
 		return false;
 	}
+	s_take              = !eb_guide;
 	const c_user_cmd c  = w.cmd_of( r.mv );
 	cmd->m_forward_move = c.m_forward_move;
 	cmd->m_side_move    = c.m_side_move;

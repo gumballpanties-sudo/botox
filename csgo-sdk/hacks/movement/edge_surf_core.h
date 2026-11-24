@@ -930,8 +930,8 @@ namespace n_es
 		};
 		const auto let_go = [ & ]( const char w_ ) {
 			why = w_;
-			/* eb guide: never holds off */
-			if ( in.eb_guide )
+			/* eb guide: never holds off beside ( over the top its out press below still flies: the guide slowed that exit ) */
+			if ( in.eb_guide && e.g > 0.f )
 				return hands_off( );
 			/* in reach = beside: a ledge you are over with no plan was never ours, you land on it */
 			if ( !( e.mine || guarded || ( e.g > 0.f && e.g <= in.reach ) ) || e.riding || s.o.z <= f.top )
