@@ -802,6 +802,16 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 		atlas->AddFontFromMemoryCompressedTTF( verdana_bold_compressed_data, verdana_bold_compressed_size, 12.f, &verdana_font_config );
 	merge_extended_glyphs( atlas, 12.f, verdana_font_config.FontBuilderFlags, e_glyph_tier::glyph_tier_basic );
 
+	/* primordial hud font ( create_font 0x40471900, fonts #1 + #5 ): Tahoma 13 weight 400 flags 0x80 = no FONTFLAG_ANTIALIAS ->
+	   FreeType Monochrome alone ( no MonoHinting = FT_LOAD_TARGET_NORMAL hinting ), not bold. #1's msjh cjk merge -> basic tier */
+	{
+		ImFontConfig primordial_config     = { };
+		primordial_config.FontBuilderFlags = ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Monochrome;
+		fonts[ e_font_names::font_name_primordial_tahoma_13 ] =
+			atlas->AddFontFromMemoryCompressedTTF( tahoma_compressed_data, tahoma_compressed_size, 13.f, &primordial_config, atlas->GetGlyphRangesCyrillic( ) );
+		merge_extended_glyphs( atlas, 13.f, primordial_config.FontBuilderFlags, e_glyph_tier::glyph_tier_basic );
+	}
+
 	{
 		ImFontConfig lobotomy_v1_config     = { };
 		lobotomy_v1_config.PixelSnapH       = true;
@@ -821,6 +831,17 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 		add_donor_font( primordial_roboto_regular, sizeof( primordial_roboto_regular ), 13.f, 0 );
 	fonts[ e_font_names::font_name_primordial_roboto_medium_13 ] =
 		add_donor_font( primordial_roboto_medium, sizeof( primordial_roboto_medium ), 13.f, 0, false );
+
+	/* aventum.dll gui font slot 0 ( every menu string ): its embedded verdana = stock verdana.ttf ( same checksum ), 14 px,
+	   ImFontConfig FontBuilderFlags 0x200 = Bitmap only. Bitmap matters here: nominal size request, not real-dim */
+	{
+		ImFontConfig aventum_config     = { };
+		aventum_config.FontBuilderFlags = ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Bitmap;
+
+		fonts[ e_font_names::font_name_aventum_verdana_14 ] =
+			atlas->AddFontFromMemoryCompressedTTF( verdana_compressed_data, verdana_compressed_size, 14.f, &aventum_config );
+		merge_extended_glyphs( atlas, 14.f, aventum_config.FontBuilderFlags, e_glyph_tier::glyph_tier_full );
+	}
 
 	{
 		/* fpsoverlay minesweeper cell numbers: tahoma bold 19, digits 1-8 only */

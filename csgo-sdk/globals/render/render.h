@@ -84,6 +84,8 @@ enum e_font_names {
 	font_name_primordial_roboto_medium_13,
 	font_name_grimoire_tahoma_bd_11, // grimoire wm / spec header: tahomabd 11 mono ( rows = verdana_11 )
 	font_name_datashell_verdana_bd_12, // datashell wm / spec / media: verdanab 12, mono hinting + no aa
+	font_name_primordial_tahoma_13,    // primordial wm / spec / media: tahoma 13, FreeType Monochrome only
+	font_name_aventum_verdana_14, // menu theme aventum: verdana 14, Bitmap only, both menu slots
 	font_name_max
 };
 

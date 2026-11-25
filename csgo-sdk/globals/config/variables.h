@@ -1948,6 +1948,8 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_spectators_gamesense_bar, true );
 		ADD_VARIABLE( float, m_spectators_hotwheels_gap, 2.f );
 		ADD_VARIABLE( float, m_spectators_datashell_gap, 5.f );
+		ADD_VARIABLE( float, m_spectators_primordial_transparency, 0.f ); /* primordial "Transparency" 0..100, bg only */
+		ADD_VARIABLE( bool, m_spectators_primordial_disable_header, false ); /* primordial "Disable Header" ( menu closed ) */
 		ADD_VARIABLE( int, m_watermark_lumi_design, 0 );
 		ADD_VARIABLE( bool, m_watermark_lumi_animated_title, false );
 		ADD_VARIABLE( bool, m_watermark_lumi_no_border, false );

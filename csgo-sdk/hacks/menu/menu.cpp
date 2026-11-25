@@ -659,7 +659,33 @@ const menu_style_t k_menu_styles[ ] = {
 	  IM_COL32( 41, 41, 41, 255 ), IM_COL32( 41, 41, 41, 255 ), IM_COL32( 29, 29, 29, 255 ), IM_COL32( 210, 210, 210, 255 ),
 	  IM_COL32( 127, 127, 127, 255 ), 9.f, 2.f, 2.f, e_font_names::font_name_primordial_roboto_13,
 	  e_font_names::font_name_primordial_roboto_medium_13, false, true },
+	/* aventum.dll ( Documents\!, payload GOVNO base 0x34500000 ) gui palette .data 0x34c3cab8..cb20, rounding 0 everywhere:
+	   window 16 ( title on it ), group 19 + title + accent line on it ( band = child ), widget base 23 ( checkbox / slider
+	   vertical grad 51 -> 23, button 23 / hover 51 ), outline 33 ( group ring is 22 ), combo list 19, idle label 149 =
+	   text dim ( text 255 @ .5 on 19 = 137 ), active label = accent there ( widget body, not a row colour ). ring outside the
+	   window = aventum_frame, so its inner border is off ( alpha 0 ). one font for every string, both slots */
+	{ "aventum", IM_COL32( 16, 16, 16, 255 ), IM_COL32( 19, 19, 19, 255 ), IM_COL32( 19, 19, 19, 255 ), IM_COL32( 23, 23, 23, 255 ),
+	  IM_COL32( 33, 33, 33, 255 ), IM_COL32( 0, 0, 0, 0 ), IM_COL32( 19, 19, 19, 255 ), IM_COL32( 255, 255, 255, 255 ),
+	  IM_COL32( 149, 149, 149, 255 ), 0.f, 0.f, 0.f, e_font_names::font_name_aventum_verdana_14,
+	  e_font_names::font_name_aventum_verdana_14, false, false, false, true },
 };
+
+/* aventum window render ( vfunc +0x23ebb0 -> +0x23da10 ): 4 one-px strips on the ring just outside the window, accent at the
+   top-left + bottom-right corners fading to 22 ( top l->r, right b->t, left t->b, bottom r->l ), then ( 33, 33, 33 ) @
+   alpha * .5 outline on the same ring */
+static void aventum_frame( ImDrawList* list, const ImVec2& pos, const ImVec2& size )
+{
+	const ImVec2 min( pos.x - 1.f, pos.y - 1.f ), max( pos.x + size.x + 1.f, pos.y + size.y + 1.f );
+	const ImU32 accent = ImGui::GetColorU32( ImGuiCol_::ImGuiCol_Accent ), dark = IM_COL32( 22, 22, 22, 255 );
+
+	list->PushClipRect( min, max, false );
+	list->AddRectFilledMultiColor( min, ImVec2( max.x, min.y + 1.f ), accent, dark, dark, accent );
+	list->AddRectFilledMultiColor( ImVec2( max.x - 1.f, min.y ), max, dark, dark, accent, accent );
+	list->AddRectFilledMultiColor( min, ImVec2( min.x + 1.f, max.y ), accent, accent, dark, dark );
+	list->AddRectFilledMultiColor( ImVec2( min.x, max.y - 1.f ), max, dark, accent, accent, dark );
+	list->AddRect( min, max, IM_COL32( 33, 33, 33, 127 ) );
+	list->PopClipRect( );
+}
 
 /* primordial look, layout untouched: black 180 line 1 px outside the r9 frame, solid accent line under the band
    ( its header line, over the faded one ) */
@@ -852,6 +878,8 @@ void n_menu::impl_t::on_end_scene( )
 			gamesense_frame( draw_list, position, size );
 		if ( menu_style.m_primordial )
 			primordial_frame( draw_list, position, size, background_height );
+		if ( menu_style.m_aventum )
+			aventum_frame( draw_list, position, size );
 
 		constexpr float tab_width   = 100.f;
 		constexpr float tab_height  = 24.f;

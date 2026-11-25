@@ -2,6 +2,7 @@
 #include "kamibebra_gif_data.h"
 #include "airflow_data.h"
 #include "../scaleform/image_cache.h"
+#include "../vgui_font.h" /* requiem: vgui Win32Font text */
 
 #include <ctime>
 #include <format>
@@ -7178,6 +7179,358 @@ void n_misc::impl_t::draw_spectator_list_datashell( )
 	g_render.end_stretch_block( block );
 }
 
+namespace {
+	/* requiem.dll draws its hud through vgui ISurface: text = vgui_font.h ( engine Win32Font 1:1 ), one rect per texel run */
+	n_vgui::font_t requiem_wm_font( "Tahoma", 12, 500, n_vgui::k_outline );
+	n_vgui::font_t requiem_font( "Tahoma", 12, 100, n_vgui::k_dropshadow );
+
+	/* requiem's built-in bot avatar ( VA 0x102a2fa8, 32x32 white "?" on #222222 ) as drawn: 16x16. vgui DrawSetTextureRGBA = point
+	   sampled ( MatSystemSurface k_ETextureScalingPointSample ), so px ( k, j ) = source texel ( 2k + 1, 2j + 1 ). grey, alpha 255 */
+	constexpr unsigned char requiem_bot_avatar[ 16 * 16 ] = {
+		34, 34, 34, 34, 34, 34,  34,  34,  34,  34,  34, 34, 34, 34, 34, 34, /**/ 34, 34, 34, 34, 34, 34,  34,  34,  34,  34,  34, 34, 34, 34, 34, 34,
+		34, 34, 34, 34, 34, 34,  34,  34,  34,  34,  34, 34, 34, 34, 34, 34, /**/ 34, 34, 34, 34, 34, 34,  34,  138, 34,  34,  34, 34, 34, 34, 34, 34,
+		34, 34, 34, 34, 34, 97,  255, 255, 255, 255, 34, 34, 34, 34, 34, 34, /**/ 34, 34, 34, 34, 34, 255, 255, 34,  34,  255, 34, 34, 34, 34, 34, 34,
+		34, 34, 34, 34, 34, 34,  34,  34,  34,  255, 34, 34, 34, 34, 34, 34, /**/ 34, 34, 34, 34, 34, 34,  34,  34,  255, 255, 34, 34, 34, 34, 34, 34,
+		34, 34, 34, 34, 34, 34,  34,  255, 255, 34,  34, 34, 34, 34, 34, 34, /**/ 34, 34, 34, 34, 34, 34,  34,  255, 34,  34,  34, 34, 34, 34, 34, 34,
+		34, 34, 34, 34, 34, 34,  34,  34,  34,  34,  34, 34, 34, 34, 34, 34, /**/ 34, 34, 34, 34, 34, 34,  34,  255, 34,  34,  34, 34, 34, 34, 34, 34,
+		34, 34, 34, 34, 34, 34,  34,  34,  34,  34,  34, 34, 34, 34, 34, 34, /**/ 34, 34, 34, 34, 34, 34,  34,  34,  34,  34,  34, 34, 34, 34, 34, 34,
+		34, 34, 34, 34, 34, 34,  34,  34,  34,  34,  34, 34, 34, 34, 34, 34, /**/ 34, 34, 34, 34, 34, 34,  34,  34,  34,  34,  34, 34, 34, 34, 34, 34,
+	};
+
+	/* vgui DrawFilledRect fills [ x0, x1 ) x [ y0, y1 ); DrawOutlinedRect = 1 px on the inside of that box */
+	void vgui_fill( ImDrawList* list, const int x0, const int y0, const int x1, const int y1, const ImU32 color )
+	{
+		list->AddRectFilled( ImVec2( static_cast< float >( x0 ), static_cast< float >( y0 ) ), ImVec2( static_cast< float >( x1 ), static_cast< float >( y1 ) ),
+		                     color );
+	}
+
+	void vgui_ring( ImDrawList* list, const int x0, const int y0, const int x1, const int y1, const ImU32 color )
+	{
+		list->AddRect( ImVec2( static_cast< float >( x0 ), static_cast< float >( y0 ) ), ImVec2( static_cast< float >( x1 ), static_cast< float >( y1 ) ),
+		               color, 0.f, 0, 1.f );
+	}
+
+	void vgui_print( ImDrawList* list, const n_vgui::text_t& text, const int x, const int y, const ImU32 color, const int clip_x0 = INT_MIN,
+	                 const int clip_y0 = INT_MIN, const int clip_x1 = INT_MAX, const int clip_y1 = INT_MAX )
+	{
+		n_vgui::draw(
+			text, x, y, color, [ list ]( const int x0, const int y0, const int x1, const int y1, const uint32_t c ) { vgui_fill( list, x0, y0, x1, y1, c ); },
+			clip_x0, clip_y0, clip_x1, clip_y1 );
+	}
+}
+
+/* requiem.dll PaintTraverse hook ( RVA 0x560e0, 0x1005633a..0x100563eb ): ONE vgui string, font = cfg m_fonts.m_watermark default
+   Tahoma 12 weight 500 FONTFLAG_OUTLINE, ( 200 ) grey, x = ( int )( screen - 7 - wide ), y 7. no box / parts / fade / in-game gate.
+   brand replaces the donor's "requiem alpha build" */
+void n_misc::impl_t::draw_watermark_requiem( )
+{
+	const n_vgui::text_t& text = n_vgui::text( requiem_wm_font, watermark_brand( ), ImGui::GetFrameCount( ) );
+	if ( !text.tall )
+		return;
+
+	const int x = static_cast< int >( static_cast< float >( static_cast< int >( g_ctx.m_width ) - 7 ) - static_cast< float >( text.wide ) ), y = 7;
+	g_watermark_box = ImVec4( static_cast< float >( x ), static_cast< float >( y ), static_cast< float >( x + text.wide ),
+	                          static_cast< float >( y + text.tall ) );
+
+	const auto draw_list = ImGui::GetForegroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	vgui_print( draw_list, text, x, y, IM_COL32( 200, 200, 200, 255 ) );
+
+	g_render.end_stretch_block( block );
+}
+
+/* requiem.dll FUN_10049600 ( RVA 0x49600 ). vgui Tahoma 12 weight 100 drop shadow ( hA = "A" tall = 13 ). W = clamp( screen / 8.7,
+   170, 300 ), H = 68 ( n <= 1 ) else 68 + ( n - 1 ) * ( hA + 4 ). frame: fill 200, ring 150, white 8 ring, again 5 in; "spectators ( n )"
+   centred at y + 10; accent 2 px + accent - 25 2 px bars; black list box + white 8 ring; rows every hA + 4 from y + 27 + hA: 16 px avatar
+   ( bots = requiem's "?" ), lowercased name clipped at x + W - 16. donor listing = everyone whose observer target is us, or our target
+   when we are dead ( us included ), no bot / GOTV filter; show targets = every spectator + " -> target". always show = donor style
+   "always on", off = "when someone spectating" ( alpha +-0.05 per 10 ms of realtime ) */
+void n_misc::impl_t::draw_spectator_list_requiem( )
+{
+	const auto local   = g_ctx.m_local;
+	const auto globals = g_interfaces.m_global_vars_base;
+	if ( !globals )
+		return;
+
+	const bool show_target = GET_VARIABLE( g_variables.m_spectators_list_show_target, bool );
+
+	/* donor focus: us; dead ( life state or health < 1 ) and watching a live, non dormant player -> them */
+	int focus = local ? static_cast< int >( local->get_index( ) ) : -1;
+	if ( local && ( !local->is_alive( ) || local->get_health( ) < 1 ) ) {
+		const auto target =
+			reinterpret_cast< c_base_entity* >( g_interfaces.m_client_entity_list->get_client_entity_from_handle( local->get_observer_target_handle( ) ) );
+		if ( target && target->is_player( ) && !target->is_dormant( ) )
+			focus = static_cast< int >( target->get_index( ) );
+	}
+
+	/* donor loop is i < maxClients: the last player slot is never listed */
+	std::vector< spectator_entry_t > entries{ };
+	collect_spectators( entries, true, true );
+	std::erase_if( entries, [ & ]( const spectator_entry_t& entry ) {
+		return entry.m_index >= globals->m_max_clients || ( !show_target && entry.m_target_index != focus );
+	} );
+	std::sort( entries.begin( ), entries.end( ), []( const spectator_entry_t& a, const spectator_entry_t& b ) { return a.m_index < b.m_index; } );
+	const int n = static_cast< int >( entries.size( ) );
+
+	/* donor alpha ( .data 0x102a55f0, starts 1.0 ): style 0 snaps to in game || menu, style 1 steps once per > 10 ms of realtime */
+	static float alpha = 1.f, last = 0.f;
+	if ( spectators_always_show_cfg )
+		alpha = ( g_interfaces.m_engine_client->is_in_game( ) || g_menu.m_opened ) ? 1.f : 0.f;
+	else if ( globals->m_real_time - last > 0.01f || globals->m_real_time < last ) {
+		last  = globals->m_real_time;
+		alpha = ImClamp( alpha + ( ( n == 0 && !g_menu.m_opened ) ? -0.05f : 0.05f ), 0.f, 1.f );
+	}
+	if ( alpha == 0.f )
+		return;
+
+	const int frame = ImGui::GetFrameCount( );
+	const int ha    = n_vgui::text( requiem_font, "A", frame ).tall;
+	if ( !ha )
+		return;
+
+	const int w = std::clamp( static_cast< int >( static_cast< float >( g_ctx.m_width ) / 8.7f ), 170, 300 );
+	const int h = n < 1 ? 68 : 68 + ( n - 1 ) * ( ha + 4 );
+
+	drag_placed_panel( static_cast< float >( w ), static_cast< float >( h ) );
+
+	const int x = GET_VARIABLE( g_variables.m_spectators_list_x, int );
+	const int y = GET_VARIABLE( g_variables.m_spectators_list_y, int );
+
+	const auto a        = [ & ]( const int k ) { return static_cast< int >( alpha * static_cast< float >( k ) ); };
+	const ImVec4 accent = ImGui::GetStyleColorVec4( ImGuiCol_::ImGuiCol_Accent );
+	const int ar = static_cast< int >( accent.x * 255.f ), ag = static_cast< int >( accent.y * 255.f ), ab = static_cast< int >( accent.z * 255.f );
+	const ImU32 bg = IM_COL32( 0, 0, 0, a( 200 ) ), border = IM_COL32( 0, 0, 0, a( 150 ) ), hi = IM_COL32( 255, 255, 255, a( 8 ) );
+	const ImU32 list = IM_COL32( 0, 0, 0, a( 255 ) ), white = IM_COL32( 255, 255, 255, a( 255 ) );
+	const ImU32 acc  = IM_COL32( ar, ag, ab, a( 255 ) );
+	const ImU32 acc2 = IM_COL32( std::max( ar - 25, 0 ), std::max( ag - 25, 0 ), std::max( ab - 25, 0 ), a( 255 ) );
+
+	const auto draw_list = ImGui::GetBackgroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	vgui_fill( draw_list, x, y, x + w, y + h, bg );
+	vgui_ring( draw_list, x, y, x + w, y + h, border );
+	vgui_ring( draw_list, x + 1, y + 1, x + w - 1, y + h - 1, hi );
+	vgui_fill( draw_list, x + 5, y + 5, x + w - 5, y + h - 5, bg );
+	vgui_ring( draw_list, x + 5, y + 5, x + w - 5, y + h - 5, border );
+	vgui_ring( draw_list, x + 6, y + 6, x + w - 6, y + h - 6, hi );
+
+	/* "spectators" + "(" + n + ")", no space ( 0x1004a0cd..0x1004a1ca ) */
+	const n_vgui::text_t& header = n_vgui::text( requiem_font, n ? std::format( "spectators({})", n ) : std::string( "spectators" ), frame );
+	vgui_print( draw_list, header, static_cast< int >( static_cast< float >( x + 5 ) + static_cast< float >( w - 10 ) * 0.5f ) - header.wide / 2, y + 10,
+	            white );
+
+	vgui_fill( draw_list, x + 11, y + 10 + ha, x + w - 11, y + 12 + ha, acc );
+	vgui_fill( draw_list, x + 11, y + 12 + ha, x + w - 11, y + 14 + ha, acc2 );
+	vgui_fill( draw_list, x + 11, y + 21 + ha, x + w - 11, y + h - 10, list );
+	vgui_ring( draw_list, x + 12, y + 22 + ha, x + w - 12, y + h - 11, hi );
+
+	const bool draw_avatar = GET_VARIABLE( g_variables.m_spectators_avatar, bool );
+
+	for ( int i = 0; i < n; i++ ) {
+		const spectator_entry_t& entry = entries[ i ];
+		const int row_y                = y + 27 + ha + i * ( ha + 4 );
+
+		/* avatar before the clip ( never clipped ), 32 px steam small avatar drawn at 16 point sampled, tinted text colour */
+		if ( draw_avatar ) {
+			if ( entry.m_fake_player ) {
+				for ( int j = 0; j < 16; j++ )
+					for ( int k = 0; k < 16; ) {
+						int end               = k + 1;
+						const unsigned char v = requiem_bot_avatar[ j * 16 + k ];
+						while ( end < 16 && requiem_bot_avatar[ j * 16 + end ] == v )
+							end++;
+						vgui_fill( draw_list, x + 16 + k, row_y - 2 + j, x + 16 + end, row_y - 1 + j, IM_COL32( v, v, v, a( 255 ) ) );
+						k = end;
+					}
+			} else if ( entry.m_index >= 0 && entry.m_index < 64 && g_avatar_cache[ entry.m_index ] ) {
+				draw_list->AddCallback(
+					[]( const ImDrawList*, const ImDrawCmd* ) {
+						g_interfaces.m_direct_device->SetSamplerState( 0, D3DSAMP_MINFILTER, D3DTEXF_POINT );
+						g_interfaces.m_direct_device->SetSamplerState( 0, D3DSAMP_MAGFILTER, D3DTEXF_POINT );
+					},
+					nullptr );
+				draw_list->AddImage( g_avatar_cache[ entry.m_index ], ImVec2( static_cast< float >( x + 16 ), static_cast< float >( row_y - 2 ) ),
+				                     ImVec2( static_cast< float >( x + 32 ), static_cast< float >( row_y + 14 ) ), ImVec2( 0, 0 ), ImVec2( 1, 1 ), white );
+				draw_list->AddCallback( ImDrawCallback_ResetRenderState, nullptr );
+			}
+		}
+
+		std::string name = spectator_row_text( entry );
+		for ( char& c : name )
+			if ( c >= 'A' && c <= 'Z' )
+				c = static_cast< char >( c + 32 ); /* CRT tolower per byte, "C" locale */
+
+		vgui_print( draw_list, n_vgui::text( requiem_font, name, frame ), x + 36, row_y, white, x + 16, row_y, x + w - 16, row_y + ( h - 31 - ha ) );
+	}
+
+	g_render.end_stretch_block( block );
+}
+
+namespace {
+	/* primordial.bin wm chrome ( also the media frame ): fill_r0 ( 45,45,45,170 ), fill_r0 1 px accent bar down the left edge */
+	void primordial_box( ImDrawList* list, const ImVec2 min, const ImVec2 max )
+	{
+		list->AddRectFilled( min, max, IM_COL32( 45, 45, 45, 170 ) );
+		list->AddRectFilled( min, ImVec2( min.x + 1.f, max.y ), ImGui::ColorConvertFloat4ToU32( ImGui::GetStyleColorVec4( ImGuiCol_::ImGuiCol_Accent ) ) );
+	}
+}
+
+/* primordial.bin 0x40195070: "primordial - " + user = brand + " - " + user name, '\n' stripped. Tahoma 13 FreeType Monochrome,
+   text_size truncated to int ( w, h = 13 ): box ( 0, 0 ) ( w + 8, h + 4 ), accent bar, text ( 220 ) at ( 4, 2 ) with font flag 0x80
+   drop shadow ( black, same alpha ) at ( 5, 3 ). fixed top-left, no fps / ping / time / fade */
+void n_misc::impl_t::draw_watermark_primordial( )
+{
+	const auto font = g_render.m_fonts[ e_font_names::font_name_primordial_tahoma_13 ];
+	if ( !font )
+		return;
+
+	std::string text = watermark_brand( ) + " - " + GET_VARIABLE( g_variables.m_watermark_clarity_user, std::string );
+	std::erase( text, '\n' );
+
+	const ImVec2 size = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, text.c_str( ) );
+	const float w = static_cast< float >( static_cast< int >( size.x ) ), h = static_cast< float >( static_cast< int >( size.y ) );
+	g_watermark_box = ImVec4( 0.f, 0.f, w + 8.f, h + 4.f );
+
+	const auto draw_list = ImGui::GetForegroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	primordial_box( draw_list, ImVec2( 0.f, 0.f ), ImVec2( w + 8.f, h + 4.f ) );
+	draw_list->AddText( font, font->FontSize, ImVec2( 5.f, 3.f ), IM_COL32( 0, 0, 0, 255 ), text.c_str( ) );
+	draw_list->AddText( font, font->FontSize, ImVec2( 4.f, 2.f ), IM_COL32( 220, 220, 220, 255 ), text.c_str( ) );
+
+	g_render.end_stretch_block( block );
+}
+
+/* primordial.bin spectator window 0x40766120, draw 0x40191da0, collector 0x4018f9c0. Tahoma 13 FreeType Monochrome ( font #1 rows,
+   #5 title: same face ), every text with the font's 0x80 drop shadow ( +1, +1, same alpha ). W = max( 150, widest row + 12 ), H = header
+   ( 13 + 5 ) + 12 + 13 n. 1 px black r5 ring outside, ( 45 ) r5 header band, ( 36 ) r5 body clipped below the header, rows ( 200 ) at
+   ( x + 6, y + header + 5 + 13 i ), title "spectators" / "spectators ( n )" centred at y + 2, 1 px accent line at y + header - 1. bg alpha
+   ( 1 - transparency ) * e, text + line e, e = 0.5 ( sin( ( t - 0.5 ) pi ) + 1 ), t +-5 / s. donor listing: watchers of our view ( us;
+   dead + in eye / chase -> our target ), bots + GOTV ( fake clients ) skipped, names cut at 18 bytes + "...". show targets = donor
+   "Show All" ( every spectator, " -> name" / " -> YOU", our-view rows accent ), observer mode = donor "Show Mode" */
+void n_misc::impl_t::draw_spectator_list_primordial( )
+{
+	const auto font = g_render.m_fonts[ e_font_names::font_name_primordial_tahoma_13 ];
+	if ( !font )
+		return;
+
+	const bool show_all  = GET_VARIABLE( g_variables.m_spectators_list_show_target, bool );
+	const bool show_mode = GET_VARIABLE( g_variables.m_spectators_bhopcheat_mode, bool );
+
+	/* donor view ( 0x4017f2b0 ): us; dead and in eye / chase -> the player we watch */
+	const auto local = g_ctx.m_local;
+	int view         = local ? static_cast< int >( local->get_index( ) ) : -1;
+	if ( local && !local->is_alive( ) &&
+	     ( local->get_observer_mode( ) == e_obs_mode::obs_mode_in_eye || local->get_observer_mode( ) == e_obs_mode::obs_mode_chase ) ) {
+		if ( const auto target = reinterpret_cast< c_base_entity* >(
+				 g_interfaces.m_client_entity_list->get_client_entity_from_handle( local->get_observer_target_handle( ) ) ) )
+			view = static_cast< int >( target->get_index( ) );
+	}
+
+	std::vector< spectator_entry_t > entries{ };
+	collect_spectators( entries, true );
+	std::erase_if( entries, [ & ]( const spectator_entry_t& entry ) { return entry.m_fake_player || ( !show_all && entry.m_target_index != view ); } );
+	std::sort( entries.begin( ), entries.end( ), []( const spectator_entry_t& a, const spectator_entry_t& b ) { return a.m_index < b.m_index; } );
+
+	const auto mode_text = []( const int mode ) -> const char* {
+		switch ( mode ) {
+		case 1: return "death cam";
+		case 2: return "freeze cam";
+		case 3: return "fixed";
+		case 4: return "in eye";
+		case 5: return "chase";
+		case 6: return "roaming";
+		default: return "";
+		}
+	};
+	const auto cut = []( const std::string& s ) { return s.size( ) > 18 ? s.substr( 0, 18 ) + "..." : s; }; /* 0x4047e3b0, bytes */
+
+	struct row_t {
+		std::string m_text;
+		bool m_view;
+	};
+	std::vector< row_t > rows{ };
+	for ( const auto& entry : entries ) {
+		std::string s = cut( entry.m_name );
+		if ( show_all )
+			s += " -> " + ( entry.m_target_index == view ? std::string( "YOU" ) : cut( entry.m_target_name ) );
+		if ( show_mode )
+			s += std::string( " (" ) + mode_text( entry.m_obs_mode ) + ")";
+		rows.push_back( { std::move( s ), entry.m_target_index == view } );
+	}
+	const int n = static_cast< int >( rows.size( ) );
+
+	/* window anim ( 0x4045f210 ): visible = in game || menu ( + always show for an empty list ) */
+	static float t     = 0.f;
+	const bool visible = ( g_interfaces.m_engine_client->is_in_game( ) || g_menu.m_opened ) &&
+	                     ( n > 0 || GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ) );
+	t = ImClamp( t + ( visible ? 1.f : -1.f ) * ImGui::GetIO( ).DeltaTime * 5.f, 0.f, 1.f );
+	if ( t == 0.f )
+		return;
+	const float e = 0.5f * static_cast< float >( std::sin( ( static_cast< double >( t ) - 0.5 ) * 3.14159265358979323846 ) + 1.0 );
+
+	const auto size = [ & ]( const std::string& s ) {
+		const ImVec2 v = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, s.c_str( ) );
+		return ImVec2( static_cast< float >( static_cast< int >( v.x ) ), static_cast< float >( static_cast< int >( v.y ) ) );
+	};
+	const int fh = static_cast< int >( size( "ABCDEF" ).y ); /* font + 0xC line height = 13 */
+	const int header =
+		( GET_VARIABLE( g_variables.m_spectators_primordial_disable_header, bool ) && !g_menu.m_opened ) ? 0 : fh + 5; /* font #5 height + 5 */
+	int w = 150;
+	for ( const auto& row : rows )
+		w = std::max( w, static_cast< int >( size( row.m_text ).x ) + 12 );
+	const int h = header + 12 + n * fh;
+
+	drag_placed_panel( static_cast< float >( w + 2 ), static_cast< float >( h + 2 ) ); /* + the 1 px ring outside the box */
+
+	const int x = GET_VARIABLE( g_variables.m_spectators_list_x, int ) + 1;
+	const int y = GET_VARIABLE( g_variables.m_spectators_list_y, int ) + 1;
+
+	/* every primitive: alpha byte = trunc( a * global alpha ), rgb untouched */
+	const auto mul = []( const ImU32 c, const float m ) {
+		return ( c & ~IM_COL32_A_MASK ) |
+		       ( static_cast< ImU32 >( static_cast< int >( static_cast< float >( c >> IM_COL32_A_SHIFT ) * m ) ) << IM_COL32_A_SHIFT );
+	};
+	const ImU32 accent = ImGui::ColorConvertFloat4ToU32( ImGui::GetStyleColorVec4( ImGuiCol_::ImGuiCol_Accent ) );
+	const float bg_a   = ( 1.f - ImClamp( GET_VARIABLE( g_variables.m_spectators_primordial_transparency, float ), 0.f, 100.f ) * 0.01f ) * e;
+
+	const auto draw_list = ImGui::GetBackgroundDrawList( );
+	const auto block     = g_render.begin_stretch_block( draw_list );
+
+	const auto rect = [ & ]( const int x0, const int y0, const int x1, const int y1, const ImU32 c, const float r ) {
+		draw_list->AddRectFilled( ImVec2( static_cast< float >( x0 ), static_cast< float >( y0 ) ), ImVec2( static_cast< float >( x1 ), static_cast< float >( y1 ) ),
+		                          c, r );
+	};
+	const auto text = [ & ]( const float tx, const float ty, const ImU32 c, const std::string& s ) { /* 0x40475c50: shadow first, same alpha */
+		draw_list->AddText( font, font->FontSize, ImVec2( tx + 1.f, ty + 1.f ), mul( IM_COL32( 0, 0, 0, c >> IM_COL32_A_SHIFT ), e ), s.c_str( ) );
+		draw_list->AddText( font, font->FontSize, ImVec2( tx, ty ), mul( c, e ), s.c_str( ) );
+	};
+
+	rect( x - 1, y - 1, x + w + 1, y + h + 1, mul( IM_COL32( 0, 0, 0, 255 ), bg_a ), 5.f );
+	rect( x, y, x + w, y + h, mul( IM_COL32( 45, 45, 45, 255 ), bg_a ), 5.f );
+	draw_list->PushClipRect( ImVec2( static_cast< float >( x - 1 ), static_cast< float >( y + header ) ),
+	                         ImVec2( static_cast< float >( x + w + 1 ), static_cast< float >( y + header + h + 1 ) ), true );
+	rect( x, y, x + w, y + h, mul( IM_COL32( 36, 36, 36, 255 ), bg_a ), 5.f );
+	for ( int i = 0; i < n; i++ ) { /* align 3: y centre int( i * fh + header + 6 + fh / 2 ), minus roundf( th / 2 ) */
+		const float cy = static_cast< float >( y + static_cast< int >( static_cast< float >( i * fh + header + 6 ) + static_cast< float >( fh ) * 0.5f ) );
+		text( static_cast< float >( x + 6 ), static_cast< float >( static_cast< int >( cy - std::roundf( size( rows[ i ].m_text ).y * 0.5f ) ) ),
+		      ( show_all && rows[ i ].m_view ) ? accent : IM_COL32( 200, 200, 200, 255 ), rows[ i ].m_text );
+	}
+	draw_list->PopClipRect( );
+
+	if ( header ) { /* align 5 at ( x + int( W / 2 ), y + int( header / 2 ) ) */
+		const std::string title = n == 0 ? std::string( "spectators" ) : std::format( "spectators ({})", n );
+		const ImVec2 ts         = size( title );
+		const float tx = static_cast< float >( static_cast< int >( static_cast< float >( x + static_cast< int >( w * 0.5f ) ) - std::roundf( ts.x * 0.5f ) ) );
+		const float ty = static_cast< float >( static_cast< int >( static_cast< float >( y + static_cast< int >( header * 0.5f ) ) - std::roundf( ts.y * 0.5f ) ) );
+		text( tx, ty, IM_COL32( 200, 200, 200, 255 ), title );
+		rect( x, y + header - 1, x + w, y + header, mul( accent, e ), 0.f );
+	}
+
+	g_render.end_stretch_block( block );
+}
+
 bool n_misc::media_player_donor_look( const int style, media_look_t& look )
 {
 	const ImVec4 accent = ImGui::GetStyleColorVec4( ImGuiCol_::ImGuiCol_Accent );
@@ -7210,6 +7563,10 @@ bool n_misc::media_player_donor_look( const int style, media_look_t& look )
 	case 24: look = { true, IM_COL32( 255, 255, 255, 255 ), IM_COL32( 150, 150, 150, 255 ), 0 }; return true;
 	/* wm chrome box ( frame case 25 ), datashell display_spotify: white text, black 1 px drop shadow */
 	case 25: look = { true, IM_COL32( 255, 255, 255, 255 ), IM_COL32( 255, 255, 255, 255 ), 1 }; return true;
+	/* requiem spotify panel ( FUN_100560e0 ): no box anywhere, title white, artists 180, Tahoma 12 drop shadow */
+	case 26: look = { false, IM_COL32( 255, 255, 255, 255 ), IM_COL32( 180, 180, 180, 255 ), 1 }; return true;
+	/* primordial has no music panel: wm chrome box ( frame case 27 ), wm text ( 220 ) title, accent artist, font flag 0x80 drop shadow */
+	case 27: look = { true, IM_COL32( 220, 220, 220, 255 ), ImColor( accent.x, accent.y, accent.z, 1.f ), 1 }; return true;
 	default: return false;
 	}
 }
@@ -7519,6 +7876,7 @@ void n_misc::media_player_donor_frame( ImDrawList* list, const ImVec2 min, const
 		break;
 	case 24: grimoire_box( list, min.x, min.y, max.x - min.x, max.y - min.y ); break;
 	case 25: datashell_box( list, min, max ); break;
+	case 27: primordial_box( list, min, max ); break;
 	default: break;
 	}
 }

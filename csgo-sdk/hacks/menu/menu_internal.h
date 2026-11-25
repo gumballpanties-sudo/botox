@@ -105,6 +105,7 @@ struct menu_style_t {
 	bool m_gamesense; /* skeet chrome: layered border, gradient bar, icon tab strip */
 	bool m_primordial; /* primordial chrome: black 180 outer line, solid accent line, scrollbar colours */
 	bool m_clarity;    /* clarity scrollbar: grab 31, no track */
+	bool m_aventum;    /* aventum chrome: 1 px accent -> 22 gradient ring + 33 @ .5 outline outside the window */
 };
 
 extern const menu_style_t k_menu_styles[ ];

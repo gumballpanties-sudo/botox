@@ -79,6 +79,8 @@ namespace
 			case 23: font = g_render.m_fonts[ e_font_names::font_name_lobotomy_bold_13 ]; break;
 			case 24: font = g_render.m_fonts[ e_font_names::font_name_grimoire_tahoma_bd_11 ]; break;
 			case 25: font = g_render.m_fonts[ e_font_names::font_name_datashell_verdana_bd_12 ]; break;
+			case 26: font = g_render.m_fonts[ e_font_names::font_name_tahoma_12 ]; break; /* requiem: vgui Tahoma 12 ( bilevel ) */
+			case 27: font = g_render.m_fonts[ e_font_names::font_name_primordial_tahoma_13 ]; break;
 			default: break;
 			}
 		}

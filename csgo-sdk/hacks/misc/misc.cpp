@@ -459,6 +459,10 @@ void n_misc::impl_t::draw_watermark( )
 		return this->draw_watermark_grimoire( );
 	case 25:
 		return this->draw_watermark_datashell( );
+	case 26:
+		return this->draw_watermark_requiem( );
+	case 27:
+		return this->draw_watermark_primordial( );
 	default:
 		break;
 	}
@@ -1289,6 +1293,9 @@ static std::tuple< ImFont*, ImFont*, float > media_player_fonts( )
 		case 23: pick( e_font_names::font_name_lobotomy_bold_13, e_font_names::font_name_lobotomy_bold_13 ); break;
 		case 24: pick( e_font_names::font_name_grimoire_tahoma_bd_11, e_font_names::font_name_grimoire_tahoma_bd_11 ); break;
 		case 25: pick( e_font_names::font_name_datashell_verdana_bd_12, e_font_names::font_name_datashell_verdana_bd_12 ); break;
+		/* requiem spotify panel: vgui Tahoma 12 ( bilevel ) */
+		case 26: pick( e_font_names::font_name_tahoma_12, e_font_names::font_name_tahoma_12 ); break;
+		case 27: pick( e_font_names::font_name_primordial_tahoma_13, e_font_names::font_name_primordial_tahoma_13 ); break;
 		default: break;
 		}
 	}
@@ -2467,6 +2474,7 @@ void n_misc::impl_t::on_end_scene( )
 			return;
 
 		/* menu open = every style acts as always show; flags restored on exit so cfg never saves the force */
+		n_misc::spectators_always_show_cfg = GET_VARIABLE( g_variables.m_spectators_list_always_show, bool );
 		struct always_show_scope_t {
 			bool* m_flags[ 3 ] = { &GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ),
 				                   &GET_VARIABLE( g_variables.m_spectators_always_show, bool ),
@@ -2601,6 +2609,12 @@ void n_misc::impl_t::on_end_scene( )
 			break;
 		case 36:
 			draw_spectator_list_datashell( );
+			break;
+		case 37:
+			draw_spectator_list_requiem( );
+			break;
+		case 38:
+			draw_spectator_list_primordial( );
 			break;
 		default:
 			break;

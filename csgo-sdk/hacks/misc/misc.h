@@ -37,6 +37,10 @@ namespace n_misc
 	std::string watermark_label( );
 	std::string watermark_brand( );
 
+	/* m_spectators_list_always_show before the menu-open force ( misc.cpp always_show_scope_t ): requiem tells its two
+	   visibility styles apart by the real setting */
+	inline bool spectators_always_show_cfg = false;
+
 	struct clantag_frame_t {
 		std::string m_text = { };
 		float m_hold       = 1.f;
@@ -180,6 +184,8 @@ namespace n_misc
 		void draw_watermark_lobotomy_v2( );
 		void draw_watermark_grimoire( );
 		void draw_watermark_datashell( );
+		void draw_watermark_requiem( );
+		void draw_watermark_primordial( );
 		void draw_watermark_gif( );
 		void draw_screen_images( );
 		void draw_media_player( );
@@ -249,6 +255,8 @@ namespace n_misc
 		void draw_spectator_list_hotwheels_v1( );
 		void draw_spectator_list_grimoire( );
 		void draw_spectator_list_datashell( );
+		void draw_spectator_list_requiem( );
+		void draw_spectator_list_primordial( );
 
 	public:
 		/* gifs + gdi+ + eyes art, render thread only. textures_only = Reset hook (decoded gifs stay), full = unload */

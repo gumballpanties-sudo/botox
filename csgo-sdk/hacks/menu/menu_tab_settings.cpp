@@ -1493,13 +1493,13 @@ void n_menu::impl_t::tab_misc( )
 				"watermark settings",
 				[]( ) {
 					auto& style = GET_VARIABLE( g_variables.m_watermark_style, int );
-					if ( style < 0 || style > 25 )
+					if ( style < 0 || style > 27 )
 						style = 0;
 
 					ImGui::Combo( "style##watermark style", &style,
 					              "default\0kamibebra\0clarity\0clarity v2\0delusional\0interwebz\0havoc\0onetap\0airflow\0ev0lve\0legendware\0"
 					              "interium\0skebob\0cumidere\0illusory\0lumi\0billware\0dna\0dna clarity\0cucumber\0howeweware\0gamesense\0millionware v1\0"
-					              "lobotomy v2\0grimoire\0datashell\0" );
+					              "lobotomy v2\0grimoire\0datashell\0requiem\0primordial\0" );
 
 					{
 						static char name_buffer[ 25 ] = { };
@@ -1586,7 +1586,8 @@ void n_menu::impl_t::tab_misc( )
 					const bool shows_user = ( ( style == 0 || style == 2 || style == 15 || style == 21 || style == 22 || style == 23 || style == 24 ) && GET_VARIABLE( g_variables.m_watermark_user, bool ) ) ||
 					                        style == 12 ||
 					                        ( style == 1 && ( GET_VARIABLE( g_variables.m_watermark_kami_show_flags, int ) & 1 ) ) || style == 3 ||
-					                        style == 8 || style == 10 || style == 17 || style == 18 || style == 19 || style == 20 || ( label_style && label == 2 );
+					                        style == 8 || style == 10 || style == 17 || style == 18 || style == 19 || style == 20 || style == 27 ||
+					                        ( label_style && label == 2 );
 
 					if ( shows_user ) {
 						static char user_buffer[ 33 ] = { };
@@ -1749,18 +1750,19 @@ void n_menu::impl_t::tab_misc( )
 
 					if ( color_style != 9 && color_style != 12 && color_style != 13 && color_style != 14 && color_style != 16 && color_style != 18 &&
 					     color_style != 19 && color_style != 20 && color_style != 21 && color_style != 24 && color_style != 26 && color_style != 28 &&
-					     color_style != 29 && color_style != 30 && color_style != 31 && color_style != 33 && color_style != 34 && color_style != 35 && color_style != 36 && ( color_style != 25 || lumi_type == 1 ) )
+					     color_style != 29 && color_style != 30 && color_style != 31 && color_style != 33 && color_style != 34 && color_style != 35 && color_style != 36 &&
+					     color_style != 37 && color_style != 38 && ( color_style != 25 || lumi_type == 1 ) )
 						ImGui::Combo( "listed players##spectatorlist player", &GET_VARIABLE( g_variables.m_spectators_list_type, int ),
 					                  "all spectators\0local spectators\0" );
 
-					if ( GET_VARIABLE( g_variables.m_spectators_list_style, int ) > 36 )
+					if ( GET_VARIABLE( g_variables.m_spectators_list_style, int ) > 38 )
 						GET_VARIABLE( g_variables.m_spectators_list_style, int ) = 0;
 
 					ImGui::Combo( "style##spectatorlist style", &GET_VARIABLE( g_variables.m_spectators_list_style, int ),
 				                  "default\0delusional\0interwebz\0windows xp\0clarity\0chillware\0lobotomy v2\0kamibebra\0eyes\0cumhacck\0clarity v2\0"
 				                  "airplane\0bhop cheat\0millionware\0aimware\0havoc\0onetap\0airflow\0ev0lve\0legendware\0interium\0chillware v2\0"
 				                  "skebob\0cumidere\0illusory\0lumi\0billware\0inkabanium\0dna\0cucumber\0howeweware\0gamesense\0kamidere\0millionware v1\0"
-				                  "hotwheels v1\0grimoire\0datashell\0" );
+				                  "hotwheels v1\0grimoire\0datashell\0requiem\0primordial\0" );
 
 					const int style = GET_VARIABLE( g_variables.m_spectators_list_style, int );
 
@@ -1772,8 +1774,8 @@ void n_menu::impl_t::tab_misc( )
 					}
 
 					if ( style == 1 || style == 2 || style == 3 || style == 4 || style == 15 || style == 22 || style == 23 || style == 24 || style == 26 || style == 28 ||
-					     style == 29 || style == 30 || style == 31 || style == 32 || style == 33 || style == 34 || style == 35 || style == 36 ||
-					     ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 1 ) )
+					     style == 29 || style == 30 || style == 31 || style == 32 || style == 33 || style == 34 || style == 35 || style == 36 || style == 37 ||
+					     style == 38 || ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 1 ) )
 						ImGui::Checkbox( "show targets##spectatorlist targets",
 						                 &GET_VARIABLE( g_variables.m_spectators_list_show_target, bool ) );
 
@@ -1784,8 +1786,16 @@ void n_menu::impl_t::tab_misc( )
 
 					if ( ( style == 0 && GET_VARIABLE( g_variables.m_spectators_list_type, int ) == 0 ) || style == 4 || style == 5 || style == 6 ||
 					     style == 11 || style == 15 || style == 17 || style == 18 || style == 21 || style == 22 || style == 23 || style == 25 ||
-					     style == 26 || style == 27 || style == 28 || style == 29 || style == 30 || style == 31 || style == 32 || style == 34 || style == 35 || style == 36 )
+					     style == 26 || style == 27 || style == 28 || style == 29 || style == 30 || style == 31 || style == 32 || style == 34 || style == 35 || style == 36 || style == 37 || style == 38 )
 						ImGui::Checkbox( "always show##spectatorlist always show", &GET_VARIABLE( g_variables.m_spectators_list_always_show, bool ) );
+
+					if ( style == 38 ) { /* primordial "Show Mode" / "Transparency" / "Disable Header" */
+						ImGui::Checkbox( "observer mode##spectatorlist primordial", &GET_VARIABLE( g_variables.m_spectators_bhopcheat_mode, bool ) );
+						ImGui::SliderFloat( "transparency##spectatorlist primordial", &GET_VARIABLE( g_variables.m_spectators_primordial_transparency, float ), 0.f,
+						                    100.f, "%.0f" );
+						ImGui::Checkbox( "disable header##spectatorlist primordial",
+						                 &GET_VARIABLE( g_variables.m_spectators_primordial_disable_header, bool ) );
+					}
 
 					if ( style == 34 )
 						ImGui::SliderFloat( "gap##spectatorlist hotwheels", &GET_VARIABLE( g_variables.m_spectators_hotwheels_gap, float ), 0.f, 20.f, "%.0f px" );
@@ -1944,7 +1954,7 @@ void n_menu::impl_t::tab_misc( )
 						ImGui::Checkbox( "observer mode##spectatorlist bhopcheat mode", &GET_VARIABLE( g_variables.m_spectators_bhopcheat_mode, bool ) );
 
 					if ( ( style < 13 && style != 8 && style != 9 && style != 11 ) || style == 22 || style == 31 || style == 32 || style == 34 || style == 35 ||
-					     ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 2 ) )
+					     style == 37 || ( style == 25 && GET_VARIABLE( g_variables.m_spectators_lumi_type, int ) != 2 ) )
 						ImGui::Checkbox( "spectator avatars", &GET_VARIABLE( g_variables.m_spectators_avatar, bool ) );
 
 					if ( style == 10 )
