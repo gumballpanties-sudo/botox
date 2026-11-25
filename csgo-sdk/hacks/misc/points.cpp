@@ -146,14 +146,14 @@ void points_draw( )
 	constexpr float k_inactivity = 3.f, k_fade = 0.35f, k_quick_anim = 0.25f, k_reveal = 0.22f;
 	constexpr float k_alpha_out = 0.08f, k_alpha_in = 0.08f, k_slide = 50.f, k_gap = 6.f;
 	constexpr float k_spring = 200.f, k_damping = 40.f, k_impulse = 6.f;
-	constexpr float k_bob = 3.75f, k_drop_in = 17.f;
+	constexpr float k_bob = 3.75f, k_row_bob = 2.f, k_drop_in = 17.f;
 
 	static int shown = 0;
 	static unsigned seen_events = 0;
 	static float display_timer = 0.f, fade_timer = 0.f, anim_timer = 0.f, reveal_timer = 0.f, reset_timer = 0.f;
 	static bool fading = false, anim_active = false, revealing = false;
 	static float offset = 0.f, offset_vel = 0.f, bob_phase = 0.f, drop = 0.f, trail = 0.f;
-	static float row_anim[ k_rows ] = { };
+	static float row_anim[ k_rows ] = { }, row_bob[ k_rows ] = { };
 
 	const auto reset = [ & ] {
 		shown = 0;
@@ -246,7 +246,8 @@ void points_draw( )
 
 	drop += ( 0.f - drop ) * std::min( 8.5f * dt, 1.f );
 
-	bob_phase = std::fmod( bob_phase + dt * std::clamp( GET_VARIABLE( g_variables.m_points_speed, float ), 0.1f, 10.f ) * 3.6f, 6.2831853f );
+	const float bob_rate = std::clamp( GET_VARIABLE( g_variables.m_points_speed, float ), 0.1f, 10.f ) * 3.6f;
+	bob_phase = std::fmod( bob_phase + dt * bob_rate, 6.2831853f );
 	const float bob = std::sin( bob_phase ) * k_bob;
 
 	if ( fading && fade_timer >= k_fade && alpha <= 0.001f ) {
@@ -362,6 +363,10 @@ void points_draw( )
 
 		for ( int n = 0; n < count; ++n ) {
 			const int i            = order[ n ];
+			/* own bob per row: start phase + rate from trick index, rows never lock step */
+			if ( row_anim[ i ] <= 0.f )
+				row_bob[ i ] = i * 2.4f;
+			row_bob[ i ]           = std::fmod( row_bob[ i ] + dt * bob_rate * ( 0.8f + 0.05f * i ), 6.2831853f );
 			row_anim[ i ]          = std::min( row_anim[ i ] + dt * speed / k_reveal, 1.f );
 			const float t          = ease_out( row_anim[ i ] );
 			const float a          = group_alpha * t;
@@ -380,7 +385,7 @@ void points_draw( )
 			const float row_w = name_size.x + space + mult_w + gain_w;
 			const float slide = ( 1.f - t ) * 12.f;
 			float rx          = std::floor( align == 0 ? anchor - slide : ( align == 1 ? anchor - row_w * 0.5f : anchor - row_w ) + slide );
-			const float ry    = std::floor( from_bottom ? row_y - name_size.y : row_y );
+			const float ry    = std::floor( ( from_bottom ? row_y - name_size.y : row_y ) + std::sin( row_bob[ i ] ) * k_row_bob );
 
 			put( k_row_names[ i ], rx, ry, row_size, white( 255.f ), accent_row( 150.f ) );
 			rx += name_size.x + space;
