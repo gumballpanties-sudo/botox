@@ -210,6 +210,17 @@ Vertical gradient.
 
 Returns `screen_x, screen_y`, or `nil` when the point is behind the camera.
 
+#### `render.blur(x1, y1, x2, y2, strength, color, rounding)`
+
+Blurs what is on screen under the rect: the game, its hud, the botox overlays drawn before lua, and everything drawn before this call (this script's earlier draws, scripts loaded before it). Draw your panel on top right after it = frosted glass panel. `strength` = blur radius, default `1` = 34 px (the menu background blur at 100), `0` to `3`, `0` = no blur. `color` tints and fades the blur: default white = as is, `color(255, 255, 255, 128)` = half blurred, `color(170, 200, 255)` = bluish. `rounding` = corner radius, default `0`; give it your panel's. Each call blurs the whole frame once at about 270 rows: cheap, but one call per panel, not per element.
+
+```lua
+callbacks.register("paint", function()
+    render.blur(100, 100, 360, 220, 1, color(255, 255, 255), 8)       -- blur first
+    render.rect_filled(100, 100, 360, 220, color(20, 20, 20, 120), 8) -- see-through panel over it
+end)
+```
+
 #### `render.load_image(file)`
 
 Works anywhere. `file` = a png, jpg, gif or bmp in `C:\botox\lua\images\` (`"logo.png"`, subfolders too: `"icons\\skull.gif"`), or a full path (`"D:\\pics\\cat.png"`). Returns an [image](#image), or `nil, error` (no such file, other format, bigger than 4096 px a side, file over 32 MB). Plain ASCII file names.
@@ -917,6 +928,7 @@ Full scripts in [lua_examples/](lua_examples/), copy them into `C:\botox\lua\`:
 | --- | --- |
 | [watermark.lua](lua_examples/watermark.lua) | paint, text_size, ui color / slider, latency |
 | [image.lua](lua_examples/image.lua) | render.load_image + render.image: a picture from `lua\images\` in a corner, scale / opacity / rounding, ui.input file name, ui.text status |
+| [blur_panel.lua](lua_examples/blur_panel.lua) | render.blur: frosted glass panel, strength / tint / rounding / panel color options, drag it with the mouse while the menu is open |
 | [speed.lua](lua_examples/speed.lua) | local player velocity, keybind, indicator font |
 | [box_esp.lua](lua_examples/box_esp.lua) | entities.players, world_to_screen, mins_maxs, combo |
 | [slow_walk.lua](lua_examples/slow_walk.lua) | create_move cmd editing with a keybind |

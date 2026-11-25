@@ -4,6 +4,8 @@
 #include "../scaleform/image_cache.h"
 #include "../vgui_font.h" /* requiem: vgui Win32Font text */
 
+#include <bit>
+#include <cstdint>
 #include <ctime>
 #include <format>
 #include <fstream>
@@ -400,7 +402,8 @@ void n_misc::impl_t::draw_spectator_list( )
 	ImGui::PopStyleVar( );
 }
 
-void n_misc::impl_t::collect_spectators( std::vector< spectator_entry_t >& out, const bool all_players, const bool keep_hltv )
+void n_misc::impl_t::collect_spectators( std::vector< spectator_entry_t >& out, const bool all_players, const bool keep_hltv,
+                                         const bool keep_dead_target )
 {
 	out.clear( );
 
@@ -418,7 +421,7 @@ void n_misc::impl_t::collect_spectators( std::vector< spectator_entry_t >& out, 
 		const auto spectated_player = reinterpret_cast< c_base_entity* >(
 			g_interfaces.m_client_entity_list->get_client_entity_from_handle( entity->get_observer_target_handle( ) ) );
 
-		if ( !spectated_player || !spectated_player->is_alive( ) )
+		if ( !spectated_player || ( !keep_dead_target && !spectated_player->is_alive( ) ) )
 			return;
 
 		const bool watching_local = spectated_player == g_ctx.m_local;
@@ -2889,11 +2892,19 @@ namespace
 		device->SetTransform( D3DTS_PROJECTION, &projection );
 	}
 
+	/* m_spread as it was when the blur was queued: menu + lua blurs of one frame replay after both queued, each keeps its own radius */
+	float airflow_replay_spread = 1.f;
+
+	void airflow_blur_spread( const ImDrawList*, const ImDrawCmd* command )
+	{
+		airflow_replay_spread = std::bit_cast< float >( static_cast< std::uint32_t >( reinterpret_cast< std::uintptr_t >( command->UserCallbackData ) ) );
+	}
+
 	void airflow_blur_first_pass( const ImDrawList*, const ImDrawCmd* command )
 	{
 		const auto device    = g_interfaces.m_direct_device;
 		const auto& blur     = *static_cast< const airflow_blur_t* >( command->UserCallbackData );
-		const float texel[4] = { blur.m_spread / static_cast< float >( blur.m_small_width ) };
+		const float texel[4] = { airflow_replay_spread / static_cast< float >( blur.m_small_width ) };
 
 		device->SetPixelShader( blur.m_shader_x );
 		device->SetPixelShaderConstantF( 0, texel, 1 );
@@ -2904,7 +2915,7 @@ namespace
 	{
 		const auto device    = g_interfaces.m_direct_device;
 		const auto& blur     = *static_cast< const airflow_blur_t* >( command->UserCallbackData );
-		const float texel[4] = { blur.m_spread / static_cast< float >( blur.m_small_height ) };
+		const float texel[4] = { airflow_replay_spread / static_cast< float >( blur.m_small_height ) };
 
 		device->SetPixelShader( blur.m_shader_y );
 		device->SetPixelShaderConstantF( 0, texel, 1 );
@@ -2943,6 +2954,7 @@ namespace
 		const auto texture_1 = reinterpret_cast< ImTextureID >( blur.m_textures[ 1 ] );
 
 		list->AddCallback( airflow_blur_begin, &blur );
+		list->AddCallback( airflow_blur_spread, reinterpret_cast< void* >( static_cast< std::uintptr_t >( std::bit_cast< std::uint32_t >( blur.m_spread ) ) ) );
 
 		for ( int i = 0; i < passes; ++i ) {
 			list->AddCallback( airflow_blur_first_pass, &blur );
@@ -2986,6 +2998,12 @@ bool screen_blur_fullscreen( ImDrawList* list, const ImU32 tint, const int passe
 
 bool screen_blur_fullscreen_smooth( ImDrawList* list, const ImU32 tint, const float amount )
 {
+	return screen_blur_rect_smooth( list, ImVec2( 0.f, 0.f ), ImVec2( g_ctx.m_width, g_ctx.m_height ), tint, amount, 0.f );
+}
+
+/* render thread ( record time ). blurs the whole frame drawn so far, shows the min..max cut of it */
+bool screen_blur_rect_smooth( ImDrawList* list, const ImVec2 min, const ImVec2 max, const ImU32 tint, const float amount, const float rounding )
+{
 	const auto device = g_interfaces.m_direct_device;
 	if ( amount <= 0.f || !device || !ensure_airflow_blur( device, screen_blur ) )
 		return false;
@@ -3000,7 +3018,7 @@ bool screen_blur_fullscreen_smooth( ImDrawList* list, const ImU32 tint, const fl
 	if ( !queue_airflow_blur( list, passes, screen_blur ) )
 		return false;
 
-	airflow_blur_rect( list, true, ImVec2( 0.f, 0.f ), ImVec2( g_ctx.m_width, g_ctx.m_height ), tint, 0.f, ImDrawFlags_None, screen_blur );
+	airflow_blur_rect( list, true, min, max, tint, rounding, ImDrawFlags_RoundCornersAll, screen_blur );
 	return true;
 }
 
@@ -7266,7 +7284,7 @@ void n_misc::impl_t::draw_spectator_list_requiem( )
 
 	/* donor loop is i < maxClients: the last player slot is never listed */
 	std::vector< spectator_entry_t > entries{ };
-	collect_spectators( entries, true, true );
+	collect_spectators( entries, true, true, true ); /* donor: no bot / GOTV filter, target only has to exist */
 	std::erase_if( entries, [ & ]( const spectator_entry_t& entry ) {
 		return entry.m_index >= globals->m_max_clients || ( !show_target && entry.m_target_index != focus );
 	} );
@@ -7429,7 +7447,7 @@ void n_misc::impl_t::draw_spectator_list_primordial( )
 	}
 
 	std::vector< spectator_entry_t > entries{ };
-	collect_spectators( entries, true );
+	collect_spectators( entries, true, false, true ); /* target only has to exist ( 0x4018fa14 ) */
 	std::erase_if( entries, [ & ]( const spectator_entry_t& entry ) { return entry.m_fake_player || ( !show_all && entry.m_target_index != view ); } );
 	std::sort( entries.begin( ), entries.end( ), []( const spectator_entry_t& a, const spectator_entry_t& b ) { return a.m_index < b.m_index; } );
 
@@ -7444,7 +7462,8 @@ void n_misc::impl_t::draw_spectator_list_primordial( )
 		default: return "";
 		}
 	};
-	const auto cut = []( const std::string& s ) { return s.size( ) > 18 ? s.substr( 0, 18 ) + "..." : s; }; /* 0x4047e3b0, bytes */
+	/* 0x4047e3b0: > 18 bytes = first 18 + "...", empty = "<blank>" */
+	const auto cut = []( const std::string& s ) { return s.size( ) > 18 ? s.substr( 0, 18 ) + "..." : s.empty( ) ? std::string( "<blank>" ) : s; };
 
 	struct row_t {
 		std::string m_text;
@@ -7468,7 +7487,7 @@ void n_misc::impl_t::draw_spectator_list_primordial( )
 	t = ImClamp( t + ( visible ? 1.f : -1.f ) * ImGui::GetIO( ).DeltaTime * 5.f, 0.f, 1.f );
 	if ( t == 0.f )
 		return;
-	const float e = 0.5f * static_cast< float >( std::sin( ( static_cast< double >( t ) - 0.5 ) * 3.14159265358979323846 ) + 1.0 );
+	const float e = 0.5f * static_cast< float >( std::sin( ( static_cast< double >( t ) - 0.5 ) * 3.1415926 ) + 1.0 ); /* donor pi ( 0x40640d88 ) */
 
 	const auto size = [ & ]( const std::string& s ) {
 		const ImVec2 v = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.f, s.c_str( ) );

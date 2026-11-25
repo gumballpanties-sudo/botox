@@ -803,12 +803,17 @@ static bool build_fonts( font_set_t& set, const font_request_t& request )
 	merge_extended_glyphs( atlas, 12.f, verdana_font_config.FontBuilderFlags, e_glyph_tier::glyph_tier_basic );
 
 	/* primordial hud font ( create_font 0x40471900, fonts #1 + #5 ): Tahoma 13 weight 400 flags 0x80 = no FONTFLAG_ANTIALIAS ->
-	   FreeType Monochrome alone ( no MonoHinting = FT_LOAD_TARGET_NORMAL hinting ), not bold. #1's msjh cjk merge -> basic tier */
+	   FreeType Monochrome alone ( no MonoHinting = FT_LOAD_TARGET_NORMAL hinting ), not bold. #1's range list ( 0x40ccdf50: latin ext /
+	   greek / arabic / thai + cyrillic + vietnamese + the cjk sets' punctuation / kana / fullwidth ) read from tahoma itself like the donor
+	   ( codepoints tahoma lacks are skipped ); its msjh cjk merge -> basic tier ( fills only what tahoma lacks ) */
 	{
+		static const ImWchar primordial_ranges[] = { 0x0020, 0x00FF, 0x0100, 0x024F, 0x0300, 0x03FF, 0x0400, 0x052F, 0x0600, 0x06FF,
+			                                         0x0E00, 0x0E7F, 0x1EA0, 0x1EF9, 0x2000, 0x206F, 0x2DE0, 0x2DFF, 0x3000, 0x30FF,
+			                                         0x31F0, 0x31FF, 0xA640, 0xA69F, 0xFF00, 0xFFEF, 0xFFFD, 0xFFFD, 0 };
 		ImFontConfig primordial_config     = { };
 		primordial_config.FontBuilderFlags = ImGuiFreeTypeBuilderFlags::ImGuiFreeTypeBuilderFlags_Monochrome;
 		fonts[ e_font_names::font_name_primordial_tahoma_13 ] =
-			atlas->AddFontFromMemoryCompressedTTF( tahoma_compressed_data, tahoma_compressed_size, 13.f, &primordial_config, atlas->GetGlyphRangesCyrillic( ) );
+			atlas->AddFontFromMemoryCompressedTTF( tahoma_compressed_data, tahoma_compressed_size, 13.f, &primordial_config, primordial_ranges );
 		merge_extended_glyphs( atlas, 13.f, primordial_config.FontBuilderFlags, e_glyph_tier::glyph_tier_basic );
 	}
 

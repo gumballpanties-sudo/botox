@@ -207,7 +207,8 @@ namespace n_misc
 		void draw_spectator_list( );
 		void draw_spectating_local( );
 
-		void collect_spectators( std::vector< spectator_entry_t >& out, bool all_players = false, bool keep_hltv = false );
+		/* keep_dead_target: also watchers of a dead player ( server keeps it 0.5 s / 3 s; requiem + primordial never check alive ) */
+		void collect_spectators( std::vector< spectator_entry_t >& out, bool all_players = false, bool keep_hltv = false, bool keep_dead_target = false );
 
 		void draw_spectator_list_delusional( );
 		void draw_spectator_list_interwebz( );
@@ -314,6 +315,8 @@ void boot_screen_fade_others( ImDrawData* draw_data );
 /* airflow blur over the whole back buffer, tinted, passes = strength. false = no blur this frame */
 bool screen_blur_fullscreen( ImDrawList* list, ImU32 tint, int passes );
 bool screen_blur_fullscreen_smooth( ImDrawList* list, ImU32 tint, float amount );
+/* amount 1 = 34 px radius ( menu blur ); tint multiplies + fades, rounding = corner radius. lua render.blur */
+bool screen_blur_rect_smooth( ImDrawList* list, ImVec2 min, ImVec2 max, ImU32 tint, float amount, float rounding );
 
 enum class e_points_trick {
 	edge_bug, fireman, jump_bug, head_ceiling,

@@ -823,6 +823,27 @@ namespace
 		return 0;
 	}
 
+	/* blurs what is drawn under the rect so far ( game, huds, earlier draws of this and older scripts ), menu blur's
+	   pipeline ( screen_blur_rect_smooth ). strength 1 = 34 px radius, 0..3; color tints + fades it, alpha 0 = skipped */
+	int l_render_blur( lua_State* L )
+	{
+		require_paint( L );
+
+		const float x1 = check_float( L, 1 ), y1 = check_float( L, 2 ), x2 = check_float( L, 3 ), y2 = check_float( L, 4 );
+		const float strength     = std::clamp( opt_float( L, 5, 1.f ), 0.f, 3.f );
+		const unsigned int color = opt_color( L, 6 );
+		const float rounding     = std::max( opt_float( L, 7, 0.f ), 0.f );
+		if ( strength <= 0.f || !( color & IM_COL32_A_MASK ) )
+			return 0;
+
+		g_render.m_draw_data.emplace_back(
+			e_draw_type::draw_type_callback,
+			std::make_any< callback_draw_object_t >( callback_draw_object_t{
+				[ min = ImVec2( std::min( x1, x2 ), std::min( y1, y2 ) ), max = ImVec2( std::max( x1, x2 ), std::max( y1, y2 ) ), strength, color,
+			      rounding ]( ImDrawList* draw_list ) { screen_blur_rect_smooth( draw_list, min, max, color, strength, rounding ); } } ) );
+		return 0;
+	}
+
 	int l_image_size( lua_State* L )
 	{
 		const image_ref_t* image = check_image( L );
@@ -3506,6 +3527,7 @@ void n_lua_api::open( lua_State* L )
 		                                { "world_to_screen", l_render_world_to_screen },
 		                                { "load_image", l_render_load_image },
 		                                { "image", l_render_image },
+	                                { "blur", l_render_blur },
 		                                { nullptr, nullptr } };
 	add_table( L, "render", render );
 
