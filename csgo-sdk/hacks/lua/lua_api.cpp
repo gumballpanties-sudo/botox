@@ -832,15 +832,22 @@ namespace
 		const float x1 = check_float( L, 1 ), y1 = check_float( L, 2 ), x2 = check_float( L, 3 ), y2 = check_float( L, 4 );
 		const float strength     = std::clamp( opt_float( L, 5, 1.f ), 0.f, 3.f );
 		const unsigned int color = opt_color( L, 6 );
-		const float rounding     = std::max( opt_float( L, 7, 0.f ), 0.f );
-		if ( strength <= 0.f || !( color & IM_COL32_A_MASK ) )
+		const float rounding     = std::max( 0.f, opt_float( L, 7, 0.f ) );   // 0 first: nan -> 0
+		if ( !( strength > 0.f ) || !( color & IM_COL32_A_MASK ) )
+			return 0;
+
+		/* 48 a frame like tf2 / css: each one replays a full frame blur ( up to 64 x 2 passes ), a loop of them = fps gone */
+		static int s_frame = -1, s_count = 0;
+		if ( const int now = g_interfaces.m_global_vars_base->m_frame_count; std::exchange( s_frame, now ) != now )
+			s_count = 0;
+		if ( ++s_count > 48 )
 			return 0;
 
 		g_render.m_draw_data.emplace_back(
 			e_draw_type::draw_type_callback,
 			std::make_any< callback_draw_object_t >( callback_draw_object_t{
 				[ min = ImVec2( std::min( x1, x2 ), std::min( y1, y2 ) ), max = ImVec2( std::max( x1, x2 ), std::max( y1, y2 ) ), strength, color,
-			      rounding ]( ImDrawList* draw_list ) { screen_blur_rect_smooth( draw_list, min, max, color, strength, rounding ); } } ) );
+			      rounding ]( ImDrawList* draw_list ) { screen_blur_rect_smooth( draw_list, min, max, color, strength, rounding, true ); } } ) );
 		return 0;
 	}
 

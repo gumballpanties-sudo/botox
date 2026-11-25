@@ -1714,6 +1714,13 @@ float n_render::impl_t::to_overlay_x( float screen_x )
 	return overlay_stretch( scale, center_x ) ? center_x + ( screen_x - center_x ) / scale : screen_x;
 }
 
+float n_render::impl_t::to_screen_x( float overlay_x )
+{
+	float scale, center_x;
+
+	return overlay_stretch( scale, center_x ) ? center_x + ( overlay_x - center_x ) * scale : overlay_x;
+}
+
 static void stretch_overlays( )
 {
 	float scale, center_x;

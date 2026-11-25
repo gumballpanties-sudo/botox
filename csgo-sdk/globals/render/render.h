@@ -284,6 +284,8 @@ namespace n_render
 		}
 
 		float to_overlay_x( float screen_x );
+		/* where a background list x lands after stretch_overlays ( inverse of to_overlay_x ) */
+		float to_screen_x( float overlay_x );
 
 		struct stretch_block_t {
 			ImDrawList* m_list;

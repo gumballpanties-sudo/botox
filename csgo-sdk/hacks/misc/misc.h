@@ -315,8 +315,9 @@ void boot_screen_fade_others( ImDrawData* draw_data );
 /* airflow blur over the whole back buffer, tinted, passes = strength. false = no blur this frame */
 bool screen_blur_fullscreen( ImDrawList* list, ImU32 tint, int passes );
 bool screen_blur_fullscreen_smooth( ImDrawList* list, ImU32 tint, float amount );
-/* amount 1 = 34 px radius ( menu blur ); tint multiplies + fades, rounding = corner radius. lua render.blur */
-bool screen_blur_rect_smooth( ImDrawList* list, ImVec2 min, ImVec2 max, ImU32 tint, float amount, float rounding );
+/* amount 1 = 34 px radius ( menu blur ); tint multiplies + fades, rounding = corner radius. follow_stretch = lua render.blur
+   ( background list rect: uv follows the overlay stretch, far off-screen part clamped ) */
+bool screen_blur_rect_smooth( ImDrawList* list, ImVec2 min, ImVec2 max, ImU32 tint, float amount, float rounding, bool follow_stretch = false );
 
 enum class e_points_trick {
 	edge_bug, fireman, jump_bug, head_ceiling,

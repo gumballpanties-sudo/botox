@@ -3002,10 +3002,11 @@ bool screen_blur_fullscreen_smooth( ImDrawList* list, const ImU32 tint, const fl
 }
 
 /* render thread ( record time ). blurs the whole frame drawn so far, shows the min..max cut of it */
-bool screen_blur_rect_smooth( ImDrawList* list, const ImVec2 min, const ImVec2 max, const ImU32 tint, const float amount, const float rounding )
+bool screen_blur_rect_smooth( ImDrawList* list, const ImVec2 min, const ImVec2 max, const ImU32 tint, const float amount, const float rounding,
+                              const bool follow_stretch )
 {
 	const auto device = g_interfaces.m_direct_device;
-	if ( amount <= 0.f || !device || !ensure_airflow_blur( device, screen_blur ) )
+	if ( !( amount > 0.f ) || !device || !ensure_airflow_blur( device, screen_blur ) )
 		return false;
 
 	/* amount 1 = boot screen radius: 5 passes of sigma 1.69 texels at 1/9 = 34 screen px; same px here at the chain's res */
@@ -3018,7 +3019,20 @@ bool screen_blur_rect_smooth( ImDrawList* list, const ImVec2 min, const ImVec2 m
 	if ( !queue_airflow_blur( list, passes, screen_blur ) )
 		return false;
 
-	airflow_blur_rect( list, true, min, max, tint, rounding, ImDrawFlags_RoundCornersAll, screen_blur );
+	if ( !follow_stretch ) {
+		airflow_blur_rect( list, true, min, max, tint, rounding, ImDrawFlags_RoundCornersAll, screen_blur );
+		return true;
+	}
+
+	/* lua rect, background list: stretch_overlays scales its x about the centre later, so sample where it lands. Off-screen
+	   part dropped ( corners kept a radius out ): a vertex far out loses float precision on the gpu clip */
+	const float left = g_render.to_overlay_x( 0.f ) - rounding, right = g_render.to_overlay_x( g_ctx.m_width ) + rounding;
+	const float top = -rounding, bottom = g_ctx.m_height + rounding;
+	const ImVec2 lo( ImClamp( min.x, left, right ), ImClamp( min.y, top, bottom ) ), hi( ImClamp( max.x, left, right ), ImClamp( max.y, top, bottom ) );
+
+	list->AddImageRounded( reinterpret_cast< ImTextureID >( screen_blur.m_textures[ 0 ] ), lo, hi,
+	                       ImVec2( g_render.to_screen_x( lo.x ) / g_ctx.m_width, lo.y / g_ctx.m_height ),
+	                       ImVec2( g_render.to_screen_x( hi.x ) / g_ctx.m_width, hi.y / g_ctx.m_height ), tint, rounding, ImDrawFlags_RoundCornersAll );
 	return true;
 }
 
