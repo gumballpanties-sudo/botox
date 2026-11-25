@@ -192,11 +192,12 @@ enum e_smooth_origin {
 	smooth_origin_right,
 	smooth_origin_bottom,
 	smooth_origin_left,
-	smooth_origin_top
+	smooth_origin_top,
+	smooth_origin_center /* default style spawn: in place, fade, smooth reflow */
 };
 
 /* appended, saved configs keep 1 = right / 2 = bottom */
-inline constexpr const char* k_smooth_origin_names = "auto\0right\0bottom\0left\0top\0";
+inline constexpr const char* k_smooth_origin_names = "auto\0right\0bottom\0left\0top\0center\0";
 
 enum e_pre_layout {
 	pre_layout_right = 0,

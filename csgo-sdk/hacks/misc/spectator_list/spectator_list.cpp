@@ -1,6 +1,7 @@
 #include "spectator_list.h"
 #include "kamibebra_gif_data.h"
 #include "airflow_data.h"
+#include "blur_plan.h"
 #include "../scaleform/image_cache.h"
 #include "../vgui_font.h" /* requiem: vgui Win32Font text */
 
@@ -3002,8 +3003,7 @@ bool screen_blur_fullscreen_smooth( ImDrawList* list, const ImU32 tint, const fl
 }
 
 /* render thread ( record time ). blurs the whole frame drawn so far, shows the min..max cut of it */
-bool screen_blur_rect_smooth( ImDrawList* list, const ImVec2 min, const ImVec2 max, const ImU32 tint, const float amount, const float rounding,
-                              const bool follow_stretch )
+bool screen_blur_rect_smooth( ImDrawList* list, const ImVec2 min, const ImVec2 max, const ImU32 tint, const float amount, const float rounding )
 {
 	const auto device = g_interfaces.m_direct_device;
 	if ( !( amount > 0.f ) || !device || !ensure_airflow_blur( device, screen_blur ) )
@@ -3019,21 +3019,32 @@ bool screen_blur_rect_smooth( ImDrawList* list, const ImVec2 min, const ImVec2 m
 	if ( !queue_airflow_blur( list, passes, screen_blur ) )
 		return false;
 
-	if ( !follow_stretch ) {
-		airflow_blur_rect( list, true, min, max, tint, rounding, ImDrawFlags_RoundCornersAll, screen_blur );
-		return true;
-	}
-
-	/* lua rect, background list: stretch_overlays scales its x about the centre later, so sample where it lands. Off-screen
-	   part dropped ( corners kept a radius out ): a vertex far out loses float precision on the gpu clip */
-	const float left = g_render.to_overlay_x( 0.f ) - rounding, right = g_render.to_overlay_x( g_ctx.m_width ) + rounding;
-	const float top = -rounding, bottom = g_ctx.m_height + rounding;
-	const ImVec2 lo( ImClamp( min.x, left, right ), ImClamp( min.y, top, bottom ) ), hi( ImClamp( max.x, left, right ), ImClamp( max.y, top, bottom ) );
-
-	list->AddImageRounded( reinterpret_cast< ImTextureID >( screen_blur.m_textures[ 0 ] ), lo, hi,
-	                       ImVec2( g_render.to_screen_x( lo.x ) / g_ctx.m_width, lo.y / g_ctx.m_height ),
-	                       ImVec2( g_render.to_screen_x( hi.x ) / g_ctx.m_width, hi.y / g_ctx.m_height ), tint, rounding, ImDrawFlags_RoundCornersAll );
+	airflow_blur_rect( list, true, min, max, tint, rounding, ImDrawFlags_RoundCornersAll, screen_blur );
 	return true;
+}
+
+void screen_blur_rects( ImDrawList* list, const screen_blur_batch_t& batch )
+{
+	const auto device = g_interfaces.m_direct_device;
+	if ( batch.m_rects.empty( ) || !( batch.m_strength > 0.f ) || !device || !ensure_airflow_blur( device, screen_blur ) )
+		return;
+
+	const BlurPlan plan  = BlurPlanFor( batch.m_strength );
+	screen_blur.m_spread = plan.spread;
+	if ( !queue_airflow_blur( list, plan.passes, screen_blur ) )
+		return;
+
+	/* background list: stretch_overlays scales its x about the centre later, so sample where it lands. Off-screen part dropped
+	   ( corners kept a radius out ): a vertex far out loses float precision on the gpu clip */
+	const auto texture = reinterpret_cast< ImTextureID >( screen_blur.m_textures[ 0 ] );
+	for ( const auto& [ min, max, tint, rounding ] : batch.m_rects ) {
+		const float left = g_render.to_overlay_x( 0.f ) - rounding, right = g_render.to_overlay_x( g_ctx.m_width ) + rounding;
+		const float top = -rounding, bottom = g_ctx.m_height + rounding;
+		const ImVec2 lo( ImClamp( min.x, left, right ), ImClamp( min.y, top, bottom ) ), hi( ImClamp( max.x, left, right ), ImClamp( max.y, top, bottom ) );
+
+		list->AddImageRounded( texture, lo, hi, ImVec2( g_render.to_screen_x( lo.x ) / g_ctx.m_width, lo.y / g_ctx.m_height ),
+		                       ImVec2( g_render.to_screen_x( hi.x ) / g_ctx.m_width, hi.y / g_ctx.m_height ), tint, rounding, ImDrawFlags_RoundCornersAll );
+	}
 }
 
 void n_misc::impl_t::release_spectator_textures( const bool textures_only )

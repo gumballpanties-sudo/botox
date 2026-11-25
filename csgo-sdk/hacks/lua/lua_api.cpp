@@ -823,8 +823,8 @@ namespace
 		return 0;
 	}
 
-	/* blurs what is drawn under the rect so far ( game, huds, earlier draws of this and older scripts ), menu blur's
-	   pipeline ( screen_blur_rect_smooth ). strength 1 = 34 px radius, 0..3; color tints + fades it, alpha 0 = skipped */
+	/* gamesense: the paint's first call queues one blur of what is drawn so far, every rect of the paint is drawn from it
+	   there ( under all lua draws after it ). strength 0..3, biggest of the paint wins; color tints + fades, alpha 0 = skipped */
 	int l_render_blur( lua_State* L )
 	{
 		require_paint( L );
@@ -836,18 +836,18 @@ namespace
 		if ( !( strength > 0.f ) || !( color & IM_COL32_A_MASK ) )
 			return 0;
 
-		/* 48 a frame like tf2 / css: each one replays a full frame blur ( up to 64 x 2 passes ), a loop of them = fps gone */
-		static int s_frame = -1, s_count = 0;
-		if ( const int now = g_interfaces.m_global_vars_base->m_frame_count; std::exchange( s_frame, now ) != now )
-			s_count = 0;
-		if ( ++s_count > 48 )
-			return 0;
+		static std::shared_ptr< screen_blur_batch_t > s_batch;
+		static unsigned int s_serial = 0;
+		if ( !s_batch || s_serial != n_lua_api::s_paint_serial ) {
+			s_serial = n_lua_api::s_paint_serial;
+			s_batch  = std::make_shared< screen_blur_batch_t >( );
+			g_render.m_draw_data.emplace_back( e_draw_type::draw_type_callback,
+			                                   std::make_any< callback_draw_object_t >( callback_draw_object_t{
+												   [ batch = s_batch ]( ImDrawList* draw_list ) { screen_blur_rects( draw_list, *batch ); } } ) );
+		}
 
-		g_render.m_draw_data.emplace_back(
-			e_draw_type::draw_type_callback,
-			std::make_any< callback_draw_object_t >( callback_draw_object_t{
-				[ min = ImVec2( std::min( x1, x2 ), std::min( y1, y2 ) ), max = ImVec2( std::max( x1, x2 ), std::max( y1, y2 ) ), strength, color,
-			      rounding ]( ImDrawList* draw_list ) { screen_blur_rect_smooth( draw_list, min, max, color, strength, rounding, true ); } } ) );
+		s_batch->m_strength = std::max( s_batch->m_strength, strength );
+		s_batch->m_rects.push_back( { ImVec2( std::min( x1, x2 ), std::min( y1, y2 ) ), ImVec2( std::max( x1, x2 ), std::max( y1, y2 ) ), color, rounding } );
 		return 0;
 	}
 

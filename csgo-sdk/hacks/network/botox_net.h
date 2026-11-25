@@ -22,6 +22,8 @@ namespace n_botox_net
 	constexpr int NAME_CHUNK        = 11;
 	constexpr float ESP_TIMEOUT     = 1.5f;
 	constexpr float ESP_SNAP        = 256.f;
+	constexpr float ESP_GLIDE       = 1.15f;
+	constexpr float ESP_JITTER      = 0.03f;
 	constexpr float USER_TIMEOUT    = 5.f;
 	constexpr float SKIN_TIMEOUT    = 15.f;
 	constexpr float ITEM_PATIENCE   = 4.f;
@@ -194,17 +196,19 @@ namespace n_botox_net
 		void apply_web( int sender );
 		void drop_web_peers( bool stale_only );
 
-		/* glides m_from -> m_origin over one packet gap: smooth, one gap behind, never overshoots */
+		/* glides m_from -> m_origin over 1.15 gaps + 2 ticks: next packet lands mid-glide, so a late one never stops the box.
+		   never overshoots, ~that long behind. tools/botox_net_check.py glide sim */
 		struct shared_t {
 			c_vector m_origin = { };
 			c_vector m_from   = { };
 			int m_health      = 0;
+			int m_sender      = 0;
 			float m_time      = -1.f;
 			float m_interval  = 0.1f;
 
 			c_vector at( float time ) const
 			{
-				const float f = std::clamp( ( time - m_time ) / m_interval, 0.f, 1.f );
+				const float f = std::clamp( ( time - m_time ) / ( m_interval * ESP_GLIDE + ESP_JITTER ), 0.f, 1.f );
 				return m_from + ( m_origin - m_from ) * f;
 			}
 		} m_shared[ 65 ]{ };

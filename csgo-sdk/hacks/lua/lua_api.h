@@ -19,6 +19,8 @@ namespace n_lua_api
 	inline bool* s_send_packet      = nullptr;
 	inline game_event_t* s_event    = nullptr;
 	inline bool s_in_paint          = false;
+	/* bumped per paint before swap_draw_data: a render.blur batch of an older paint is the render thread's, never append */
+	inline unsigned int s_paint_serial = 0;
 	inline n_lua::draw_model_t* s_draw = nullptr;
 	/* bumped per draw: a model kept from an earlier draw must not write into this one */
 	inline unsigned int s_draw_serial = 0;

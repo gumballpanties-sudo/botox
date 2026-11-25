@@ -1154,7 +1154,8 @@ void n_menu::impl_t::tab_movement( )
 							ImGui::Combo( "comes from##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int ),
 							              k_smooth_origin_names );
 							/* kamibebra auto = fades in place, no direction */
-							if ( st == indicator_style_smooth || GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int ) != smooth_origin_auto ) {
+							if ( const int o = GET_VARIABLE( g_variables.m_velocity_indicator_smooth_origin, int );
+							     o != smooth_origin_center && ( st == indicator_style_smooth || o != smooth_origin_auto ) ) {
 								/* random = pre speed rolls its own angle in +-max each show */
 								ImGui::Checkbox( "random angle##velocity indicator", &GET_VARIABLE( g_variables.m_velocity_indicator_smooth_random_angle, bool ) );
 								if ( GET_VARIABLE( g_variables.m_velocity_indicator_smooth_random_angle, bool ) )
@@ -1245,7 +1246,8 @@ void n_menu::impl_t::tab_movement( )
 						if ( const int st = GET_VARIABLE( g_variables.m_stamina_indicator_style, int ); st == indicator_style_smooth || st == indicator_style_kamibebra ) {
 							ImGui::Combo( "comes from##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_smooth_origin, int ),
 							              k_smooth_origin_names );
-							if ( st == indicator_style_smooth || GET_VARIABLE( g_variables.m_stamina_indicator_smooth_origin, int ) != smooth_origin_auto )
+							if ( const int o = GET_VARIABLE( g_variables.m_stamina_indicator_smooth_origin, int );
+							     o != smooth_origin_center && ( st == indicator_style_smooth || o != smooth_origin_auto ) )
 								ImGui::SliderFloat( "angle##stamina indicator", &GET_VARIABLE( g_variables.m_stamina_indicator_smooth_angle, float ), -90.f, 90.f,
 								                    "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
 						}
@@ -1372,14 +1374,16 @@ void n_menu::impl_t::tab_movement( )
 						if ( const int st = GET_VARIABLE( g_variables.m_key_indicators_style, int ); st == indicator_style_smooth || st == indicator_style_kamibebra ) {
 							ImGui::Combo( "comes from##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_origin, int ),
 							              k_smooth_origin_names );
-							/* random = each tag rolls its own angle in +-max on turn on */
-							ImGui::Checkbox( "random angle##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_random_angle, bool ) );
-							if ( GET_VARIABLE( g_variables.m_key_indicators_smooth_random_angle, bool ) )
-								ImGui::SliderFloat( "max angle##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_angle, float ), 0.f, 90.f,
-								                    "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
-							else
-								ImGui::SliderFloat( "angle##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_angle, float ), -90.f, 90.f,
-								                    "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+							if ( GET_VARIABLE( g_variables.m_key_indicators_smooth_origin, int ) != smooth_origin_center ) {
+								/* random = each tag rolls its own angle in +-max on turn on */
+								ImGui::Checkbox( "random angle##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_random_angle, bool ) );
+								if ( GET_VARIABLE( g_variables.m_key_indicators_smooth_random_angle, bool ) )
+									ImGui::SliderFloat( "max angle##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_angle, float ), 0.f,
+									                    90.f, "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+								else
+									ImGui::SliderFloat( "angle##keybind indicators", &GET_VARIABLE( g_variables.m_key_indicators_smooth_angle, float ), -90.f,
+									                    90.f, "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+							}
 						}
 
 						if ( GET_VARIABLE( g_variables.m_key_indicators_style, int ) == indicator_style_static )

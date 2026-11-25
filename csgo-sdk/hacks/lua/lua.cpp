@@ -459,6 +459,7 @@ void n_lua::impl_t::on_paint( )
 
 	this->m_draw_model_live = any_callback( "draw_model" );
 
+	++n_lua_api::s_paint_serial;
 	n_lua_api::s_in_paint = true;
 	dispatch( "paint", no_args );
 	n_lua_api::s_in_paint = false;

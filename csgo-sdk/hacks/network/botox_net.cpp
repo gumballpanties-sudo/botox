@@ -631,20 +631,27 @@ void n_botox_net::impl_t::receive( int sender, const packet_t& packet )
 		     std::fabs( origin.m_x ) > 65536.f || std::fabs( origin.m_y ) > 65536.f || std::fabs( origin.m_z ) > 65536.f )
 			return;
 
-		/* gap = 1 player per sender tick round robin, so it grows with player count. stale / teleport / respawn snaps */
 		auto& shared     = m_shared[ esp.m_index ];
 		const float time = now( );
+		const bool live  = fresh( shared.m_time, ESP_TIMEOUT ) && shared.m_health > 0;
+
+		/* one source per player: peers see him at their own lerp + ping, mixing them flips the box.
+		   self report wins (his own spot), else keep the sender until it skips 2 gaps */
+		if ( live && sender != shared.m_sender && sender != esp.m_index && time - shared.m_time < ( std::max )( shared.m_interval * 2.f, 0.1f ) )
+			return;
+
+		/* gap = 1 player per sender tick round robin, so it grows with sender's player count. stale / teleport / respawn snaps,
+		   gap estimate kept (it's the sender's, not this player's) */
 		const c_vector shown = shared.at( time );
-		if ( fresh( shared.m_time, ESP_TIMEOUT ) && shared.m_health > 0 && shown.dist_to_squared( origin ) < ESP_SNAP * ESP_SNAP ) {
-			shared.m_interval += ( std::clamp( time - shared.m_time, 0.015f, 0.5f ) - shared.m_interval ) * 0.5f;
+		if ( live && shown.dist_to_squared( origin ) < ESP_SNAP * ESP_SNAP ) {
+			shared.m_interval += ( std::clamp( time - shared.m_time, 0.015f, 0.5f ) - shared.m_interval ) * 0.25f;
 			shared.m_from = shown;
-		} else {
-			shared.m_interval = 0.1f;
-			shared.m_from     = origin;
-		}
+		} else
+			shared.m_from = origin;
 		shared.m_origin = origin;
 		shared.m_health = esp.m_health;
 		shared.m_time   = time;
+		shared.m_sender = sender;
 		return;
 	}
 
