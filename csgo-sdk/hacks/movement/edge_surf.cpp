@@ -81,7 +81,8 @@ bool edge_surf_eb_armed( )
    an owned cmd = eb_cmd_taken: the eb search runs on the ticks it lets go */
 static bool eb_guide_armed( )
 {
-	return GET_VARIABLE( g_variables.m_edgebug_edge_surf_guide, bool ) && GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool ) && eb_key_down( );
+	return GET_VARIABLE( g_variables.m_edgebug_edge_surf_guide, bool ) && GET_VARIABLE( g_variables.m_edgebug_edge_surf, bool ) &&
+	       GET_VARIABLE( g_variables.m_edgebug_autostrafe_to_edge, bool ) && eb_key_down( );
 }
 
 /* indicators.cpp: tick the guided eb is due ( its pin proven: A = next cmd, P = this one ) */

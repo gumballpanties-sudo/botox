@@ -541,7 +541,8 @@ void n_menu::impl_t::tab_movement( )
 								ImGui::Checkbox( "path bend##ebbend", &GET_VARIABLE( g_variables.m_edgebug_path_bend, bool ) );
 								ImGui::Checkbox( "ebanat shapes##ebshapes", &GET_VARIABLE( g_variables.m_edgebug_ebanat_shapes, bool ) );
 								/* no plan held: edge surf's controller guides you onto a ledge for one pin, the search runs when it lets go */
-								ImGui::Checkbox( "edge surf guide##ebesguide", &GET_VARIABLE( g_variables.m_edgebug_edge_surf_guide, bool ) );
+								if ( GET_VARIABLE( g_variables.m_edgebug_edge_surf, bool ) )
+									ImGui::Checkbox( "edge surf guide##ebesguide", &GET_VARIABLE( g_variables.m_edgebug_edge_surf_guide, bool ) );
 							}
 							ImGui::Checkbox( "duck timing##ebducktiming", &GET_VARIABLE( g_variables.m_edgebug_duck_timing, bool ) );
 							if ( GET_VARIABLE( g_variables.m_edgebug_duck_timing, bool ) )

@@ -1388,7 +1388,7 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_edgebug_path_bend, true );
 		ADD_VARIABLE( bool, m_edgebug_ebanat_shapes, true );
 		ADD_VARIABLE( bool, m_edgebug_edge_surf, false );
-		ADD_VARIABLE( bool, m_edgebug_edge_surf_guide, true );
+		ADD_VARIABLE( bool, m_edgebug_edge_surf_guide, false );
 		ADD_VARIABLE( bool, m_edgebug_mouse_lock, false );
 		ADD_VARIABLE( int, m_edgebug_mouse_lock_type, 1 );
 		ADD_VARIABLE( float, m_edgebug_mouse_lock_strength, 100.f );
