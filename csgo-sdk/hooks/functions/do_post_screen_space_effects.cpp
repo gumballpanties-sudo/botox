@@ -11,6 +11,7 @@
 #include "../../hacks/visuals/screen/depth_view.h"
 #include "../../hacks/visuals/screen/depth_warp.h"
 #include "../../hacks/visuals/screen/flip_world.h"
+#include "../../hacks/visuals/screen/model_glow.h"
 #include "../../hacks/visuals/screen/player_stencil.h"
 #include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../../hacks/visuals/screen/reflections.h"
@@ -138,6 +139,9 @@ void __fastcall n_detoured_functions::do_post_screen_space_effects( void* ecx, v
 		g_true_motion_blur.on_post_screen_space_effects( setup );
 
 		g_bloom.on_post_screen_space_effects( setup );
+
+		// viewmodel + dropped weapon glow / stencil: reads its stencil refs before the engine glow writes its own over them
+		g_model_glow.on_post_screen_space_effects( );
 	}
 
 	/* glow + stencil over every pass above ( no blur / bloom / warp on them ). passes restore the depth-stencil, so the

@@ -721,6 +721,9 @@ namespace n_variables
 		ADD_VARIABLE( c_color, m_dropped_weapons_name_color, c_color( 255, 255, 255, 255 ) );
 		ADD_VARIABLE( bool, m_dropped_weapons_icon, false );
 		ADD_VARIABLE( c_color, m_dropped_weapons_icon_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( bool, m_dropped_weapons_glow, false );
+		ADD_VARIABLE( c_color, m_dropped_weapons_glow_vis_color, c_color( 255, 255, 255, 153 ) );
+		ADD_VARIABLE( c_color, m_dropped_weapons_glow_invis_color, c_color( 114, 155, 221, 153 ) );
 
 		ADD_VARIABLE( bool, m_bomb_esp, false );
 		ADD_VARIABLE( bool, m_bomb_esp_icon, true );
@@ -1191,6 +1194,46 @@ namespace n_variables
 		ADD_VARIABLE( float, m_viewmodel_shift_right, 0.75f );
 		ADD_VARIABLE( bool, m_viewmodel_low_fps, false );
 		ADD_VARIABLE( float, m_viewmodel_low_fps_rate, 24.f );
+
+		/* viewmodel glow / stencil ( model_glow.cpp ): player glow / stencil look, one colour per part. part off = no glow there, its
+		   coverage still stops the others */
+		ADD_VARIABLE( bool, m_viewmodel_glow, false );
+		ADD_VARIABLE( bool, m_viewmodel_glow_weapon, true );
+		ADD_VARIABLE( c_color, m_viewmodel_glow_weapon_color, c_color( 224, 175, 86, 153 ) );
+		ADD_VARIABLE( c_color, m_viewmodel_glow_weapon_outer_color, c_color( 0, 0, 0, 255 ) );
+		ADD_VARIABLE( bool, m_viewmodel_glow_gloves, true );
+		ADD_VARIABLE( c_color, m_viewmodel_glow_gloves_color, c_color( 114, 155, 221, 153 ) );
+		ADD_VARIABLE( c_color, m_viewmodel_glow_gloves_outer_color, c_color( 0, 0, 0, 255 ) );
+		ADD_VARIABLE( bool, m_viewmodel_glow_sleeves, true );
+		ADD_VARIABLE( c_color, m_viewmodel_glow_sleeves_color, c_color( 114, 155, 221, 153 ) );
+		ADD_VARIABLE( c_color, m_viewmodel_glow_sleeves_outer_color, c_color( 0, 0, 0, 255 ) );
+		ADD_VARIABLE( bool, m_viewmodel_glow_gradient, false );
+		ADD_VARIABLE( float, m_viewmodel_glow_gradient_inner, 60.f );
+		ADD_VARIABLE( bool, m_viewmodel_glow_normal_blend, false );
+		ADD_VARIABLE( float, m_viewmodel_glow_thickness, 15.f );
+		ADD_VARIABLE( bool, m_viewmodel_glow_wave, false );
+		ADD_VARIABLE( c_color, m_viewmodel_glow_wave_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( float, m_viewmodel_glow_wave_speed, 0.5f );
+		ADD_VARIABLE( float, m_viewmodel_glow_wave_size, 0.35f );
+		ADD_VARIABLE( float, m_viewmodel_glow_wave_strength, 0.8f );
+		ADD_VARIABLE( float, m_viewmodel_glow_wave_angle, 0.f );
+		ADD_VARIABLE( bool, m_viewmodel_glow_pulse, false );
+		ADD_VARIABLE( float, m_viewmodel_glow_pulse_speed, 1.f );
+		ADD_VARIABLE( float, m_viewmodel_glow_pulse_min, 35.f );
+		ADD_VARIABLE( bool, m_viewmodel_stencil, false );
+		ADD_VARIABLE( bool, m_viewmodel_stencil_weapon, true );
+		ADD_VARIABLE( c_color, m_viewmodel_stencil_weapon_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( bool, m_viewmodel_stencil_gloves, true );
+		ADD_VARIABLE( c_color, m_viewmodel_stencil_gloves_color, c_color( 114, 155, 221, 255 ) );
+		ADD_VARIABLE( bool, m_viewmodel_stencil_sleeves, true );
+		ADD_VARIABLE( c_color, m_viewmodel_stencil_sleeves_color, c_color( 114, 155, 221, 255 ) );
+		ADD_VARIABLE( float, m_viewmodel_stencil_thickness, 1.5f );
+		ADD_VARIABLE( bool, m_viewmodel_stencil_wave, false );
+		ADD_VARIABLE( c_color, m_viewmodel_stencil_wave_color, c_color( 255, 255, 255, 255 ) );
+		ADD_VARIABLE( float, m_viewmodel_stencil_wave_speed, 0.5f );
+		ADD_VARIABLE( float, m_viewmodel_stencil_wave_size, 0.35f );
+		ADD_VARIABLE( float, m_viewmodel_stencil_wave_strength, 0.8f );
+		ADD_VARIABLE( float, m_viewmodel_stencil_wave_angle, 0.f );
 
 		ADD_VARIABLE( bool, m_bunny_hop, false );
 		ADD_VARIABLE( int, m_bunny_hop_chance, 100 );

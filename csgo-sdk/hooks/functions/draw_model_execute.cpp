@@ -14,6 +14,7 @@
 #include "../../hacks/lua/lua_api.h"
 #include "../../hacks/misc/misc.h"
 #include "../../hacks/visuals/players/sound_esp/sound_esp.h"
+#include "../../hacks/visuals/screen/model_glow.h"
 #include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../../hacks/visuals/viewmodel_bones.h"
 #include "../../hacks/visuals/viewmodel_fps.h"
@@ -245,6 +246,28 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 	if ( g_rear_mirror.drawing( ) )
 		return original( ecx, edx, context, state, info, custom_bone_to_world );
 
+	/* viewmodel glow / stencil: a live part stamps its stencil ref ( model_glow.cpp reads it at DoPostScreenSpaceEffects ).
+	   destructor: stencil off after whichever path drew it */
+	struct viewmodel_stamp_t {
+		viewmodel_stamp_t( void* context, const int ref ) : m_context( context ), m_ref( context ? ref : 0 )
+		{
+			if ( this->m_ref )
+				n_model_glow::impl_t::stamp( this->m_context, this->m_ref );
+		}
+
+		~viewmodel_stamp_t( )
+		{
+			if ( this->m_ref )
+				n_model_glow::impl_t::stamp( this->m_context, 0 );
+		}
+
+		void* m_context;
+		int m_ref;
+	} const viewmodel_stamp{ context, g_model_glow.in_view_models( ) && !( info.flags & studio_depth_pass_flags ) && !g_ctx.m_is_glow_being_drawn &&
+		                                          !game_forced_material( ) && info.model && info.model->m_name
+		                                      ? g_model_glow.viewmodel_ref( viewmodel_part( info.model->m_name ) )
+		                                      : 0 };
+
 	/* viewmodel bone velocity for true motion blur. destructor: bones must be read after whichever
 	   return path drew the model. skipped on depth-only passes and inside glow */
 	struct viewmodel_bones_t {
@@ -345,6 +368,10 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 
 			g_viewmodel_trail.record( part, info.model, bone_count, custom_bone_to_world );
 
+			// ghosts never stamp: viewmodel glow / stencil hug the live gun only
+			if ( viewmodel_stamp.m_ref )
+				n_model_glow::impl_t::stamp( context, 0 );
+
 			// ghosts in their own depth range behind the live viewmodel, no depth write: never over a live part
 			g_viewmodel_trail.for_each_ghost( context, part, info.model, bone_count, [ & ]( matrix3x4_t* ghost_bones, const float alpha ) {
 				override_state = saved_override;
@@ -352,6 +379,9 @@ void __fastcall n_detoured_functions::draw_model_execute( void* ecx, void* edx, 
 				                     GET_VARIABLE( g_variables.m_chams_trail_dark_colors, std::vector< c_color > ), false, alpha,
 				                     [ & ]( ) { original( ecx, edx, context, state, info, ghost_bones ); }, nullptr, false );
 			} );
+
+			if ( viewmodel_stamp.m_ref )
+				n_model_glow::impl_t::stamp( context, viewmodel_stamp.m_ref );
 		}
 
 		override_state = saved_override;

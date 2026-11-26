@@ -607,6 +607,14 @@ void n_menu::impl_t::tab_visuals( )
 							ImGui::ColorEdit4( "##dropped weapons icon color",
 						                       &GET_VARIABLE( g_variables.m_dropped_weapons_icon_color, c_color ), color_picker_alpha_flags );
 						}
+
+						ImGui::Checkbox( "glow##dropped weapons", &GET_VARIABLE( g_variables.m_dropped_weapons_glow, bool ) );
+						if ( GET_VARIABLE( g_variables.m_dropped_weapons_glow, bool ) ) {
+							ImGui::ColorEdit4( "glow visible##dropped weapons glow vis color",
+						                       &GET_VARIABLE( g_variables.m_dropped_weapons_glow_vis_color, c_color ), color_picker_alpha_flags );
+							ImGui::ColorEdit4( "glow invisible##dropped weapons glow invis color",
+						                       &GET_VARIABLE( g_variables.m_dropped_weapons_glow_invis_color, c_color ), color_picker_alpha_flags );
+						}
 					},
 					ImVec2( 220.f, -1.f ) );
 			}
@@ -1336,6 +1344,108 @@ void n_menu::impl_t::tab_visuals( )
 						if ( GET_VARIABLE( g_variables.m_weapon_sheen_normal, bool ) )
 							ImGui::SliderFloat( "env strength##weapon sheen", &GET_VARIABLE( g_variables.m_weapon_sheen_env, float ), 0.f, 10.f, "%.2f",
 							                    ImGuiSliderFlags_AlwaysClamp );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "viewmodel glow", &GET_VARIABLE( g_variables.m_viewmodel_glow, bool ) );
+			if ( GET_VARIABLE( g_variables.m_viewmodel_glow, bool ) ) {
+				ImGui::OptionPopup(
+					"viewmodel glow settings",
+					[ & ]( ) {
+						const bool gradient = GET_VARIABLE( g_variables.m_viewmodel_glow_gradient, bool );
+
+						// part toggle + colour, gradient adds its outer colour
+						const auto part = [ & ]( const char* label, const char* color_id, const char* outer_id, const std::uint32_t on,
+						                         const std::uint32_t color, const std::uint32_t outer ) {
+							ImGui::Checkbox( label, &GET_VARIABLE( on, bool ) );
+							if ( !GET_VARIABLE( on, bool ) )
+								return;
+							ImGui::SameLine( );
+							ImGui::ColorEdit4( color_id, &GET_VARIABLE( color, c_color ), color_picker_alpha_flags );
+							if ( gradient )
+								ImGui::ColorEdit4( outer_id, &GET_VARIABLE( outer, c_color ), color_picker_alpha_flags );
+						};
+
+						part( "weapon##viewmodel glow", "##viewmodel glow weapon color", "weapon outer##viewmodel glow weapon outer color",
+						      g_variables.m_viewmodel_glow_weapon, g_variables.m_viewmodel_glow_weapon_color, g_variables.m_viewmodel_glow_weapon_outer_color );
+						part( "gloves##viewmodel glow", "##viewmodel glow gloves color", "gloves outer##viewmodel glow gloves outer color",
+						      g_variables.m_viewmodel_glow_gloves, g_variables.m_viewmodel_glow_gloves_color, g_variables.m_viewmodel_glow_gloves_outer_color );
+						part( "sleeves##viewmodel glow", "##viewmodel glow sleeves color", "sleeves outer##viewmodel glow sleeves outer color",
+						      g_variables.m_viewmodel_glow_sleeves, g_variables.m_viewmodel_glow_sleeves_color,
+						      g_variables.m_viewmodel_glow_sleeves_outer_color );
+
+						ImGui::Checkbox( "accent wave##viewmodel glow", &GET_VARIABLE( g_variables.m_viewmodel_glow_wave, bool ) );
+						if ( GET_VARIABLE( g_variables.m_viewmodel_glow_wave, bool ) ) {
+							ImGui::ColorEdit4( "wave color##viewmodel glow wave", &GET_VARIABLE( g_variables.m_viewmodel_glow_wave_color, c_color ),
+							                   color_picker_no_alpha_flags );
+							ImGui::SliderFloat( "wave speed##viewmodel glow wave", &GET_VARIABLE( g_variables.m_viewmodel_glow_wave_speed, float ), 0.05f,
+							                    4.f, "%.2fx", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "wave size##viewmodel glow wave", &GET_VARIABLE( g_variables.m_viewmodel_glow_wave_size, float ), 0.05f, 2.f,
+							                    "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "wave strength##viewmodel glow wave", &GET_VARIABLE( g_variables.m_viewmodel_glow_wave_strength, float ),
+							                    0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "wave angle##viewmodel glow wave", &GET_VARIABLE( g_variables.m_viewmodel_glow_wave_angle, float ), -180.f,
+							                    180.f, "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+						}
+
+						ImGui::Checkbox( "edge pulse##viewmodel glow", &GET_VARIABLE( g_variables.m_viewmodel_glow_pulse, bool ) );
+						if ( GET_VARIABLE( g_variables.m_viewmodel_glow_pulse, bool ) ) {
+							ImGui::SliderFloat( "pulse speed##viewmodel glow pulse", &GET_VARIABLE( g_variables.m_viewmodel_glow_pulse_speed, float ), 0.1f,
+							                    4.f, "%.1fx", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "pulse min##viewmodel glow pulse", &GET_VARIABLE( g_variables.m_viewmodel_glow_pulse_min, float ), 0.f, 95.f,
+							                    "%.0f%%", ImGuiSliderFlags_AlwaysClamp );
+						}
+
+						ImGui::Checkbox( "normal blending##viewmodel glow", &GET_VARIABLE( g_variables.m_viewmodel_glow_normal_blend, bool ) );
+						if ( GET_VARIABLE( g_variables.m_viewmodel_glow_normal_blend, bool ) )
+							ImGui::SliderFloat( "thickness##viewmodel glow", &GET_VARIABLE( g_variables.m_viewmodel_glow_thickness, float ), 2.f, 30.f,
+							                    "%.0f px", ImGuiSliderFlags_AlwaysClamp );
+
+						ImGui::Checkbox( "gradient##viewmodel glow", &GET_VARIABLE( g_variables.m_viewmodel_glow_gradient, bool ) );
+						if ( gradient )
+							ImGui::SliderFloat( "inner size##viewmodel glow gradient", &GET_VARIABLE( g_variables.m_viewmodel_glow_gradient_inner, float ),
+							                    0.f, 100.f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp );
+					},
+					ImVec2( 220.f, -1.f ) );
+			}
+
+			ImGui::Checkbox( "viewmodel stencil", &GET_VARIABLE( g_variables.m_viewmodel_stencil, bool ) );
+			if ( GET_VARIABLE( g_variables.m_viewmodel_stencil, bool ) ) {
+				ImGui::OptionPopup(
+					"viewmodel stencil settings",
+					[ & ]( ) {
+						const auto part = [ & ]( const char* label, const char* color_id, const std::uint32_t on, const std::uint32_t color ) {
+							ImGui::Checkbox( label, &GET_VARIABLE( on, bool ) );
+							if ( !GET_VARIABLE( on, bool ) )
+								return;
+							ImGui::SameLine( );
+							ImGui::ColorEdit4( color_id, &GET_VARIABLE( color, c_color ), color_picker_alpha_flags );
+						};
+
+						part( "weapon##viewmodel stencil", "##viewmodel stencil weapon color", g_variables.m_viewmodel_stencil_weapon,
+						      g_variables.m_viewmodel_stencil_weapon_color );
+						part( "gloves##viewmodel stencil", "##viewmodel stencil gloves color", g_variables.m_viewmodel_stencil_gloves,
+						      g_variables.m_viewmodel_stencil_gloves_color );
+						part( "sleeves##viewmodel stencil", "##viewmodel stencil sleeves color", g_variables.m_viewmodel_stencil_sleeves,
+						      g_variables.m_viewmodel_stencil_sleeves_color );
+
+						ImGui::SliderFloat( "thickness##viewmodel stencil", &GET_VARIABLE( g_variables.m_viewmodel_stencil_thickness, float ), 0.5f, 8.f,
+						                    "%.1f px", ImGuiSliderFlags_AlwaysClamp );
+
+						ImGui::Checkbox( "accent wave##viewmodel stencil", &GET_VARIABLE( g_variables.m_viewmodel_stencil_wave, bool ) );
+						if ( GET_VARIABLE( g_variables.m_viewmodel_stencil_wave, bool ) ) {
+							ImGui::ColorEdit4( "wave color##viewmodel stencil wave", &GET_VARIABLE( g_variables.m_viewmodel_stencil_wave_color, c_color ),
+							                   color_picker_no_alpha_flags );
+							ImGui::SliderFloat( "wave speed##viewmodel stencil wave", &GET_VARIABLE( g_variables.m_viewmodel_stencil_wave_speed, float ),
+							                    0.05f, 4.f, "%.2fx", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "wave size##viewmodel stencil wave", &GET_VARIABLE( g_variables.m_viewmodel_stencil_wave_size, float ), 0.05f,
+							                    2.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "wave strength##viewmodel stencil wave", &GET_VARIABLE( g_variables.m_viewmodel_stencil_wave_strength, float ),
+							                    0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "wave angle##viewmodel stencil wave", &GET_VARIABLE( g_variables.m_viewmodel_stencil_wave_angle, float ),
+							                    -180.f, 180.f, "%.0f deg", ImGuiSliderFlags_AlwaysClamp );
+						}
 					},
 					ImVec2( 220.f, -1.f ) );
 			}

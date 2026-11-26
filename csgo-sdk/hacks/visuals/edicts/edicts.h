@@ -61,9 +61,15 @@ inline constexpr const static char collide_data[] = {
 	char( 0x30 ), char( 0x22 ), char( 0x0A ), char( 0x7D ), char( 0x0A ), char( 0x00 )
 };
 
+class c_base_entity;
+class c_weapon_data;
+
 namespace n_edicts
 {
 	struct impl_t {
+		// a gun on the floor ( no owner ): the dropped weapon esp + glow set. nullptr = not one
+		static c_weapon_data* dropped_gun( c_base_entity* entity );
+
 		void on_frame_stage_notify( int stage );
 		void on_paint_traverse( );
 

@@ -142,6 +142,7 @@
     <ClCompile Include="hacks\visuals\screen\depth_warp.cpp" />
     <ClCompile Include="hacks\visuals\screen\mc_clouds.cpp" />
     <ClCompile Include="hacks\visuals\screen\player_stencil.cpp" />
+    <ClCompile Include="hacks\visuals\screen\model_glow.cpp" />
     <ClCompile Include="hacks\visuals\screen\color_correction.cpp" />
     <ClCompile Include="hacks\visuals\screen\depth_of_field.cpp" />
     <ClCompile Include="hacks\visuals\screen\depth_source.cpp" />
@@ -545,6 +546,7 @@
     <ClInclude Include="hacks\visuals\screen\depth_warp_shader.h" />
     <ClInclude Include="hacks\visuals\screen\mc_clouds.h" />
     <ClInclude Include="hacks\visuals\screen\player_stencil.h" />
+    <ClInclude Include="hacks\visuals\screen\model_glow.h" />
     <ClInclude Include="hacks\visuals\screen\color_correction.h" />
     <ClInclude Include="hacks\visuals\screen\depth_of_field.h" />
     <ClInclude Include="hacks\visuals\screen\depth_source.h" />

@@ -235,6 +235,49 @@ void n_edicts::impl_t::projectiles( )
 	} );
 }
 
+c_weapon_data* n_edicts::impl_t::dropped_gun( c_base_entity* entity )
+{
+	if ( !entity || entity == g_ctx.m_local || entity->is_dormant( ) )
+		return nullptr;
+
+	const auto client_renderable = entity->get_client_renderable( );
+	if ( !client_renderable )
+		return nullptr;
+
+	const auto client_unknown = client_renderable->get_client_unknown( );
+	if ( !client_unknown )
+		return nullptr;
+
+	const auto client_networkable = client_unknown->get_client_networkable( );
+	if ( !client_networkable )
+		return nullptr;
+
+	const auto client_class = client_networkable->get_client_class( );
+	if ( !client_class )
+		return nullptr;
+
+	const auto class_id = client_class->m_class_id;
+
+	if ( class_id == e_class_ids::c_base_weapon_world_model )
+		return nullptr;
+
+	if ( !strstr( client_class->m_network_name, "CWeapon" ) && class_id != e_class_ids::c_deagle && class_id != e_class_ids::cak47 )
+		return nullptr;
+
+	const short definition_index = entity->get_item_definition_index( );
+	if ( !definition_index )
+		return nullptr;
+
+	const auto weapon_data = g_interfaces.m_weapon_system->get_weapon_data( definition_index );
+	if ( !weapon_data || !weapon_data->is_gun( ) )
+		return nullptr;
+
+	if ( g_interfaces.m_client_entity_list->get< c_base_entity >( entity->get_owner_entity_handle( ) ) )
+		return nullptr;
+
+	return weapon_data;
+}
+
 void n_edicts::impl_t::dropped_weapons( )
 {
 	const bool box_enabled         = GET_VARIABLE( g_variables.m_dropped_weapons_box, bool );
@@ -248,42 +291,8 @@ void n_edicts::impl_t::dropped_weapons( )
 	const auto weapon_color        = GET_VARIABLE( g_variables.m_dropped_weapons_name_color, c_color );
 
 	g_entity_cache.enumerate( e_enumeration_type::type_edicts, [ & ]( c_base_entity* entity ) {
-		if ( !entity || entity == g_ctx.m_local || entity->is_dormant( ) )
-			return;
-
-		const auto client_renderable = entity->get_client_renderable( );
-		if ( !client_renderable )
-			return;
-
-		const auto client_unknown = client_renderable->get_client_unknown( );
-		if ( !client_unknown )
-			return;
-
-		const auto client_networkable = client_unknown->get_client_networkable( );
-		if ( !client_networkable )
-			return;
-
-		const auto client_class = client_networkable->get_client_class( );
-		if ( !client_class )
-			return;
-
-		const auto class_id = client_class->m_class_id;
-
-		if ( class_id == e_class_ids::c_base_weapon_world_model )
-			return;
-
-		if ( strstr( client_class->m_network_name, "CWeapon" ) || class_id == e_class_ids::c_deagle || class_id == e_class_ids::cak47 ) {
+		if ( const auto weapon_data = dropped_gun( entity ) ) {
 			const short definition_index = entity->get_item_definition_index( );
-			if ( !definition_index )
-				return;
-
-			const auto weapon_data = g_interfaces.m_weapon_system->get_weapon_data( definition_index );
-			if ( !weapon_data || !weapon_data->is_gun( ) )
-				return;
-
-			const auto owner_entity = g_interfaces.m_client_entity_list->get< c_base_entity >( entity->get_owner_entity_handle( ) );
-			if ( owner_entity )
-				return;
 
 			bounding_box_t box{ };
 			if ( !entity->get_bounding_box( &box ) )

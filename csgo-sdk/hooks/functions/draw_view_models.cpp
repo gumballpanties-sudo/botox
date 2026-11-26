@@ -1,4 +1,5 @@
 #include "../../globals/globals.h"
+#include "../../hacks/visuals/screen/model_glow.h"
 #include "../../hacks/visuals/screen/rear_mirror.h"
 #include "../../hacks/visuals/screen/screen.h"
 #include "../../hacks/visuals/viewmodel_fps.h"
@@ -18,7 +19,9 @@ void __fastcall n_detoured_functions::draw_view_models( void* ecx, void* edx, c_
 	if ( !draw_scope_lens_mask )
 		n_detoured_functions::screen_passes( &setup, true );
 
+	g_model_glow.begin_view_models( draw_scope_lens_mask );
 	g_viewmodel_fps.begin( setup );
 	original( ecx, edx, setup, draw_view_model, draw_scope_lens_mask );
 	g_viewmodel_fps.end( );
+	g_model_glow.end_view_models( );
 }
