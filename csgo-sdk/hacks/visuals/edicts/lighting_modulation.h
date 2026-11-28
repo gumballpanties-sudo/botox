@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 
@@ -27,16 +28,6 @@ namespace n_lighting_modulation
 		return false;
 	}
 
-	inline bool is_lamp_model( const char* model )
-	{
-		static const char* const veto[] = { "models/player", "models/weapons", "models/inventory_items", "lighthouse", "flight",
-			                                "highlight",     "lightning",      "switch" };
-		static const char* const lamp[] = { "lamp", "light", "bulb", "lantern", "fixture", "neon" };
-		char m[ 192 ];
-		normalize( model, m, sizeof( m ) );
-		return m[ 0 ] && !any( m, veto ) && any( m, lamp );
-	}
-
 	/* "beam" left out: it hit tracer / laser sprites */
 	inline bool is_light_glow_material( const char* name )
 	{
@@ -51,7 +42,21 @@ namespace n_lighting_modulation
 		return m[ 0 ] && !any( m, veto ) && any( m, glow );
 	}
 
-	/* up to max_out lamps nearest eye within max_dist, nearest first, as indices */
+	/* xy only, like luminus */
+	inline float dist2_xy( const point_t& a, const point_t& b )
+	{
+		const float dx = a.x - b.x, dy = a.y - b.y;
+		return dx * dx + dy * dy;
+	}
+
+	/* full radius on top of the light, 0 at max_dist */
+	inline float falloff_radius( const point_t& lamp, const point_t& eye, float max_dist, float radius )
+	{
+		const float d = std::sqrt( dist2_xy( lamp, eye ) );
+		return d < max_dist ? ( max_dist - d ) / max_dist * radius : 0.f;
+	}
+
+	/* up to max_out lamps nearest eye ( xy ) within max_dist, nearest first, as indices */
 	inline int pick_lamps( const point_t* lamps, int n, const point_t& eye, float max_dist, int max_out, int* out )
 	{
 		float d2s[ 64 ];
@@ -63,9 +68,8 @@ namespace n_lighting_modulation
 		int k           = 0;
 		const float lim = max_dist * max_dist;
 		for ( int i = 0; i < n; ++i ) {
-			const float dx = lamps[ i ].x - eye.x, dy = lamps[ i ].y - eye.y, dz = lamps[ i ].z - eye.z;
-			const float d2 = dx * dx + dy * dy + dz * dz;
-			if ( !( d2 <= lim ) )
+			const float d2 = dist2_xy( lamps[ i ], eye );
+			if ( !( d2 < lim ) )
 				continue;
 
 			int j = k < max_out ? k++ : max_out;

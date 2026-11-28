@@ -124,6 +124,20 @@ static bool crash_in_image( const std::uintptr_t address )
 	return VirtualQuery( reinterpret_cast< void* >( address ), &region, sizeof( region ) ) && region.State == MEM_COMMIT && region.Type == MEM_IMAGE;
 }
 
+// d3d9 user mode drivers: amd ( amdxn32 / aticfx32 / atiumdag ), nvidia, intel
+static bool crash_in_driver( const char* path )
+{
+	const char* slash = strrchr( path, '\\' );
+	const char* name  = slash ? slash + 1 : path;
+
+	static const char* const k_drivers[] = { "amdxn", "aticfx", "atiumd", "atidxx", "nvd3dum", "nvldumd", "nvwgf2um", "igdumd", "igd9" };
+	for ( const char* driver : k_drivers )
+		if ( !_strnicmp( name, driver, strlen( driver ) ) )
+			return true;
+
+	return false;
+}
+
 static bool header_heal( )
 {
 	if ( !g_self_header_size )
@@ -230,7 +244,11 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 	crash_append( "%02d:%02d:%02d.%03d %scode=%08lx thread=%lu stamp=%08lx stack_left=%u at", now.wHour, now.wMinute, now.wSecond,
 	              now.wMilliseconds, healed ? "HEADER_HEALED " : "", code, GetCurrentThreadId( ), g_self_stamp,
 	              static_cast< unsigned >( reinterpret_cast< std::uintptr_t >( slot ) - reinterpret_cast< std::uintptr_t >( tib->StackLimit ) ) );
+	g_crash_path[ 0 ] = 0; // a fault in botox leaves it unwritten
 	crash_append_address( reinterpret_cast< std::uintptr_t >( record->ExceptionAddress ) );
+
+	/* d3d9 driver fault = deferred work, no botox frame on its stack: the dump's other threads show which pass was submitting */
+	const bool in_driver = crash_in_driver( g_crash_path );
 
 	if ( code == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 )
 		crash_append( " (%s 0x%08x)", record->ExceptionInformation[ 0 ] == 8 ? "exec" : record->ExceptionInformation[ 0 ] ? "write" : "read",
@@ -296,7 +314,8 @@ static long __stdcall crash_witness( EXCEPTION_POINTERS* info )
 	/* oom: the memory map only ( who holds the address space ), small, the game is dead either way */
 	const bool dump = g_minidump_write &&
 	                  ( fatal || ( code == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 && record->ExceptionInformation[ 1 ] == fault &&
-	                             !crash_in_image( fault ) ) ) &&
+	                             !crash_in_image( fault ) ) ||
+	                    ( code == EXCEPTION_ACCESS_VIOLATION && in_driver ) ) &&
 	                  InterlockedIncrement( &g_crash_dumps ) == 1;
 	if ( dump ) {
 		sprintf_s( dump_path, "C:\\botox\\crash_%02d%02d%02d.dmp", now.wHour, now.wMinute, now.wSecond );

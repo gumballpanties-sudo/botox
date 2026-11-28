@@ -56,6 +56,7 @@
     <ClCompile Include="hacks\skins\skins.cpp" />
     <ClCompile Include="hacks\skins\skins_changers.cpp" />
     <ClCompile Include="hacks\skins\parser.cpp" />
+    <ClCompile Include="hacks\skins\sticker_import.cpp" />
     <ClCompile Include="hacks\animations\animations.cpp" />
     <ClCompile Include="hacks\auto_wall\auto_wall.cpp" />
     <ClCompile Include="hacks\avatar_cache\avatar_cache.cpp" />
@@ -168,7 +169,6 @@
     <ClCompile Include="hooks\functions\build_transformations.cpp" />
     <ClCompile Include="hooks\functions\draw_filled_rect.cpp" />
     <ClCompile Include="hooks\functions\draw_set_color.cpp" />
-    <ClCompile Include="hooks\functions\draw_static_props.cpp" />
     <ClCompile Include="hooks\functions\draw_view_models.cpp" />
     <ClCompile Include="hooks\functions\push_2d_view.cpp" />
     <ClCompile Include="hooks\functions\world_to_screen_matrix.cpp" />
@@ -463,6 +463,7 @@
     <ClInclude Include="hacks\skins\skins_internal.h" />
     <ClInclude Include="hacks\skins\skin_names.h" />
     <ClInclude Include="hacks\skins\sticker_names.h" />
+    <ClInclude Include="hacks\skins\sticker_import.h" />
     <ClInclude Include="hacks\animations\animations.h" />
     <ClInclude Include="hacks\auto_wall\auto_wall.h" />
     <ClInclude Include="hacks\avatar_cache\avatar_cache.h" />

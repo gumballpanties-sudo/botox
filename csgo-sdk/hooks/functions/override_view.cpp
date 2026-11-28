@@ -17,10 +17,4 @@ void __fastcall n_detoured_functions::override_view( void* ecx, void* edx, c_vie
 	g_screen.on_override_view_post( setup );
 
 	g_mc_clouds.on_override_view( setup );
-
-	if ( setup ) {
-		g_edicts.m_lamp_eye[ 0 ] = setup->m_origin.m_x;
-		g_edicts.m_lamp_eye[ 1 ] = setup->m_origin.m_y;
-		g_edicts.m_lamp_eye[ 2 ] = setup->m_origin.m_z;
-	}
 }

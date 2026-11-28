@@ -1,5 +1,7 @@
 #include "skins_internal.h"
 #include "../visuals/old_mods.h"
+#include "../visuals/screen/reflections.h"
+#include "../../globals/logger/logger.h"
 
 void n_skins::impl_t::agent_changer( )
 {
@@ -357,6 +359,8 @@ void n_skins::impl_t::knife_changer( )
 				hash_step( *reinterpret_cast< const unsigned int* >( &sticker_scales[ index ] ) );
 			if ( index < static_cast< int >( sticker_rotations.size( ) ) )
 				hash_step( *reinterpret_cast< const unsigned int* >( &sticker_rotations[ index ] ) );
+			if ( imported_sticker( i, slot ) )
+				hash_step( static_cast< unsigned int >( config_sticker( i, slot ).m_kit ) );
 		}
 	}
 
@@ -833,4 +837,339 @@ void n_skins::impl_t::knife_anim_live( )
 			break;
 		}
 	}
+}
+
+namespace
+{
+	/* stattrak digits sample an orange vtf, $color2 alone can't make them blue. white copy ( every dxt5 endpoint = its
+	   brightest channel as gray, peak scaled to white ) saved to csgo\materials\stattrak_color\ ( same files as
+	   StattrakColor.lua ), digit materials draw it tinted by $color2. one viewmodel at a time = color of the held weapon */
+	struct stattrak_group_t {
+		const char* m_source;
+		const char* m_white;
+		const char* m_original;
+		std::vector< std::string > m_materials;
+		c_texture* m_texture = nullptr;
+		bool m_failed        = false;
+		bool m_applied       = false;
+	};
+
+	std::vector< std::string > stattrak_digit_materials( )
+	{
+		std::vector< std::string > out{ };
+		for ( const char* dir : { "models/weapons/stattrack/stat_digit", "models/weapons/stattrack_weaponpreview/stat_digit" } ) {
+			for ( int i = 0; i < 6; i++ ) {
+				char name[ 96 ];
+				std::snprintf( name, sizeof( name ), "%s%03d", dir, i );
+				out.emplace_back( name );
+			}
+		}
+		return out;
+	}
+
+	stattrak_group_t g_stattrak_groups[ ] = {
+		{ "materials/models/weapons/stattrack/stat_digit.vtf", "stattrak_color/digit_white", "models/weapons/stattrack/stat_digit",
+		  stattrak_digit_materials( ) },
+		{ "materials/models/weapons/stattrack/stattrak_error.vtf", "stattrak_color/error_white", "models/weapons/stattrack/stattrak_error",
+		  { "models/weapons/stattrack/stattrak_error001" } },
+	};
+
+	struct stattrak_material_t {
+		c_material* m_material;
+		float m_color2[ 3 ] = { -1.f, -1.f, -1.f }; // last written, -1 = never
+	};
+	std::unordered_map< std::string, stattrak_material_t > g_stattrak_materials{ }; // referenced: material + our vars stay loaded
+	bool g_stattrak_prepared      = false;
+	bool g_stattrak_warned        = false;
+	unsigned int g_stattrak_key   = 0;
+	float g_stattrak_next_check   = 0.f;
+
+	bool whiten_vtf( std::vector< unsigned char >& vtf )
+	{
+		const auto u16 = [ & ]( std::size_t at ) { return static_cast< unsigned int >( vtf[ at ] | vtf[ at + 1 ] << 8 ); };
+		const auto u32 = [ & ]( std::size_t at ) { return u16( at ) | u16( at + 2 ) << 16; };
+
+		// 7.3+ header, IMAGE_FORMAT_DXT5 = 15
+		if ( vtf.size( ) < 104 || std::memcmp( vtf.data( ), "VTF\0", 4 ) != 0 || u32( 4 ) != 7 || u32( 8 ) < 3 || u32( 52 ) != 15 )
+			return false;
+
+		const unsigned int width = u16( 16 ), height = u16( 18 ), frames = u16( 24 ), mips = vtf[ 56 ];
+
+		std::size_t start = 0;
+		for ( unsigned int i = 0, count = u32( 68 ); i < count; i++ ) {
+			const std::size_t entry = 80 + i * 8;
+			if ( entry + 8 > vtf.size( ) )
+				return false;
+			if ( vtf[ entry ] == 0x30 && vtf[ entry + 1 ] == 0 && vtf[ entry + 2 ] == 0 )
+				start = u32( entry + 4 );
+		}
+		if ( !start )
+			return false;
+
+		std::size_t size = 0;
+		for ( unsigned int m = 0; m < mips; m++ )
+			size += static_cast< std::size_t >( ( ( std::max )( 1u, width >> m ) + 3 ) / 4 ) * ( ( ( std::max )( 1u, height >> m ) + 3 ) / 4 ) * 16;
+		size *= frames;
+		if ( !size || start + size > vtf.size( ) )
+			return false;
+
+		const auto brightest = []( unsigned int c ) {
+			return ( std::max )( { ( ( c >> 11 ) & 31 ) * 255 / 31, ( ( c >> 5 ) & 63 ) * 255 / 63, ( c & 31 ) * 255 / 31 } );
+		};
+
+		unsigned int peak = 1;
+		for ( std::size_t o = start; o < start + size; o += 16 )
+			peak = ( std::max )( { peak, brightest( u16( o + 8 ) ), brightest( u16( o + 10 ) ) } );
+
+		// dxt5 color blocks always interpolate 4 colors, grays blend like the old endpoints did: digits, glow, dim cells stay put
+		for ( std::size_t o = start; o < start + size; o += 16 ) {
+			for ( const std::size_t at : { o + 8, o + 10 } ) {
+				const unsigned int v    = ( std::min )( 255u, ( brightest( u16( at ) ) * 255 + peak / 2 ) / peak );
+				const unsigned int r5   = ( v * 31 + 127 ) / 255, g6 = ( v * 63 + 127 ) / 255;
+				const unsigned int gray = r5 << 11 | g6 << 5 | r5;
+				vtf[ at ]               = static_cast< unsigned char >( gray & 0xff );
+				vtf[ at + 1 ]           = static_cast< unsigned char >( gray >> 8 );
+			}
+		}
+		return true;
+	}
+
+	std::string stattrak_dir( )
+	{
+		char exe[ MAX_PATH ]{ };
+		if ( !GetModuleFileNameA( nullptr, exe, MAX_PATH ) )
+			return { };
+
+		std::string root = exe;
+		const auto slash = root.find_last_of( "\\/" );
+		if ( slash == std::string::npos )
+			return { };
+		root.erase( slash );
+
+		CreateDirectoryA( ( root + "\\csgo\\materials" ).c_str( ), nullptr );
+		root += "\\csgo\\materials\\stattrak_color";
+		CreateDirectoryA( root.c_str( ), nullptr );
+		return root + "\\";
+	}
+
+	bool is_vtf_file( const std::string& path )
+	{
+		std::ifstream file( path, std::ios::binary );
+		char head[ 4 ]{ };
+		return file.read( head, 4 ) && std::memcmp( head, "VTF\0", 4 ) == 0;
+	}
+
+	void stattrak_prepare( )
+	{
+		const std::string dir = stattrak_dir( );
+
+		for ( auto& group : g_stattrak_groups ) {
+			const std::string path = dir + ( std::strrchr( group.m_white, '/' ) + 1 ) + ".vtf";
+			if ( dir.empty( ) ) {
+				group.m_failed = true;
+				continue;
+			}
+			if ( is_vtf_file( path ) )
+				continue;
+
+			std::vector< unsigned char > vtf{ };
+			if ( !read_game_file( group.m_source, vtf ) || !whiten_vtf( vtf ) ) {
+				group.m_failed = true;
+				g_logger.print( std::string( "can't make a white copy of " ) + group.m_source + "\n", "[stattrak]" );
+				continue;
+			}
+
+			std::ofstream out( path, std::ios::binary | std::ios::trunc );
+			if ( !out.write( reinterpret_cast< const char* >( vtf.data( ) ), static_cast< std::streamsize >( vtf.size( ) ) ) ) {
+				out.close( );
+				DeleteFileA( path.c_str( ) );
+				group.m_failed = true;
+				g_logger.print( "can't write " + path + "\n", "[stattrak]" );
+			}
+		}
+	}
+
+	c_texture* stattrak_white( stattrak_group_t& group )
+	{
+		if ( group.m_failed )
+			return nullptr;
+
+		if ( !group.m_texture ) {
+			group.m_texture = g_interfaces.m_material_system->find_texture( group.m_white, TEXTURE_GROUP_MODEL, false );
+			if ( !group.m_texture ) {
+				group.m_failed = true;
+				return nullptr;
+			}
+			group.m_texture->increment_reference_count( );
+		}
+
+		// every check: sv_pure without the bypass turns loose files into the error texture
+		if ( group.m_texture->is_error( ) ) {
+			if ( !g_stattrak_warned ) {
+				g_stattrak_warned = true;
+				g_logger.print( "csgo won't load materials\\stattrak_color ( sv_pure server: turn on sv_pure bypass )\n", "[stattrak]" );
+			}
+			return nullptr;
+		}
+		return group.m_texture;
+	}
+
+	stattrak_material_t* stattrak_material( const std::string& name )
+	{
+		if ( const auto it = g_stattrak_materials.find( name ); it != g_stattrak_materials.end( ) )
+			return &it->second;
+
+		c_material* const material = g_interfaces.m_material_system->find_material( name.c_str( ), TEXTURE_GROUP_MODEL, false );
+		if ( !material || material->is_error_material( ) )
+			return nullptr;
+
+		material->increment_reference_count( );
+		return &( g_stattrak_materials[ name ] = stattrak_material_t{ material } );
+	}
+
+	void stattrak_set( stattrak_material_t& entry, c_texture* texture, float r, float g, float b )
+	{
+		c_material* const material = entry.m_material;
+
+		bool found = false;
+		if ( c_material_var* const var = material->find_var( "$basetexture", &found, false ); found && var && texture && var->get_texture( ) != texture ) {
+			var->set_texture( texture );
+			entry.m_color2[ 0 ] = -1.f; // stock texture back = material reloaded, its $color2 too
+		}
+
+		/* csgo bakes $color2 into the material's per instance command buffer ( BaseShader.cpp PI_SetModulation* ->
+		   ApplyColor2Factor ), built only while snapshotting: a write alone never shows ( white digits ). rebuild on change,
+		   like misc.cpp world modulation. queued to the render thread with the write, no-op before precache */
+		if ( entry.m_color2[ 0 ] == r && entry.m_color2[ 1 ] == g && entry.m_color2[ 2 ] == b )
+			return;
+
+		found = false;
+		if ( c_material_var* const var = material->find_var( "$color2", &found, false ); found && var ) {
+			var->set_vector( r, g, b );
+			material->recompute_state_snapshots( );
+			entry.m_color2[ 0 ] = r;
+			entry.m_color2[ 1 ] = g;
+			entry.m_color2[ 2 ] = b;
+		}
+	}
+
+	void stattrak_restore( stattrak_group_t& group )
+	{
+		c_texture* original = g_interfaces.m_material_system->find_texture( group.m_original, TEXTURE_GROUP_MODEL, false );
+		if ( original && original->is_error( ) )
+			original = nullptr;
+
+		for ( const std::string& name : group.m_materials ) {
+			if ( const auto it = g_stattrak_materials.find( name ); it != g_stattrak_materials.end( ) )
+				stattrak_set( it->second, original, 1.f, 1.f, 1.f );
+		}
+		group.m_applied = false;
+	}
+
+	void stattrak_apply( const c_color& color )
+	{
+		if ( !g_stattrak_prepared ) {
+			g_stattrak_prepared = true;
+			stattrak_prepare( );
+		}
+
+		const float r = color.get< 0 >( ) / 255.f, g = color.get< 1 >( ) / 255.f, b = color.get< 2 >( ) / 255.f;
+
+		for ( auto& group : g_stattrak_groups ) {
+			if ( c_texture* const texture = stattrak_white( group ) ) {
+				for ( const std::string& name : group.m_materials ) {
+					if ( stattrak_material_t* const entry = stattrak_material( name ) )
+						stattrak_set( *entry, texture, r, g, b );
+				}
+				group.m_applied = true;
+			} else if ( group.m_applied )
+				stattrak_restore( group );
+		}
+	}
+
+	void stattrak_restore_all( )
+	{
+		for ( auto& group : g_stattrak_groups ) {
+			if ( group.m_applied )
+				stattrak_restore( group );
+		}
+	}
+}
+
+void n_skins::impl_t::stattrak_color( )
+{
+	if ( g_ctx.m_eject_restoring ) {
+		stattrak_restore_all( );
+
+		for ( auto& group : g_stattrak_groups ) {
+			if ( group.m_texture ) {
+				group.m_texture->decrement_reference_count( );
+				group.m_texture = nullptr;
+			}
+		}
+		for ( const auto& [ name, entry ] : g_stattrak_materials )
+			entry.m_material->decrement_reference_count( );
+		g_stattrak_materials.clear( );
+		return;
+	}
+
+	c_color color{ };
+	bool custom = false;
+
+	c_base_entity* const local  = g_interfaces.m_engine_client->is_connected_safe( )
+	                                  ? g_interfaces.m_client_entity_list->get< c_base_entity >( g_interfaces.m_engine_client->get_local_player( ) )
+	                                  : nullptr;
+	c_base_entity* const weapon = local && local->is_alive( ) ? g_interfaces.m_client_entity_list->get< c_base_entity >( local->get_active_weapon_handle( ) )
+	                                                          : nullptr;
+
+	if ( weapon && !is_knife_class( class_id_of( weapon ) ) && GET_VARIABLE( WEAPON_VAR( m_weapon_skins_enable ), bool ) ) {
+		const auto& stattraks = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_stattrak ), std::vector< bool > );
+		const auto& customs   = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_stattrak_custom_color ), std::vector< bool > );
+		const auto& colors    = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_stattrak_color ), std::vector< c_color > );
+
+		for ( int i = 0; i < WEAPON_COUNT; i++ ) {
+			if ( weapon->get_item_definition_index( ) != WEAPON_IDS[ i ] )
+				continue;
+
+			custom = i < static_cast< int >( stattraks.size( ) ) && stattraks[ i ] && i < static_cast< int >( customs.size( ) ) && customs[ i ] &&
+			         i < static_cast< int >( colors.size( ) );
+			if ( custom )
+				color = colors[ i ];
+			break;
+		}
+	}
+
+	/* swapping $basetexture on digits the map already loaded doesn't take on the 1st map. like StattrakColor.lua: white mask
+	   goes on from the menu as soon as ANY custom color is set up ( either team ), weapon switches only move $color2 */
+	const auto weapons_custom = []( bool tside ) {
+		if ( !GET_VARIABLE( tside ? g_variables.m_weapon_skins_enable_tside : g_variables.m_weapon_skins_enable, bool ) )
+			return false;
+		const auto& stattraks = GET_VARIABLE( tside ? g_variables.m_weapon_skins_stattrak_tside : g_variables.m_weapon_skins_stattrak, std::vector< bool > );
+		const auto& customs   = GET_VARIABLE( tside ? g_variables.m_weapon_skins_stattrak_custom_color_tside : g_variables.m_weapon_skins_stattrak_custom_color,
+		                                      std::vector< bool > );
+		for ( std::size_t i = 0; i < stattraks.size( ) && i < customs.size( ); i++ ) {
+			if ( stattraks[ i ] && customs[ i ] )
+				return true;
+		}
+		return false;
+	};
+	const bool any_custom = weapons_custom( false ) || weapons_custom( true );
+
+	// white mask * this = the stock look ( StattrakColor.lua default )
+	if ( !custom )
+		color = c_color( 230, 110, 30, 255 );
+
+	const unsigned int key = any_custom ? 0x01000000u | color.get< 0 >( ) | color.get< 1 >( ) << 8 | color.get< 2 >( ) << 16 : 0u;
+
+	// material reloads ( map change, sv_pure, mat_reloadallmaterials ) put the stock texture back: recheck twice a second
+	const float now = g_interfaces.m_global_vars_base->m_real_time;
+	if ( key == g_stattrak_key && now < g_stattrak_next_check )
+		return;
+	g_stattrak_key        = key;
+	g_stattrak_next_check = now + 0.5f;
+
+	if ( any_custom )
+		stattrak_apply( color );
+	else
+		stattrak_restore_all( );
 }

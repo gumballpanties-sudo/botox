@@ -1,5 +1,6 @@
 #pragma once
 #include "skins.h"
+#include "sticker_import.h"
 #include "../network/botox_net.h"
 #include "../../game/sdk/includes/includes.h"
 #include "../../globals/includes/includes.h"
@@ -786,6 +787,14 @@ inline int gun_index_of( short definition )
 	return -1;
 }
 
+/* png/jpg path on this slot, nullptr = none */
+inline const std::string* imported_sticker( int gun, int slot )
+{
+	const int index = gun * STICKER_SLOTS + slot;
+	auto& images    = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_image ), std::vector< std::string > );
+	return gun >= 0 && index < static_cast< int >( images.size( ) ) && !images[ index ].empty( ) ? &images[ index ] : nullptr;
+}
+
 /* our config for this gun's slots (all kit 0 when weapon skins are off) */
 inline n_skins::sticker_t config_sticker( int gun, int slot )
 {
@@ -800,7 +809,11 @@ inline n_skins::sticker_t config_sticker( int gun, int slot )
 	auto& scales    = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_scale ), std::vector< float > );
 	auto& rotations = GET_VARIABLE( WEAPON_VAR( m_weapon_skins_sticker_rotation ), std::vector< float > );
 
-	sticker.m_kit = index < static_cast< int >( kits.size( ) ) ? kits[ index ] : 0;
+	// imported image wins over the picked kit
+	if ( const std::string* image = imported_sticker( gun, slot ) )
+		sticker.m_kit = n_sticker_import::kit_for( *image );
+	else
+		sticker.m_kit = index < static_cast< int >( kits.size( ) ) ? kits[ index ] : 0;
 	if ( sticker.m_kit <= 0 )
 		return sticker;
 

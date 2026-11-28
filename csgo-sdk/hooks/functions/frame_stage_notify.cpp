@@ -14,6 +14,7 @@
 #include "../../hacks/movement/movement_recorder.h"
 #include "../../hacks/network/botox_net.h"
 #include "../../hacks/skins/skins.h"
+#include "../../hacks/skins/sticker_import.h"
 #include "../../hacks/chams/chams.h"
 #include "../../hacks/visuals/bullets/bullets.h"
 #include "../../hacks/visuals/edicts/edicts.h"
@@ -34,8 +35,11 @@ void __fastcall n_detoured_functions::frame_stage_notify( void* ecx, void* edx, 
 	/* chams / skins / smoke rebuild here: must not run while eject releases materials */
 	HOOK_SCOPE_OR_BAIL( original( ecx, edx, stage ) );
 
-	if ( stage == render_start )
+	if ( stage == render_start ) {
 		g_flip_world.on_render_start( );
+		g_skins.stattrak_color( );
+		n_sticker_import::eject_restore( );
+	}
 
 	g_lua.on_frame_stage( stage );
 

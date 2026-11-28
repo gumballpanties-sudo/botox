@@ -501,7 +501,9 @@ void n_botox_net::impl_t::queue_skins( )
 		if ( !knife ) {
 			const int gun = gun_index_of( definition );
 			for ( int slot = 0; slot < STICKERS; slot++ ) {
-				stickers[ slot ] = config_sticker( gun, slot );
+				// imported = a spray kit pointed at a file only we have
+				if ( !imported_sticker( gun, slot ) )
+					stickers[ slot ] = config_sticker( gun, slot );
 				if ( stickers[ slot ].m_kit > 0 )
 					sticker_mask |= 1 << slot;
 			}

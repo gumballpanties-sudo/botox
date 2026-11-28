@@ -104,6 +104,7 @@
     <ClCompile Include="hacks\skins\skins.cpp" />
     <ClCompile Include="hacks\skins\skins_changers.cpp" />
     <ClCompile Include="hacks\skins\parser.cpp" />
+    <ClCompile Include="hacks\skins\sticker_import.cpp" />
     <ClCompile Include="hacks\misc\scaleform\scaleform.cpp" />
     <ClCompile Include="hacks\misc\scaleform\image_cache.cpp" />
     <ClCompile Include="hacks\misc\scaleform\moi_hud.cpp" />
@@ -151,7 +152,6 @@
     <ClCompile Include="hooks\functions\build_transformations.cpp" />
     <ClCompile Include="hooks\functions\draw_filled_rect.cpp" />
     <ClCompile Include="hooks\functions\draw_set_color.cpp" />
-    <ClCompile Include="hooks\functions\draw_static_props.cpp" />
     <ClCompile Include="hooks\functions\draw_view_models.cpp" />
     <ClCompile Include="hooks\functions\push_2d_view.cpp" />
     <ClCompile Include="hooks\functions\world_to_screen_matrix.cpp" />
@@ -403,6 +403,7 @@
     <ClInclude Include="hacks\skins\skins_internal.h" />
     <ClInclude Include="hacks\skins\skin_names.h" />
     <ClInclude Include="hacks\skins\sticker_names.h" />
+    <ClInclude Include="hacks\skins\sticker_import.h" />
     <ClInclude Include="game\sdk\enums\e_hitgroup.h" />
     <ClInclude Include="game\sdk\enums\e_glow_style.h" />
     <ClInclude Include="globals\logger\logger.h" />

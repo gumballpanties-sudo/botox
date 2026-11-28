@@ -7,6 +7,7 @@
 #include "../misc/server_browser.h"
 #include "../misc/hud_font/hud_font.h"
 #include "../network/botox_net.h"
+#include "../skins/sticker_import.h"
 #include "../../game/sdk/includes/includes.h"
 
 #include <shellapi.h>
@@ -402,6 +403,8 @@ void n_menu::impl_t::tab_inventory( )
 				COPY_TEAM( m_weapon_skins_seed, std::vector< int > );
 				COPY_TEAM( m_weapon_skins_stattrak, std::vector< bool > );
 				COPY_TEAM( m_weapon_skins_stattrak_kills, std::vector< int > );
+				COPY_TEAM( m_weapon_skins_stattrak_custom_color, std::vector< bool > );
+				COPY_TEAM( m_weapon_skins_stattrak_color, std::vector< c_color > );
 				COPY_TEAM( m_weapon_skins_custom_name, std::vector< std::string > );
 				COPY_TEAM( m_weapon_skins_custom_color, std::vector< bool > );
 				COPY_TEAM( m_weapon_skins_color_1, std::vector< c_color > );
@@ -412,6 +415,7 @@ void n_menu::impl_t::tab_inventory( )
 				COPY_TEAM( m_weapon_skins_sticker_wear, std::vector< float > );
 				COPY_TEAM( m_weapon_skins_sticker_scale, std::vector< float > );
 				COPY_TEAM( m_weapon_skins_sticker_rotation, std::vector< float > );
+				COPY_TEAM( m_weapon_skins_sticker_image, std::vector< std::string > );
 				COPY_TEAM( m_knife_enable, bool );
 				COPY_TEAM( m_knife_model, int );
 				COPY_TEAM( m_knife_fix_view, bool );
@@ -458,8 +462,19 @@ void n_menu::impl_t::tab_inventory( )
 				if ( ImGui::Checkbox( "stattrak", &stattrak ) )
 					stattraks[ sel ] = stattrak;
 
-				if ( stattrak )
+				if ( stattrak ) {
 					ImGui::SliderInt( "kills", &stattrak_kills[ sel ], 0, 99999, "%d" );
+
+					auto& st_customs = GET_VARIABLE( TV( m_weapon_skins_stattrak_custom_color ), std::vector< bool > );
+					auto& st_colors  = GET_VARIABLE( TV( m_weapon_skins_stattrak_color ), std::vector< c_color > );
+					if ( sel < static_cast< int >( st_customs.size( ) ) && sel < static_cast< int >( st_colors.size( ) ) ) {
+						bool st_custom = st_customs[ sel ];
+						if ( ImGui::Checkbox( "stattrak color", &st_custom ) )
+							st_customs[ sel ] = st_custom;
+						ImGui::SameLine( );
+						ImGui::ColorEdit4( "##stattrak color", &st_colors[ sel ], color_picker_no_alpha_flags );
+					}
+				}
 
 				static char weapon_name[ 41 ] = { };
 				static int last_selected      = -1;
@@ -502,6 +517,7 @@ void n_menu::impl_t::tab_inventory( )
 				auto& sticker_wears     = GET_VARIABLE( TV( m_weapon_skins_sticker_wear ), std::vector< float > );
 				auto& sticker_scales    = GET_VARIABLE( TV( m_weapon_skins_sticker_scale ), std::vector< float > );
 				auto& sticker_rotations = GET_VARIABLE( TV( m_weapon_skins_sticker_rotation ), std::vector< float > );
+				auto& sticker_images    = GET_VARIABLE( TV( m_weapon_skins_sticker_image ), std::vector< std::string > );
 
 				ImGui::Combo( "sticker slot", &GET_VARIABLE( g_variables.m_weapon_skins_sticker_slot, int ),
 				              "slot 1\0slot 2\0slot 3\0slot 4\0slot 5\0" );
@@ -511,11 +527,19 @@ void n_menu::impl_t::tab_inventory( )
 
 				if ( slot >= 0 && slot < 5 && sticker < static_cast< int >( sticker_kits.size( ) ) &&
 				     sticker < static_cast< int >( sticker_wears.size( ) ) && sticker < static_cast< int >( sticker_scales.size( ) ) &&
-				     sticker < static_cast< int >( sticker_rotations.size( ) ) ) {
+				     sticker < static_cast< int >( sticker_rotations.size( ) ) && sticker < static_cast< int >( sticker_images.size( ) ) ) {
 					static ImGuiTextFilter sticker_filter{ };
 					skin_selector( "sticker", g_skins.m_parser_stickers, &sticker_kits[ sticker ], sticker_filter );
 
-					if ( sticker_kits[ sticker ] > 0 ) {
+					// png / jpg on this slot, beats the picked sticker
+					image_path_input( "import sticker##sticker image", "C:\\sticker.png", sticker_images[ sticker ], false );
+					if ( !sticker_images[ sticker ].empty( ) ) {
+						ImGui::Label( "%s", n_sticker_import::status( sticker_images[ sticker ] ).c_str( ) );
+						if ( ImGui::Button( "remove imported sticker", ImVec2( -1.f, 15.f ) ) )
+							sticker_images[ sticker ].clear( );
+					}
+
+					if ( sticker_kits[ sticker ] > 0 || !sticker_images[ sticker ].empty( ) ) {
 						ImGui::SliderFloat( "sticker wear", &sticker_wears[ sticker ], 0.f, 1.f, "%.4f" );
 						ImGui::SliderFloat( "sticker scale", &sticker_scales[ sticker ], 0.1f, 5.f, "%.2f" );
 						ImGui::SliderFloat( "sticker rotation", &sticker_rotations[ sticker ], 0.f, 360.f, "%.0f" );
@@ -545,10 +569,12 @@ void n_menu::impl_t::tab_inventory( )
 							g_config.reset< std::vector< float > >( variable );
 
 						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_stattrak, g_variables.m_weapon_skins_stattrak_tside,
-						                                       g_variables.m_weapon_skins_custom_color, g_variables.m_weapon_skins_custom_color_tside } )
+						                                       g_variables.m_weapon_skins_custom_color, g_variables.m_weapon_skins_custom_color_tside,
+						                                       g_variables.m_weapon_skins_stattrak_custom_color, g_variables.m_weapon_skins_stattrak_custom_color_tside } )
 							g_config.reset< std::vector< bool > >( variable );
 
-						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_color_1, g_variables.m_weapon_skins_color_1_tside,
+						for ( const std::uint32_t variable : { g_variables.m_weapon_skins_stattrak_color, g_variables.m_weapon_skins_stattrak_color_tside,
+						                                       g_variables.m_weapon_skins_color_1, g_variables.m_weapon_skins_color_1_tside,
 						                                       g_variables.m_weapon_skins_color_2, g_variables.m_weapon_skins_color_2_tside,
 						                                       g_variables.m_weapon_skins_color_3, g_variables.m_weapon_skins_color_3_tside,
 						                                       g_variables.m_weapon_skins_color_4, g_variables.m_weapon_skins_color_4_tside } )
@@ -556,6 +582,8 @@ void n_menu::impl_t::tab_inventory( )
 
 						g_config.reset< std::vector< std::string > >( g_variables.m_weapon_skins_custom_name );
 						g_config.reset< std::vector< std::string > >( g_variables.m_weapon_skins_custom_name_tside );
+						g_config.reset< std::vector< std::string > >( g_variables.m_weapon_skins_sticker_image );
+						g_config.reset< std::vector< std::string > >( g_variables.m_weapon_skins_sticker_image_tside );
 
 						g_logger.print( "reset all weapon skins" );
 						open_reset_popup = false;
@@ -604,8 +632,9 @@ void n_menu::impl_t::tab_inventory( )
 				ImGui::SliderInt( "knife pattern", &GET_VARIABLE( TV( m_knife_seed ), int ), 0, 1023, "%d" );
 
 				ImGui::Checkbox( "knife stattrak", &GET_VARIABLE( TV( m_knife_stattrak ), bool ) );
-				if ( GET_VARIABLE( TV( m_knife_stattrak ), bool ) )
+				if ( GET_VARIABLE( TV( m_knife_stattrak ), bool ) ) {
 					ImGui::SliderInt( "knife kills", &GET_VARIABLE( TV( m_knife_stattrak_kills ), int ), 0, 99999, "%d" );
+				}
 
 				static char knife_name[ 41 ] = { };
 				auto& knife_name_var         = GET_VARIABLE( TV( m_knife_custom_name ), std::string );

@@ -1017,17 +1017,19 @@ void n_menu::impl_t::tab_visuals( )
 					[ & ]( ) {
 						ImGui::ColorEdit4( "color##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_color, c_color ),
 						                   color_picker_no_alpha_flags );
-						ImGui::Checkbox( "lamp lights##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_lamps, bool ) );
+						ImGui::Checkbox( "world lights##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_lamps, bool ) );
 						if ( GET_VARIABLE( g_variables.m_lighting_modulation_lamps, bool ) ) {
 							ImGui::SliderInt( "intensity##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_intensity, int ), 0,
-							                  10, "%d", ImGuiSliderFlags_AlwaysClamp );
-							ImGui::SliderFloat( "radius##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_radius, float ), 25.f,
+							                  30, "%d", ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderFloat( "radius##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_radius, float ), 0.f,
 							                    1000.f, "%.0f u", ImGuiSliderFlags_AlwaysClamp );
-							ImGui::SliderInt( "max lights##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_max, int ), 1, 16,
+							ImGui::SliderInt( "max lights##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_max, int ), 1, 32,
 							                  "%d", ImGuiSliderFlags_AlwaysClamp );
 							ImGui::SliderFloat( "max distance##lighting modulation",
-							                    &GET_VARIABLE( g_variables.m_lighting_modulation_distance, float ), 100.f, 8000.f, "%.0f u",
+							                    &GET_VARIABLE( g_variables.m_lighting_modulation_distance, float ), 85.f, 2000.f, "%.0f u",
 							                    ImGuiSliderFlags_AlwaysClamp );
+							ImGui::SliderInt( "light style##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_style, int ), 0, 11,
+							                  "%d", ImGuiSliderFlags_AlwaysClamp );
 						}
 						ImGui::Checkbox( "light glows##lighting modulation", &GET_VARIABLE( g_variables.m_lighting_modulation_glows, bool ) );
 						if ( GET_VARIABLE( g_variables.m_lighting_modulation_glows, bool ) )

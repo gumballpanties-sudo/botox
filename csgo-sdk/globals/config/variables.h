@@ -425,6 +425,7 @@ namespace n_variables
 		ADD_VARIABLE( int, m_knife_seed, 0 );
 		ADD_VARIABLE( bool, m_knife_stattrak, false );
 		ADD_VARIABLE( int, m_knife_stattrak_kills, 0 );
+		// stattrak digits drawn from a white copy of stat_digit.vtf tinted by $color2 ( skins_changers.cpp stattrak_color )
 		ADD_VARIABLE( std::string, m_knife_custom_name, "" );
 		/* overwrites the kit's 4 palette colours in CCSWeaponVisualsDataProcessor::SetVisualsData.
 		   only palette styles react (solid / ano / spray / hydro), "original" style ignores them */
@@ -448,6 +449,8 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( int, 34, m_weapon_skins_seed, 0 );
 		ADD_VARIABLE_VECTOR( bool, 34, m_weapon_skins_stattrak, false );
 		ADD_VARIABLE_VECTOR( int, 34, m_weapon_skins_stattrak_kills, 0 );
+		ADD_VARIABLE_VECTOR( bool, 34, m_weapon_skins_stattrak_custom_color, false );
+		ADD_VARIABLE_VECTOR( c_color, 34, m_weapon_skins_stattrak_color, c_color( 230, 110, 30, 255 ) );
 		ADD_VARIABLE_VECTOR( std::string, 34, m_weapon_skins_custom_name, "" );
 		ADD_VARIABLE_VECTOR( bool, 34, m_weapon_skins_custom_color, false );
 		ADD_VARIABLE_VECTOR( c_color, 34, m_weapon_skins_color_1, c_color( 255, 255, 255, 255 ) );
@@ -459,6 +462,7 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( float, 170, m_weapon_skins_sticker_wear, 0.f );
 		ADD_VARIABLE_VECTOR( float, 170, m_weapon_skins_sticker_scale, 1.f );
 		ADD_VARIABLE_VECTOR( float, 170, m_weapon_skins_sticker_rotation, 0.f );
+		ADD_VARIABLE_VECTOR( std::string, 170, m_weapon_skins_sticker_image, "" );
 		ADD_VARIABLE( bool, m_agent_enable, false );
 		ADD_VARIABLE( int, m_agent_t, 0 );
 		ADD_VARIABLE( int, m_agent_ct, 0 );
@@ -498,6 +502,8 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( int, 34, m_weapon_skins_seed_tside, 0 );
 		ADD_VARIABLE_VECTOR( bool, 34, m_weapon_skins_stattrak_tside, false );
 		ADD_VARIABLE_VECTOR( int, 34, m_weapon_skins_stattrak_kills_tside, 0 );
+		ADD_VARIABLE_VECTOR( bool, 34, m_weapon_skins_stattrak_custom_color_tside, false );
+		ADD_VARIABLE_VECTOR( c_color, 34, m_weapon_skins_stattrak_color_tside, c_color( 230, 110, 30, 255 ) );
 		ADD_VARIABLE_VECTOR( std::string, 34, m_weapon_skins_custom_name_tside, "" );
 		ADD_VARIABLE_VECTOR( bool, 34, m_weapon_skins_custom_color_tside, false );
 		ADD_VARIABLE_VECTOR( c_color, 34, m_weapon_skins_color_1_tside, c_color( 255, 255, 255, 255 ) );
@@ -508,6 +514,7 @@ namespace n_variables
 		ADD_VARIABLE_VECTOR( float, 170, m_weapon_skins_sticker_wear_tside, 0.f );
 		ADD_VARIABLE_VECTOR( float, 170, m_weapon_skins_sticker_scale_tside, 1.f );
 		ADD_VARIABLE_VECTOR( float, 170, m_weapon_skins_sticker_rotation_tside, 0.f );
+		ADD_VARIABLE_VECTOR( std::string, 170, m_weapon_skins_sticker_image_tside, "" );
 
 		ADD_VARIABLE( bool, m_players, false );
 		ADD_VARIABLE( key_bind_t, m_players_key, key_bind_t( 0, 0 ) ); /* style 0 = always on */
@@ -808,10 +815,11 @@ namespace n_variables
 		ADD_VARIABLE( bool, m_lighting_modulation, false );
 		ADD_VARIABLE( c_color, m_lighting_modulation_color, c_color( 255, 150, 60, 255 ) );
 		ADD_VARIABLE( bool, m_lighting_modulation_lamps, true );
-		ADD_VARIABLE( int, m_lighting_modulation_intensity, 3 );
-		ADD_VARIABLE( float, m_lighting_modulation_radius, 250.f );
-		ADD_VARIABLE( int, m_lighting_modulation_max, 8 );
-		ADD_VARIABLE( float, m_lighting_modulation_distance, 2500.f );
+		ADD_VARIABLE( int, m_lighting_modulation_intensity, 4 );
+		ADD_VARIABLE( float, m_lighting_modulation_radius, 95.f );
+		ADD_VARIABLE( int, m_lighting_modulation_max, 32 );
+		ADD_VARIABLE( float, m_lighting_modulation_distance, 450.f );
+		ADD_VARIABLE( int, m_lighting_modulation_style, 1 );
 		ADD_VARIABLE( bool, m_lighting_modulation_glows, true );
 		ADD_VARIABLE( float, m_lighting_modulation_glow_brightness, 100.f );
 

@@ -69,7 +69,6 @@ namespace n_hooks
 		c_detour_hook m_draw_model_execute{ };
 		c_detour_hook m_build_transformations{ };
 		c_detour_hook m_list_leaves_in_box{ };
-		c_detour_hook m_draw_static_props{ };
 		c_detour_hook m_send_datagram{ };
 		c_detour_hook m_draw_view_models{ };
 		c_detour_hook m_is_hltv{ };
@@ -181,8 +180,6 @@ namespace n_detoured_functions
 	void __fastcall build_transformations( void* ecx, void* edx, void* studio_hdr, void* pos, void* q, const matrix3x4_t& camera_transform,
 	                                       int bone_mask, void* bone_computed );
 	int __fastcall list_leaves_in_box( void* ecx, void* edx, const c_vector& mins, const c_vector& maxs, unsigned short* list, int list_max );
-	void __fastcall draw_static_props( void* ecx, void* edx, void** props, const void* instances, int count, bool shadow_depth, bool ssao_depth,
-	                                   bool wireframe );
 	int __fastcall send_datagram( c_net_channel* net_channel, int edx, bf_write* datagram );
 	void __fastcall draw_view_models( void* ecx, void* edx, c_view_setup& setup, bool draw_view_model, bool draw_scope_lens_mask );
 	/* body in do_post_screen_space_effects.cpp: world draws + depth passes, gun-free ones at DrawViewModels entry. main thread */

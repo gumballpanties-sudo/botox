@@ -230,6 +230,10 @@ namespace n_skins
 
 		void knife_hold( int stage );
 
+		/* fsn render_start, every frame ( menu too ): any custom stattrak color set up = white mask on the digits from the menu,
+		   $color2 = held weapon's color or stock orange; none set up = stock. reads g_ctx.m_eject_restoring as off, restores + drops refs */
+		void stattrak_color( );
+
 		bool m_forcing_update = false;
 
 		std::vector< unsigned int > m_seen_weapons = { };
